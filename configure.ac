@@ -1103,6 +1103,9 @@ case "${target}" in
   moxie-*-*)
     noconfigdirs="$noconfigdirs"
     ;;
+  brew-*-*)
+    noconfigdirs="$noconfigdirs"
+    ;;
   h8300*-*-*)
     noconfigdirs="$noconfigdirs target-libgloss"
     ;;

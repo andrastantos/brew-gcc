@@ -382,6 +382,9 @@ ft32*)	cpu_type=ft32
 moxie*)	cpu_type=moxie
 	target_has_targetm_common=no
 	;;
+brew*)	cpu_type=brew
+	target_has_targetm_common=no
+	;;
 fido-*-*)
 	cpu_type=m68k
 	extra_headers=math-68881.h
@@ -1696,6 +1699,12 @@ moxie-*-moxiebox*)
 	gnu_ld=yes
 	tm_file="${tm_file} dbxelf.h elfos.h moxie/moxiebox.h newlib-stdint.h"
 	tmake_file="${tmake_file} moxie/t-moxiebox"
+	;;
+brew-*-elf)
+	gas=yes
+	gnu_ld=yes
+	tm_file="dbxelf.h elfos.h newlib-stdint.h ${tm_file}"
+	tmake_file="${tmake_file} brew/t-brew"
 	;;
 h8300-*-elf*)
 	tmake_file="h8300/t-h8300"

@@ -91,6 +91,7 @@ mmix port		Hans-Peter Nilsson	<hp@bitrange.com>
 mn10300 port		Jeff Law		<jeffreyalaw@gmail.com>
 mn10300 port		Alexandre Oliva		<aoliva@gcc.gnu.org>
 moxie port		Anthony Green		<green@moxielogic.com>
+brew port		Andras Tantos		<andras@tantosonline.com>
 msp430 port		Nick Clifton		<nickc@redhat.com>
 nds32 port		Chung-Ju Wu		<jasonwucj@gmail.com>
 nds32 port		Shiva Chen		<shiva0217@gmail.com>

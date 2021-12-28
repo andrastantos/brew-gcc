@@ -124,6 +124,8 @@ ft32*)	cpu_type=ft32
 	;;
 moxie*)	cpu_type=moxie
 	;;
+brew*)	cpu_type=brew
+	;;
 i[34567]86-*-*)
 	cpu_type=i386
 	;;
@@ -1062,6 +1064,10 @@ mn10300-*-*)
 	;;
 moxie-*-elf | moxie-*-moxiebox* | moxie-*-uclinux* | moxie-*-rtems*)
 	tmake_file="$tmake_file moxie/t-moxie t-softfp-sfdf t-softfp-excl t-softfp"
+	extra_parts="$extra_parts crti.o crtn.o crtbegin.o crtend.o"
+	;;
+brew-*-elf *)
+	tmake_file="$tmake_file brew/t-brew t-softfp-sfdf t-softfp-excl t-softfp"
 	extra_parts="$extra_parts crti.o crtn.o crtbegin.o crtend.o"
 	;;
 msp430-*-elf*)

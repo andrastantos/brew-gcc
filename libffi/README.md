@@ -57,6 +57,7 @@ tested:
 | ARM             | Windows          | MSVC                    |
 | AVR32           | Linux            | GCC                     |
 | Blackfin        | uClinux          | GCC                     |
+| Brew            | Bare metal       | GCC                     |
 | CSKY            | Linux            | GCC                     |
 | HPPA            | HPUX             | GCC                     |
 | KVX             | Linux            | GCC                     |

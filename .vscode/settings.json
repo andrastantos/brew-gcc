@@ -1,0 +1,15 @@
+{
+    "window.zoomLevel": -1,
+    "search.exclude": {
+        "**/*.dmp": true
+    },
+    "diffEditor.ignoreTrimWhitespace": false,
+    "editor.renderWhitespace": "all",
+"python.languageServer": "Pylance",
+"security.workspace.trust.untrustedFiles": "open",
+    "[c]": {
+        "editor.tabSize": 2,
+	"editor.insertSpaces": true,
+    },
+    "cmake.configureOnOpen": false
+}

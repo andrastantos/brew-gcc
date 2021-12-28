@@ -1188,7 +1188,7 @@ case $cpu-$vendor in
 			| asmjs \
 			| ba \
 			| be32 | be64 \
-			| bfin | bpf | bs2000 \
+			| bfin | bpf | bs2000 | brew \
 			| c[123]* | c30 | [cjt]90 | c4x \
 			| c8051 | clipper | craynv | csky | cydra \
 			| d10v | d30v | dlx | dsp16xx \
