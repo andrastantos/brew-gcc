@@ -390,7 +390,8 @@ const (
 	EM_MIPS_RS4_BE Machine = 10     /* MIPS R4000 Big-Endian */
 	EM_ALPHA_STD   Machine = 41     /* Digital Alpha (standard value). */
 	EM_ALPHA       Machine = 0x9026 /* Alpha (written in the absence of an ABI) */
-)
+	EM_BREW        Machine = 0xb0a1 /* FINALIZE AFTER MERGE: BREW number */
+
 
 var machineStrings = []intName{
 	{0, "EM_NONE"},
@@ -581,6 +582,7 @@ var machineStrings = []intName{
 	{10, "EM_MIPS_RS4_BE"},
 	{41, "EM_ALPHA_STD"},
 	{0x9026, "EM_ALPHA"},
+	{0xb0a1, "EM_BREW"),
 }
 
 func (i Machine) String() string   { return stringName(uint32(i), machineStrings, false) }
