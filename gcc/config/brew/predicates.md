@@ -24,7 +24,7 @@
 
 ;; Nonzero if OP can be source of a simple move operation.
 
-(define_predicate "brew_general_movsrc_operand"
+(define_predicate "brew_general_mov_src_operand"
   (match_code "mem,const_int,reg,subreg,symbol_ref,label_ref,const")
 {
   /* Any (MEM LABEL_REF) is OK.  That is a pc-relative load.  */
@@ -47,5 +47,15 @@
   (ior
     (match_code "reg")
     (match_code "const_int")
+  )
+)
+
+(define_predicate "brew_comparison_operand"
+  (ior
+    (match_code "reg")
+    (and
+      (match_code "const_int")
+      (match_test "INTVAL(op) == 0")
+    )
   )
 )

@@ -94,15 +94,15 @@
 */
 
 #define REGISTER_NAMES {            \
-  "$pc",  "$fp",  "$sp",  "$r3",    \
+  "$pc",  "$sp",  "$fp",  "$r3",    \
   "$r4",  "$r5",  "$r6",  "$r7",    \
   "$r8",  "$r9",  "$r10", "$r11",   \
   "$r12", "$r13", "$r14",           \
   "?fp",  "?ap" }
 
 #define BREW_PC     0
-#define BREW_FP     1
-#define BREW_SP     2
+#define BREW_SP     1
+#define BREW_FP     2
 #define BREW_R3     3
 #define BREW_R4     4
 #define BREW_R5     5
@@ -134,7 +134,7 @@ enum reg_class
 
 #define REG_CLASS_CONTENTS \
 { { 0x00000000 }, /* Empty */                                  \
-  { 0x0001FFFE }, /* $fp, $sp, $r0 to $r14; $?fp, $?ap */      \
+  { 0x0001FFFE }, /* $sp, $fp, $r0 to $r14; $?fp, $?ap */      \
   { 0x00000001 }, /* $pc */                                    \
   { 0x0001FFFF }  /* All registers */                          \
 }
@@ -301,11 +301,11 @@ enum reg_class
 
 /* Define this macro to the minimum alignment enforced by hardware
    for the stack pointer on this machine.  The definition is a C
-   expression for the desired alignment (measured in bits).  */
-/* Since we don't have a HW stack, really this could be anything,
-   but since we don't support unaligned accesses and most values
-   are 32-bits anyway, it's probably easier to keep the stack
-   32-bit aligned */
+   expression for the desired alignment (measured in bits).
+   
+   NOTE: Since we don't have a HW stack, really this could be anything,
+   but since we don't support unaligned accesses, it's safest and
+   easiest to keep the stack 32-bit aligned */
 #define STACK_BOUNDARY 32
 
 /* Normal alignment required for function parameters on the stack, in
@@ -360,19 +360,23 @@ enum reg_class
    functions being called, in `call' RTL expressions.  */
 #define FUNCTION_MODE QImode
 
-/* The register number of the stack pointer register, which must also
-   be a fixed register according to `FIXED_REGISTERS'.  */
+/* The two 'hard' registers for accessing the stack and the 
+   frame within a function. These must be marked as 'fixed'
+   in `FIXED_REGISTERS'.
+*/
+/* Register to use for pushing sub-function arguments. */
 #define STACK_POINTER_REGNUM BREW_SP
+/* Register to use for accessing function arguments. */
+#define HARD_FRAME_POINTER_REGNUM BREW_FP
 
-/* The register number of the frame pointer register, which is used to
-   access automatic variables in the stack frame.  */
+/* Virtual base register for access to local variables of the function.
+   This will eventually be resolved to fp or sp. */
 #define FRAME_POINTER_REGNUM BREW_QFP
 
-/* The register number of the arg pointer register, which is used to
-   access the function's argument list.  */
+/* Virtual base register to access function arguments.
+   This will eventually be resolved to fp or sp. */
 #define ARG_POINTER_REGNUM BREW_QAP
 
-#define HARD_FRAME_POINTER_REGNUM BREW_FP
 
 /* Definitions for register eliminations.
 
