@@ -29,11 +29,6 @@
 	    (match_test "GET_CODE (XEXP (op, 0)) == LABEL_REF")
 	    (match_test "GET_CODE (XEXP (op, 0)) == CONST"))))
 
-(define_constraint "B"
-  "An offset address."
-  (and (match_code "mem")
-       (match_test "brew_offset_address_p (op)")))
-
 (define_constraint "W"
   "A register indirect memory operand."
   (and (match_code "mem")
@@ -55,6 +50,11 @@
   (and (match_code "const_int")
        (match_test "ival == -1")))
 
+(define_constraint "B"
+  "An offset address."
+  (and (match_code "mem")
+       (match_test "brew_offset_address_p (op)")))
+
 ;; TODO: Leave these constraint classes in for now to make porting incremental.
 ;;       These however don't apply to brew, so remove eventually.
 (define_constraint "I"
@@ -66,3 +66,5 @@
   "A constant -(0..255)"
   (and (match_code "const_int")
        (match_test "ival >= -255 && ival <= 0")))
+
+

@@ -1,4 +1,4 @@
-/* Prototypes for brew.c functions used in the md file & elsewhere.
+/* Prototypes for moxie.c functions used in the md file & elsewhere.
    Copyright (C) 2009-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
@@ -21,3 +21,5 @@ extern void  brew_expand_prologue (void);
 extern void  brew_expand_epilogue (void);
 extern int   brew_initial_elimination_offset (int, int);
 extern bool  brew_offset_address_p (rtx);
+extern const char *brew_emit_cbranch(machine_mode mode, rtx *operands);
+extern const char *brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands);

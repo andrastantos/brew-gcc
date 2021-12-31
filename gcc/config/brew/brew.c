@@ -40,16 +40,10 @@
 #include "calls.h"
 #include "expr.h"
 #include "builtins.h"
+#include "explow.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
-
-#define LOSE_AND_RETURN(msgid, x)                \
-  do                                             \
-    {                                            \
-      brew_operand_lossage (msgid, x);           \
-      return;                                    \
-    } while (0)
 
 /* Worker function for TARGET_RETURN_IN_MEMORY.  */
 
@@ -96,11 +90,107 @@ brew_function_value_regno_p (const unsigned int regno)
   return (regno == BREW_R4);
 }
 
-/* Emit an error message when we're in an asm, and a fatal error for
-   "normal" insns.  Formatted output isn't easily implemented, since we
-   use output_operand_lossage to output the actual message and handle the
-   categorization of the error.  */
+/* Returns the condition code for the inverted comparison (so for example LT for GT) */
+/* NOTE: this is not a negated code! */
+static enum rtx_code
+invert_code(enum rtx_code code)
+{
+  switch (code) {
+    case NE: return NE;
+    case EQ: return EQ;
+    case GE: return LE;
+    case GT: return LT;
+    case LE: return GE;
+    case LT: return GT;
+    case GEU: return LEU;
+    case GTU: return LTU;
+    case LEU: return GEU;
+    case LTU: return GTU;
+    default:
+      gcc_assert(false);
+  }
+}
 
+/* Emit the assembly for a conditional branch (cbranchsi4) */
+const char *
+brew_emit_cbranch(machine_mode mode, rtx *operands)
+{
+  /* 
+    operands[0]: condition
+    operands[1]: first thing to compare
+    operands[2]: second thing to compare
+    operands[3]: branch target
+  */
+  enum rtx_code code = GET_CODE (operands[0]);
+
+  if (operands[1] == CONST0_RTX(mode))
+    {
+      code = invert_code(code);
+      rtx tmp = operands[2];
+      operands[2] = operands[1];
+      operands[1] = tmp;
+    }
+  /* Force operands into registers if needed */
+  if (!REG_P(operands[1]))
+    operands[1] = force_reg(mode, operands[1]);
+  bool compare_to_zero = operands[2] == CONST0_RTX(mode);
+  if (!REG_P(operands[2]) && ! compare_to_zero)
+    operands[2] = force_reg(mode, operands[2]);
+
+  /* There are certain comparisons that don't make sense
+     such as an unsigned integer being less then 0.
+     These are replaced by their equivalent unconditional
+     branches or nops as the case may be */
+  switch (code)
+    {
+    case NE: return "if %s1 != %s2 $pc <- %l3";
+    case EQ: return "if %s1 == %s2 $pc <- %l3";
+    case GE: return "if %s1 >= %s2 $pc <- %l3";
+    case GT: return "if %s1 > %s2 $pc <- %l3";
+    case LE: return "if %s1 <= %s2 $pc <- %l3";
+    case LT: return "if %s1 < %s2 $pc <- %l3";
+    case GEU: if (compare_to_zero) return "$pc <- %l3"; else return "if %1 >= %2 $pc <- %l3";
+    case GTU: return "if %1 > %2 $pc <- %l3";
+    case LEU: return "if %1 <= %2 $pc <- %l3";
+    case LTU: if (compare_to_zero) return ""; else return "if %1 < %2 $pc <- %l3";
+    default:
+      gcc_unreachable ();
+    }
+}
+
+/* Emit the assembly for a conditional branch (b<cond> patterns) */
+const char *
+brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
+{
+  /*
+  condition: a string, such as 'le', 'ne' etc. signifying the comparison to be performed
+  reverse: true, if reverse comparison is to be performed (that is branch on false)
+  operands[0]: condition register (always compared to 0)
+  operands[1]: branch target
+  */
+
+  if (!REG_P(operands[0]))
+    operands[0] = force_reg(mode, operands[0]);
+
+  switch (condition)
+    {
+    case NE:  return reverse ? brew_emit_bcond(mode, EQ,  false, operands) : "if %s1 != %s2 $pc <- %l3";
+    case EQ:  return reverse ? brew_emit_bcond(mode, NE,  false, operands) : "if %s1 == %s2 $pc <- %l3";
+    case GE:  return reverse ? brew_emit_bcond(mode, LT,  false, operands) : "if %s1 >= %s2 $pc <- %l3";
+    case GT:  return reverse ? brew_emit_bcond(mode, LE,  false, operands) : "if %s1 > %s2 $pc <- %l3";
+    case LE:  return reverse ? brew_emit_bcond(mode, GT,  false, operands) : "if %s1 <= %s2 $pc <- %l3";
+    case LT:  return reverse ? brew_emit_bcond(mode, GE,  false, operands) : "if %s1 < %s2 $pc <- %l3";
+    case GEU: return reverse ? brew_emit_bcond(mode, LTU, false, operands) : "$pc <- %l3";
+    case GTU: return reverse ? brew_emit_bcond(mode, LEU, false, operands) : "if %1 > %2 $pc <- %l3";
+    case LEU: return reverse ? brew_emit_bcond(mode, GTU, false, operands) : "if %1 <= %2 $pc <- %l3";
+    case LTU: return reverse ? brew_emit_bcond(mode, GEU, false, operands) : "";
+    default:
+      gcc_unreachable ();
+    }
+}
+
+/* Emit an error message when we're in an asm, and a fatal error for
+   "normal" insns. */
 static void
 brew_operand_lossage (const char *msgid, rtx op)
 {
@@ -123,12 +213,13 @@ brew_print_operand_address (FILE *file, machine_mode, rtx x)
       switch (GET_CODE (XEXP (x, 1)))
         {
         case CONST_INT:
-          fprintf (file, "%ld(%s)", 
-                   INTVAL(XEXP (x, 1)), reg_names[REGNO (XEXP (x, 0))]);
+          fprintf (file, "%s,%ld", 
+                   reg_names[REGNO (XEXP (x, 0))],
+                   INTVAL(XEXP (x, 1)));
           break;
         case SYMBOL_REF:
           output_addr_const (file, XEXP (x, 1));
-          fprintf (file, "(%s)", reg_names[REGNO (XEXP (x, 0))]);
+          fprintf (file, "%s", reg_names[REGNO (XEXP (x, 0))]);
           break;
         case CONST:
           {
@@ -137,8 +228,9 @@ brew_print_operand_address (FILE *file, machine_mode, rtx x)
                 && CONST_INT_P (XEXP (plus, 1)))
               {
                 output_addr_const(file, XEXP (plus, 0));
-                fprintf (file,"+%ld(%s)", INTVAL (XEXP (plus, 1)),
-                         reg_names[REGNO (XEXP (x, 0))]);
+                fprintf (file,"%s,(%ld)",
+                         reg_names[REGNO (XEXP (x, 0))],
+                         INTVAL (XEXP (plus, 1)));
               }
             else
               abort();
@@ -168,39 +260,63 @@ brew_print_operand (FILE *file, rtx x, int code)
      "operand", and then do a break to let default handling
      (zero-modifier) output the operand.  */
 
-  switch (code)
-    {
-    case 0:
-      /* No code, print as usual.  */
-      break;
-
-    default:
-      LOSE_AND_RETURN ("invalid operand modifier letter", x);
-    }
-
   /* Print an operand as without a modifier letter.  */
   switch (GET_CODE (operand))
     {
     case REG:
-      if (REGNO (operand) > LAST_PHYSICAL_REG)
-        internal_error ("internal error: bad register: %d", REGNO (operand));
-      fprintf (file, "%s", reg_names[REGNO (operand)]);
+      {
+        int regno = REGNO(operand);
+        if (regno > LAST_PHYSICAL_REG)
+          internal_error ("internal error: bad register: %d", regno);
+        switch (code)
+          {
+          case 's':
+          case 'f':
+            fprintf (file, "%c%c%s", reg_names[regno][0], (char)(code), reg_names[regno]+1);
+            break;
+          case 0:
+            fprintf (file, "%s", reg_names[regno]);
+            break;
+          default:
+            brew_operand_lossage("invalid operand modifier letter", x);
+            break;
+          }
+      }
       return;
 
     case MEM:
-      output_address (GET_MODE (XEXP (operand, 0)), XEXP (operand, 0));
+      switch (code)
+        {
+        case 's':
+        case 'f':
+        case 0:
+          output_address(GET_MODE (XEXP (operand, 0)), XEXP (operand, 0));
+          break;
+        default:
+          brew_operand_lossage("invalid operand modifier letter", x);
+          break;
+        }
       return;
 
     default:
-      /* No need to handle all strange variants, let output_addr_const
-         do it for us.  */
-      if (CONSTANT_P (operand))
+      switch (code)
         {
-          output_addr_const (file, operand);
-          return;
+        case 's':
+        case 'f':
+        case 0:
+          /* No need to handle all strange variants, let output_addr_const
+            do it for us.  */
+          if (CONSTANT_P (operand))
+            {
+              output_addr_const (file, operand);
+              return;
+            }
+          brew_operand_lossage("unexpected operand", x);
+          break;
+        default:
+          brew_operand_lossage("invalid operand modifier letter", x);
+          break;
         }
-
-      LOSE_AND_RETURN ("unexpected operand", x);
     }
 }
 
@@ -411,14 +527,14 @@ brew_setup_incoming_varargs (cumulative_args_t cum_v,
 
 
 /* Return the fixed registers used for condition codes.  */
-
+/*
 static bool
 brew_fixed_condition_code_regs (unsigned int *p1, unsigned int *p2)
 {
-  *p1 = CC_REG;
-  *p2 = INVALID_REGNUM;
-  return true;
+  gc_assert(false);
+  return false;
 }
+*/
 
 /* Return the next register to be used to hold a function argument or
    NULL_RTX if there's no more space.  */
@@ -539,7 +655,7 @@ brew_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
   emit_move_insn (mem, fnaddr);
 }
 
-/* Return true for memory offset addresses between -32768 and 32767.  */
+/* Return true for reg+memory references */
 bool
 brew_offset_address_p (rtx x)
 {
@@ -550,11 +666,10 @@ brew_offset_address_p (rtx x)
       x = XEXP (x, 1);
       if (GET_CODE (x) == CONST_INT)
         {
-          unsigned int v = INTVAL (x) & 0xFFFF8000;
-          return (v == 0xFFFF8000 || v == 0x00000000);
+          return true;
         }
     }
-  return 0;
+  return false;
 }
 
 /* Helper function for `brew_legitimate_address_p'.  */
@@ -625,8 +740,8 @@ brew_legitimate_address_p (machine_mode mode ATTRIBUTE_UNUSED,
 #undef  TARGET_SETUP_INCOMING_VARARGS
 #define TARGET_SETUP_INCOMING_VARARGS         brew_setup_incoming_varargs
 
-#undef        TARGET_FIXED_CONDITION_CODE_REGS
-#define        TARGET_FIXED_CONDITION_CODE_REGS brew_fixed_condition_code_regs
+//#undef        TARGET_FIXED_CONDITION_CODE_REGS
+//#define        TARGET_FIXED_CONDITION_CODE_REGS brew_fixed_condition_code_regs
 
 /* Define this to return an RTX representing the place where a
    function returns or receives a value of data type RET_TYPE, a tree

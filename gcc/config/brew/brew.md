@@ -19,6 +19,14 @@
 ;; <http://www.gnu.org/licenses/>.
 
 ;; -------------------------------------------------------------------------
+;; Special agument formating codes:
+;; 's' (as in %s0) prints the register in it's 'signed format'
+;; 'f' (as in %f0) prints the register in it's 'flat format'
+;; For non-register references, these formatting codes are simply ignored.
+;; -------------------------------------------------------------------------
+
+
+;; -------------------------------------------------------------------------
 ;; Brew specific constraints, predicates and attributes
 ;; -------------------------------------------------------------------------
 
@@ -45,92 +53,98 @@
   [(set (match_operand:SI 0 "register_operand" "=r,r,r,r")
         (plus:SI
           (match_operand:SI 1 "register_operand" "r,r,r,r")
-          (match_operand:SI 2 "brew_reg_or_const" "L,M,?i,r")))]
+          (match_operand:SI 2 "brew_reg_or_const" "L,M,r,i")))]
   ""
   "@
   %0 <- %1 + 1
   %0 <- %1 - 1
   %0 <- %1 + %2
-  %0 <- %1 + %2")
+  %0 <- %1 + (%2)")
+
 
 (define_insn "subsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r,r")
+  [(set (match_operand:SI 0 "register_operand" "=r,r,r,r")
           (minus:SI
-           (match_operand:SI 1 "register_operand" "0,0")
-           (match_operand:SI 2 "brew_reg_or_const" "I,r")))]
+          (match_operand:SI 1 "register_operand" "r,r,r,r")
+          (match_operand:SI 2 "brew_reg_or_const" "L,M,r,i")))]
   ""
   "@
-  dec\\t%0, %2
-  sub\\t%0, %2")
+  %0 <- %1 - 1
+  %0 <- %1 + 1
+  %0 <- %1 - %2
+  %0 <- %1 - (%2)")
 
+;; FIXME: THIS IS THE SIGNED VERSION. HOW TO DEFINE THE UNSIGNED VERSION?
 (define_insn "mulsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
           (mult:SI
-           (match_operand:SI 1 "register_operand" "0")
-           (match_operand:SI 2 "register_operand" "r")))]
+           (match_operand:SI 1 "register_operand" "r,r")
+           (match_operand:SI 2 "brew_reg_or_const" "r,i")))]
   ""
-  "mul\\t%0, %2")
+  "@
+  %0 <- %1 * %2
+  %0 <- %1 * (%2)")
 
-(define_code_iterator EXTEND [sign_extend zero_extend])
-(define_code_attr mul [(sign_extend "mul") (zero_extend "umul")])
-
-(define_insn "<mul>si3_highpart"
-  [(set (match_operand:SI 0 "register_operand"                       "=r")
+(define_insn "mulsi3_highpart"
+  [(set (match_operand:SI 0 "register_operand"                       "=r,r")
         (truncate:SI
          (lshiftrt:DI
-          (mult:DI (EXTEND:DI (match_operand:SI 1 "register_operand"  "0"))
-                   (EXTEND:DI (match_operand:SI 2 "register_operand"  "r")))
+          (mult:DI (sign_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
+                   (sign_extend:DI (match_operand:SI 2 "brew_reg_or_const"  "r,i")))
           (const_int 32))))]
-  "TARGET_HAS_MULX"
-  "<mul>.x\\t%0, %2")
-
-(define_expand "<mul>sidi3"
-  [(set (match_operand:DI 0 "register_operand" "")
-        (mult:DI (EXTEND:DI (match_operand:SI 1 "register_operand" "0"))
-                 (EXTEND:DI (match_operand:SI 2 "register_operand" "r"))))]
-  "TARGET_HAS_MULX"
-{
-  rtx hi = gen_reg_rtx (SImode);
-  rtx lo = gen_reg_rtx (SImode);
-
-  emit_insn (gen_<mul>si3_highpart (hi, operands[1], operands[2]));
-  emit_insn (gen_mulsi3 (lo, operands[1], operands[2]));
-  emit_move_insn (gen_lowpart (SImode, operands[0]), lo);
-  emit_move_insn (gen_highpart (SImode, operands[0]), hi);
-  DONE;
-})
-
-(define_insn "divsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-          (div:SI
-           (match_operand:SI 1 "register_operand" "0")
-           (match_operand:SI 2 "register_operand" "r")))]
   ""
-  "div\\t%0, %2")
+  "@
+  %s0 <- upper %s1 * %s2
+  %s0 <- upper %s1 * (%s2)")
 
-(define_insn "udivsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-          (udiv:SI
-           (match_operand:SI 1 "register_operand" "0")
-           (match_operand:SI 2 "register_operand" "r")))]
+(define_insn "umulsi3_highpart"
+  [(set (match_operand:SI 0 "register_operand"                       "=r,r")
+        (truncate:SI
+         (lshiftrt:DI
+          (mult:DI (zero_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
+                   (zero_extend:DI (match_operand:SI 2 "brew_reg_or_const"  "r,i")))
+          (const_int 32))))]
   ""
-  "udiv\\t%0, %2")
+  "@
+  %0 <- upper %1 * %2
+  %0 <- upper %1 * (%2)")
 
-(define_insn "modsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-          (mod:SI
-           (match_operand:SI 1 "register_operand" "0")
-           (match_operand:SI 2 "register_operand" "r")))]
-  ""
-  "mod\\t%0, %2")
+;; FIXME: These generate incorrect code at the moment, unfortunately.
+;;        The most likely reason is that gen_lowpart and gen_highpart (which are
+;;        function pointers in a struct, and can mean different things in different
+;;        passes) insist on generating the two extra multiplications and the additions
+;;        that are usually needed to create a 64-bit result using 32-bit arithmetic.
+;;(define_expand "mulsidi3"
+;;  [(set (match_operand:DI 0 "register_operand" "=r")
+;;        (mult:DI (sign_extend:DI (match_operand:SI 1 "register_operand" "r"))
+;;                 (sign_extend:DI (match_operand:SI 2 "brew_reg_or_const" "ir"))))]
+;;  ""
+;;{
+;;  rtx hi = gen_reg_rtx (SImode);
+;;  rtx lo = gen_reg_rtx (SImode);
+;;
+;;  emit_insn (gen_mulsi3_highpart (hi, operands[1], operands[2]));
+;;  emit_insn (gen_mulsi3 (lo, operands[1], operands[2]));
+;;  emit_move_insn (gen_lowpart (SImode, operands[0]), lo);
+;;  emit_move_insn (gen_highpart (SImode, operands[0]), hi);
+;;  DONE;
+;;})
 
-(define_insn "umodsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-          (umod:SI
-           (match_operand:SI 1 "register_operand" "0")
-           (match_operand:SI 2 "register_operand" "r")))]
-  ""
-  "umod\\t%0, %2")
+;;(define_expand "umulsidi3"
+;;  [(set (match_operand:DI 0 "register_operand" "=r")
+;;        (mult:DI (zero_extend:DI (match_operand:SI 1 "register_operand" "r"))
+;;                 (zero_extend:DI (match_operand:SI 2 "brew_reg_or_const" "ir"))))]
+;;  ""
+;;{
+;;  rtx hi = gen_reg_rtx (SImode);
+;;  rtx lo = gen_reg_rtx (SImode);
+;;
+;;  emit_insn (gen_umulsi3_highpart (hi, operands[1], operands[2]));
+;;  emit_insn (gen_mulsi3 (lo, operands[1], operands[2]));
+;;  emit_move_insn (gen_lowpart (SImode, operands[0]), lo);
+;;  emit_move_insn (gen_highpart (SImode, operands[0]), hi);
+;;  DONE;
+;;})
 
 ;; -------------------------------------------------------------------------
 ;; Unary arithmetic instructions
@@ -140,13 +154,13 @@
   [(set (match_operand:SI 0 "register_operand" "=r")
           (neg:SI (match_operand:SI 1 "register_operand" "r")))]
   ""
-  "neg\\t%0, %1")
+  "%s0 <- -%s1")
 
 (define_insn "one_cmplsi2"
   [(set (match_operand:SI 0 "register_operand" "=r")
         (not:SI (match_operand:SI 1 "register_operand" "r")))]
   ""
-  "not\\t%0, %1")
+  "%0 <- ~%1")
 
 ;; -------------------------------------------------------------------------
 ;; Logical operators
@@ -154,61 +168,67 @@
 
 (define_insn "andsi3"
   [(set (match_operand:SI 0 "register_operand" "=r")
-        (and:SI (match_operand:SI 1 "register_operand" "0")
-                (match_operand:SI 2 "register_operand" "r")))]
+        (and:SI
+          (match_operand:SI 1 "register_operand" "r")
+          (match_operand:SI 2 "brew_reg_or_const" "ir")))]
   ""
-{
-  return "and\\t%0, %2";
-})
+  "%0 <- %1 & %2"
+)
 
 (define_insn "xorsi3"
   [(set (match_operand:SI 0 "register_operand" "=r")
-        (xor:SI (match_operand:SI 1 "register_operand" "0")
-                (match_operand:SI 2 "register_operand" "r")))]
+        (xor:SI
+          (match_operand:SI 1 "register_operand" "r")
+          (match_operand:SI 2 "brew_reg_or_const" "ir")))]
   ""
-{
-  return "xor\\t%0, %2";
-})
+  "%0 <- %1 ^ %2"
+)
 
 (define_insn "iorsi3"
   [(set (match_operand:SI 0 "register_operand" "=r")
-        (ior:SI (match_operand:SI 1 "register_operand" "0")
-                (match_operand:SI 2 "register_operand" "r")))]
+        (ior:SI
+          (match_operand:SI 1 "register_operand" "r")
+          (match_operand:SI 2 "brew_reg_or_const" "ir")))]
   ""
-{
-  return "or\\t%0, %2";
-})
+  "%0 <- %1 | %2"
+)
 
 ;; -------------------------------------------------------------------------
 ;; Shifters
 ;; -------------------------------------------------------------------------
 
 (define_insn "ashlsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (ashift:SI (match_operand:SI 1 "register_operand" "0")
-                   (match_operand:SI 2 "register_operand" "r")))]
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
+        (ashift:SI
+          (match_operand:SI 1 "brew_reg_or_const" "r,ir")
+          (match_operand:SI 2 "brew_reg_or_const" "ir,r")))]
   ""
-{
-  return "ashl\\t%0, %2";
-})
+  "@
+  %0 <- %1 << %2
+  %0 <- %1 << %2"
+)
 
 (define_insn "ashrsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (ashiftrt:SI (match_operand:SI 1 "register_operand" "0")
-                     (match_operand:SI 2 "register_operand" "r")))]
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
+        (ashiftrt:SI
+          (match_operand:SI 1 "brew_reg_or_const" "r,ir")
+          (match_operand:SI 2 "brew_reg_or_const" "ir,r")))]
   ""
-{
-  return "ashr\\t%0, %2";
-})
+  "@
+  %s0 <- %s1 >> %2
+  %s0 <- %s1 >> %2"
+)
 
 (define_insn "lshrsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (lshiftrt:SI (match_operand:SI 1 "register_operand" "0")
-                     (match_operand:SI 2 "register_operand" "r")))]
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
+        (lshiftrt:SI
+          (match_operand:SI 1 "brew_reg_or_const" "r,ir")
+          (match_operand:SI 2 "brew_reg_or_const" "ir,r")))]
   ""
-{
-  return "lshr\\t%0, %2";
-})
+  "@
+  %0 <- %1 >> %2
+  s0 <- %1 >> %2"
+)
 
 ;; -------------------------------------------------------------------------
 ;; Move instructions
@@ -218,17 +238,22 @@
 
 ;; Push a register onto the stack
 (define_insn "movsi_push"
-  [(set (mem:SI (pre_dec:SI (reg:SI 1)))
-          (match_operand:SI 0 "register_operand" "r"))]
+  [(set
+    (mem:SI (pre_dec:SI (reg:SI 1)))
+    (match_operand:SI 0 "register_operand" "r")
+  )
+  ]
   ""
-  "push\\t$sp, %0")
+  "$sp <- $sp - 4
+  mem[$sp] <- %0")
 
 ;; Pop a register from the stack
 (define_insn "movsi_pop"
   [(set (match_operand:SI 1 "register_operand" "=r")
           (mem:SI (post_inc:SI (match_operand:SI 0 "register_operand" "r"))))]
   ""
-  "pop\\t%0, %1")
+  "%1 <- mem[$sp]
+  $sp <- $sp + 4")
 
 (define_expand "movsi"
    [(set (match_operand:SI 0 "general_operand" "")
@@ -253,59 +278,65 @@
 }")
 
 (define_insn "*movsi"
-  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r,W,A,r,r,B,r")
-        (match_operand:SI 1 "brew_general_movsrc_operand" "O,r,i,r,r,W,A,r,B"))]
+  [(set (match_operand:SI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
+        (match_operand:SI 1 "brew_general_mov_src_operand" "O,r,i,r,r,r,W,A,B"))]
   "register_operand (operands[0], SImode)
    || register_operand (operands[1], SImode)"
   "@
-   xor\\t%0, %0
-   mov\\t%0, %1
-   ldi.l\\t%0, %1
-   st.l\\t%0, %1
-   sta.l\\t%0, %1
-   ld.l\\t%0, %1
-   lda.l\\t%0, %1
-   sto.l\\t%0, %1
-   ldo.l\\t%0, %1"
-  [(set_attr "length"        "2,2,6,2,6,2,6,4,4")])
-
-(define_insn "zero_extendqisi2"
-  [(set (match_operand:SI 0 "register_operand" "=r,r,r,r")
-        (zero_extend:SI (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")))]
-  ""
-  "@
-   zex.b\\t%0, %1
-   ld.b\\t%0, %1
-   lda.b\\t%0, %1
-   ldo.b\\t%0, %1"
-  [(set_attr "length" "2,2,6,4")])
+   %0 <- %0 - %0
+   %0 <- %1
+   %0 <- %1
+   mem[%0] <- %1
+   mem[%0] <- %1
+   mem[%0] <- %1
+   %0 <- mem[%1]
+   %0 <- mem[%1]
+   %0 <- mem[%1]"
+  [(set_attr "length"        "2,2,6,6,6,6,6,6,6")])
 
 (define_insn "zero_extendhisi2"
-  [(set (match_operand:SI 0 "register_operand" "=r,r,r,r")
+  [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
         (zero_extend:SI (match_operand:HI 1 "nonimmediate_operand" "r,W,A,B")))]
   ""
   "@
-   zex.s\\t%0, %1
-   ld.s\\t%0, %1
-   lda.s\\t%0, %1
-   ldo.s\\t%0, %1"
-  [(set_attr "length" "2,2,6,4")])
+   %0 <- %1 & 0xffff
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]"
+  [(set_attr "length" "6,6,6,6")])
 
-(define_insn "extendqisi2"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (sign_extend:SI (match_operand:QI 1 "nonimmediate_operand" "r")))]
+(define_insn "zero_extendqisi2"
+  [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
+        (zero_extend:SI (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")))]
   ""
   "@
-   sex.b\\t%0, %1"
-  [(set_attr "length" "2")])
+   %0 <- %1 & 0xff
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]"
+  [(set_attr "length" "6,6,6,6")])
 
 (define_insn "extendhisi2"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (sign_extend:SI (match_operand:HI 1 "nonimmediate_operand" "r")))]
+  [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
+        (sign_extend:SI (match_operand:HI 1 "nonimmediate_operand" "r,W,A,B")))]
   ""
   "@
-   sex.s\\t%0, %1"
-  [(set_attr "length" "2")])
+   %s0 <- wsi %s1
+   %s0 <- mem16[%1]
+   %s0 <- mem16[%1]
+   %s0 <- mem16[%1]"
+  [(set_attr "length" "2,6,6,6")])
+
+(define_insn "extendqisi2"
+  [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
+        (sign_extend:SI (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")))]
+  ""
+  "@
+   %s0 <- bsi %s1
+   %s0 <- mem8[%1]
+   %s0 <- mem8[%1]
+   %s0 <- mem8[%1]"
+  [(set_attr "length" "2,6,6,6")])
 
 (define_expand "movqi"
   [(set (match_operand:QI 0 "general_operand" "")
@@ -318,22 +349,39 @@
     operands[1] = force_reg (QImode, operands[1]);
 }")
 
+(define_insn "*movhi"
+  [(set (match_operand:HI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
+        (match_operand:HI 1 "brew_general_mov_src_operand" "O,r,i,r,r,r,W,A,B"))]
+  "(register_operand (operands[0], HImode)
+    || register_operand (operands[1], HImode))"
+  "@
+   %0 <- %0 - %0
+   %0 <- %1
+   %0 <- %1
+   mem16[%0] <- %1
+   mem16[%0] <- %1
+   mem16[%0] <- %1
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]"
+  [(set_attr "length"        "2,2,6,6,6,6,6,6,6")])
+
 (define_insn "*movqi"
-  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r,W,A,r,r,B,r")
-        (match_operand:QI 1 "brew_general_movsrc_operand" "O,r,i,r,r,W,A,r,B"))]
+  [(set (match_operand:QI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
+        (match_operand:QI 1 "brew_general_mov_src_operand" "O,r,i,r,r,r,W,A,B"))]
   "register_operand (operands[0], QImode)
    || register_operand (operands[1], QImode)"
   "@
-   xor\\t%0, %0
-   mov\\t%0, %1
-   ldi.b\\t%0, %1
-   st.b\\t%0, %1
-   sta.b\\t%0, %1
-   ld.b\\t%0, %1
-   lda.b\\t%0, %1
-   sto.b\\t%0, %1
-   ldo.b\\t%0, %1"
-  [(set_attr "length"        "2,2,6,2,6,2,6,4,4")])
+   %0 <- %0 - %0
+   %0 <- %1
+   %0 <- %1
+   mem8[%0] <- %1
+   mem8[%0] <- %1
+   mem8[%0] <- %1
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]"
+  [(set_attr "length"        "2,2,6,6,6,6,6,6,6")])
 
 (define_expand "movhi"
   [(set (match_operand:HI 0 "general_operand" "")
@@ -346,108 +394,99 @@
     operands[1] = force_reg (HImode, operands[1]);
 }")
 
-(define_insn "*movhi"
-  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r,W,A,r,r,B,r")
-        (match_operand:HI 1 "brew_general_movsrc_operand" "O,r,i,r,r,W,A,r,B"))]
-  "(register_operand (operands[0], HImode)
-    || register_operand (operands[1], HImode))"
-  "@
-   xor\\t%0, %0
-   mov\\t%0, %1
-   ldi.s\\t%0, %1
-   st.s\\t%0, %1
-   sta.s\\t%0, %1
-   ld.s\\t%0, %1
-   lda.s\\t%0, %1
-   sto.s\\t%0, %1
-   ldo.s\\t%0, %1"
-  [(set_attr "length"        "2,2,6,2,6,2,6,4,4")])
-
 ;; -------------------------------------------------------------------------
-;; Compare instructions
+;; Conditional branch
 ;; -------------------------------------------------------------------------
 
-(define_constants
-  [(CC_REG 19)])
-
-(define_expand "cbranchsi4"
-  [(set (reg:CC CC_REG)
-        (compare:CC
-         (match_operand:SI 1 "general_operand" "")
-         (match_operand:SI 2 "general_operand" "")))
-   (set (pc)
-        (if_then_else (match_operator 0 "comparison_operator"
-                       [(reg:CC CC_REG) (const_int 0)])
-                      (label_ref (match_operand 3 "" ""))
-                      (pc)))]
-  ""
-  "
-  /* Force the compare operands into registers.  */
-  if (GET_CODE (operands[1]) != REG)
-        operands[1] = force_reg (SImode, operands[1]);
-  if (GET_CODE (operands[2]) != REG)
-        operands[2] = force_reg (SImode, operands[2]);
-  ")
-
-(define_insn "*cmpsi"
-  [(set (reg:CC CC_REG)
-        (compare
-         (match_operand:SI 0 "register_operand" "r")
-         (match_operand:SI 1 "register_operand"        "r")))]
-  ""
-  "cmp\\t%0, %1")
-
-
-;; -------------------------------------------------------------------------
-;; Branch instructions
-;; -------------------------------------------------------------------------
-
-(define_code_iterator cond [ne eq lt ltu gt gtu ge le geu leu])
-(define_code_attr CC [(ne "ne") (eq "eq") (lt "lt") (ltu "ltu") 
-                      (gt "gt") (gtu "gtu") (ge "ge") (le "le") 
-                      (geu "geu") (leu "leu") ])
-(define_code_attr rCC [(ne "eq") (eq "ne") (lt "ge") (ltu "geu") 
-                       (gt "le") (gtu "leu") (ge "lt") (le "gt") 
-                       (geu "ltu") (leu "gtu") ])
-
-(define_insn "*b<cond:code>"
-  [(set (pc)
-        (if_then_else (cond (reg:CC CC_REG)
-                            (const_int 0))
-                      (label_ref (match_operand 0 "" ""))
-                      (pc)))]
+(define_insn "cbranchsi4"
+  [(set
+    (pc)
+    (if_then_else
+      (match_operator 0 "comparison_operator"
+        [
+         (match_operand:SI 1 "register_operand" "r")
+         (match_operand:SI 2 "brew_comparison_operand" "ri")
+        ]
+      )
+      (label_ref(match_operand 3 "" ""))
+      (pc)
+    )
+  )]
   ""
 {
-  if (get_attr_length (insn) == 2)
-    return "b<CC>\\t%l0";
-  else
-    return "b<rCC>\\t.+6\n\tjmpa   %l0";
+  return brew_emit_cbranch(SImode, operands);
 }
-  [(set (attr "length")
-        (if_then_else (lt (abs (minus (pc) (match_dup 0))) (const_int 1022))
-                      (const_int 2) (const_int 8)))])
+  [(set_attr "length" "6")]
+)
 
+;; -------------------------------------------------------------------------
+;; Branch instructions (these apparently must be defined according to chapter
+;; 'Interdependence of patterns')
+;; -------------------------------------------------------------------------
+;;
+;;(define_code_iterator cond [ne eq lt ltu gt gtu ge le geu leu])
+;;
+;;(define_insn "*b<cond:code>"
+;;  [(set
+;;    (pc)
+;;    (if_then_else
+;;      (cond:CC (match_operand:SI 0 ) (const_int 0))
+;;      (pc)
+;;      (label_ref (match_operand 1 "" ""))
+;;    )
+;;  )]
+;;  ""
+;;{
+;;  return brew_emit_bcond(SImode, <CODE>, false, operands);
+;;}
+;;  [(set_attr "length" "6")]
+;;)
+;;
+;;(define_insn "*b<cond:code>"
+;;  [(set
+;;    (pc)
+;;    (if_then_else
+;;      (cond:CC (match_operand:SI 0 ) (const_int 0))
+;;      (label_ref (match_operand 1 "" ""))
+;;      (pc)
+;;    )
+;;  )]
+;;  ""
+;;{
+;;  return brew_emit_bcond(SImode, <CODE>, true, operands);
+;;}
+;;  [(set_attr "length" "6")]
+;;)
+;;
+;;
 ;; -------------------------------------------------------------------------
 ;; Call and Jump instructions
 ;; -------------------------------------------------------------------------
 
 (define_expand "call"
-  [(call (match_operand:QI 0 "memory_operand" "")
-                (match_operand 1 "general_operand" ""))]
+  [(call
+    (match_operand:QI 0 "memory_operand" "")
+    (match_operand 1 "general_operand" "")
+  )]
   ""
 {
   gcc_assert (MEM_P (operands[0]));
 })
 
+;;  (clobber (reg:SI 3))
+
 (define_insn "*call"
-  [(call (mem:QI (match_operand:SI
-                  0 "nonmemory_operand" "i,r"))
-         (match_operand 1 "" ""))]
+  [(call
+    (mem:QI (match_operand:SI 0 "nonmemory_operand" "ir"))
+    (match_operand 1 "")
+  )
+  ]
   ""
-  "@
-   jsra\\t%0
-   jsr\\t%0"
-  [(set_attr "length"        "6,2")])
+  "$r3 <- $pc + 12
+  $sp <- $sp - 4
+  mem[$sp] <- $r3
+  $pc <- %0"
+)
 
 (define_expand "call_value"
   [(set (match_operand 0 "" "")
@@ -458,34 +497,47 @@
   gcc_assert (MEM_P (operands[1]));
 })
 
+;;  (clobber (reg:SI 3))
 (define_insn "*call_value"
   [(set (match_operand 0 "register_operand" "=r")
         (call (mem:QI (match_operand:SI
                        1 "immediate_operand" "i"))
-              (match_operand 2 "" "")))]
+              (match_operand 2 "" "")))
+  ]
   ""
-  "jsra\\t%1"
-  [(set_attr "length"        "6")])
+  "$r3 <- $pc + 12
+  $sp <- $sp - 4
+  mem[$sp] <- $r3
+  $pc <- %0"
+)
+
+;;  (clobber (reg:SI 3))
 
 (define_insn "*call_value_indirect"
   [(set (match_operand 0 "register_operand" "=r")
         (call (mem:QI (match_operand:SI
                        1 "register_operand" "r"))
-              (match_operand 2 "" "")))]
+              (match_operand 2 "" "")))
+  ]
   ""
-  "jsr\\t%1")
+  "$r3 <- $pc + 12
+  $sp <- $sp - 4
+  mem[$sp] <- $r3
+  $pc <- %0"
+)
 
 (define_insn "indirect_jump"
   [(set (pc) (match_operand:SI 0 "nonimmediate_operand" "r"))]
   ""
-  "jmp\\t%0")
+  "$pc <-%0")
 
 (define_insn "jump"
   [(set (pc)
         (label_ref (match_operand 0 "" "")))]
   ""
-  "jmpa\\t%l0"
-  [(set_attr "length"        "6")])
+  "$pc <- %l0"
+  [(set_attr "length"        "6")]
+)
 
 
 ;; -------------------------------------------------------------------------
@@ -515,4 +567,5 @@
 (define_insn "returner"
   [(return)]
   "reload_completed"
-  "ret")
+  "$pc <- mem[$sp]
+   $sp <- $sp + 4")

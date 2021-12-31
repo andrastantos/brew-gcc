@@ -10,7 +10,8 @@
 	"files.associations": {
     "brew.h": "c",
     "random": "cpp",
-    "*.def": "cpp"
+    "*.def": "cpp",
+    "flexary5.C": "cpp"
   }
 	}
 }
