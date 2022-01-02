@@ -130,13 +130,7 @@ brew_emit_cbranch(machine_mode mode, rtx *operands)
       operands[2] = operands[1];
       operands[1] = tmp;
     }
-  /* Force operands into registers if needed */
-  if (!REG_P(operands[1]))
-    operands[1] = force_reg(mode, operands[1]);
   bool compare_to_zero = operands[2] == CONST0_RTX(mode);
-  if (!REG_P(operands[2]) && ! compare_to_zero)
-    operands[2] = force_reg(mode, operands[2]);
-
   /* There are certain comparisons that don't make sense
      such as an unsigned integer being less then 0.
      These are replaced by their equivalent unconditional
