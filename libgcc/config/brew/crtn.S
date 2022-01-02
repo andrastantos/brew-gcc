@@ -1,4 +1,4 @@
-# crtn.S for moxie
+# crtn.S for brew
 # 
 #   Copyright (C) 2009-2021 Free Software Foundation, Inc.
 # 
@@ -28,7 +28,11 @@
 	.file		"crtn.S"
 
 	.section	".init"
-	ret
+  $r3 <- mem[$sp]
+  $sp <- $sp + 4
+  $pc <- $r3
 	
 	.section	".fini"
-	ret
+  $r3 <- mem[$sp]
+  $sp <- $sp + 4
+  $pc <- $r3
