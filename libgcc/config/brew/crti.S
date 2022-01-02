@@ -1,4 +1,4 @@
-# crti.S for moxie
+# crti.S for brew
 #
 #   Copyright (C) 2009-2021 Free Software Foundation, Inc.
 # 

@@ -1066,7 +1066,7 @@ moxie-*-elf | moxie-*-moxiebox* | moxie-*-uclinux* | moxie-*-rtems*)
 	tmake_file="$tmake_file moxie/t-moxie t-softfp-sfdf t-softfp-excl t-softfp"
 	extra_parts="$extra_parts crti.o crtn.o crtbegin.o crtend.o"
 	;;
-brew-*-elf *)
+brew-*-elf*)
 	tmake_file="$tmake_file brew/t-brew t-softfp-sfdf t-softfp-excl t-softfp"
 	extra_parts="$extra_parts crti.o crtn.o crtbegin.o crtend.o"
 	;;
