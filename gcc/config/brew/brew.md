@@ -398,6 +398,9 @@
 ;; Conditional branch
 ;; -------------------------------------------------------------------------
 
+;; FIXME: removed 'i' as it caused all sorts of trouble in register
+;;        allocation. But now, 0-compares don't match, which is a petty
+;;        and results in suboptimal codegen.
 (define_insn "cbranchsi4"
   [(set
     (pc)
@@ -405,7 +408,7 @@
       (match_operator 0 "comparison_operator"
         [
          (match_operand:SI 1 "register_operand" "r")
-         (match_operand:SI 2 "brew_comparison_operand" "ri")
+         (match_operand:SI 2 "brew_comparison_operand" "r")
         ]
       )
       (label_ref(match_operand 3 "" ""))
@@ -564,8 +567,16 @@
 }
 ")
 
+;; FIXME: this is not ideal: we have to increment $sp
+;;        before we can load $pc (well, d'uh), but that
+;;        means we either clobber $r3 or we leave the
+;;        stack in an unstable state. An interrupt in that
+;;        point might corrupt the return address.
+;;        So, maybe we do need an atomic RET instruction?
 (define_insn "returner"
   [(return)]
   "reload_completed"
-  "$pc <- mem[$sp]
-   $sp <- $sp + 4")
+  "$r3 <- mem[$sp]
+   $sp <- $sp + 4
+   $pc <- $r3"
+)
