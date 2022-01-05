@@ -183,6 +183,46 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
     }
 }
 
+
+/* This is the pattern to generate temp registers
+
+rtx
+brew_emit_push(machine_mode mode, rtx *operands)
+{
+  rtx temp_reg = gen_reg_rtx(mode);
+}
+
+
+
+
+rtx
+brew_emit_call(machine_mode mode, rtx *operands)
+{
+  rtx temp_reg = gen_reg_rtx(mode);
+}
+
+*/
+
+
+
+
+
+//////////////////////////////////////////////////////////////
+// TODO: there's a bunch of stuff here that needs to be reviews
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* Emit an error message when we're in an asm, and a fatal error for
    "normal" insns. */
 static void
@@ -384,56 +424,54 @@ brew_compute_frame (void)
        ? (HOST_WIDE_INT) crtl->outgoing_args_size : 0);
 }
 
+// NOTE: do_link in bfin.c is a very good example of how to generate push/pop patterns.
+//       here we use the same example to generate multiple stores and a final SP adjustment.
+
+// This function expands the instruction sequence for a function prologue.
 void
 brew_expand_prologue (void)
 {
   int regno;
   rtx insn;
 
+  rtx spreg = gen_rtx_REG(Pmode, BREW_SP);
+
   brew_compute_frame ();
 
   if (flag_stack_usage_info)
     current_function_static_stack_size = cfun->machine->size_for_adjusting_sp;
 
+  int save_cnt = 0;
   /* Save callee-saved registers.  */
+  // For each register we save, we'll have to decrement SP by 4 and of course
+  // make sure that further references are offsetted by that much.
   for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
     {
       if (df_regs_ever_live_p (regno)
           && !call_used_or_fixed_reg_p (regno))
         {
-          insn = emit_insn (gen_movsi_push (gen_rtx_REG (Pmode, regno)));
+          rtx pat = gen_movsi(
+            gen_rtx_MEM(Pmode,
+              plus_constant(Pmode, spreg, -4*save_cnt, false), // Not an in-place addition
+            ),
+            gen_rtx_REG(Pmode, regno)
+          );
+          rtx_insn *insn = emit_insn(pat);
           RTX_FRAME_RELATED_P (insn) = 1;
+          ++save_cnt;
         }
     }
-
-  if (cfun->machine->size_for_adjusting_sp > 0)
+  int sp_adjust = cfun->machine->size_for_adjusting_sp + save_cnt * 4;
+  if (sp_adjust > 0)
     {
-      int i = cfun->machine->size_for_adjusting_sp; 
-      while ((i >= 255) && (i <= 510))
-        {
-          insn = emit_insn (gen_subsi3 (stack_pointer_rtx, 
-                                        stack_pointer_rtx, 
-                                        GEN_INT (255)));
-          RTX_FRAME_RELATED_P (insn) = 1;
-          i -= 255;
-        }
-      if (i <= 255)
-        {
-          insn = emit_insn (gen_subsi3 (stack_pointer_rtx, 
-                                        stack_pointer_rtx, 
-                                        GEN_INT (i)));
-          RTX_FRAME_RELATED_P (insn) = 1;
-        }
-      else
-        {
-          rtx reg = gen_rtx_REG (SImode, BREW_R3);
-          insn = emit_move_insn (reg, GEN_INT (i));
-          RTX_FRAME_RELATED_P (insn) = 1;
-          insn = emit_insn (gen_subsi3 (stack_pointer_rtx, 
-                                        stack_pointer_rtx, 
-                                        reg));
-          RTX_FRAME_RELATED_P (insn) = 1;
-        }
+      insn = emit_insn(
+        gen_subsi3(
+          stack_pointer_rtx, 
+          stack_pointer_rtx, 
+          GEN_INT(sp_adjust)
+        )
+      );
+      RTX_FRAME_RELATED_P (insn) = 1;
     }
 }
 
