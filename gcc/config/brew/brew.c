@@ -389,6 +389,16 @@ brew_option_override (void)
 #endif
 }
 
+// Determines if we wanted to save/restore the specified register
+// in function prologue/epilog
+static bool
+reg_needs_save_restore(int regno)
+{
+  return
+    (df_regs_ever_live_p(regno) && !call_used_or_fixed_reg_p (regno)) ||
+    (regno == BREW_FP);
+}
+
 /* Compute the size of the local area and the size to be adjusted by the
  * prologue and epilogue.  */
 
@@ -414,7 +424,7 @@ brew_compute_frame (void)
 
   /* Save callee-saved registers.  */
   for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-    if (df_regs_ever_live_p (regno) && (! call_used_or_fixed_reg_p (regno)))
+    if (reg_needs_save_restore(regno))
       cfun->machine->callee_saved_reg_size += 4;
 
   cfun->machine->size_for_adjusting_sp = 
@@ -434,8 +444,6 @@ brew_expand_prologue (void)
   int regno;
   rtx insn;
 
-  rtx spreg = gen_rtx_REG(Pmode, BREW_SP);
-
   brew_compute_frame ();
 
   if (flag_stack_usage_info)
@@ -447,21 +455,27 @@ brew_expand_prologue (void)
   // make sure that further references are offsetted by that much.
   for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
     {
-      if (df_regs_ever_live_p (regno)
-          && !call_used_or_fixed_reg_p (regno))
+      if (reg_needs_save_restore(regno))
         {
-          rtx pat = gen_movsi(
+          insn = emit_insn(gen_movsi(
             gen_rtx_MEM(Pmode,
-              plus_constant(Pmode, spreg, -4*save_cnt, false), // Not an in-place addition
+              plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt, false) // Not an in-place addition
             ),
             gen_rtx_REG(Pmode, regno)
-          );
-          rtx_insn *insn = emit_insn(pat);
+          ));
           RTX_FRAME_RELATED_P (insn) = 1;
           ++save_cnt;
         }
     }
-  int sp_adjust = cfun->machine->size_for_adjusting_sp + save_cnt * 4;
+  gcc_assert(save_cnt*4 == cfun->machine->callee_saved_reg_size);
+  /* set up FP */
+  insn = emit_insn(gen_movsi(
+    hard_frame_pointer_rtx,
+    stack_pointer_rtx
+  ));
+  RTX_FRAME_RELATED_P (insn) = 1;
+  /* adjust SP */
+  int sp_adjust = cfun->machine->size_for_adjusting_sp + cfun->machine->callee_saved_reg_size;
   if (sp_adjust > 0)
     {
       insn = emit_insn(
@@ -479,33 +493,38 @@ void
 brew_expand_epilogue (void)
 {
   int regno;
-  rtx reg;
 
-  if (cfun->machine->callee_saved_reg_size != 0)
+  // We have to 'pop' the return address from the stack as well so, adjust SP by 4 extra bytes
+  int save_cnt = cfun->machine->callee_saved_reg_size / 4 + 1;
+  int sp_adjust = cfun->machine->size_for_adjusting_sp + save_cnt * 4;
+  if (sp_adjust > 0)
     {
-      reg = gen_rtx_REG (Pmode, BREW_R3);
-      if (cfun->machine->callee_saved_reg_size <= 255)
-        {
-          emit_move_insn (reg, hard_frame_pointer_rtx);
-          emit_insn (gen_subsi3 
-                     (reg, reg, 
-                      GEN_INT (cfun->machine->callee_saved_reg_size)));
-        }
-      else
-        {
-          emit_move_insn (reg,
-                          GEN_INT (-cfun->machine->callee_saved_reg_size));
-          emit_insn (gen_addsi3 (reg, reg, hard_frame_pointer_rtx));
-        }
+      /* Restore SP */
+      emit_insn(
+        gen_addsi3(
+          stack_pointer_rtx, 
+          stack_pointer_rtx, 
+          GEN_INT(sp_adjust)
+        )
+      );
+      /* Restore registers */
       for (regno = FIRST_PSEUDO_REGISTER; regno-- > 0; )
-        if (!call_used_or_fixed_reg_p (regno)
-            && df_regs_ever_live_p (regno))
-          {
-            rtx preg = gen_rtx_REG (Pmode, regno);
-            emit_insn (gen_movsi_pop (reg, preg));
-          }
+        {
+          if (reg_needs_save_restore(regno))
+            {
+              --save_cnt;
+              emit_insn(gen_movsi(
+                gen_rtx_REG(Pmode, regno),
+                gen_rtx_MEM(Pmode,
+                  // Again: because of the return address also being on the stack, 
+                  // we're offsetting everything by 4 extra bytes
+                  plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt -4, false) // Not an in-place addition
+                )
+              ));
+            }
+        }
     }
-
+  // Return: we already adjusted SP, so all we have to do is to get PC from MEM[SP]
   emit_jump_insn (gen_returner ());
 }
 
