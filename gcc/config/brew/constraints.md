@@ -24,47 +24,64 @@
 
 (define_constraint "A"
   "An absolute address."
-  (and (match_code "mem")
-       (ior (match_test "GET_CODE (XEXP (op, 0)) == SYMBOL_REF")
-	    (match_test "GET_CODE (XEXP (op, 0)) == LABEL_REF")
-	    (match_test "GET_CODE (XEXP (op, 0)) == CONST"))))
+  (and
+    (match_code "mem")
+    (ior
+      (match_test "GET_CODE (XEXP (op, 0)) == SYMBOL_REF")
+      (match_test "GET_CODE (XEXP (op, 0)) == LABEL_REF")
+      (match_test "GET_CODE (XEXP (op, 0)) == CONST_INT")
+      (match_test "GET_CODE (XEXP (op, 0)) == CONST")
+    )
+  )
+)
 
 (define_constraint "W"
   "A register indirect memory operand."
-  (and (match_code "mem")
-       (match_test "REG_P (XEXP (op, 0))
-		    && REGNO_OK_FOR_BASE_P (REGNO (XEXP (op, 0)))")))
+  (and
+    (match_code "mem")
+    (match_test
+      "REG_P(XEXP(op, 0)) && REGNO_OK_FOR_BASE_P(REGNO(XEXP(op, 0)))"
+    )
+  )
+)
+
+(define_constraint "R"
+  "Any register, including PC"
+  (ior
+    (match_code "pc")
+    (match_code "reg")
+  )
+)
 
 (define_constraint "O"
   "The constant zero"
-  (and (match_code "const_int")
-       (match_test "ival == 0")))
+  (and
+    (match_code "const_int")
+    (match_test "ival == 0")
+  )
+)
 
 (define_constraint "L"
   "The constant 1"
-  (and (match_code "const_int")
-       (match_test "ival == 1")))
+  (and
+    (match_code "const_int")
+    (match_test "ival == 1")
+  )
+)
 
 (define_constraint "M"
   "The constant -1"
-  (and (match_code "const_int")
-       (match_test "ival == -1")))
+  (and
+    (match_code "const_int")
+    (match_test "ival == -1")
+  )
+)
 
 (define_constraint "B"
   "An offset address."
-  (and (match_code "mem")
-       (match_test "brew_offset_address_p (op)")))
-
-;; TODO: Leave these constraint classes in for now to make porting incremental.
-;;       These however don't apply to brew, so remove eventually.
-(define_constraint "I"
-  "An 8-bit constant (0..255)"
-  (and (match_code "const_int")
-       (match_test "ival >= 0 && ival <= 255")))
-
-(define_constraint "N"
-  "A constant -(0..255)"
-  (and (match_code "const_int")
-       (match_test "ival >= -255 && ival <= 0")))
-
+  (and
+    (match_code "mem")
+    (match_test "brew_offset_address_p(op)")
+  )
+)
 
