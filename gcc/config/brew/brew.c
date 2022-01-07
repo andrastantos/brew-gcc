@@ -41,9 +41,13 @@
 #include "expr.h"
 #include "builtins.h"
 #include "explow.h"
+#include "tm_p.h"
+#include "insn-config.h"
+#include "recog.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
+
 
 /* Worker function for TARGET_RETURN_IN_MEMORY.  */
 
@@ -183,6 +187,107 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
     }
 }
 
+bool brew_mov_operand(machine_mode mode, rtx operand, bool is_dst)
+{
+  int ret_val = 0;
+  do {
+    if (MEM_P(operand))
+      {
+        // Accept memory references by label, reg, or const
+        if (
+          GET_CODE(XEXP(operand, 0)) == LABEL_REF ||
+          GET_CODE(XEXP(operand, 0)) == REG ||
+          GET_CODE(XEXP(operand, 0)) == CONST_INT
+        )
+          {
+            ret_val = 1;
+            break;
+          }
+        // Accept register-offset references too (even PC-relative)
+        if (
+          GET_CODE(XEXP(operand, 0)) == PLUS &&
+          (
+            GET_CODE(XEXP(XEXP(operand, 0), 0)) == REG ||
+            GET_CODE(XEXP(XEXP(operand, 0), 0)) == PC
+          ) && (
+            GET_CODE(XEXP(XEXP(operand, 0), 1)) == CONST_INT ||
+            GET_CODE(XEXP(XEXP(operand, 0), 1)) == LABEL_REF
+          )
+        )
+          {
+            ret_val = 1;
+            break;
+          }
+        // Other memory references are not OK
+        ret_val = 0;
+        break;
+      }
+    // Normal registers are OK and PC as well as a source
+    if (REG_P(operand))
+      {
+        ret_val = 1;
+        break;
+      }
+    if (!is_dst && GET_CODE(operand) == PC)
+      {
+        ret_val = 1;
+        break;
+      }
+    // All else is only allowed as a source
+    if (!is_dst)
+      ret_val = general_operand(operand, mode);
+  } while (false);
+  return ret_val;
+}
+
+// TODO: There are a few lessons here
+//       1. We shouldn't use plus or plus_const or similar here. Apparently when this thing gets called
+//          it's already too late for such intelligence. We should actually generate instructions.
+//       2. we shouldn't use pc_rtx either. I think that's a virtual register and this late in the game
+//          we want to use the hard register $pc.
+//       3. We still have the problem of a mode inconsistency: the address of the function call is in QI
+//          mode (probably due to FUNCTION_MODE), but the target ($pc) is in SImode.
+void brew_expand_call(machine_mode mode, rtx *operands)
+{
+  gcc_assert (MEM_P (operands[0]));
+  // $r3 <- $pc + 12
+  rtx temp_reg = gen_reg_rtx(mode);
+  emit_insn(gen_addsi3(
+    temp_reg,
+    gen_rtx_REG(mode, BREW_PC), // pc_rtx,
+    GEN_INT(12)
+  ));
+  // $sp <- $sp - 4
+  emit_insn(gen_subsi3(
+    stack_pointer_rtx,
+    stack_pointer_rtx,
+    GEN_INT(4)
+  ));
+  // mem[$sp] <- $r3
+  emit_insn(gen_move_insn(
+    gen_rtx_MEM(Pmode,
+      plus_constant(Pmode, stack_pointer_rtx, 0, false) // Not an in-place addition
+    ),
+    temp_reg // gen_rtx_REG(Pmode, BREW_R12)
+  ));
+  /*
+  emit_insn(gen_movsi(
+    gen_rtx_MEM(Pmode,
+      plus_constant(Pmode, stack_pointer_rtx, 0, false) // Not an in-place addition
+    ),
+    temp_reg // gen_rtx_REG(Pmode, BREW_R12)
+  ));
+  */
+
+  //emit_insn(gen_movsi(
+  //  gen_rtx_MEM(Pmode, stack_pointer_rtx),
+  //  temp_reg
+  //));
+  // $pc <- %0
+  // this instruction will be emitted in *call insn.
+  //emit_call_insn(gen_movsi(pc_rtx /* gen_rtx_REG(mode, BREW_PC)*/, operands[0]));
+  //emit_call_insn(gen_set_pc(operands[0]));
+}
 
 /* This is the pattern to generate temp registers
 
@@ -587,16 +692,41 @@ brew_fixed_condition_code_regs (unsigned int *p1, unsigned int *p2)
 }
 */
 
-/* Return the next register to be used to hold a function argument or
-   NULL_RTX if there's no more space.  */
+static bool
+arg_can_be_in_register(const function_arg_info &arg)
+{
+  if (!arg.named)
+    return false;
 
+  if (arg.aggregate_type_p())
+    return false;
+
+  HOST_WIDE_INT arg_size = arg.promoted_size_in_bytes();
+  return arg_size <= 4 && arg_size > 0;
+}
+
+// The following two functions work in tandem:
+//   brew_function_arg decides in what form the argument should be passed.
+//     It returns either a REG rtx specifying the register to be used or
+//     NULL_RTX if the arg to be passed on the stack.
+//     In helping with deciding *which* register to chose, an argument
+//     cum_v.p (retrieved using get_cumulative_args) is used. This is
+//     defined as a simply 'unsigned int' to count the number of args
+//     that have already been passed in registers.
+//   brew_function_arg_advance is used to update cum_v.p after the 
+//     decision in the first function is made. It must therefore come
+//     to the same conclusion in terms of using a register or stack
+//     and increment cum_v.p as needed.
+
+// Return the next register to be used to hold a function argument or
+// NULL_RTX if there's no more space.
 static rtx
 brew_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
 
-  if (*cum < 8)
-    return gen_rtx_REG (arg.mode, *cum);
+  if (*cum < 4 && arg_can_be_in_register(arg))
+    return gen_rtx_REG (arg.mode, BREW_R4 + *cum);
   else 
     return NULL_RTX;
 }
@@ -606,14 +736,12 @@ brew_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
    : (unsigned) int_size_in_bytes (TYPE))
 
 static void
-brew_function_arg_advance (cumulative_args_t cum_v,
-                            const function_arg_info &arg)
+brew_function_arg_advance (cumulative_args_t cum_v, const function_arg_info &arg)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
 
-  *cum = (*cum < BREW_R8 /* TODO: is this true? We want to use regs to pass arguments from $r4 to $r7 */
-          ? *cum + ((3 + BREW_FUNCTION_ARG_SIZE (arg.mode, arg.type)) / 4)
-          : *cum);
+  if (*cum < 4 && arg_can_be_in_register(arg))
+    *cum += 1;
 }
 
 /* Return non-zero if the function argument described by ARG is to be
@@ -622,42 +750,32 @@ brew_function_arg_advance (cumulative_args_t cum_v,
 static bool
 brew_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
 {
-  if (arg.aggregate_type_p ())
+  if (arg.aggregate_type_p())
     return true;
-  unsigned HOST_WIDE_INT size = arg.type_size_in_bytes ();
-  return size > 4*6;
+  HOST_WIDE_INT size = arg.type_size_in_bytes();
+  return size > 16 || size <= 0;
 }
 
 /* Some function arguments will only partially fit in the registers
-   that hold arguments.  Given a new arg, return the number of bytes
-   that fit in argument passing registers.  */
-
+   that hold arguments. Given a new arg, return the number of bytes
+   that fit in argument passing registers. */
+// For now, we're simply choosing an all-or-nothing approach:
+//   we either completely put the argument in registers or completely
+//   on the stack.
 static int
 brew_arg_partial_bytes (cumulative_args_t cum_v, const function_arg_info &arg)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
   int bytes_left, size;
 
-  if (*cum >= 8)
+  if (*cum >= 4)
     return 0;
 
   if (brew_pass_by_reference (cum_v, arg))
-    size = 4;
-  else if (arg.type)
-    {
-      if (AGGREGATE_TYPE_P (arg.type))
-        return 0;
-      size = int_size_in_bytes (arg.type);
-    }
-  else
-    size = GET_MODE_SIZE (arg.mode);
-
-  bytes_left = (4 * 6) - ((*cum - 2) * 4);
-
-  if (size > bytes_left)
-    return bytes_left;
-  else
+    return 4;
+  if (!arg_can_be_in_register(arg))
     return 0;
+  return arg.promoted_size_in_bytes();
 }
 
 /* Worker function for TARGET_STATIC_CHAIN.  */

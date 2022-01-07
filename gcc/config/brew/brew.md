@@ -52,7 +52,7 @@
 (define_insn "addsi3"
   [(set (match_operand:SI 0 "register_operand" "=r,r,r,r")
         (plus:SI
-          (match_operand:SI 1 "register_operand" "r,r,r,r")
+          (match_operand:SI 1 "brew_reg_or_pc_operand" "r,r,r,r")
           (match_operand:SI 2 "brew_reg_or_const" "L,M,r,i")))]
   ""
   "@
@@ -262,7 +262,7 @@
   "
 {
   /* If this is a store, force the value into a register.  */
-  if (! (reload_in_progress || reload_completed))
+  /*if (! (reload_in_progress || reload_completed))
   {
     if (MEM_P (operands[0]))
     {
@@ -274,14 +274,13 @@
       if (MEM_P (operands[1])
           && MEM_P (XEXP (operands[1], 0)))
         operands[1] = gen_rtx_MEM (SImode, force_reg (SImode, XEXP (operands[1], 0)));
-  }
+  }*/
 }")
 
 (define_insn "*movsi"
-  [(set (match_operand:SI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
-        (match_operand:SI 1 "brew_general_mov_src_operand" "O,r,i,r,r,r,W,A,B"))]
-  "register_operand (operands[0], SImode)
-   || register_operand (operands[1], SImode)"
+  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r,W,A,B,r,r,r,X")
+        (match_operand:SI 1 "general_operand" "O,r,i,r,r,r,W,A,B,X"))]
+  ""
   "@
    %0 <- %0 - %0
    %0 <- %1
@@ -291,8 +290,40 @@
    mem[%0] <- %1
    %0 <- mem[%1]
    %0 <- mem[%1]
-   %0 <- mem[%1]"
-  [(set_attr "length"        "2,2,6,6,6,6,6,6,6")])
+   %0 <- mem[%1]
+   === %0 === <- === %1 ==="
+)
+
+(define_insn "*movsi"
+  [(set (match_operand:SI 0 "nonimmediate_operand" "")
+        (match_operand:SI 1 "general_operand" ""))]
+  ""
+  "=== %0 === <- === %1 ==="
+)
+;;  [(set_attr "length"        "2,2,6,6,6,6,6,6,6")])
+
+;;(define_insn "*movsi"
+;;  [(set (pc)
+;;        (match_operand:SI 0 "brew_general_mov_src_operand" "r,i,W,A,B"))]
+;;  "register_operand (operands[0], SImode)"
+;;  "@
+;;   $pc <- %0 ; PC MOVSI
+;;   $pc <- %0 ; PC MOVSI
+;;   $pc <- mem[%0] ; PC MOVSI
+;;   $pc <- mem[%0] ; PC MOVSI
+;;   $pc <- mem[%0] ; PC MOVSI"
+;;  [(set_attr "length"        "2,2,6,6,6")])
+;;
+;;(define_insn "*movsi"
+;;  [(set (match_operand:SI 0 "nonimmediate_operand"        "=r,W,A,B")
+;;        (pc))]
+;;  "register_operand (operands[0], SImode)"
+;;  "@
+;;   %0 <- $pc ; PC MOVSI2
+;;   mem[%0] <- $pc ; PC MOVSI2
+;;   mem[%0] <- $pc ; PC MOVSI2
+;;   mem[%0] <- $pc ; PC MOVSI2"
+;;  [(set_attr "length"        "2,6,6,6")])
 
 (define_insn "zero_extendhisi2"
   [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
@@ -466,17 +497,35 @@
 ;; Call and Jump instructions
 ;; -------------------------------------------------------------------------
 
+;;    (match_operand:QI 0 "memory_operand" "")
+
 (define_expand "call"
   [(call
-    (match_operand:QI 0 "memory_operand" "")
+    (label_ref(match_operand 0 "" ""))
     (match_operand 1 "general_operand" "")
   )]
   ""
 {
-  gcc_assert (MEM_P (operands[0]));
+  brew_expand_call(Pmode, operands); 
 })
 
-;;  (clobber (reg:SI 3))
+(define_insn "set_pc"
+  [(set
+    (pc)
+    (mem:QI (match_operand:SI 0 "" ""))
+  )]
+  ""
+  "$pc <- %0 ; THIS IS WHERE A CALL WOULD GO FOR SET_PC (%0)"
+)
+
+;;(define_insn "*call"
+;;  [(call
+;;    (mem:QI (match_operand:SI 0 "nonmemory_operand" "i,r"))
+;;    (match_operand 1 "" "")
+;;  )]
+;;  ""
+;;  ";; THIS IS WHERE A CALL WOULD GO"
+;;)
 
 (define_insn "*call"
   [(call
@@ -485,10 +534,7 @@
   )
   ]
   ""
-  "$r3 <- $pc + 12
-  $sp <- $sp - 4
-  mem[$sp] <- $r3
-  $pc <- %0"
+  "$pc <- %0 ; THIS IS WHERE A CALL WOULD GO FOR CALL (%0)"
 )
 
 (define_expand "call_value"
@@ -497,24 +543,53 @@
                  (match_operand 2 "" "")))]
   ""
 {
-  gcc_assert (MEM_P (operands[1]));
+  brew_expand_call(Pmode, operands + 1); 
 })
 
-;;  (clobber (reg:SI 3))
-(define_insn "*call_value"
-  [(set (match_operand 0 "register_operand" "=r")
-        (call (mem:QI (match_operand:SI
-                       1 "immediate_operand" "i"))
-              (match_operand 2 "" "")))
-  ]
+;;(define_insn "*call_value"
+;;  [(set
+;;    (match_operand 0 "register_operand" "=r")
+;;    (call
+;;      (mem:QI (match_operand:SI 1 "immediate_operand" "i"))
+;;      (match_operand 2 "" "")
+;;    )
+;;  )]
+;;  ""
+;;  ";; THIS IS WHERE A CALL_VALUE WOULD GO"
+;;)
+;;
+;;
+;;(define_insn "*call_value_indirect"
+;;  [(set
+;;    (match_operand 0 "register_operand" "=r")
+;;    (call
+;;      (mem:QI (match_operand:SI 1 "register_operand" "r"))
+;;      (match_operand 2 "" "")
+;;    )
+;;  )]
+;;  ""
+;;  ";; THIS IS WHERE A CALL_VALUE_INDIRECT WOULD GO"
+;;)
+
+(define_insn "*reg_move"
+  [(set
+    (match_operand:SI 0 "register_operand" "=r")
+    (match_operand:SI 1 "register_operand" "r")
+  )]
   ""
-  "$r3 <- $pc + 12
-  $sp <- $sp - 4
-  mem[$sp] <- $r3
-  $pc <- %0"
+  "%0 <- %1 ; REG_MOVE"
 )
 
-;;  (clobber (reg:SI 3))
+(define_insn "*call_value"
+  [(set
+    (match_operand 0 "register_operand" "=r")
+    (call
+      (mem:QI (match_operand:SI 1 "immediate_operand" "i"))
+      (match_operand 2 "" "")))
+  ]
+  ""
+  "$pc <- %1 ; THIS IS WHERE A CALL WOULD GO FOR CALL_VALUE (return in %0) (addr in %1) (params in %2)"
+)
 
 (define_insn "*call_value_indirect"
   [(set (match_operand 0 "register_operand" "=r")
@@ -523,10 +598,7 @@
               (match_operand 2 "" "")))
   ]
   ""
-  "$r3 <- $pc + 12
-  $sp <- $sp - 4
-  mem[$sp] <- $r3
-  $pc <- %0"
+  "$pc <- %1 ; THIS IS WHERE A CALL WOULD GO FOR CALL_VALUE_INDIRECT (return in %0) (addr in %1) (params in %2)"
 )
 
 (define_insn "indirect_jump"
