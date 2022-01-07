@@ -46,16 +46,20 @@
   "nop")
 
 ;; -------------------------------------------------------------------------
-;; Arithmetic instructions
+;; Plus and minus instructions
 ;; -------------------------------------------------------------------------
 
 (define_insn "addsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r,r,r,r")
-        (plus:SI
-          (match_operand:SI 1 "brew_reg_or_pc_operand" "r,r,r,r")
-          (match_operand:SI 2 "brew_reg_or_const" "L,M,r,i")))]
+  [(set
+    (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
+    (plus:SI
+      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R")
+      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i")
+    )
+  )]
   ""
   "@
+  %0 <- %1
   %0 <- %1 + 1
   %0 <- %1 - 1
   %0 <- %1 + %2
@@ -63,25 +67,39 @@
 
 
 (define_insn "subsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r,r,r,r")
-          (minus:SI
-          (match_operand:SI 1 "register_operand" "r,r,r,r")
-          (match_operand:SI 2 "brew_reg_or_const" "L,M,r,i")))]
+  [(set
+    (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
+    (minus:SI
+      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R")
+      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i")
+    )
+  )]
   ""
   "@
+  %0 <- %1
   %0 <- %1 - 1
   %0 <- %1 + 1
   %0 <- %1 - %2
   %0 <- %1 - (%2)")
 
+;; -------------------------------------------------------------------------
+;; Multiplications
+;; -------------------------------------------------------------------------
+
 ;; FIXME: THIS IS THE SIGNED VERSION. HOW TO DEFINE THE UNSIGNED VERSION?
 (define_insn "mulsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r,r")
-          (mult:SI
-           (match_operand:SI 1 "register_operand" "r,r")
-           (match_operand:SI 2 "brew_reg_or_const" "r,i")))]
+  [(set
+    (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
+    (mult:SI
+      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R")
+      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i")
+    )
+  )]
   ""
   "@
+  %0 <- %0 - %0
+  %0 <- %1
+  %0 <- -%1
   %0 <- %1 * %2
   %0 <- %1 * (%2)")
 
@@ -90,7 +108,7 @@
         (truncate:SI
          (lshiftrt:DI
           (mult:DI (sign_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
-                   (sign_extend:DI (match_operand:SI 2 "brew_reg_or_const"  "r,i")))
+                   (sign_extend:DI (match_operand:SI 2 "brew_allreg_or_const_operand"  "r,i")))
           (const_int 32))))]
   ""
   "@
@@ -102,7 +120,7 @@
         (truncate:SI
          (lshiftrt:DI
           (mult:DI (zero_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
-                   (zero_extend:DI (match_operand:SI 2 "brew_reg_or_const"  "r,i")))
+                   (zero_extend:DI (match_operand:SI 2 "brew_allreg_or_const_operand"  "r,i")))
           (const_int 32))))]
   ""
   "@
@@ -117,7 +135,7 @@
 ;;(define_expand "mulsidi3"
 ;;  [(set (match_operand:DI 0 "register_operand" "=r")
 ;;        (mult:DI (sign_extend:DI (match_operand:SI 1 "register_operand" "r"))
-;;                 (sign_extend:DI (match_operand:SI 2 "brew_reg_or_const" "ir"))))]
+;;                 (sign_extend:DI (match_operand:SI 2 "brew_allreg_or_const_operand" "ir"))))]
 ;;  ""
 ;;{
 ;;  rtx hi = gen_reg_rtx (SImode);
@@ -133,7 +151,7 @@
 ;;(define_expand "umulsidi3"
 ;;  [(set (match_operand:DI 0 "register_operand" "=r")
 ;;        (mult:DI (zero_extend:DI (match_operand:SI 1 "register_operand" "r"))
-;;                 (zero_extend:DI (match_operand:SI 2 "brew_reg_or_const" "ir"))))]
+;;                 (zero_extend:DI (match_operand:SI 2 "brew_allreg_or_const_operand" "ir"))))]
 ;;  ""
 ;;{
 ;;  rtx hi = gen_reg_rtx (SImode);
@@ -151,83 +169,135 @@
 ;; -------------------------------------------------------------------------
 
 (define_insn "negsi2"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-          (neg:SI (match_operand:SI 1 "register_operand" "r")))]
+  [(set
+    (match_operand:SI 0 "register_operand" "=r")
+    (neg:SI
+      (match_operand:SI 1 "register_operand" "r")
+    )
+  )]
   ""
-  "%s0 <- -%s1")
+  "%s0 <- -%s1"
+)
 
 (define_insn "one_cmplsi2"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (not:SI (match_operand:SI 1 "register_operand" "r")))]
+  [(set
+    (match_operand:SI 0 "register_operand" "=r")
+    (not:SI
+      (match_operand:SI 1 "register_operand" "r")
+    )
+  )]
   ""
   "%0 <- ~%1")
+
+(define_insn "bswapsi2"
+  [(set
+    (match_operand:SI 0 "register_operand" "=r")
+    (bswap:SI
+      (match_operand:SI 1 "register_operand" "r")
+    )
+  )]
+  ""
+  "%0 <- bswap %1")
 
 ;; -------------------------------------------------------------------------
 ;; Logical operators
 ;; -------------------------------------------------------------------------
 
 (define_insn "andsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (and:SI
-          (match_operand:SI 1 "register_operand" "r")
-          (match_operand:SI 2 "brew_reg_or_const" "ir")))]
+  [(set
+    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (and:SI
+      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R")
+      (match_operand:SI 2 "brew_allreg_or_const_operand" "1,O,R,i")
+    )
+  )]
   ""
-  "%0 <- %1 & %2"
+  "@
+  %0 <- %1
+  %0 <- %1 - %1
+  %0 <- %1 & %2
+  %0 <- %1 & (%2)"
 )
 
 (define_insn "xorsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (xor:SI
-          (match_operand:SI 1 "register_operand" "r")
-          (match_operand:SI 2 "brew_reg_or_const" "ir")))]
+  [(set
+    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (xor:SI
+      (match_operand:SI 1 "register_operand" "r,r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "1,O,r,i")
+    )
+  )]
   ""
-  "%0 <- %1 ^ %2"
+  "@
+  %0 <- %1 - %1
+  %0 <- %1
+  %0 <- %1 ^ %2
+  %0 <- %1 ^ (%2)"
 )
 
 (define_insn "iorsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (ior:SI
-          (match_operand:SI 1 "register_operand" "r")
-          (match_operand:SI 2 "brew_reg_or_const" "ir")))]
+  [(set
+    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (ior:SI
+      (match_operand:SI 1 "register_operand" "r,r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "1,O,r,i")
+    )
+  )]
   ""
-  "%0 <- %1 | %2"
+  "@
+  %0 <- %1
+  %0 <- %1
+  %0 <- %1 | %2
+  %0 <- %1 | (%2)"
 )
 
 ;; -------------------------------------------------------------------------
-;; Shifters
+;; Shifts
 ;; -------------------------------------------------------------------------
 
 (define_insn "ashlsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r,r")
-        (ashift:SI
-          (match_operand:SI 1 "brew_reg_or_const" "r,ir")
-          (match_operand:SI 2 "brew_reg_or_const" "ir,r")))]
+  [(set 
+    (match_operand:SI 0 "register_operand" "=r,r,r")
+    (ashift:SI
+      (match_operand:SI 1 "brew_allreg_or_const_operand" "R,i,R")
+      (match_operand:SI 2 "brew_allreg_or_const_operand" "R,R,i")
+    )
+  )]
   ""
   "@
   %0 <- %1 << %2
-  %0 <- %1 << %2"
+  %0 <- (%1) << %2
+  %0 <- %1 << (%2)"
 )
 
 (define_insn "ashrsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r,r")
-        (ashiftrt:SI
-          (match_operand:SI 1 "brew_reg_or_const" "r,ir")
-          (match_operand:SI 2 "brew_reg_or_const" "ir,r")))]
+  [(set 
+    (match_operand:SI 0 "register_operand" "=r,r,r")
+    (ashiftrt:SI
+      (match_operand:SI 1 "brew_allreg_or_const_operand" "R,i,R")
+      (match_operand:SI 2 "brew_allreg_or_const_operand" "R,R,i")
+    )
+  )]
   ""
   "@
   %s0 <- %s1 >> %2
-  %s0 <- %s1 >> %2"
+  %s0 <- (%s1) >> %2
+  %s0 <- %s1 >> (%2)"
 )
 
 (define_insn "lshrsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r,r")
-        (lshiftrt:SI
-          (match_operand:SI 1 "brew_reg_or_const" "r,ir")
-          (match_operand:SI 2 "brew_reg_or_const" "ir,r")))]
+  [(set 
+    (match_operand:SI 0 "register_operand" "=r,r,r")
+    (lshiftrt:SI
+      (match_operand:SI 1 "brew_allreg_or_const_operand" "R,i,R")
+      (match_operand:SI 2 "brew_allreg_or_const_operand" "R,R,i")
+    )
+  )]
   ""
   "@
   %0 <- %1 >> %2
-  s0 <- %1 >> %2"
+  %0 <- (%1) >> %2
+  %0 <- %1 >> (%2)"
 )
 
 ;; -------------------------------------------------------------------------
@@ -236,55 +306,55 @@
 
 ;; SImode
 
-;; Push a register onto the stack
-(define_insn "movsi_push"
-  [(set
-    (mem:SI (pre_dec:SI (reg:SI 1)))
-    (match_operand:SI 0 "register_operand" "r")
-  )
-  ]
-  ""
-  "$sp <- $sp - 4
-  mem[$sp] <- %0")
-
-;; Pop a register from the stack
-(define_insn "movsi_pop"
-  [(set (match_operand:SI 1 "register_operand" "=r")
-          (mem:SI (post_inc:SI (match_operand:SI 0 "register_operand" "r"))))]
-  ""
-  "%1 <- mem[$sp]
-  $sp <- $sp + 4")
+;; The define_expand pattern transforms the move into something
+;; that a single ASM instruction can handle. That is, a register
+;; to register move, an immediate load or a memory load/store
+;; with a <reg>+<offset> address pattern.
+;;
+;; The corresponding define_insn pattern then recognizes these
+;; generated patterns and emits the appropriate instruction.
 
 (define_expand "movsi"
-   [(set (match_operand:SI 0 "general_operand" "")
-         (match_operand:SI 1 "general_operand" ""))]
-   ""
+  [(set
+    (match_operand:SI 0 "general_operand" "")
+    (match_operand:SI 1 "general_operand" "")
+  )]
+  ""
   "
 {
-  /* If this is a store, force the value into a register.  */
-  /*if (! (reload_in_progress || reload_completed))
-  {
-    if (MEM_P (operands[0]))
+  if (!(reload_in_progress || reload_completed))
     {
-      operands[1] = force_reg (SImode, operands[1]);
-      if (MEM_P (XEXP (operands[0], 0)))
-        operands[0] = gen_rtx_MEM (SImode, force_reg (SImode, XEXP (operands[0], 0)));
+      if(MEM_P(operands[0]))
+        {
+          // For stores, force the second arg. into a register
+          operands[1] = force_reg(SImode, operands[1]);
+          // We should make sure that the address 
+          // generated for the store is based on a <reg>+<offset> pattern
+          if(MEM_P(XEXP(operands[0], 0)))
+            operands[0] = gen_rtx_MEM(SImode, force_reg(SImode, XEXP(operands[0], 0)));
+        }
+      else if(MEM_P(operands[1]))
+        {
+          // For loads, make sure the destination is a register
+          gcc_assert(REG_P(operands[0]));
+          // We should make sure that the address 
+          // generated for the load is based on a <reg>+<offset> pattern
+          if(MEM_P(XEXP (operands[1], 0)))
+            operands[1] = gen_rtx_MEM (SImode, force_reg(SImode, XEXP(operands[1], 0)));
+        }
     }
-    else 
-      if (MEM_P (operands[1])
-          && MEM_P (XEXP (operands[1], 0)))
-        operands[1] = gen_rtx_MEM (SImode, force_reg (SImode, XEXP (operands[1], 0)));
-  }*/
 }")
 
 (define_insn "*movsi"
-  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r,W,A,B,r,r,r,X")
-        (match_operand:SI 1 "general_operand" "O,r,i,r,r,r,W,A,B,X"))]
+  [(set
+    (match_operand:SI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r,X")
+    (match_operand:SI 1 "brew_general_mov_src_operand" "O,R,i,R,R,R,W,A,B,X")
+  )]
   ""
   "@
    %0 <- %0 - %0
    %0 <- %1
-   %0 <- %1
+   %0 <- (%1)
    mem[%0] <- %1
    mem[%0] <- %1
    mem[%0] <- %1
