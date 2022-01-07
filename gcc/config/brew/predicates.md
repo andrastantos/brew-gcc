@@ -25,30 +25,28 @@
 ;; Nonzero if OP can be source of a simple move operation.
 
 (define_predicate "brew_general_mov_src_operand"
-  (match_code "mem,const_int,reg,subreg,symbol_ref,label_ref,const")
+  (match_code "mem,const_int,reg,pc,subreg,symbol_ref,label_ref,const")
 {
-  /* Any (MEM LABEL_REF) is OK.  That is a pc-relative load.  */
-  if (MEM_P (op) && GET_CODE (XEXP (op, 0)) == LABEL_REF)
-    return 1;
+  return brew_mov_operand(mode, op, false);
+})
 
-  if (MEM_P (op)
-      && GET_CODE (XEXP (op, 0)) == PLUS
-      && GET_CODE (XEXP (XEXP (op, 0), 0)) == REG
-      && GET_CODE (XEXP (XEXP (op, 0), 1)) == CONST_INT
-  )
-    return 1;
-
-  return general_operand (op, mode);
+(define_predicate "brew_general_mov_dst_operand"
+  (match_code "mem,reg,subreg,pc")
+{
+  return brew_mov_operand(mode, op, true);
 })
 
 ;; A predicate that accepts either a register or a constant integer operand.
 ;;   this is used for the many 3-operand ALU operations.
 (define_predicate "brew_reg_or_const"
-  (ior
-    (match_code "reg")
-    (match_code "const_int")
-  )
+  (match_code "reg,pc,const_int")
 )
+
+(define_predicate "brew_reg_or_pc_operand"
+  (match_code "reg,pc")
+)
+
+
 
 (define_predicate "brew_comparison_operand"
   (ior

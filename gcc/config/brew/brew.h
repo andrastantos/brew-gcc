@@ -213,9 +213,10 @@ enum reg_class
 
 /* A C statement (sans semicolon) for initializing the variable CUM
    for the state at the beginning of the argument list.  
-   For brew, the first arg is passed in register 3 (aka $r3).  */
+   We simply count the number of registers to be passed in, so we
+   initialize the count to 0 */
 #define INIT_CUMULATIVE_ARGS(CUM,FNTYPE,LIBNAME,FNDECL,N_NAMED_ARGS) \
-  (CUM = BREW_R3)
+  (CUM = 0)
 
 /* How Scalar Function Values Are Returned */
 
