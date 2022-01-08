@@ -49,50 +49,31 @@
 #include "target-def.h"
 
 
-/* Worker function for TARGET_RETURN_IN_MEMORY.  */
+// Per-function machine data.
+struct GTY(()) machine_function
+ {
+   // Number of bytes saved on the stack for callee saved registers.
+   int callee_saved_reg_size;
+   // Number of bytes saved on the stack for local variables.
+   int local_vars_size;
+   // Total SP adjustment needed. Includes padding.
+   int size_for_adjusting_sp;
+ };
 
-static bool
-brew_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
+static struct machine_function *
+brew_init_machine_status (void)
 {
-  const HOST_WIDE_INT size = int_size_in_bytes (type);
-  return (size == -1 || size > 2 * UNITS_PER_WORD);
+  return ggc_cleared_alloc<machine_function>();
 }
 
-/* Define how to find the value returned by a function.
-   VALTYPE is the data type of the value (as a tree).
-   If the precise function being called is known, FUNC is its
-   FUNCTION_DECL; otherwise, FUNC is 0.  
 
-   We always return values in register $r0 for brew.  */
-
-static rtx
-brew_function_value (const_tree valtype, 
-                      const_tree fntype_or_decl ATTRIBUTE_UNUSED,
-                      bool outgoing ATTRIBUTE_UNUSED)
-{
-  return gen_rtx_REG (TYPE_MODE (valtype), BREW_R4);
-}
-
-/* Define how to find the value returned by a library function.
-
-   We always return values in register $r0 for brew.  */
-
-static rtx
-brew_libcall_value (machine_mode mode,
-                     const_rtx fun ATTRIBUTE_UNUSED)
-{
-  return gen_rtx_REG (mode, BREW_R4);
-}
-
-/* Handle TARGET_FUNCTION_VALUE_REGNO_P.
-
-   We always return values in register $r4 for brew.  */
-
-static bool
-brew_function_value_regno_p (const unsigned int regno)
-{
-  return (regno == BREW_R4);
-}
+///////////////////////////////////////////////////////////////////////////
+//
+//
+// RTL EXPANSION CODE FOR define_expand PATTERNS
+//
+//
+///////////////////////////////////////////////////////////////////////////
 
 /* Returns the condition code for the inverted comparison (so for example LT for GT) */
 /* NOTE: this is not a negated code! */
@@ -187,6 +168,164 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
     }
 }
 
+void brew_expand_call(machine_mode mode, rtx *operands)
+{
+  gcc_assert (MEM_P(operands[0]));
+  // $r3 <- $pc + 16
+  rtx temp_reg = gen_reg_rtx(mode);
+  emit_insn(gen_addsi3(
+    temp_reg,
+    gen_rtx_REG(mode, BREW_PC), // Can't use pc_rtx here: that's not a valid operand for the addsi3 pattern.
+    GEN_INT(16)
+  ));
+  // $sp <- $sp - 4
+  emit_insn(gen_subsi3(
+    stack_pointer_rtx,
+    stack_pointer_rtx,
+    GEN_INT(4)
+  ));
+  // mem[$sp] <- $r3
+  emit_insn(gen_move_insn(
+    gen_rtx_MEM(Pmode, stack_pointer_rtx),
+    temp_reg
+  ));
+  // this last instruction will be emitted in *call insn.
+  // $pc <- %0
+}
+
+// Determines if we wanted to save/restore the specified register
+// in function prologue/epilog
+static bool
+reg_needs_save_restore(int regno)
+{
+  return
+    (df_regs_ever_live_p(regno) && !call_used_or_fixed_reg_p (regno)) ||
+    (regno == BREW_FP);
+}
+
+// Compute the size of the local area and the size to be adjusted by the
+// prologue and epilogue.
+static void
+brew_compute_frame(void)
+{
+  int stack_alignment = STACK_BOUNDARY / BITS_PER_UNIT;
+
+  // Let's start with the real frame size, and adjust with any alignment, if needed
+  cfun->machine->local_vars_size = get_frame_size();
+  int left_over = cfun->machine->local_vars_size % stack_alignment;
+  if (left_over > 0)
+    cfun->machine->local_vars_size += stack_alignment - left_over;
+
+  cfun->machine->callee_saved_reg_size = 0;
+
+  // Save callee-saved registers
+  for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+    if (reg_needs_save_restore(regno))
+      cfun->machine->callee_saved_reg_size += 4;
+
+  cfun->machine->size_for_adjusting_sp = 
+    crtl->args.pretend_args_size +
+    cfun->machine->local_vars_size +
+    (ACCUMULATE_OUTGOING_ARGS ? (HOST_WIDE_INT) crtl->outgoing_args_size : 0);
+}
+
+// This function expands the instruction sequence for a function prologue.
+void
+brew_expand_prologue (void)
+{
+  int regno;
+  rtx insn;
+
+  brew_compute_frame();
+
+  if (flag_stack_usage_info)
+    current_function_static_stack_size = cfun->machine->size_for_adjusting_sp;
+
+  int save_cnt = 0;
+  // Save callee-saved registers.
+  // For each register we save, we'll have to decrement SP by 4 and of course
+  // make sure that further references are offsetted by that much.
+  for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+    {
+      if (reg_needs_save_restore(regno))
+        {
+          insn = emit_insn(gen_movsi(
+            gen_rtx_MEM(Pmode,
+              plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt, false) // Not an in-place addition
+            ),
+            gen_rtx_REG(Pmode, regno)
+          ));
+          RTX_FRAME_RELATED_P (insn) = 1;
+          ++save_cnt;
+        }
+    }
+  gcc_assert(save_cnt*4 == cfun->machine->callee_saved_reg_size);
+  // set up FP
+  insn = emit_insn(gen_movsi(
+    hard_frame_pointer_rtx,
+    stack_pointer_rtx
+  ));
+  RTX_FRAME_RELATED_P (insn) = 1;
+  // adjust SP
+  int sp_adjust = cfun->machine->size_for_adjusting_sp + cfun->machine->callee_saved_reg_size;
+  if (sp_adjust > 0)
+    {
+      insn = emit_insn(
+        gen_subsi3(
+          stack_pointer_rtx, 
+          stack_pointer_rtx, 
+          GEN_INT(sp_adjust)
+        )
+      );
+      RTX_FRAME_RELATED_P (insn) = 1;
+    }
+}
+
+void
+brew_expand_epilogue (void)
+{
+  int regno;
+
+  // We have to 'pop' the return address from the stack as well so, adjust SP by 4 extra bytes
+  int save_cnt = cfun->machine->callee_saved_reg_size / 4 + 1;
+  int sp_adjust = cfun->machine->size_for_adjusting_sp + save_cnt * 4;
+  if (sp_adjust > 0)
+    {
+      // Restore SP
+      emit_insn(
+        gen_addsi3(
+          stack_pointer_rtx, 
+          stack_pointer_rtx, 
+          GEN_INT(sp_adjust)
+        )
+      );
+      // Restore registers
+      for (regno = FIRST_PSEUDO_REGISTER; regno-- > 0; )
+        {
+          if (reg_needs_save_restore(regno))
+            {
+              --save_cnt;
+              emit_insn(gen_movsi(
+                gen_rtx_REG(Pmode, regno),
+                gen_rtx_MEM(Pmode,
+                  plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt, false) // Not an in-place addition
+                )
+              ));
+            }
+        }
+    }
+  // Return: we already adjusted SP, so all we have to do is to get PC from MEM[SP]
+  emit_jump_insn (gen_returner ());
+}
+
+///////////////////////////////////////////////////////////////////////////
+//
+//
+// PREDICATE HELPERS
+//
+//
+///////////////////////////////////////////////////////////////////////////
+
 bool brew_mov_operand(machine_mode mode, rtx operand, bool is_dst)
 {
   int ret_val = 0;
@@ -240,77 +379,27 @@ bool brew_mov_operand(machine_mode mode, rtx operand, bool is_dst)
   return ret_val;
 }
 
-// TODO: There are a few lessons here
-//       1. We shouldn't use plus or plus_const or similar here. Apparently when this thing gets called
-//          it's already too late for such intelligence. We should actually generate instructions.
-//       2. we shouldn't use pc_rtx either. I think that's a virtual register and this late in the game
-//          we want to use the hard register $pc.
-//       3. We still have the problem of a mode inconsistency: the address of the function call is in QI
-//          mode (probably due to FUNCTION_MODE), but the target ($pc) is in SImode.
-void brew_expand_call(machine_mode mode, rtx *operands)
+
+///////////////////////////////////////////////////////////////////////////
+//
+//
+// CONSTRAINT HELPERS
+//
+//
+///////////////////////////////////////////////////////////////////////////
+
+// Return true for <reg>+<ofs> references
+bool
+brew_offset_address_p(rtx x)
 {
-  gcc_assert (MEM_P (operands[0]));
-  // $r3 <- $pc + 12
-  rtx temp_reg = gen_reg_rtx(mode);
-  emit_insn(gen_addsi3(
-    temp_reg,
-    gen_rtx_REG(mode, BREW_PC), // pc_rtx,
-    GEN_INT(12)
-  ));
-  // $sp <- $sp - 4
-  emit_insn(gen_subsi3(
-    stack_pointer_rtx,
-    stack_pointer_rtx,
-    GEN_INT(4)
-  ));
-  // mem[$sp] <- $r3
-  emit_insn(gen_move_insn(
-    gen_rtx_MEM(Pmode,
-      plus_constant(Pmode, stack_pointer_rtx, 0, false) // Not an in-place addition
-    ),
-    temp_reg // gen_rtx_REG(Pmode, BREW_R12)
-  ));
-  /*
-  emit_insn(gen_movsi(
-    gen_rtx_MEM(Pmode,
-      plus_constant(Pmode, stack_pointer_rtx, 0, false) // Not an in-place addition
-    ),
-    temp_reg // gen_rtx_REG(Pmode, BREW_R12)
-  ));
-  */
-
-  //emit_insn(gen_movsi(
-  //  gen_rtx_MEM(Pmode, stack_pointer_rtx),
-  //  temp_reg
-  //));
-  // $pc <- %0
-  // this instruction will be emitted in *call insn.
-  //emit_call_insn(gen_movsi(pc_rtx /* gen_rtx_REG(mode, BREW_PC)*/, operands[0]));
-  //emit_call_insn(gen_set_pc(operands[0]));
+  x = XEXP(x, 0);
+  if (GET_CODE(x) != PLUS)
+    return false;
+  x = XEXP(x, 1);
+  if (GET_CODE(x) != CONST_INT)
+    return false;
+  return true;
 }
-
-/* This is the pattern to generate temp registers
-
-rtx
-brew_emit_push(machine_mode mode, rtx *operands)
-{
-  rtx temp_reg = gen_reg_rtx(mode);
-}
-
-
-
-
-rtx
-brew_emit_call(machine_mode mode, rtx *operands)
-{
-  rtx temp_reg = gen_reg_rtx(mode);
-}
-
-*/
-
-
-
-
 
 //////////////////////////////////////////////////////////////
 // TODO: there's a bunch of stuff here that needs to be reviews
@@ -328,78 +417,302 @@ brew_emit_call(machine_mode mode, rtx *operands)
 
 
 
-/* Emit an error message when we're in an asm, and a fatal error for
-   "normal" insns. */
-static void
-brew_operand_lossage (const char *msgid, rtx op)
+
+// Implements the macro INITIAL_ELIMINATION_OFFSET, return the OFFSET.
+// That is: used to figure out the offset between $?fp, $?ap and $fp
+int
+brew_initial_elimination_offset (int from, int to)
 {
-  debug_rtx (op);
-  output_operand_lossage ("%s", msgid);
+  int ret;
+  
+  if (from == FRAME_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
+    {
+      // Compute this since we need to use cfun->machine->local_vars_size.
+      brew_compute_frame();
+      ret = -cfun->machine->callee_saved_reg_size;
+    }
+  else if (from == ARG_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
+    ret = 0x00;
+  else
+    abort ();
+
+  return ret;
 }
 
-/* The PRINT_OPERAND_ADDRESS worker.  */
 
-static void
-brew_print_operand_address (FILE *file, machine_mode, rtx x)
+
+
+
+///////////////////////////////////////////////////////////////////////////
+//
+//
+// Target hook implementations
+//
+//
+///////////////////////////////////////////////////////////////////////////
+
+
+// for TARGET_RETURN_IN_MEMORY
+// Returns true if return value is to be in memory, false for registers
+static bool
+brew_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
 {
-  switch (GET_CODE (x))
-    {
-    case REG:
-      fprintf (file, "(%s)", reg_names[REGNO (x)]);
-      break;
-      
-    case PLUS:
-      switch (GET_CODE (XEXP (x, 1)))
-        {
-        case CONST_INT:
-          fprintf (file, "%s,%ld", 
-                   reg_names[REGNO (XEXP (x, 0))],
-                   INTVAL(XEXP (x, 1)));
-          break;
-        case SYMBOL_REF:
-          output_addr_const (file, XEXP (x, 1));
-          fprintf (file, "%s", reg_names[REGNO (XEXP (x, 0))]);
-          break;
-        case CONST:
-          {
-            rtx plus = XEXP (XEXP (x, 1), 0);
-            if (GET_CODE (XEXP (plus, 0)) == SYMBOL_REF 
-                && CONST_INT_P (XEXP (plus, 1)))
-              {
-                output_addr_const(file, XEXP (plus, 0));
-                fprintf (file,"%s,(%ld)",
-                         reg_names[REGNO (XEXP (x, 0))],
-                         INTVAL (XEXP (plus, 1)));
-              }
-            else
-              abort();
-          }
-          break;
-        default:
-          abort();
-        }
-      break;
+  // We allow returns of up to 4 words in registers.
+  const HOST_WIDE_INT size = int_size_in_bytes (type);
+  return (size == -1 || size > 4 * UNITS_PER_WORD);
+}
 
-    default:
-      output_addr_const (file, x);
-      break;
+static const HOST_WIDE_INT max_regs_for_args = 4;
+static const int ret_value_reg = BREW_R4;
+static const int first_arg_value_reg = BREW_R4;
+
+// Returns the size of the argument, in number of registers used,
+// if it is to be passed in registres. Returns 0, if arg should be
+// passed on the stack.
+static int
+arg_size_in_register(const function_arg_info &arg, HOST_WIDE_INT reg_args_so_far)
+{
+  // Per documentation it's best not to pass unnamed parameters
+  // in registers.
+  if (!arg.named)
+    return 0;
+
+  // Don't attempt to pass structs and the like through registers
+  if (arg.aggregate_type_p())
+    return 0;
+
+  // Otherwise allow arg to be in registers, if we have enough left.
+  HOST_WIDE_INT arg_size = arg.promoted_size_in_bytes();
+  if (arg_size <= 0)
+    return 0;
+  HOST_WIDE_INT regs_needed = (arg_size + 3) / 4; // Round up arg-size to the next register size
+  if (regs_needed > max_regs_for_args - reg_args_so_far)
+    return 0;
+  return regs_needed;
+}
+
+// The following two functions work in tandem:
+//   brew_function_arg decides in what form the argument should be passed.
+//     It returns either a REG rtx specifying the register to be used or
+//     NULL_RTX if the arg to be passed on the stack.
+//     In helping with deciding *which* register to chose, an argument
+//     cum_v.p (retrieved using get_cumulative_args) is used. This is
+//     defined as a simply 'unsigned int' to count the number of args
+//     that have already been passed in registers.
+//   brew_function_arg_advance is used to update cum_v.p after the 
+//     decision in the first function is made. It must therefore come
+//     to the same conclusion in terms of using a register or stack
+//     and increment cum_v.p as needed.
+
+// for TARGET_FUNCTION_ARG
+// Return the next register to be used to hold a function argument or
+// NULL_RTX if there's no more space.
+static rtx
+brew_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
+{
+  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
+
+  if (arg_size_in_register(arg, *cum) > 0)
+    return gen_rtx_REG (arg.mode, first_arg_value_reg + *cum);
+  else 
+    return NULL_RTX;
+}
+
+#define BREW_FUNCTION_ARG_SIZE(MODE, TYPE)        \
+  ((MODE) != BLKmode ? GET_MODE_SIZE (MODE)        \
+   : (unsigned) int_size_in_bytes (TYPE))
+
+// for TARGET_FUNCTION_ARG_ADVANCE
+static void
+brew_function_arg_advance (cumulative_args_t cum_v, const function_arg_info &arg)
+{
+  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
+
+  *cum += arg_size_in_register(arg, *cum);
+}
+
+
+// for TARGET_PASS_BY_REFERENCE
+// Return non-zero if the function argument described by ARG is to be passed by reference.
+static bool
+brew_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
+{
+  if (arg.aggregate_type_p())
+    return true;
+  HOST_WIDE_INT size = arg.type_size_in_bytes();
+  return size > 16 || size <= 0;
+}
+
+// for TARGET_ARG_PARTIAL_BYTES
+// Some function arguments will only partially fit in the registers
+// that hold arguments. Given a new arg, return the number of bytes
+// that fit in argument passing registers.
+static int
+brew_arg_partial_bytes (cumulative_args_t cum_v, const function_arg_info &arg)
+{
+  // For now, we're simply choosing an all-or-nothing approach:
+  //   we either completely put the argument in registers or completely
+  //   on the stack.
+  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
+  int bytes_left, size;
+
+  HOST_WIDE_INT regs_needed = arg_size_in_register(arg, *cum);
+  if (regs_needed == 0)
+    // It doesn't seem to be the case that we need to consider the pointer for
+    // forced pass-by-ref arguments. Most targets seem to not handle this case.
+    //if (brew_pass_by_reference(cum_v, arg) && (*cum < max_regs_for_args))
+    //  {
+    //    gcc_assert(false);
+    //    return 4;
+    //  }
+  return arg.promoted_size_in_bytes();
+}
+
+// Helper function for `brew_legitimate_address_p'
+static bool
+brew_reg_ok_for_base_p(const_rtx reg, bool strict_p)
+{
+  int regno = REGNO(reg);
+
+  if (strict_p)
+    return
+      HARD_REGNO_OK_FOR_BASE_P(regno) ||
+      HARD_REGNO_OK_FOR_BASE_P(reg_renumber[regno]);
+  else    
+    return
+      !HARD_REGISTER_NUM_P(regno) ||
+      HARD_REGNO_OK_FOR_BASE_P(regno);
+}
+
+// for TARGET_LEGITIMATE_ADDRESS_P
+static bool
+brew_legitimate_address_p(
+  machine_mode mode ATTRIBUTE_UNUSED,
+  rtx x,
+  bool strict_p,
+  addr_space_t as
+) {
+  gcc_assert(ADDR_SPACE_GENERIC_P(as));
+
+  // Accept <reg>+<offset> pattern
+  if (
+    GET_CODE(x) == PLUS &&
+    REG_P(XEXP(x, 0)) &&
+    brew_reg_ok_for_base_p(XEXP(x, 0), strict_p) &&
+    CONST_INT_P(XEXP(x, 1))
+  )
+    return true;
+  // Accept a <reg> pattern
+  if (REG_P(x) && brew_reg_ok_for_base_p(x, strict_p))
+    return true;
+  // Accept an <offset> pattern
+  if (
+    GET_CODE(x) == SYMBOL_REF ||
+    GET_CODE(x) == LABEL_REF ||
+    GET_CODE(x) == CONST
+  )
+    return true;
+  return false;
+}
+
+// for TARGET_SETUP_INCOMING_VARARGS
+static void
+brew_setup_incoming_varargs(
+  cumulative_args_t cum_v,
+  const function_arg_info &,
+  int *pretend_size,
+  int no_rtl
+) {
+  CUMULATIVE_ARGS *cum = get_cumulative_args(cum_v);
+  int regs = max_regs_for_args - *cum;
+  
+  gcc_assert(regs >= 0);
+
+  *pretend_size = GET_MODE_SIZE(SImode) * regs;
+  
+  if (no_rtl)
+    return;
+  
+  for (int regno = *cum; regno < max_regs_for_args; regno++)
+    {
+      emit_move_insn(
+        gen_rtx_MEM(SImode,
+          gen_rtx_PLUS(
+            Pmode,
+            gen_rtx_REG(SImode, ARG_POINTER_REGNUM),
+            GEN_INT(UNITS_PER_WORD * (1 + regno))
+          )
+        ),
+        gen_rtx_REG(SImode, regno)
+      );
     }
 }
 
-/* The PRINT_OPERAND worker.  */
+// for TARGET_FUNCTION_VALUE
+// Define how to find the value returned by a function.
+static rtx
+brew_function_value(
+  const_tree valtype,
+  const_tree fntype_or_decl ATTRIBUTE_UNUSED,
+  bool outgoing ATTRIBUTE_UNUSED
+) {
+  // We always return values in register $r4 for brew
+  return gen_rtx_REG(TYPE_MODE(valtype), ret_value_reg);
+}
 
+// for TARGET_LIBCALL_VALUE
+// Define how to find the value returned by a library function.
+static rtx
+brew_libcall_value(
+  machine_mode mode,
+  const_rtx fun ATTRIBUTE_UNUSED
+) {
+  // We always return values in register $r4 for brew.
+  return gen_rtx_REG(mode, ret_value_reg);
+}
+
+// for TARGET_FUNCTION_VALUE_REGNO_P
+// Return true if regno is the number of a hard register in which the
+// values of called function may come back.
+static bool
+brew_function_value_regno_p(const unsigned int regno)
+{
+  // We always return values in register $r4 for brew.
+  return (regno == ret_value_reg);
+}
+
+// for TARGET_OPTION_OVERRIDE worker.
+static void
+brew_option_override (void)
+{
+  // Set the per-function-data initializer.
+  init_machine_status = brew_init_machine_status;
+}
+
+// If we can't create asm, we need to abort.
+// NOTE: the whole of GCC needs to deal with inline ASM as well,
+// where it's not an internal compiler error when we encounter
+// invalid asm. This function however is never called under those
+// circumstances.
+static void
+brew_operand_lossage(const char *msgid, rtx op)
+{
+  debug_rtx(op);
+  output_operand_lossage("%s", msgid);
+}
+
+// for TARGET_PRINT_OPERAND
 static void
 brew_print_operand (FILE *file, rtx x, int code)
 {
   rtx operand = x;
 
-  /* New code entries should just be added to the switch below.  If
-     handling is finished, just return.  If handling was just a
-     modification of the operand, the modified operand should be put in
-     "operand", and then do a break to let default handling
-     (zero-modifier) output the operand.  */
+  // New code entries should just be added to the switch below.  If
+  // handling is finished, just return.  If handling was just a
+  // modification of the operand, the modified operand should be put in
+  // "operand", and then do a break to let default handling
+  // (zero-modifier) output the operand. 
 
-  /* Print an operand as without a modifier letter.  */
   switch (GET_CODE (operand))
     {
     case REG:
@@ -443,8 +756,8 @@ brew_print_operand (FILE *file, rtx x, int code)
         case 's':
         case 'f':
         case 0:
-          /* No need to handle all strange variants, let output_addr_const
-            do it for us.  */
+          // No need to handle all strange variants
+          // let output_addr_const do it for us.
           if (CONSTANT_P (operand))
             {
               output_addr_const (file, operand);
@@ -459,326 +772,177 @@ brew_print_operand (FILE *file, rtx x, int code)
     }
 }
 
-/* Per-function machine data.  */
-struct GTY(()) machine_function
- {
-   /* Number of bytes saved on the stack for callee saved registers.  */
-   int callee_saved_reg_size;
-
-   /* Number of bytes saved on the stack for local variables.  */
-   int local_vars_size;
-
-   /* The sum of 2 sizes: locals vars and padding byte for saving the
-    * registers.  Used in expand_prologue () and expand_epilogue().  */
-   int size_for_adjusting_sp;
- };
-
-/* Zero initialization is OK for all current fields.  */
-
-static struct machine_function *
-brew_init_machine_status (void)
-{
-  return ggc_cleared_alloc<machine_function> ();
-}
-
-
-/* The TARGET_OPTION_OVERRIDE worker.  */
+// for PRINT_OPERAND_ADDRESS
+// FIXME: I don't think this is always correct. We should run some tests to see...
 static void
-brew_option_override (void)
+brew_print_operand_address(FILE *file, machine_mode, rtx x)
 {
-  /* Set the per-function-data initializer.  */
-  init_machine_status = brew_init_machine_status;
-
-#ifdef TARGET_BREWBOX  
-  target_flags |= MASK_HAS_MULX;
-#endif
-}
-
-// Determines if we wanted to save/restore the specified register
-// in function prologue/epilog
-static bool
-reg_needs_save_restore(int regno)
-{
-  return
-    (df_regs_ever_live_p(regno) && !call_used_or_fixed_reg_p (regno)) ||
-    (regno == BREW_FP);
-}
-
-/* Compute the size of the local area and the size to be adjusted by the
- * prologue and epilogue.  */
-
-static void
-brew_compute_frame (void)
-{
-  /* For aligning the local variables.  */
-  int stack_alignment = STACK_BOUNDARY / BITS_PER_UNIT;
-  int padding_locals;
-  int regno;
-
-  /* Padding needed for each element of the frame.  */
-  cfun->machine->local_vars_size = get_frame_size ();
-
-  /* Align to the stack alignment.  */
-  padding_locals = cfun->machine->local_vars_size % stack_alignment;
-  if (padding_locals)
-    padding_locals = stack_alignment - padding_locals;
-
-  cfun->machine->local_vars_size += padding_locals;
-
-  cfun->machine->callee_saved_reg_size = 0;
-
-  /* Save callee-saved registers.  */
-  for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-    if (reg_needs_save_restore(regno))
-      cfun->machine->callee_saved_reg_size += 4;
-
-  cfun->machine->size_for_adjusting_sp = 
-    crtl->args.pretend_args_size
-    + cfun->machine->local_vars_size 
-    + (ACCUMULATE_OUTGOING_ARGS
-       ? (HOST_WIDE_INT) crtl->outgoing_args_size : 0);
-}
-
-// NOTE: do_link in bfin.c is a very good example of how to generate push/pop patterns.
-//       here we use the same example to generate multiple stores and a final SP adjustment.
-
-// This function expands the instruction sequence for a function prologue.
-void
-brew_expand_prologue (void)
-{
-  int regno;
-  rtx insn;
-
-  brew_compute_frame ();
-
-  if (flag_stack_usage_info)
-    current_function_static_stack_size = cfun->machine->size_for_adjusting_sp;
-
-  int save_cnt = 0;
-  /* Save callee-saved registers.  */
-  // For each register we save, we'll have to decrement SP by 4 and of course
-  // make sure that further references are offsetted by that much.
-  for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+  switch (GET_CODE(x))
     {
-      if (reg_needs_save_restore(regno))
-        {
-          insn = emit_insn(gen_movsi(
-            gen_rtx_MEM(Pmode,
-              plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt, false) // Not an in-place addition
-            ),
-            gen_rtx_REG(Pmode, regno)
-          ));
-          RTX_FRAME_RELATED_P (insn) = 1;
-          ++save_cnt;
-        }
-    }
-  gcc_assert(save_cnt*4 == cfun->machine->callee_saved_reg_size);
-  /* set up FP */
-  insn = emit_insn(gen_movsi(
-    hard_frame_pointer_rtx,
-    stack_pointer_rtx
-  ));
-  RTX_FRAME_RELATED_P (insn) = 1;
-  /* adjust SP */
-  int sp_adjust = cfun->machine->size_for_adjusting_sp + cfun->machine->callee_saved_reg_size;
-  if (sp_adjust > 0)
-    {
-      insn = emit_insn(
-        gen_subsi3(
-          stack_pointer_rtx, 
-          stack_pointer_rtx, 
-          GEN_INT(sp_adjust)
-        )
-      );
-      RTX_FRAME_RELATED_P (insn) = 1;
-    }
-}
-
-void
-brew_expand_epilogue (void)
-{
-  int regno;
-
-  // We have to 'pop' the return address from the stack as well so, adjust SP by 4 extra bytes
-  int save_cnt = cfun->machine->callee_saved_reg_size / 4 + 1;
-  int sp_adjust = cfun->machine->size_for_adjusting_sp + save_cnt * 4;
-  if (sp_adjust > 0)
-    {
-      /* Restore SP */
-      emit_insn(
-        gen_addsi3(
-          stack_pointer_rtx, 
-          stack_pointer_rtx, 
-          GEN_INT(sp_adjust)
-        )
-      );
-      /* Restore registers */
-      for (regno = FIRST_PSEUDO_REGISTER; regno-- > 0; )
-        {
-          if (reg_needs_save_restore(regno))
-            {
-              --save_cnt;
-              emit_insn(gen_movsi(
-                gen_rtx_REG(Pmode, regno),
-                gen_rtx_MEM(Pmode,
-                  // Again: because of the return address also being on the stack, 
-                  // we're offsetting everything by 4 extra bytes
-                  plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt -4, false) // Not an in-place addition
-                )
-              ));
-            }
-        }
-    }
-  // Return: we already adjusted SP, so all we have to do is to get PC from MEM[SP]
-  emit_jump_insn (gen_returner ());
-}
-
-/* Implements the macro INITIAL_ELIMINATION_OFFSET, return the OFFSET.  */
-/* That is: used to figure out the offset between $?fp, $?ap and $fp */
-int
-brew_initial_elimination_offset (int from, int to)
-{
-  int ret;
-  
-  if ((from) == FRAME_POINTER_REGNUM && (to) == HARD_FRAME_POINTER_REGNUM)
-    {
-      /* Compute this since we need to use cfun->machine->local_vars_size.  */
-      brew_compute_frame ();
-      ret = -cfun->machine->callee_saved_reg_size;
-    }
-  else if ((from) == ARG_POINTER_REGNUM && (to) == HARD_FRAME_POINTER_REGNUM)
-    ret = 0x00;
-  else
-    abort ();
-
-  return ret;
-}
-
-/* Worker function for TARGET_SETUP_INCOMING_VARARGS.  */
-
-static void
-brew_setup_incoming_varargs (cumulative_args_t cum_v,
-                              const function_arg_info &,
-                              int *pretend_size, int no_rtl)
-{
-  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-  int regno;
-  int regs = 8 - *cum;
-  
-  *pretend_size = regs < 0 ? 0 : GET_MODE_SIZE (SImode) * regs;
-  
-  if (no_rtl)
-    return;
-  
-  for (regno = *cum; regno < 8; regno++)
-    {
-      rtx reg = gen_rtx_REG (SImode, regno);
-      rtx slot = gen_rtx_PLUS (Pmode,
-                               gen_rtx_REG (SImode, ARG_POINTER_REGNUM),
-                               GEN_INT (UNITS_PER_WORD * (3 + (regno-2))));
+    case REG:
+      fprintf(file, "%s", reg_names[REGNO (x)]);
+      break;
       
-      emit_move_insn (gen_rtx_MEM (SImode, slot), reg);
+    case PLUS:
+      switch (GET_CODE(XEXP(x, 1)))
+        {
+        case CONST_INT:
+          fprintf(file, "%s,%ld", reg_names[REGNO(XEXP(x, 0))], INTVAL(XEXP(x, 1)));
+          break;
+        case SYMBOL_REF:
+          output_addr_const(file, XEXP(x, 1));
+          fprintf(file, "%s", reg_names[REGNO(XEXP (x, 0))]);
+          break;
+        case CONST:
+          {
+            rtx plus = XEXP(XEXP(x, 1), 0);
+            if (
+              GET_CODE(XEXP(plus, 0)) == SYMBOL_REF &&
+              CONST_INT_P(XEXP(plus, 1))
+            )
+              {
+                output_addr_const(file, XEXP (plus, 0));
+                fprintf(file,"%s,%ld", reg_names[REGNO(XEXP(x, 0))], INTVAL(XEXP(plus, 1)));
+              }
+            else
+              abort();
+          }
+          break;
+        default:
+          abort();
+        }
+      break;
+
+    default:
+      output_addr_const (file, x);
+      break;
     }
 }
 
 
-/* Return the fixed registers used for condition codes.  */
-/*
-static bool
-brew_fixed_condition_code_regs (unsigned int *p1, unsigned int *p2)
-{
-  gc_assert(false);
-  return false;
-}
-*/
 
-static bool
-arg_can_be_in_register(const function_arg_info &arg)
-{
-  if (!arg.named)
-    return false;
 
-  if (arg.aggregate_type_p())
-    return false;
 
-  HOST_WIDE_INT arg_size = arg.promoted_size_in_bytes();
-  return arg_size <= 4 && arg_size > 0;
-}
 
-// The following two functions work in tandem:
-//   brew_function_arg decides in what form the argument should be passed.
-//     It returns either a REG rtx specifying the register to be used or
-//     NULL_RTX if the arg to be passed on the stack.
-//     In helping with deciding *which* register to chose, an argument
-//     cum_v.p (retrieved using get_cumulative_args) is used. This is
-//     defined as a simply 'unsigned int' to count the number of args
-//     that have already been passed in registers.
-//   brew_function_arg_advance is used to update cum_v.p after the 
-//     decision in the first function is made. It must therefore come
-//     to the same conclusion in terms of using a register or stack
-//     and increment cum_v.p as needed.
+// pass in everything smaller then an int as int for function calls.
+#undef  TARGET_PROMOTE_PROTOTYPES
+#define TARGET_PROMOTE_PROTOTYPES                hook_bool_const_tree_true
+#undef  TARGET_RETURN_IN_MEMORY
+#define TARGET_RETURN_IN_MEMORY                  brew_return_in_memory
+#undef  TARGET_MUST_PASS_IN_STACK
+#define TARGET_MUST_PASS_IN_STACK                must_pass_in_stack_var_size
+#undef  TARGET_PASS_BY_REFERENCE
+#define TARGET_PASS_BY_REFERENCE                 brew_pass_by_reference
+#undef  TARGET_ARG_PARTIAL_BYTES
+#define TARGET_ARG_PARTIAL_BYTES                 brew_arg_partial_bytes
+#undef  TARGET_FUNCTION_ARG
+#define TARGET_FUNCTION_ARG                      brew_function_arg
+#undef  TARGET_FUNCTION_ARG_ADVANCE
+#define TARGET_FUNCTION_ARG_ADVANCE              brew_function_arg_advance
+// We should use the LRA register allocator, even if Moxie used the old one.
+#undef  TARGET_LRA_P
+#define TARGET_LRA_P                             hook_bool_void_true
+#undef  TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P
+#define TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P   brew_legitimate_address_p
+#undef  TARGET_SETUP_INCOMING_VARARGS
+#define TARGET_SETUP_INCOMING_VARARGS            brew_setup_incoming_varargs
+#undef  TARGET_FUNCTION_VALUE
+#define TARGET_FUNCTION_VALUE                    brew_function_value
+#undef  TARGET_LIBCALL_VALUE
+#define TARGET_LIBCALL_VALUE                     brew_libcall_value
+#undef  TARGET_FUNCTION_VALUE_REGNO_P
+#define TARGET_FUNCTION_VALUE_REGNO_P            brew_function_value_regno_p
+// FIXME:
+// Moxie says the FP is always required. Right now our prolog/epilogue code assumes that too,
+// but that's incorrect: instead we should eliminate FP as much as possible and set this to
+// constant false. However, how do we *know* in the prolog/epilogue code if FP setup/restore
+// is actually needed?
+#undef  TARGET_FRAME_POINTER_REQUIRED
+#define TARGET_FRAME_POINTER_REQUIRED            hook_bool_void_true
+#undef  TARGET_OPTION_OVERRIDE
+#define TARGET_OPTION_OVERRIDE                   brew_option_override
+#undef  TARGET_PRINT_OPERAND
+#define TARGET_PRINT_OPERAND                     brew_print_operand
+#undef  TARGET_PRINT_OPERAND_ADDRESS
+#define TARGET_PRINT_OPERAND_ADDRESS             brew_print_operand_address
+#undef  TARGET_CONSTANT_ALIGNMENT
+#define TARGET_CONSTANT_ALIGNMENT                constant_alignment_word_strings
 
-// Return the next register to be used to hold a function argument or
-// NULL_RTX if there's no more space.
-static rtx
-brew_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
-{
-  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
+/////////////////////////////////////////////////////////////////////
+// Trampolines for Nested Functions
+/////////////////////////////////////////////////////////////////////
 
-  if (*cum < 4 && arg_can_be_in_register(arg))
-    return gen_rtx_REG (arg.mode, BREW_R4 + *cum);
-  else 
-    return NULL_RTX;
-}
 
-#define BREW_FUNCTION_ARG_SIZE(MODE, TYPE)        \
-  ((MODE) != BLKmode ? GET_MODE_SIZE (MODE)        \
-   : (unsigned) int_size_in_bytes (TYPE))
-
+// for TARGET_ASM_TRAMPOLINE_TEMPLATE.
+// Output assembler code for a block containing the constant parts
+// of a trampoline, leaving space for the variable parts.
+// Note that STATIC_CHAIN_REGNUM is $r14
 static void
-brew_function_arg_advance (cumulative_args_t cum_v, const function_arg_info &arg)
+brew_asm_trampoline_template(FILE *f)
 {
-  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-
-  if (*cum < 4 && arg_can_be_in_register(arg))
-    *cum += 1;
+  // Both instructions are 6 bytes, total is 12 bytes
+  fprintf(f, "\t%s <- mem[.Lstatic_chain]\n", reg_names[STATIC_CHAIN_REGNUM]);
+  fprintf(f, "\t$pc <- mem[.Lfunc_address]\n");
+  // 2 words of constant pool: 8 bytes
+  fprintf(f, ".Lstatic_chain:\n");
+  fprintf(f, "\t.long 0\n");
+  fprintf(f, ".Lfunc_address:\n");
+  fprintf(f, "\t.long 0\n");
 }
 
-/* Return non-zero if the function argument described by ARG is to be
-   passed by reference.  */
-
-static bool
-brew_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
+// for TARGET_TRAMPOLINE_INIT
+static void
+brew_trampoline_init(rtx m_tramp, tree fndecl, rtx chain_value)
 {
-  if (arg.aggregate_type_p())
-    return true;
-  HOST_WIDE_INT size = arg.type_size_in_bytes();
-  return size > 16 || size <= 0;
+  // Copy static trampoline template over to
+  // destination location 
+  emit_block_move(
+    m_tramp,
+    assemble_trampoline_template(),
+    GEN_INT(TRAMPOLINE_SIZE),
+    BLOCK_OP_NORMAL
+  );
+
+  // Generate two moves that fill-in the addresses in the trampoline
+  rtx mem;
+  int pool = 12;
+  mem = adjust_address(m_tramp, SImode, pool);
+  emit_move_insn(mem, chain_value);
+  mem = adjust_address(m_tramp, SImode, pool + 4);
+  rtx fnaddr = XEXP(DECL_RTL(fndecl), 0);
+  emit_move_insn (mem, fnaddr);
+
+  // Clear cache for the memory of the trampoline
+  //rtx a_tramp = XEXP(m_tramp, 0); // address of the trampolien
+  //maybe_emit_call_builtin___clear_cache(
+  //  a_tramp,
+  //  plus_constant(
+  //    Pmode,
+  //    a_tramp,
+  //    TRAMPOLINE_SIZE
+  //  )
+  //);
 }
 
-/* Some function arguments will only partially fit in the registers
-   that hold arguments. Given a new arg, return the number of bytes
-   that fit in argument passing registers. */
-// For now, we're simply choosing an all-or-nothing approach:
-//   we either completely put the argument in registers or completely
-//   on the stack.
-static int
-brew_arg_partial_bytes (cumulative_args_t cum_v, const function_arg_info &arg)
-{
-  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-  int bytes_left, size;
 
-  if (*cum >= 4)
-    return 0;
 
-  if (brew_pass_by_reference (cum_v, arg))
-    return 4;
-  if (!arg_can_be_in_register(arg))
-    return 0;
-  return arg.promoted_size_in_bytes();
-}
+#undef	TARGET_ASM_TRAMPOLINE_TEMPLATE
+#define TARGET_ASM_TRAMPOLINE_TEMPLATE              brew_asm_trampoline_template
+#undef	TARGET_TRAMPOLINE_INIT
+#define TARGET_TRAMPOLINE_INIT                      brew_trampoline_init
+// The low bit is ignored when loading $pc ($pc doesn't have bit-0 implemented) so is safe to use.
+#undef TARGET_CUSTOM_FUNCTION_DESCRIPTORS
+#define TARGET_CUSTOM_FUNCTION_DESCRIPTORS          1
 
-/* Worker function for TARGET_STATIC_CHAIN.  */
+
+
+/***** OLD MOXIE TRAMPOLINE HANDLING
+#undef  TARGET_STATIC_CHAIN
+#define TARGET_STATIC_CHAIN brew_static_chain
+#undef  TARGET_ASM_TRAMPOLINE_TEMPLATE
+#define TARGET_ASM_TRAMPOLINE_TEMPLATE brew_asm_trampoline_template
+#undef  TARGET_TRAMPOLINE_INIT
+#define TARGET_TRAMPOLINE_INIT brew_trampoline_init
 
 static rtx
 brew_static_chain (const_tree ARG_UNUSED (fndecl_or_type), bool incoming_p)
@@ -796,8 +960,6 @@ brew_static_chain (const_tree ARG_UNUSED (fndecl_or_type), bool incoming_p)
   return mem;
 }
 
-/* Worker function for TARGET_ASM_TRAMPOLINE_TEMPLATE.  */
-
 static void
 brew_asm_trampoline_template (FILE *f)
 {
@@ -807,8 +969,6 @@ brew_asm_trampoline_template (FILE *f)
   fprintf (f, "\tpop   $sp, $r0\n");
   fprintf (f, "\tjmpa  0x0\n");
 }
-
-/* Worker function for TARGET_TRAMPOLINE_INIT.  */
 
 static void
 brew_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
@@ -823,125 +983,7 @@ brew_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
   mem = adjust_address (m_tramp, SImode, 16);
   emit_move_insn (mem, fnaddr);
 }
-
-/* Return true for reg+memory references */
-bool
-brew_offset_address_p (rtx x)
-{
-  x = XEXP (x, 0);
-
-  if (GET_CODE (x) == PLUS)
-    {
-      x = XEXP (x, 1);
-      if (GET_CODE (x) == CONST_INT)
-        {
-          return true;
-        }
-    }
-  return false;
-}
-
-/* Helper function for `brew_legitimate_address_p'.  */
-
-static bool
-brew_reg_ok_for_base_p (const_rtx reg, bool strict_p)
-{
-  int regno = REGNO (reg);
-
-  if (strict_p)
-    return HARD_REGNO_OK_FOR_BASE_P (regno)
-           || HARD_REGNO_OK_FOR_BASE_P (reg_renumber[regno]);
-  else    
-    return !HARD_REGISTER_NUM_P (regno)
-           || HARD_REGNO_OK_FOR_BASE_P (regno);
-}
-
-/* Worker function for TARGET_LEGITIMATE_ADDRESS_P.  */
-
-static bool
-brew_legitimate_address_p (machine_mode mode ATTRIBUTE_UNUSED,
-                            rtx x, bool strict_p,
-                            addr_space_t as)
-{
-  gcc_assert (ADDR_SPACE_GENERIC_P (as));
-
-  if (GET_CODE(x) == PLUS
-      && REG_P (XEXP (x, 0))
-      && brew_reg_ok_for_base_p (XEXP (x, 0), strict_p)
-      && CONST_INT_P (XEXP (x, 1))
-      && IN_RANGE (INTVAL (XEXP (x, 1)), -32768, 32767))
-    return true;
-  if (REG_P (x) && brew_reg_ok_for_base_p (x, strict_p))
-    return true;
-  if (GET_CODE (x) == SYMBOL_REF
-      || GET_CODE (x) == LABEL_REF
-      || GET_CODE (x) == CONST)
-    return true;
-  return false;
-}
-
-/* The Global `targetm' Variable.  */
-
-/* Initialize the GCC target structure.  */
-
-#undef  TARGET_PROMOTE_PROTOTYPES
-#define TARGET_PROMOTE_PROTOTYPES        hook_bool_const_tree_true
-
-#undef  TARGET_RETURN_IN_MEMORY
-#define TARGET_RETURN_IN_MEMORY                brew_return_in_memory
-#undef  TARGET_MUST_PASS_IN_STACK
-#define TARGET_MUST_PASS_IN_STACK        must_pass_in_stack_var_size
-#undef  TARGET_PASS_BY_REFERENCE
-#define TARGET_PASS_BY_REFERENCE        brew_pass_by_reference
-#undef  TARGET_ARG_PARTIAL_BYTES
-#define TARGET_ARG_PARTIAL_BYTES        brew_arg_partial_bytes
-#undef  TARGET_FUNCTION_ARG
-#define TARGET_FUNCTION_ARG                brew_function_arg
-#undef  TARGET_FUNCTION_ARG_ADVANCE
-#define TARGET_FUNCTION_ARG_ADVANCE        brew_function_arg_advance
-
-#undef TARGET_LRA_P
-#define TARGET_LRA_P hook_bool_void_false
-
-#undef  TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P
-#define TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P        brew_legitimate_address_p
-
-#undef  TARGET_SETUP_INCOMING_VARARGS
-#define TARGET_SETUP_INCOMING_VARARGS         brew_setup_incoming_varargs
-
-//#undef        TARGET_FIXED_CONDITION_CODE_REGS
-//#define        TARGET_FIXED_CONDITION_CODE_REGS brew_fixed_condition_code_regs
-
-/* Define this to return an RTX representing the place where a
-   function returns or receives a value of data type RET_TYPE, a tree
-   node representing a data type.  */
-#undef TARGET_FUNCTION_VALUE
-#define TARGET_FUNCTION_VALUE brew_function_value
-#undef TARGET_LIBCALL_VALUE
-#define TARGET_LIBCALL_VALUE brew_libcall_value
-#undef TARGET_FUNCTION_VALUE_REGNO_P
-#define TARGET_FUNCTION_VALUE_REGNO_P brew_function_value_regno_p
-
-#undef TARGET_FRAME_POINTER_REQUIRED
-#define TARGET_FRAME_POINTER_REQUIRED hook_bool_void_true
-
-#undef TARGET_STATIC_CHAIN
-#define TARGET_STATIC_CHAIN brew_static_chain
-#undef TARGET_ASM_TRAMPOLINE_TEMPLATE
-#define TARGET_ASM_TRAMPOLINE_TEMPLATE brew_asm_trampoline_template
-#undef TARGET_TRAMPOLINE_INIT
-#define TARGET_TRAMPOLINE_INIT brew_trampoline_init
-
-#undef TARGET_OPTION_OVERRIDE
-#define TARGET_OPTION_OVERRIDE brew_option_override
-
-#undef  TARGET_PRINT_OPERAND
-#define TARGET_PRINT_OPERAND brew_print_operand
-#undef  TARGET_PRINT_OPERAND_ADDRESS
-#define TARGET_PRINT_OPERAND_ADDRESS brew_print_operand_address
-
-#undef  TARGET_CONSTANT_ALIGNMENT
-#define TARGET_CONSTANT_ALIGNMENT constant_alignment_word_strings
+************/
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

@@ -304,8 +304,6 @@
 ;; Move instructions
 ;; -------------------------------------------------------------------------
 
-;; SImode
-
 ;; The define_expand pattern transforms the move into something
 ;; that a single ASM instruction can handle. That is, a register
 ;; to register move, an immediate load or a memory load/store
@@ -347,8 +345,8 @@
 
 (define_insn "*movsi"
   [(set
-    (match_operand:SI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r,X")
-    (match_operand:SI 1 "brew_general_mov_src_operand" "O,R,i,R,R,R,W,A,B,X")
+    (match_operand:SI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
+    (match_operand:SI 1 "brew_general_mov_src_operand" "O,R,i,R,R,R,W,A,B")
   )]
   ""
   "@
@@ -360,44 +358,125 @@
    mem[%0] <- %1
    %0 <- mem[%1]
    %0 <- mem[%1]
-   %0 <- mem[%1]
-   === %0 === <- === %1 ==="
+   %0 <- mem[%1]"
+  [(set_attr "length" "2,2,6, 6,6,6, 6,6,6")]
 )
 
-(define_insn "*movsi"
-  [(set (match_operand:SI 0 "nonimmediate_operand" "")
-        (match_operand:SI 1 "general_operand" ""))]
+
+
+(define_expand "movhi"
+  [(set
+    (match_operand:HI 0 "general_operand" "")
+    (match_operand:HI 1 "general_operand" "")
+  )]
   ""
-  "=== %0 === <- === %1 ==="
-)
-;;  [(set_attr "length"        "2,2,6,6,6,6,6,6,6")])
+  "
+{
+  if (!(reload_in_progress || reload_completed))
+    {
+      if(MEM_P(operands[0]))
+        {
+          // For stores, force the second arg. into a register
+          operands[1] = force_reg(HImode, operands[1]);
+          // We should make sure that the address 
+          // generated for the store is based on a <reg>+<offset> pattern
+          if(MEM_P(XEXP(operands[0], 0)))
+            operands[0] = gen_rtx_MEM(HImode, force_reg(HImode, XEXP(operands[0], 0)));
+        }
+      else if(MEM_P(operands[1]))
+        {
+          // For loads, make sure the destination is a register
+          gcc_assert(REG_P(operands[0]));
+          // We should make sure that the address 
+          // generated for the load is based on a <reg>+<offset> pattern
+          if(MEM_P(XEXP (operands[1], 0)))
+            operands[1] = gen_rtx_MEM (HImode, force_reg(HImode, XEXP(operands[1], 0)));
+        }
+    }
+}")
 
-;;(define_insn "*movsi"
-;;  [(set (pc)
-;;        (match_operand:SI 0 "brew_general_mov_src_operand" "r,i,W,A,B"))]
-;;  "register_operand (operands[0], SImode)"
-;;  "@
-;;   $pc <- %0 ; PC MOVSI
-;;   $pc <- %0 ; PC MOVSI
-;;   $pc <- mem[%0] ; PC MOVSI
-;;   $pc <- mem[%0] ; PC MOVSI
-;;   $pc <- mem[%0] ; PC MOVSI"
-;;  [(set_attr "length"        "2,2,6,6,6")])
-;;
-;;(define_insn "*movsi"
-;;  [(set (match_operand:SI 0 "nonimmediate_operand"        "=r,W,A,B")
-;;        (pc))]
-;;  "register_operand (operands[0], SImode)"
-;;  "@
-;;   %0 <- $pc ; PC MOVSI2
-;;   mem[%0] <- $pc ; PC MOVSI2
-;;   mem[%0] <- $pc ; PC MOVSI2
-;;   mem[%0] <- $pc ; PC MOVSI2"
-;;  [(set_attr "length"        "2,6,6,6")])
+(define_insn "*movhi"
+  [(set
+    (match_operand:HI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
+    (match_operand:HI 1 "brew_general_mov_src_operand" "O,R,i,R,R,R,W,A,B")
+  )]
+  ""
+  "@
+   %0 <- %0 - %0
+   %0 <- %1
+   %0 <- (%1)
+   mem16[%0] <- %1
+   mem16[%0] <- %1
+   mem16[%0] <- %1
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]"
+  [(set_attr "length" "2,2,6, 6,6,6, 6,6,6")]
+)
+
+
+
+(define_expand "movqi"
+  [(set
+    (match_operand:QI 0 "general_operand" "")
+    (match_operand:QI 1 "general_operand" "")
+  )]
+  ""
+  "
+{
+  if (!(reload_in_progress || reload_completed))
+    {
+      if(MEM_P(operands[0]))
+        {
+          // For stores, force the second arg. into a register
+          operands[1] = force_reg(QImode, operands[1]);
+          // We should make sure that the address 
+          // generated for the store is based on a <reg>+<offset> pattern
+          if(MEM_P(XEXP(operands[0], 0)))
+            operands[0] = gen_rtx_MEM(QImode, force_reg(QImode, XEXP(operands[0], 0)));
+        }
+      else if(MEM_P(operands[1]))
+        {
+          // For loads, make sure the destination is a register
+          gcc_assert(REG_P(operands[0]));
+          // We should make sure that the address 
+          // generated for the load is based on a <reg>+<offset> pattern
+          if(MEM_P(XEXP (operands[1], 0)))
+            operands[1] = gen_rtx_MEM (QImode, force_reg(QImode, XEXP(operands[1], 0)));
+        }
+    }
+}")
+
+(define_insn "*movqi"
+  [(set
+    (match_operand:QI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
+    (match_operand:QI 1 "brew_general_mov_src_operand" "O,R,i,R,R,R,W,A,B")
+  )]
+  ""
+  "@
+   %0 <- %0 - %0
+   %0 <- %1
+   %0 <- (%1)
+   mem8[%0] <- %1
+   mem8[%0] <- %1
+   mem8[%0] <- %1
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]"
+  [(set_attr "length" "2,2,6, 6,6,6, 6,6,6")]
+)
+
+;; -------------------------------------------------------------------------
+;; Sign- and zero-extend
+;; -------------------------------------------------------------------------
 
 (define_insn "zero_extendhisi2"
-  [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
-        (zero_extend:SI (match_operand:HI 1 "nonimmediate_operand" "r,W,A,B")))]
+  [(set
+    (match_operand:SI 0 "register_operand"      "=r,r,r,r")
+    (zero_extend:SI
+      (match_operand:HI 1 "nonimmediate_operand" "r,W,A,B")
+    )
+  )]
   ""
   "@
    %0 <- %1 & 0xffff
@@ -407,8 +486,12 @@
   [(set_attr "length" "6,6,6,6")])
 
 (define_insn "zero_extendqisi2"
-  [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
-        (zero_extend:SI (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")))]
+  [(set
+    (match_operand:SI 0 "register_operand"      "=r,r,r,r")
+    (zero_extend:SI
+      (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")
+    )
+  )]
   ""
   "@
    %0 <- %1 & 0xff
@@ -418,8 +501,12 @@
   [(set_attr "length" "6,6,6,6")])
 
 (define_insn "extendhisi2"
-  [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
-        (sign_extend:SI (match_operand:HI 1 "nonimmediate_operand" "r,W,A,B")))]
+  [(set
+    (match_operand:SI 0 "register_operand"      "=r,r,r,r")
+    (sign_extend:SI
+      (match_operand:HI 1 "nonimmediate_operand" "r,W,A,B")
+    )
+  )]
   ""
   "@
    %s0 <- wsi %s1
@@ -429,8 +516,12 @@
   [(set_attr "length" "2,6,6,6")])
 
 (define_insn "extendqisi2"
-  [(set (match_operand:SI 0 "register_operand"                    "=r,r,r,r")
-        (sign_extend:SI (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")))]
+  [(set
+    (match_operand:SI 0 "register_operand"      "=r,r,r,r")
+    (sign_extend:SI
+      (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")
+    )
+  )]
   ""
   "@
    %s0 <- bsi %s1
@@ -438,62 +529,6 @@
    %s0 <- mem8[%1]
    %s0 <- mem8[%1]"
   [(set_attr "length" "2,6,6,6")])
-
-(define_expand "movqi"
-  [(set (match_operand:QI 0 "general_operand" "")
-        (match_operand:QI 1 "general_operand" ""))]
-  ""
-  "
-{
-  /* If this is a store, force the value into a register.  */
-  if (MEM_P (operands[0]))
-    operands[1] = force_reg (QImode, operands[1]);
-}")
-
-(define_insn "*movhi"
-  [(set (match_operand:HI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
-        (match_operand:HI 1 "brew_general_mov_src_operand" "O,r,i,r,r,r,W,A,B"))]
-  "(register_operand (operands[0], HImode)
-    || register_operand (operands[1], HImode))"
-  "@
-   %0 <- %0 - %0
-   %0 <- %1
-   %0 <- %1
-   mem16[%0] <- %1
-   mem16[%0] <- %1
-   mem16[%0] <- %1
-   %0 <- mem16[%1]
-   %0 <- mem16[%1]
-   %0 <- mem16[%1]"
-  [(set_attr "length"        "2,2,6,6,6,6,6,6,6")])
-
-(define_insn "*movqi"
-  [(set (match_operand:QI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
-        (match_operand:QI 1 "brew_general_mov_src_operand" "O,r,i,r,r,r,W,A,B"))]
-  "register_operand (operands[0], QImode)
-   || register_operand (operands[1], QImode)"
-  "@
-   %0 <- %0 - %0
-   %0 <- %1
-   %0 <- %1
-   mem8[%0] <- %1
-   mem8[%0] <- %1
-   mem8[%0] <- %1
-   %0 <- mem8[%1]
-   %0 <- mem8[%1]
-   %0 <- mem8[%1]"
-  [(set_attr "length"        "2,2,6,6,6,6,6,6,6")])
-
-(define_expand "movhi"
-  [(set (match_operand:HI 0 "general_operand" "")
-        (match_operand:HI 1 "general_operand" ""))]
-  ""
-  "
-{
-  /* If this is a store, force the value into a register.  */
-  if (MEM_P (operands[0]))
-    operands[1] = force_reg (HImode, operands[1]);
-}")
 
 ;; -------------------------------------------------------------------------
 ;; Conditional branch
@@ -509,7 +544,7 @@
       (match_operator 0 "comparison_operator"
         [
          (match_operand:SI 1 "register_operand" "r")
-         (match_operand:SI 2 "brew_comparison_operand" "r")
+         (match_operand:SI 2 "brew_comparison_operand" "ri")
         ]
       )
       (label_ref(match_operand 3 "" ""))
@@ -561,13 +596,16 @@
 ;;}
 ;;  [(set_attr "length" "6")]
 ;;)
-;;
-;;
+
+
 ;; -------------------------------------------------------------------------
 ;; Call and Jump instructions
 ;; -------------------------------------------------------------------------
 
-;;    (match_operand:QI 0 "memory_operand" "")
+;; The way these patterns work is that the 'define_expand' version creates
+;; all but the last instruction needed for a given call sequence.
+;; Then, the 'define_insn' version of the pattern will attach the last
+;; instruction (namely the actual jump to the call target).
 
 (define_expand "call"
   [(call
@@ -579,24 +617,6 @@
   brew_expand_call(Pmode, operands); 
 })
 
-(define_insn "set_pc"
-  [(set
-    (pc)
-    (mem:QI (match_operand:SI 0 "" ""))
-  )]
-  ""
-  "$pc <- %0 ; THIS IS WHERE A CALL WOULD GO FOR SET_PC (%0)"
-)
-
-;;(define_insn "*call"
-;;  [(call
-;;    (mem:QI (match_operand:SI 0 "nonmemory_operand" "i,r"))
-;;    (match_operand 1 "" "")
-;;  )]
-;;  ""
-;;  ";; THIS IS WHERE A CALL WOULD GO"
-;;)
-
 (define_insn "*call"
   [(call
     (mem:QI (match_operand:SI 0 "nonmemory_operand" "ir"))
@@ -604,51 +624,21 @@
   )
   ]
   ""
-  "$pc <- %0 ; THIS IS WHERE A CALL WOULD GO FOR CALL (%0)"
+  "$pc <- %0"
 )
 
 (define_expand "call_value"
-  [(set (match_operand 0 "" "")
-                (call (match_operand:QI 1 "memory_operand" "")
-                 (match_operand 2 "" "")))]
+  [(set
+    (match_operand 0 "" "")
+    (call
+      (match_operand:QI 1 "memory_operand" "")
+      (match_operand 2 "" "")
+    )
+  )]
   ""
 {
   brew_expand_call(Pmode, operands + 1); 
 })
-
-;;(define_insn "*call_value"
-;;  [(set
-;;    (match_operand 0 "register_operand" "=r")
-;;    (call
-;;      (mem:QI (match_operand:SI 1 "immediate_operand" "i"))
-;;      (match_operand 2 "" "")
-;;    )
-;;  )]
-;;  ""
-;;  ";; THIS IS WHERE A CALL_VALUE WOULD GO"
-;;)
-;;
-;;
-;;(define_insn "*call_value_indirect"
-;;  [(set
-;;    (match_operand 0 "register_operand" "=r")
-;;    (call
-;;      (mem:QI (match_operand:SI 1 "register_operand" "r"))
-;;      (match_operand 2 "" "")
-;;    )
-;;  )]
-;;  ""
-;;  ";; THIS IS WHERE A CALL_VALUE_INDIRECT WOULD GO"
-;;)
-
-(define_insn "*reg_move"
-  [(set
-    (match_operand:SI 0 "register_operand" "=r")
-    (match_operand:SI 1 "register_operand" "r")
-  )]
-  ""
-  "%0 <- %1 ; REG_MOVE"
-)
 
 (define_insn "*call_value"
   [(set
@@ -658,7 +648,8 @@
       (match_operand 2 "" "")))
   ]
   ""
-  "$pc <- %1 ; THIS IS WHERE A CALL WOULD GO FOR CALL_VALUE (return in %0) (addr in %1) (params in %2)"
+  "$pc <- %1"
+  [(set_attr "length"        "6")]
 )
 
 (define_insn "*call_value_indirect"
@@ -668,17 +659,19 @@
               (match_operand 2 "" "")))
   ]
   ""
-  "$pc <- %1 ; THIS IS WHERE A CALL WOULD GO FOR CALL_VALUE_INDIRECT (return in %0) (addr in %1) (params in %2)"
+  "$pc <- %1"
+  [(set_attr "length"        "2")]
 )
 
 (define_insn "indirect_jump"
   [(set (pc) (match_operand:SI 0 "nonimmediate_operand" "r"))]
   ""
-  "$pc <-%0")
+  "$pc <-%0"
+  [(set_attr "length"        "2")]
+)
 
 (define_insn "jump"
-  [(set (pc)
-        (label_ref (match_operand 0 "" "")))]
+  [(set (pc) (label_ref (match_operand 0 "" "")))]
   ""
   "$pc <- %l0"
   [(set_attr "length"        "6")]
@@ -694,7 +687,7 @@
   ""
   "
 {
-  brew_expand_prologue ();
+  brew_expand_prologue();
   DONE;
 }
 ")
@@ -704,17 +697,14 @@
   ""
   "
 {
-  brew_expand_epilogue ();
+  brew_expand_epilogue();
   DONE;
 }
 ")
 
-;; FIXME: this is not ideal: we have to increment $sp
-;;        before we can load $pc (well, d'uh), but that
-;;        means we either clobber $r3 or we leave the
-;;        stack in an unstable state. An interrupt in that
-;;        point might corrupt the return address.
-;;        So, maybe we do need an atomic RET instruction?
+;; This pattern is used by brew_expand_epilogue to generate the actual
+;; return statement. At this point, the stack pointer is already adjusted
+;; so all we need is the indirect jump.
 (define_insn "returner"
   [(return)]
   "reload_completed"

@@ -169,6 +169,10 @@ enum reg_class
                               1, 1, }     /* $?fp, $?ap             */
 
 
+// The chain register is used if a nested functions address is taken.
+// This is used by GCC trampoline code.
+#define STATIC_CHAIN_REGNUM BREW_R14 
+
 /* We can't copy to or from our CC register. */
 #define AVOID_CCMODE_COPIES 1
 
@@ -349,7 +353,7 @@ enum reg_class
 #define FUNCTION_PROFILER(FILE,LABELNO) (abort (), 0)
 
 /* Trampolines for Nested Functions.  */
-#define TRAMPOLINE_SIZE (2 + 6 + 4 + 2 + 6)
+#define TRAMPOLINE_SIZE (6 + 6 + 4 + 4)
 
 /* Alignment required for trampolines, in bits.  */
 #define TRAMPOLINE_ALIGNMENT 32
@@ -425,6 +429,8 @@ enum reg_class
 
 #define INDEX_REG_CLASS NO_REGS
 
+// FIXME: HARD_FRAME_POINTER_REGNUM is already a GENERAL_REGS, so the last
+//        condition is not needed.
 #define HARD_REGNO_OK_FOR_BASE_P(NUM) \
   ((unsigned) (NUM) < FIRST_PSEUDO_REGISTER \
    && (REGNO_REG_CLASS(NUM) == GENERAL_REGS \
