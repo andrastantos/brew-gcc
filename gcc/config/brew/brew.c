@@ -171,13 +171,21 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
 void brew_expand_call(machine_mode mode, rtx *operands)
 {
   gcc_assert (MEM_P(operands[0]));
-  // $r3 <- $pc + 16
   rtx temp_reg = gen_reg_rtx(mode);
+  // $r3 <- $pc
+  emit_insn(gen_move_insn(temp_reg, pc_rtx));
+  // $r3 <- $r3 + 16
   emit_insn(gen_addsi3(
     temp_reg,
-    gen_rtx_REG(mode, BREW_PC), // Can't use pc_rtx here: that's not a valid operand for the addsi3 pattern.
+    temp_reg,
     GEN_INT(16)
   ));
+  // $r3 <- $pc + 16
+  //emit_insn(gen_addsi3(
+  //  temp_reg,
+  //  pc_rtx, // gen_rtx_REG(mode, BREW_PC), // Can't use pc_rtx here: that's not a valid operand for the addsi3 pattern.
+  //  GEN_INT(16)
+  //));
   // $sp <- $sp - 4
   emit_insn(gen_subsi3(
     stack_pointer_rtx,
@@ -379,6 +387,47 @@ bool brew_mov_operand(machine_mode mode, rtx operand, bool is_dst)
   return ret_val;
 }
 
+bool brew_mov_memory_operand(machine_mode mode, rtx operand)
+{
+  bool ret_val = false;
+  do {
+    if (!MEM_P(operand))
+      {
+        ret_val = false;
+        break;
+      }
+    // Accept memory references by label, reg, or const
+    if (
+      GET_CODE(XEXP(operand, 0)) == LABEL_REF ||
+      GET_CODE(XEXP(operand, 0)) == REG ||
+      GET_CODE(XEXP(operand, 0)) == CONST_INT
+    )
+      {
+        ret_val = true;
+        break;
+      }
+    // Accept register-offset references too (even PC-relative)
+    if (
+      GET_CODE(XEXP(operand, 0)) == PLUS &&
+      (
+        GET_CODE(XEXP(XEXP(operand, 0), 0)) == REG ||
+        GET_CODE(XEXP(XEXP(operand, 0), 0)) == PC
+      ) && (
+        GET_CODE(XEXP(XEXP(operand, 0), 1)) == CONST_INT ||
+        GET_CODE(XEXP(XEXP(operand, 0), 1)) == LABEL_REF
+      )
+    )
+      {
+        ret_val = true;
+        break;
+      }
+    // Other memory references are not OK
+    ret_val = false;
+    break;
+  } while (false);
+  return ret_val;
+}
+
 
 ///////////////////////////////////////////////////////////////////////////
 //
@@ -486,6 +535,10 @@ arg_size_in_register(const function_arg_info &arg, HOST_WIDE_INT reg_args_so_far
   if (arg_size <= 0)
     return 0;
   HOST_WIDE_INT regs_needed = (arg_size + 3) / 4; // Round up arg-size to the next register size
+  // FIXME: force everything larger then 32 bits onto the stack
+  //        this is very conservative, but maybe it fixes some codegen issues?
+  if (regs_needed > 1)
+    return 0;
   if (regs_needed > max_regs_for_args - reg_args_so_far)
     return 0;
   return regs_needed;
@@ -840,8 +893,9 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 #undef  TARGET_FUNCTION_ARG_ADVANCE
 #define TARGET_FUNCTION_ARG_ADVANCE              brew_function_arg_advance
 // We should use the LRA register allocator, even if Moxie used the old one.
+// FIXME: we should work with both!, set this back to true!!! 
 #undef  TARGET_LRA_P
-#define TARGET_LRA_P                             hook_bool_void_true
+#define TARGET_LRA_P                             hook_bool_void_false
 #undef  TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P
 #define TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P   brew_legitimate_address_p
 #undef  TARGET_SETUP_INCOMING_VARARGS

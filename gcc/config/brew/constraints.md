@@ -50,7 +50,13 @@
   (ior
     (match_code "pc")
     (match_code "reg")
+    (match_code "subreg")
   )
+)
+
+(define_constraint "Q"
+  "PC register"
+  (match_code "pc")
 )
 
 (define_constraint "O"
