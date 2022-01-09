@@ -49,12 +49,48 @@
 ;; Plus and minus instructions
 ;; -------------------------------------------------------------------------
 
+;;(define_insn "addsi3"
+;;  [(set
+;;    (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
+;;    (plus:SI
+;;      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R,r")
+;;      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i,r")
+;;    )
+;;  )]
+;;  ""
+;;  "@
+;;  %0 <- %1
+;;  %0 <- %1 + 1
+;;  %0 <- %1 - 1
+;;  %0 <- %1 + %2
+;;  %0 <- %1 + (%2)
+;;  %0 <- %1 + %2")
+;;
+;;
+;;(define_insn "subsi3"
+;;  [(set
+;;    (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
+;;    (minus:SI
+;;      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R,r")
+;;      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i,r")
+;;    )
+;;  )]
+;;  ""
+;;  "@
+;;  %0 <- %1
+;;  %0 <- %1 - 1
+;;  %0 <- %1 + 1
+;;  %0 <- %1 - %2
+;;  %0 <- %1 - (%2)
+;;  %0 <- %1 - %2")
+
+
 (define_insn "addsi3"
   [(set
     (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
     (plus:SI
-      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R")
-      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i")
+      (match_operand:SI 1 "register_operand" "r,r,r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "O,L,M,r,i")
     )
   )]
   ""
@@ -70,8 +106,8 @@
   [(set
     (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
     (minus:SI
-      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R")
-      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i")
+      (match_operand:SI 1 "register_operand" "r,r,r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "O,L,M,r,i")
     )
   )]
   ""
@@ -91,8 +127,8 @@
   [(set
     (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
     (mult:SI
-      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R")
-      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i")
+      (match_operand:SI 1 "register_operand" "r,r,r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "O,L,M,r,i")
     )
   )]
   ""
@@ -108,7 +144,7 @@
         (truncate:SI
          (lshiftrt:DI
           (mult:DI (sign_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
-                   (sign_extend:DI (match_operand:SI 2 "brew_allreg_or_const_operand"  "r,i")))
+                   (sign_extend:DI (match_operand:SI 2 "nonmemory_operand"  "r,i")))
           (const_int 32))))]
   ""
   "@
@@ -120,7 +156,7 @@
         (truncate:SI
          (lshiftrt:DI
           (mult:DI (zero_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
-                   (zero_extend:DI (match_operand:SI 2 "brew_allreg_or_const_operand"  "r,i")))
+                   (zero_extend:DI (match_operand:SI 2 "nonmemory_operand"  "r,i")))
           (const_int 32))))]
   ""
   "@
@@ -207,8 +243,8 @@
   [(set
     (match_operand:SI 0 "register_operand" "=r,r,r,r")
     (and:SI
-      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R")
-      (match_operand:SI 2 "brew_allreg_or_const_operand" "1,O,R,i")
+      (match_operand:SI 1 "register_operand" "r,r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "1,O,r,i")
     )
   )]
   ""
@@ -259,8 +295,8 @@
   [(set 
     (match_operand:SI 0 "register_operand" "=r,r,r")
     (ashift:SI
-      (match_operand:SI 1 "brew_allreg_or_const_operand" "R,i,R")
-      (match_operand:SI 2 "brew_allreg_or_const_operand" "R,R,i")
+      (match_operand:SI 1 "nonmemory_operand" "r,i,r")
+      (match_operand:SI 2 "nonmemory_operand" "r,r,i")
     )
   )]
   ""
@@ -274,8 +310,8 @@
   [(set 
     (match_operand:SI 0 "register_operand" "=r,r,r")
     (ashiftrt:SI
-      (match_operand:SI 1 "brew_allreg_or_const_operand" "R,i,R")
-      (match_operand:SI 2 "brew_allreg_or_const_operand" "R,R,i")
+      (match_operand:SI 1 "nonmemory_operand" "r,i,r")
+      (match_operand:SI 2 "nonmemory_operand" "r,r,i")
     )
   )]
   ""
@@ -289,8 +325,8 @@
   [(set 
     (match_operand:SI 0 "register_operand" "=r,r,r")
     (lshiftrt:SI
-      (match_operand:SI 1 "brew_allreg_or_const_operand" "R,i,R")
-      (match_operand:SI 2 "brew_allreg_or_const_operand" "R,R,i")
+      (match_operand:SI 1 "nonmemory_operand" "r,i,r")
+      (match_operand:SI 2 "nonmemory_operand" "r,r,i")
     )
   )]
   ""
@@ -334,6 +370,7 @@
       else if(MEM_P(operands[1]))
         {
           // For loads, make sure the destination is a register
+          operands[0] = force_reg(SImode, operands[0]);
           gcc_assert(REG_P(operands[0]));
           // We should make sure that the address 
           // generated for the load is based on a <reg>+<offset> pattern
@@ -343,24 +380,77 @@
     }
 }")
 
-(define_insn "*movsi"
+(define_insn "*movsi_immed"
   [(set
-    (match_operand:SI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
-    (match_operand:SI 1 "brew_general_mov_src_operand" "O,R,i,R,R,R,W,A,B")
+    (match_operand:SI 0 "register_operand"  "=r,r")
+    (match_operand:SI 1 "immediate_operand"  "O,i")
   )]
   ""
   "@
    %0 <- %0 - %0
-   %0 <- %1
-   %0 <- (%1)
-   mem[%0] <- %1
-   mem[%0] <- %1
-   mem[%0] <- %1
+   %0 <- %1"
+  [(set_attr "length" "2,6")]
+)
+
+(define_insn "*movsi_move"
+  [(set
+    (match_operand:SI 0 "register_operand" "=r")
+    (match_operand:SI 1 "register_operand" "r")
+  )]
+  ""
+  "%0 <- %1"
+  [(set_attr "length" "2")]
+)
+
+(define_insn "*movsi_load"
+  [(set
+    (match_operand:SI 0 "register_operand"       "=r,r,r")
+    (match_operand:SI 1 "brew_mov_memory_operand" "W,A,B")
+  )]
+  ""
+  "@
    %0 <- mem[%1]
    %0 <- mem[%1]
    %0 <- mem[%1]"
-  [(set_attr "length" "2,2,6, 6,6,6, 6,6,6")]
+  [(set_attr "length" "6,6,6")]
 )
+
+(define_insn "*movsi_store"
+  [(set
+    (match_operand:SI 0 "brew_mov_memory_operand" "=W,A,B")
+    (match_operand:SI 1 "register_operand"         "r,r,r")
+  )]
+  ""
+  "@
+   mem[%0] <- %1
+   mem[%0] <- %1
+   mem[%0] <- %1"
+  [(set_attr "length" "6,6,6")]
+)
+
+(define_insn "*movsi_move_pc"
+  [(set
+    (match_operand:SI 0 "register_operand" "=r")
+    (pc)
+  )]
+  ""
+  "%0 <- $pc"
+  [(set_attr "length" "2")]
+)
+
+(define_insn "*movsi_store_pc"
+  [(set
+    (match_operand:SI 0 "brew_mov_memory_operand" "=W,A,B")
+    (pc)
+  )]
+  ""
+  "@
+   mem[%0] <- $pc
+   mem[%0] <- $pc
+   mem[%0] <- $pc"
+  [(set_attr "length" "6,6,6")]
+)
+
 
 
 
@@ -609,8 +699,8 @@
 
 (define_expand "call"
   [(call
-    (label_ref(match_operand 0 "" ""))
-    (match_operand 1 "general_operand" "")
+    (match_operand:QI 0 "memory_operand" "")
+    (match_operand 1 "" "")
   )]
   ""
 {
@@ -625,6 +715,16 @@
   ]
   ""
   "$pc <- %0"
+)
+
+(define_insn "*call"
+  [(call
+    (label_ref(match_operand 0 "" ""))
+    (match_operand 1 "")
+  )
+  ]
+  ""
+  "$pc <- %0 # this_is_the_label_ref_pattern"
 )
 
 (define_expand "call_value"

@@ -25,3 +25,4 @@ extern const char *brew_emit_cbranch(machine_mode mode, rtx *operands);
 extern const char *brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands);
 extern void brew_expand_call(machine_mode mode, rtx *operands);
 extern bool  brew_mov_operand(machine_mode mode, rtx operand, bool is_dst);
+extern bool  brew_mov_memory_operand(machine_mode mode, rtx operand);

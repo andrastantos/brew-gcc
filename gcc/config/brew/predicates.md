@@ -36,21 +36,35 @@
   return brew_mov_operand(mode, op, true);
 })
 
+(define_predicate "brew_mov_memory_operand"
+  (match_code "mem")
+{
+  return brew_mov_memory_operand(mode, op);
+})
+
+
 ;; A predicate that accepts either a register or a constant integer operand.
 ;;   this is used for the many 3-operand ALU operations.
+;;(define_predicate "brew_allreg_or_const_operand"
+;;  (match_code "reg,pc,const_int,subreg,symbol_ref,label_ref,const")
+;;)
 (define_predicate "brew_allreg_or_const_operand"
-  (match_code "reg,pc,const_int,subreg,symbol_ref,label_ref,const")
+  (match_code "reg,pc,subreg,const_int")
 )
 
 (define_predicate "brew_allreg_operand"
-  (match_code "reg,pc")
+  (match_code "reg,pc,subreg")
+)
+
+(define_predicate "brew_pc_operand"
+  (match_code "pc")
 )
 
 
 
 (define_predicate "brew_comparison_operand"
   (ior
-    (match_code "reg")
+    (match_code "reg,subreg")
     (and
       (match_code "const_int")
       (match_test "INTVAL(op) == 0")
