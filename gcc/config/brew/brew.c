@@ -249,7 +249,7 @@ brew_expand_prologue (void)
   // Save callee-saved registers.
   // For each register we save, we'll have to decrement SP by 4 and of course
   // make sure that further references are offsetted by that much.
-  for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+  for (regno = 1; regno < FIRST_PSEUDO_REGISTER; regno++)
     {
       if (reg_needs_save_restore(regno))
         {
@@ -304,7 +304,7 @@ brew_expand_epilogue (void)
         )
       );
       // Restore registers
-      for (regno = FIRST_PSEUDO_REGISTER; regno-- > 0; )
+      for (regno = FIRST_PSEUDO_REGISTER; regno-- > 1; )
         {
           if (reg_needs_save_restore(regno))
             {
@@ -441,7 +441,7 @@ brew_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
 
   if (arg_size_in_register(arg, *cum) > 0)
-    return gen_rtx_REG (arg.mode, first_arg_value_reg + *cum);
+    return gen_rtx_REG(arg.mode, first_arg_value_reg + *cum);
   else 
     return NULL_RTX;
 }
@@ -571,7 +571,7 @@ brew_setup_incoming_varargs(
             GEN_INT(UNITS_PER_WORD * (1 + regno))
           )
         ),
-        gen_rtx_REG(SImode, regno)
+        gen_rtx_REG(SImode, regno + first_arg_value_reg)
       );
     }
 }
