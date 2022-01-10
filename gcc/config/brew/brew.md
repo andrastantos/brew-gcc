@@ -49,42 +49,6 @@
 ;; Plus and minus instructions
 ;; -------------------------------------------------------------------------
 
-;;(define_insn "addsi3"
-;;  [(set
-;;    (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
-;;    (plus:SI
-;;      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R,r")
-;;      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i,r")
-;;    )
-;;  )]
-;;  ""
-;;  "@
-;;  %0 <- %1
-;;  %0 <- %1 + 1
-;;  %0 <- %1 - 1
-;;  %0 <- %1 + %2
-;;  %0 <- %1 + (%2)
-;;  %0 <- %1 + %2")
-;;
-;;
-;;(define_insn "subsi3"
-;;  [(set
-;;    (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
-;;    (minus:SI
-;;      (match_operand:SI 1 "brew_allreg_operand" "R,R,R,R,R,r")
-;;      (match_operand:SI 2 "brew_allreg_or_const_operand" "O,L,M,R,i,r")
-;;    )
-;;  )]
-;;  ""
-;;  "@
-;;  %0 <- %1
-;;  %0 <- %1 - 1
-;;  %0 <- %1 + 1
-;;  %0 <- %1 - %2
-;;  %0 <- %1 - (%2)
-;;  %0 <- %1 - %2")
-
-
 (define_insn "addsi3"
   [(set
     (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
@@ -99,8 +63,42 @@
   %0 <- %1 + 1
   %0 <- %1 - 1
   %0 <- %1 + %2
-  %0 <- %1 + (%2)")
+  %0 <- %1 + (%2)"
+)
 
+(define_insn "*add_reg_pc"
+  [(set
+    (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
+    (plus:SI
+      (pc)
+      (match_operand:SI 1 "nonmemory_operand" "O,L,M,r,i")
+    )
+  )]
+  ""
+  "@
+  %0 <- $pc
+  %0 <- $pc + 1
+  %0 <- $pc - 1
+  %0 <- $pc + %1
+  %0 <- $pc + (%1)"
+)
+
+(define_insn "*add_pc_reg"
+  [(set
+    (pc)
+    (plus:SI
+      (match_operand:SI 0 "register_operand" "r,r,r,r,r")
+      (match_operand:SI 1 "nonmemory_operand" "O,L,M,r,i")
+    )
+  )]
+  ""
+  "@
+  $pc <- %0
+  $pc <- %0 + 1
+  $pc <- %0 - 1
+  $pc <- %0 + %1
+  $pc <- %0 + (%1)"
+)
 
 (define_insn "subsi3"
   [(set
@@ -116,7 +114,44 @@
   %0 <- %1 - 1
   %0 <- %1 + 1
   %0 <- %1 - %2
-  %0 <- %1 - (%2)")
+  %0 <- %1 - (%2)"
+)
+
+(define_insn "*sub_reg_pc"
+  [(set
+    (match_operand:SI 0 "register_operand" "=r,r,r,r,r")
+    (minus:SI
+      (pc)
+      (match_operand:SI 1 "nonmemory_operand" "O,L,M,r,i")
+    )
+  )]
+  ""
+  "@
+  %0 <- $pc
+  %0 <- $pc - 1
+  %0 <- $pc + 1
+  %0 <- $pc - %1
+  %0 <- $pc - (%1)"
+)
+
+
+(define_insn "*sub_pc_reg"
+  [(set
+    (pc)
+    (minus:SI
+      (match_operand:SI 0 "register_operand" "r,r,r,r,r")
+      (match_operand:SI 1 "nonmemory_operand" "O,L,M,r,i")
+    )
+  )]
+  ""
+  "@
+  $pc <- %0
+  $pc <- %0 - 1
+  $pc <- %0 + 1
+  $pc <- %0 - %1
+  $pc <- %0 - (%1)"
+)
+
 
 ;; -------------------------------------------------------------------------
 ;; Multiplications
@@ -380,52 +415,19 @@
     }
 }")
 
-(define_insn "*movsi_immed"
+(define_insn "*movsi_general"
   [(set
-    (match_operand:SI 0 "register_operand"  "=r,r")
-    (match_operand:SI 1 "immediate_operand"  "O,i")
+    (match_operand:SI 0 "nonimmediate_operand"  "=r,r,r,m,r")
+    (match_operand:SI 1 "general_operand"        "O,i,r,r,m")
   )]
   ""
   "@
    %0 <- %0 - %0
-   %0 <- %1"
-  [(set_attr "length" "2,6")]
-)
-
-(define_insn "*movsi_move"
-  [(set
-    (match_operand:SI 0 "register_operand" "=r")
-    (match_operand:SI 1 "register_operand" "r")
-  )]
-  ""
-  "%0 <- %1"
-  [(set_attr "length" "2")]
-)
-
-(define_insn "*movsi_load"
-  [(set
-    (match_operand:SI 0 "register_operand"       "=r,r,r")
-    (match_operand:SI 1 "brew_mov_memory_operand" "W,A,B")
-  )]
-  ""
-  "@
-   %0 <- mem[%1]
-   %0 <- mem[%1]
+   %0 <- %1
+   %0 <- %1
+   mem[%0] <- %1
    %0 <- mem[%1]"
-  [(set_attr "length" "6,6,6")]
-)
-
-(define_insn "*movsi_store"
-  [(set
-    (match_operand:SI 0 "brew_mov_memory_operand" "=W,A,B")
-    (match_operand:SI 1 "register_operand"         "r,r,r")
-  )]
-  ""
-  "@
-   mem[%0] <- %1
-   mem[%0] <- %1
-   mem[%0] <- %1"
-  [(set_attr "length" "6,6,6")]
+  [(set_attr "length" "2,6,2,6,6")]
 )
 
 (define_insn "*movsi_move_pc"
@@ -440,17 +442,13 @@
 
 (define_insn "*movsi_store_pc"
   [(set
-    (match_operand:SI 0 "brew_mov_memory_operand" "=W,A,B")
+    (match_operand:SI 0 "memory_operand" "=m")
     (pc)
   )]
   ""
-  "@
-   mem[%0] <- $pc
-   mem[%0] <- $pc
-   mem[%0] <- $pc"
-  [(set_attr "length" "6,6,6")]
+  "mem[%0] <- $pc"
+  [(set_attr "length" "6")]
 )
-
 
 
 
@@ -476,6 +474,7 @@
       else if(MEM_P(operands[1]))
         {
           // For loads, make sure the destination is a register
+          operands[0] = force_reg(HImode, operands[0]);
           gcc_assert(REG_P(operands[0]));
           // We should make sure that the address 
           // generated for the load is based on a <reg>+<offset> pattern
@@ -485,24 +484,24 @@
     }
 }")
 
-(define_insn "*movhi"
+(define_insn "*movhi_general"
   [(set
-    (match_operand:HI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
-    (match_operand:HI 1 "brew_general_mov_src_operand" "O,R,i,R,R,R,W,A,B")
+    (match_operand:HI 0 "nonimmediate_operand"  "=r,r,r,m,r")
+    (match_operand:HI 1 "general_operand"        "O,i,r,r,m")
   )]
   ""
   "@
    %0 <- %0 - %0
    %0 <- %1
-   %0 <- (%1)
+   %0 <- %1
    mem16[%0] <- %1
-   mem16[%0] <- %1
-   mem16[%0] <- %1
-   %0 <- mem16[%1]
-   %0 <- mem16[%1]
    %0 <- mem16[%1]"
-  [(set_attr "length" "2,2,6, 6,6,6, 6,6,6")]
+  [(set_attr "length" "2,6,2,6,6")]
 )
+
+
+
+
 
 
 
@@ -528,33 +527,31 @@
       else if(MEM_P(operands[1]))
         {
           // For loads, make sure the destination is a register
+          operands[0] = force_reg(QImode, operands[0]);
           gcc_assert(REG_P(operands[0]));
           // We should make sure that the address 
           // generated for the load is based on a <reg>+<offset> pattern
           if(MEM_P(XEXP (operands[1], 0)))
-            operands[1] = gen_rtx_MEM (QImode, force_reg(QImode, XEXP(operands[1], 0)));
+            operands[1] = gen_rtx_MEM(QImode, force_reg(QImode, XEXP(operands[1], 0)));
         }
     }
 }")
 
-(define_insn "*movqi"
+(define_insn "*movqi_general"
   [(set
-    (match_operand:QI 0 "nonimmediate_operand"        "=r,r,r,W,A,B,r,r,r")
-    (match_operand:QI 1 "brew_general_mov_src_operand" "O,R,i,R,R,R,W,A,B")
+    (match_operand:QI 0 "nonimmediate_operand"  "=r,r,r,m,r")
+    (match_operand:QI 1 "general_operand"        "O,i,r,r,m")
   )]
   ""
   "@
    %0 <- %0 - %0
    %0 <- %1
-   %0 <- (%1)
+   %0 <- %1
    mem8[%0] <- %1
-   mem8[%0] <- %1
-   mem8[%0] <- %1
-   %0 <- mem8[%1]
-   %0 <- mem8[%1]
    %0 <- mem8[%1]"
-  [(set_attr "length" "2,2,6, 6,6,6, 6,6,6")]
+  [(set_attr "length" "2,6,2,6,6")]
 )
+
 
 ;; -------------------------------------------------------------------------
 ;; Sign- and zero-extend
@@ -562,63 +559,55 @@
 
 (define_insn "zero_extendhisi2"
   [(set
-    (match_operand:SI 0 "register_operand"      "=r,r,r,r")
+    (match_operand:SI 0 "register_operand"      "=r,r")
     (zero_extend:SI
-      (match_operand:HI 1 "nonimmediate_operand" "r,W,A,B")
+      (match_operand:HI 1 "nonimmediate_operand" "r,m")
     )
   )]
   ""
   "@
    %0 <- %1 & 0xffff
-   %0 <- mem16[%1]
-   %0 <- mem16[%1]
    %0 <- mem16[%1]"
-  [(set_attr "length" "6,6,6,6")])
+  [(set_attr "length" "6,6")])
 
 (define_insn "zero_extendqisi2"
   [(set
-    (match_operand:SI 0 "register_operand"      "=r,r,r,r")
+    (match_operand:SI 0 "register_operand"      "=r,r")
     (zero_extend:SI
-      (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")
+      (match_operand:QI 1 "nonimmediate_operand" "r,m")
     )
   )]
   ""
   "@
    %0 <- %1 & 0xff
-   %0 <- mem8[%1]
-   %0 <- mem8[%1]
    %0 <- mem8[%1]"
-  [(set_attr "length" "6,6,6,6")])
+  [(set_attr "length" "6,6")])
 
 (define_insn "extendhisi2"
   [(set
-    (match_operand:SI 0 "register_operand"      "=r,r,r,r")
+    (match_operand:SI 0 "register_operand"      "=r,r")
     (sign_extend:SI
-      (match_operand:HI 1 "nonimmediate_operand" "r,W,A,B")
+      (match_operand:HI 1 "nonimmediate_operand" "r,m")
     )
   )]
   ""
   "@
    %s0 <- wsi %s1
-   %s0 <- mem16[%1]
-   %s0 <- mem16[%1]
    %s0 <- mem16[%1]"
-  [(set_attr "length" "2,6,6,6")])
+  [(set_attr "length" "2,6")])
 
 (define_insn "extendqisi2"
   [(set
-    (match_operand:SI 0 "register_operand"      "=r,r,r,r")
+    (match_operand:SI 0 "register_operand"      "=r,r")
     (sign_extend:SI
-      (match_operand:QI 1 "nonimmediate_operand" "r,W,A,B")
+      (match_operand:QI 1 "nonimmediate_operand" "r,m")
     )
   )]
   ""
   "@
    %s0 <- bsi %s1
-   %s0 <- mem8[%1]
-   %s0 <- mem8[%1]
    %s0 <- mem8[%1]"
-  [(set_attr "length" "2,6,6,6")])
+  [(set_attr "length" "2,6")])
 
 ;; -------------------------------------------------------------------------
 ;; Conditional branch
@@ -634,7 +623,7 @@
       (match_operator 0 "comparison_operator"
         [
          (match_operand:SI 1 "register_operand" "r")
-         (match_operand:SI 2 "brew_comparison_operand" "ri")
+         (match_operand:SI 2 "brew_comparison_operand" "rO")
         ]
       )
       (label_ref(match_operand 3 "" ""))
