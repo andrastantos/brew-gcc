@@ -22,43 +22,6 @@
 ;; Constraints
 ;; -------------------------------------------------------------------------
 
-(define_constraint "A"
-  "An absolute address."
-  (and
-    (match_code "mem")
-    (ior
-      (match_test "GET_CODE (XEXP (op, 0)) == SYMBOL_REF")
-      (match_test "GET_CODE (XEXP (op, 0)) == LABEL_REF")
-      (match_test "GET_CODE (XEXP (op, 0)) == CONST_INT")
-      (match_test "GET_CODE (XEXP (op, 0)) == CONST")
-    )
-  )
-)
-
-(define_constraint "W"
-  "A register indirect memory operand."
-  (and
-    (match_code "mem")
-    (match_test
-      "REG_P(XEXP(op, 0)) && REGNO_OK_FOR_BASE_P(REGNO(XEXP(op, 0)))"
-    )
-  )
-)
-
-(define_constraint "R"
-  "Any register, including PC"
-  (ior
-    (match_code "pc")
-    (match_code "reg")
-    (match_code "subreg")
-  )
-)
-
-(define_constraint "Q"
-  "PC register"
-  (match_code "pc")
-)
-
 (define_constraint "O"
   "The constant zero"
   (and
@@ -82,12 +45,3 @@
     (match_test "ival == -1")
   )
 )
-
-(define_constraint "B"
-  "An offset address."
-  (and
-    (match_code "mem")
-    (match_test "brew_offset_address_p(op)")
-  )
-)
-

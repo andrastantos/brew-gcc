@@ -172,20 +172,12 @@ void brew_expand_call(machine_mode mode, rtx *operands)
 {
   gcc_assert (MEM_P(operands[0]));
   rtx temp_reg = gen_reg_rtx(mode);
-  // $r3 <- $pc
-  emit_insn(gen_move_insn(temp_reg, pc_rtx));
-  // $r3 <- $r3 + 16
+  // $r3 <- $pc + 16
   emit_insn(gen_addsi3(
     temp_reg,
-    temp_reg,
+    pc_rtx, // gen_rtx_REG(mode, BREW_PC), // Can't use pc_rtx here: that's not a valid operand for the addsi3 pattern.
     GEN_INT(16)
   ));
-  // $r3 <- $pc + 16
-  //emit_insn(gen_addsi3(
-  //  temp_reg,
-  //  pc_rtx, // gen_rtx_REG(mode, BREW_PC), // Can't use pc_rtx here: that's not a valid operand for the addsi3 pattern.
-  //  GEN_INT(16)
-  //));
   // $sp <- $sp - 4
   emit_insn(gen_subsi3(
     stack_pointer_rtx,
@@ -334,101 +326,6 @@ brew_expand_epilogue (void)
 //
 ///////////////////////////////////////////////////////////////////////////
 
-bool brew_mov_operand(machine_mode mode, rtx operand, bool is_dst)
-{
-  int ret_val = 0;
-  do {
-    if (MEM_P(operand))
-      {
-        // Accept memory references by label, reg, or const
-        if (
-          GET_CODE(XEXP(operand, 0)) == LABEL_REF ||
-          GET_CODE(XEXP(operand, 0)) == REG ||
-          GET_CODE(XEXP(operand, 0)) == CONST_INT
-        )
-          {
-            ret_val = 1;
-            break;
-          }
-        // Accept register-offset references too (even PC-relative)
-        if (
-          GET_CODE(XEXP(operand, 0)) == PLUS &&
-          (
-            GET_CODE(XEXP(XEXP(operand, 0), 0)) == REG ||
-            GET_CODE(XEXP(XEXP(operand, 0), 0)) == PC
-          ) && (
-            GET_CODE(XEXP(XEXP(operand, 0), 1)) == CONST_INT ||
-            GET_CODE(XEXP(XEXP(operand, 0), 1)) == LABEL_REF
-          )
-        )
-          {
-            ret_val = 1;
-            break;
-          }
-        // Other memory references are not OK
-        ret_val = 0;
-        break;
-      }
-    // Normal registers are OK and PC as well as a source
-    if (REG_P(operand))
-      {
-        ret_val = 1;
-        break;
-      }
-    if (!is_dst && GET_CODE(operand) == PC)
-      {
-        ret_val = 1;
-        break;
-      }
-    // All else is only allowed as a source
-    if (!is_dst)
-      ret_val = general_operand(operand, mode);
-  } while (false);
-  return ret_val;
-}
-
-bool brew_mov_memory_operand(machine_mode mode, rtx operand)
-{
-  bool ret_val = false;
-  do {
-    if (!MEM_P(operand))
-      {
-        ret_val = false;
-        break;
-      }
-    // Accept memory references by label, reg, or const
-    if (
-      GET_CODE(XEXP(operand, 0)) == LABEL_REF ||
-      GET_CODE(XEXP(operand, 0)) == REG ||
-      GET_CODE(XEXP(operand, 0)) == CONST_INT
-    )
-      {
-        ret_val = true;
-        break;
-      }
-    // Accept register-offset references too (even PC-relative)
-    if (
-      GET_CODE(XEXP(operand, 0)) == PLUS &&
-      (
-        GET_CODE(XEXP(XEXP(operand, 0), 0)) == REG ||
-        GET_CODE(XEXP(XEXP(operand, 0), 0)) == PC
-      ) && (
-        GET_CODE(XEXP(XEXP(operand, 0), 1)) == CONST_INT ||
-        GET_CODE(XEXP(XEXP(operand, 0), 1)) == LABEL_REF
-      )
-    )
-      {
-        ret_val = true;
-        break;
-      }
-    // Other memory references are not OK
-    ret_val = false;
-    break;
-  } while (false);
-  return ret_val;
-}
-
-
 ///////////////////////////////////////////////////////////////////////////
 //
 //
@@ -437,35 +334,13 @@ bool brew_mov_memory_operand(machine_mode mode, rtx operand)
 //
 ///////////////////////////////////////////////////////////////////////////
 
-// Return true for <reg>+<ofs> references
-bool
-brew_offset_address_p(rtx x)
-{
-  x = XEXP(x, 0);
-  if (GET_CODE(x) != PLUS)
-    return false;
-  x = XEXP(x, 1);
-  if (GET_CODE(x) != CONST_INT)
-    return false;
-  return true;
-}
-
-//////////////////////////////////////////////////////////////
-// TODO: there's a bunch of stuff here that needs to be reviews
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+///////////////////////////////////////////////////////////////////////////
+//
+//
+// Helpers for macros in brew.h
+//
+//
+///////////////////////////////////////////////////////////////////////////
 
 // Implements the macro INITIAL_ELIMINATION_OFFSET, return the OFFSET.
 // That is: used to figure out the offset between $?fp, $?ap and $fp
@@ -487,10 +362,6 @@ brew_initial_elimination_offset (int from, int to)
 
   return ret;
 }
-
-
-
-
 
 ///////////////////////////////////////////////////////////////////////////
 //
@@ -895,7 +766,7 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 // We should use the LRA register allocator, even if Moxie used the old one.
 // FIXME: we should work with both!, set this back to true!!! 
 #undef  TARGET_LRA_P
-#define TARGET_LRA_P                             hook_bool_void_false
+#define TARGET_LRA_P                             hook_bool_void_true
 #undef  TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P
 #define TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P   brew_legitimate_address_p
 #undef  TARGET_SETUP_INCOMING_VARARGS
