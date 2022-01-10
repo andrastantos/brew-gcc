@@ -229,6 +229,10 @@ brew_compute_frame(void)
     (ACCUMULATE_OUTGOING_ARGS ? (HOST_WIDE_INT) crtl->outgoing_args_size : 0);
 }
 
+// Stack is pre-decrement for push, and post-increment for pop.
+// This means that $sp points to the last valid value.
+// (except when in-between updates)
+
 // This function expands the instruction sequence for a function prologue.
 void
 brew_expand_prologue (void)
@@ -251,7 +255,7 @@ brew_expand_prologue (void)
         {
           insn = emit_insn(gen_movsi(
             gen_rtx_MEM(Pmode,
-              plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt, false) // Not an in-place addition
+              plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt-4, false) // Not an in-place addition
             ),
             gen_rtx_REG(Pmode, regno)
           ));
@@ -308,7 +312,7 @@ brew_expand_epilogue (void)
               emit_insn(gen_movsi(
                 gen_rtx_REG(Pmode, regno),
                 gen_rtx_MEM(Pmode,
-                  plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt, false) // Not an in-place addition
+                  plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt-4, false) // Not an in-place addition
                 )
               ));
             }
