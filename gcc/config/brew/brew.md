@@ -797,5 +797,5 @@
 (define_insn "returner"
   [(return)]
   "reload_completed"
-  "$pc <- mem[$sp]"
+  "$pc <- mem[$sp,-4]"
 )
