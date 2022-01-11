@@ -412,8 +412,8 @@ arg_size_in_register(const function_arg_info &arg, HOST_WIDE_INT reg_args_so_far
   HOST_WIDE_INT regs_needed = (arg_size + 3) / 4; // Round up arg-size to the next register size
   // FIXME: force everything larger then 32 bits onto the stack
   //        this is very conservative, but maybe it fixes some codegen issues?
-  if (regs_needed > 1)
-    return 0;
+  //if (regs_needed > 1)
+  //  return 0;
   if (regs_needed > max_regs_for_args - reg_args_so_far)
     return 0;
   return regs_needed;
@@ -481,19 +481,27 @@ brew_arg_partial_bytes (cumulative_args_t cum_v, const function_arg_info &arg)
   // For now, we're simply choosing an all-or-nothing approach:
   //   we either completely put the argument in registers or completely
   //   on the stack.
-  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-  int bytes_left, size;
-
-  HOST_WIDE_INT regs_needed = arg_size_in_register(arg, *cum);
-  if (regs_needed == 0)
-    // It doesn't seem to be the case that we need to consider the pointer for
-    // forced pass-by-ref arguments. Most targets seem to not handle this case.
-    //if (brew_pass_by_reference(cum_v, arg) && (*cum < max_regs_for_args))
-    //  {
-    //    gcc_assert(false);
-    //    return 4;
-    //  }
-  return arg.promoted_size_in_bytes();
+  return 0;
+//
+//  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
+//  int bytes_left, size;
+//
+//  HOST_WIDE_INT regs_needed = arg_size_in_register(arg, *cum);
+//  if (regs_needed == 0)
+//    {
+//      return 0;
+//    }
+//    // It doesn't seem to be the case that we need to consider the pointer for
+//    // forced pass-by-ref arguments. Most targets seem to not handle this case.
+//    //if (brew_pass_by_reference(cum_v, arg) && (*cum < max_regs_for_args))
+//    //  {
+//    //    gcc_assert(false);
+//    //    return 4;
+//    //  }
+//  int bytes = arg.promoted_size_in_bytes();
+//  // Make sure we round up to the next WORD, even for small things
+//  bytes = ((bytes + UNITS_PER_WORD - 1) / UNITS_PER_WORD) * UNITS_PER_WORD;
+//  return bytes;
 }
 
 // Helper function for `brew_legitimate_address_p'
