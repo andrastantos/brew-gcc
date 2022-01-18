@@ -1,5 +1,5 @@
 /* Command line option handling.
-   Copyright (C) 2002-2021 Free Software Foundation, Inc.
+   Copyright (C) 2002-2022 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -428,6 +428,8 @@ extern bool target_handle_option (struct gcc_options *opts,
 extern void finish_options (struct gcc_options *opts,
 			    struct gcc_options *opts_set,
 			    location_t loc);
+extern void diagnose_options (gcc_options *opts, gcc_options *opts_set,
+			      location_t loc);
 extern void print_help (struct gcc_options *opts, unsigned int lang_mask, const
 			char *help_option_argument);
 extern void default_options_optimization (struct gcc_options *opts,

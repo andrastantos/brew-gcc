@@ -1,5 +1,5 @@
 /* IPA function body analysis.
-   Copyright (C) 2003-2021 Free Software Foundation, Inc.
+   Copyright (C) 2003-2022 Free Software Foundation, Inc.
    Contributed by Jan Hubicka
 
 This file is part of GCC.
@@ -42,11 +42,11 @@ enum ipa_hints_vals {
      win.  */
   INLINE_HINT_in_scc = 16,
   /* If function is declared inline by user, it may be good idea to inline
-     it.  Set by simple_edge_hints in ipa-inline-analysis.c.  */
+     it.  Set by simple_edge_hints in ipa-inline-analysis.cc.  */
   INLINE_HINT_declared_inline = 32,
   /* Programs are usually still organized for non-LTO compilation and thus
      if functions are in different modules, inlining may not be so important. 
-     Set by simple_edge_hints in ipa-inline-analysis.c.   */
+     Set by simple_edge_hints in ipa-inline-analysis.cc.   */
   INLINE_HINT_cross_module = 64,
   /* We know that the callee is hot by profile.  */
   INLINE_HINT_known_hot = 128,
@@ -126,7 +126,7 @@ public:
   ipa_fn_summary ()
     : min_size (0),
       inlinable (false), single_caller (false),
-      fp_expressions (false),
+      fp_expressions (false), target_info (0),
       estimated_stack_size (false),
       time (0), conds (NULL),
       size_time_table (), call_size_time_table (vNULL),
@@ -141,6 +141,7 @@ public:
     : min_size (s.min_size),
     inlinable (s.inlinable), single_caller (s.single_caller),
     fp_expressions (s.fp_expressions),
+    target_info (s.target_info),
     estimated_stack_size (s.estimated_stack_size),
     time (s.time), conds (s.conds), size_time_table (),
     call_size_time_table (vNULL),
@@ -164,6 +165,10 @@ public:
   unsigned int single_caller : 1;
   /* True if function contains any floating point expressions.  */
   unsigned int fp_expressions : 1;
+  /* Like fp_expressions field above, but it's to hold some target specific
+     information, such as some target specific isa flags.  Note that for
+     offloading target compilers, this field isn't streamed.  */
+  unsigned int target_info;
 
   /* Information about function that will result after applying all the
      inline decisions present in the callgraph.  Generally kept up to
@@ -398,7 +403,7 @@ public:
 
 extern fast_call_summary <ipa_call_summary *, va_heap> *ipa_call_summaries;
 
-/* In ipa-fnsummary.c  */
+/* In ipa-fnsummary.cc  */
 void ipa_debug_fn_summary (struct cgraph_node *);
 void ipa_dump_fn_summaries (FILE *f);
 void ipa_dump_fn_summary (FILE *f, struct cgraph_node *node);

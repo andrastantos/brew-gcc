@@ -1,5 +1,5 @@
 /* d-incpath.cc -- Set up combined import paths for the D frontend.
-   Copyright (C) 2006-2021 Free Software Foundation, Inc.
+   Copyright (C) 2006-2022 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@ along with GCC; see the file COPYING3.  If not see
 
 /* Look for directories that start with the standard prefix.
    "Translate" them, i.e: replace /usr/local/lib/gcc with
-   IPREFIX and search them first.  Based on incpath.c.  */
+   IPREFIX and search them first.  Based on incpath.cc.  */
 
 static char *
 prefixed_path (const char *path, const char *iprefix)

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -1428,6 +1428,11 @@ begin
 
             Ecode := E_Success;
             Back_End.Gen_Or_Update_Object_File;
+
+            --  Use a goto instead of calling Exit_Program so that finalization
+            --  occurs normally.
+
+            goto End_Of_Program;
 
          --  Otherwise the unit is missing a crucial piece that prevents code
          --  generation.

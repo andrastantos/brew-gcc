@@ -1,6 +1,6 @@
 /* Language-independent APIs to enable/disable per-location warnings.
 
-   Copyright (C) 2021 Free Software Foundation, Inc.
+   Copyright (C) 2021-2022 Free Software Foundation, Inc.
    Contributed by Martin Sebor <msebor@redhat.com>
 
    This file is part of GCC.
@@ -41,11 +41,13 @@ public:
      NW_UNINIT = 1 << 3,
      /* Warnings about arithmetic overflow.  */
      NW_VFLOW = 1 << 4,
+     /* Warnings about dangling pointers.  */
+     NW_DANGLING = 1 << 5,
      /* All other unclassified warnings.  */
-     NW_OTHER = 1 << 5,
+     NW_OTHER = 1 << 6,
      /* All groups of warnings.  */
      NW_ALL = (NW_ACCESS | NW_LEXICAL | NW_NONNULL
-	       | NW_UNINIT | NW_VFLOW | NW_OTHER)
+	       | NW_UNINIT | NW_VFLOW | NW_DANGLING | NW_OTHER)
    };
 
   nowarn_spec_t (): m_bits () { }

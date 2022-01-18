@@ -1,5 +1,5 @@
 ;;  Mips.md	     Machine Description for MIPS based processors
-;;  Copyright (C) 1989-2021 Free Software Foundation, Inc.
+;;  Copyright (C) 1989-2022 Free Software Foundation, Inc.
 ;;  Contributed by   A. Lichnewsky, lich@inria.inria.fr
 ;;  Changes by       Michael Meissner, meissner@osf.org
 ;;  64-bit r4000 support by Ian Lance Taylor, ian@cygnus.com, and
@@ -5657,7 +5657,7 @@
   "cache\t0x14,0(%$)"
   [(set_attr "can_delay" "no")])
 
-;; Block moves, see mips.c for more details.
+;; Block moves, see mips.cc for more details.
 ;; Argument 0 is the destination
 ;; Argument 1 is the source
 ;; Argument 2 is the length

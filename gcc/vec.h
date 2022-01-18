@@ -1,5 +1,5 @@
 /* Vector API for GNU compiler.
-   Copyright (C) 2004-2021 Free Software Foundation, Inc.
+   Copyright (C) 2004-2022 Free Software Foundation, Inc.
    Contributed by Nathan Sidwell <nathan@codesourcery.com>
    Re-implemented in C++ by Diego Novillo <dnovillo@google.com>
 
@@ -193,7 +193,7 @@ struct vec_prefix
   /* FIXME - These fields should be private, but we need to cater to
 	     compilers that have stricter notions of PODness for types.  */
 
-  /* Memory allocation support routines in vec.c.  */
+  /* Memory allocation support routines in vec.cc.  */
   void register_overhead (void *, size_t, size_t CXX_MEM_STAT_INFO);
   void release_overhead (void *, size_t, size_t, bool CXX_MEM_STAT_INFO);
   static unsigned calculate_allocation (vec_prefix *, unsigned, bool);

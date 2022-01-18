@@ -1,5 +1,5 @@
 /* Definitions for -*- C++ -*- parsing and type checking.
-   Copyright (C) 1987-2021 Free Software Foundation, Inc.
+   Copyright (C) 1987-2022 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -465,6 +465,7 @@ extern GTY(()) tree cp_global_trees[CPTI_MAX];
       OVL_USING_P (in OVERLOAD)
       IMPLICIT_CONV_EXPR_NONTYPE_ARG (in IMPLICIT_CONV_EXPR)
       BASELINK_FUNCTIONS_MAYBE_INCOMPLETE_P (in BASELINK)
+      BIND_EXPR_VEC_DTOR (in BIND_EXPR)
    2: IDENTIFIER_KIND_BIT_2 (in IDENTIFIER_NODE)
       ICS_THIS_FLAG (in _CONV)
       DECL_INITIALIZED_BY_CONSTANT_EXPRESSION_P (in VAR_DECL)
@@ -711,6 +712,10 @@ typedef struct ptrmem_cst * ptrmem_cst_t;
 
 #define BIND_EXPR_TRY_BLOCK(NODE) \
   TREE_LANG_FLAG_0 (BIND_EXPR_CHECK (NODE))
+
+/* This BIND_EXPR is from build_vec_delete_1.  */
+#define BIND_EXPR_VEC_DTOR(NODE) \
+  TREE_LANG_FLAG_1 (BIND_EXPR_CHECK (NODE))
 
 /* Used to mark the block around the member initializers and cleanups.  */
 #define BIND_EXPR_BODY_BLOCK(NODE) \
@@ -1007,6 +1012,9 @@ public:
      rather than unsigned to avoid ambiguity with the built-in operator[]
      (bootstrap/91828).  */
   tree& operator[] (ptrdiff_t i) const { return (*v)[i]; }
+
+  tree *begin() { return ::begin (v); }
+  tree *end() { return ::end (v); }
 
   void release () { release_tree_vector (v); v = NULL; }
 
@@ -2019,7 +2027,7 @@ make_temp_override (T& var, type_identity_t<T> overrider)
 
 #define cp_noexcept_operand scope_chain->noexcept_operand
 
-struct named_label_entry; /* Defined in decl.c.  */
+struct named_label_entry; /* Defined in decl.cc.  */
 
 struct named_label_hash : ggc_remove <named_label_entry *>
 {
@@ -2152,7 +2160,7 @@ struct GTY(()) language_function {
 #define current_function_return_value \
   (cp_function_chain->x_return_value)
 
-/* In parser.c.  */
+/* In parser.cc.  */
 extern tree cp_literal_operator_id (const char *);
 
 #define NON_ERROR(NODE) ((NODE) == error_mark_node ? NULL_TREE : (NODE))
@@ -2387,6 +2395,7 @@ struct GTY(()) lang_type {
 /* Nonzero for _CLASSTYPE means that operator delete is defined.  */
 #define TYPE_GETS_DELETE(NODE) (LANG_TYPE_CLASS_CHECK (NODE)->gets_delete)
 #define TYPE_GETS_REG_DELETE(NODE) (TYPE_GETS_DELETE (NODE) & 1)
+#define TYPE_GETS_VEC_DELETE(NODE) (TYPE_GETS_DELETE (NODE) & 2)
 
 /* Nonzero if `new NODE[x]' should cause the allocation of extra
    storage to indicate how many array elements are in use.  */
@@ -5268,7 +5277,7 @@ more_aggr_init_expr_args_p (const aggr_init_expr_arg_iterator *iter)
 
 /* A language-specific token attached to the OpenMP data clauses to
    hold code (or code fragments) related to ctors, dtors, and op=.
-   See semantics.c for details.  */
+   See semantics.cc for details.  */
 #define CP_OMP_CLAUSE_INFO(NODE) \
   TREE_TYPE (OMP_CLAUSE_RANGE_CHECK (NODE, OMP_CLAUSE_PRIVATE, \
 				     OMP_CLAUSE__CONDTEMP_))
@@ -5578,7 +5587,7 @@ extern int comparing_specializations;
    FIXME we should always do this except during deduction/ordering.  */
 extern int comparing_dependent_aliases;
 
-/* In parser.c.  */
+/* In parser.cc.  */
 
 /* Nonzero if we are parsing an unevaluated operand: an operand to
    sizeof, typeof, or alignof.  This is a count since operands to
@@ -5613,7 +5622,7 @@ public:
     c_inhibit_evaluation_warnings = inhibit; }
 };
 
-/* in pt.c  */
+/* in pt.cc  */
 
 /* These values are used for the `STRICT' parameter to type_unification and
    fn_type_unification.  Their meanings are described with the
@@ -5646,11 +5655,11 @@ struct GTY((for_user)) spec_entry
   tree spec;  /* The specialization itself.  */
 };
 
-/* in class.c */
+/* in class.cc */
 
 extern int current_class_depth;
 
-/* in decl.c */
+/* in decl.cc */
 
 /* An array of static vars & fns.  */
 extern GTY(()) vec<tree, va_gc> *static_decls;
@@ -6020,7 +6029,7 @@ const unsigned int STF_STRIP_DEPENDENT = 1U << 1;
    ? TYPE_TI_TEMPLATE (NODE)				\
    : TYPE_NAME (NODE))
 
-/* in lex.c  */
+/* in lex.cc  */
 
 extern void init_reswords (void);
 
@@ -6468,7 +6477,7 @@ extern int class_dump_id;
 extern int module_dump_id;
 extern int raw_dump_id;
 
-/* in call.c */
+/* in call.cc */
 extern bool check_dtor_name			(tree, tree);
 int magic_varargs_p				(tree);
 
@@ -6612,7 +6621,7 @@ extern bool cp_handle_deprecated_or_unavailable (tree, tsubst_flags_t = tf_warni
 extern void cp_warn_deprecated_use_scopes	(tree);
 extern tree get_function_version_dispatcher	(tree);
 
-/* in class.c */
+/* in class.cc */
 extern tree build_vfield_ref			(tree, tree);
 extern tree build_if_in_charge			(tree true_stmt, tree false_stmt = void_node);
 extern tree build_base_path			(enum tree_code, tree,
@@ -6698,7 +6707,7 @@ extern bool uniquely_derived_from_p             (tree, tree);
 extern bool publicly_uniquely_derived_p         (tree, tree);
 extern tree common_enclosing_class		(tree, tree);
 
-/* in cvt.c */
+/* in cvt.cc */
 extern tree convert_to_reference		(tree, tree, int, int, tree,
 						 tsubst_flags_t);
 extern tree convert_from_reference		(tree);
@@ -6725,12 +6734,12 @@ extern tree tx_unsafe_fn_variant		(tree);
 extern bool fnptr_conv_p			(tree, tree);
 extern tree strip_fnptr_conv			(tree);
 
-/* in name-lookup.c */
+/* in name-lookup.cc */
 extern void maybe_push_cleanup_level		(tree);
 extern tree maybe_push_decl			(tree);
 extern tree current_decl_namespace		(void);
 
-/* decl.c */
+/* decl.cc */
 extern tree poplevel				(int, int, int);
 extern void cxx_init_decl_processing		(void);
 enum cp_tree_node_structure_enum cp_tree_node_structure
@@ -6845,7 +6854,7 @@ extern tree build_explicit_specifier		(tree, tsubst_flags_t);
 extern void do_push_parm_decls			(tree, tree, tree *);
 extern tree do_aggregate_paren_init		(tree, tree);
 
-/* in decl2.c */
+/* in decl2.cc */
 extern void record_mangling			(tree, bool);
 extern void overwrite_mangling			(tree, tree);
 extern void note_mangling_alias			(tree, tree);
@@ -6913,7 +6922,7 @@ extern bool cp_omp_mappable_type		(tree);
 extern bool cp_omp_emit_unmappable_type_notes	(tree);
 extern void cp_check_const_attributes (tree);
 
-/* in error.c */
+/* in error.cc */
 extern const char *type_as_string		(tree, int);
 extern const char *type_as_string_translate	(tree, int);
 extern const char *decl_as_string		(tree, int);
@@ -6933,7 +6942,7 @@ extern location_t location_of                   (tree);
 extern void qualified_name_lookup_error		(tree, tree, tree,
 						 location_t);
 
-/* in except.c */
+/* in except.cc */
 extern void init_exception_processing		(void);
 extern tree expand_start_catch_block		(tree);
 extern void expand_end_catch_block		(void);
@@ -6962,7 +6971,7 @@ extern tree template_parms_to_args		(tree);
 extern tree template_parms_level_to_args	(tree);
 extern tree generic_targs_for			(tree);
 
-/* in expr.c */
+/* in expr.cc */
 extern tree cplus_expand_constant		(tree);
 extern tree mark_use (tree expr, bool rvalue_p, bool read_p,
 		      location_t = UNKNOWN_LOCATION,
@@ -6976,7 +6985,7 @@ extern tree mark_type_use			(tree);
 extern tree mark_discarded_use			(tree);
 extern void mark_exp_read			(tree);
 
-/* friend.c */
+/* friend.cc */
 extern int is_friend				(tree, tree);
 extern void make_friend_class			(tree, tree, bool);
 extern void add_friend				(tree, tree, bool);
@@ -6986,7 +6995,7 @@ extern tree do_friend				(tree, tree, tree,
 extern void set_global_friend			(tree);
 extern bool is_global_friend			(tree);
 
-/* in init.c */
+/* in init.cc */
 extern tree expand_member_init			(tree);
 extern void emit_mem_initializers		(tree);
 extern tree build_aggr_init			(tree, tree, int,
@@ -7008,7 +7017,8 @@ extern tree build_new				(location_t,
 						 int, tsubst_flags_t);
 extern tree get_temp_regvar			(tree, tree);
 extern tree build_vec_init			(tree, tree, tree, bool, int,
-                                                 tsubst_flags_t);
+						 tsubst_flags_t,
+						 vec<tree, va_gc> ** = nullptr);
 extern tree build_delete			(location_t, tree, tree,
 						 special_function_kind,
 						 int, int, tsubst_flags_t);
@@ -7025,7 +7035,7 @@ extern int diagnose_uninitialized_cst_or_ref_member (tree, bool, bool);
 extern tree build_vtbl_address                  (tree);
 extern bool maybe_reject_flexarray_init		(tree, tree);
 
-/* in lex.c */
+/* in lex.cc */
 extern void cxx_dup_lang_specific_decl		(tree);
 extern tree unqualified_name_lookup_error	(tree,
 						 location_t = UNKNOWN_LOCATION);
@@ -7051,7 +7061,7 @@ extern uintptr_t module_token_cdtor (cpp_reader *, uintptr_t);
 extern uintptr_t module_token_lang (int type, int keyword, tree value,
 				    location_t, uintptr_t);
 
-/* in method.c */
+/* in method.cc */
 extern void init_method				(void);
 extern tree make_thunk				(tree, bool, tree, tree);
 extern void finish_thunk			(tree);
@@ -7181,10 +7191,10 @@ extern void module_begin_main_file (cpp_reader *, line_maps *,
 extern void module_preprocess_options (cpp_reader *);
 extern bool handle_module_option (unsigned opt, const char *arg, int value);
 
-/* In optimize.c */
+/* In optimize.cc */
 extern bool maybe_clone_body			(tree);
 
-/* In parser.c */
+/* In parser.cc */
 extern tree cp_convert_range_for (tree, tree, tree, tree, unsigned int, bool,
 				  unsigned short);
 extern void cp_convert_omp_range_for (tree &, vec<tree, va_gc> *, tree &,
@@ -7198,7 +7208,7 @@ extern location_t defparse_location (tree);
 extern void maybe_show_extern_c_location (void);
 extern bool literal_integer_zerop (const_tree);
 
-/* in pt.c */
+/* in pt.cc */
 extern tree canonical_type_parameter		(tree);
 extern void push_access_scope			(tree);
 extern void pop_access_scope			(tree);
@@ -7396,7 +7406,7 @@ extern tree add_outermost_template_args		(tree, tree);
 extern tree add_extra_args			(tree, tree, tsubst_flags_t, tree);
 extern tree build_extra_args			(tree, tree, tsubst_flags_t);
 
-/* in rtti.c */
+/* in rtti.cc */
 /* A vector of all tinfo decls that haven't been emitted yet.  */
 extern GTY(()) vec<tree, va_gc> *unemitted_tinfo_decls;
 
@@ -7414,7 +7424,7 @@ extern unsigned get_pseudo_tinfo_index		(tree);
 extern tree get_pseudo_tinfo_type		(unsigned);
 extern tree build_if_nonnull			(tree, tree, tsubst_flags_t);
 
-/* in search.c */
+/* in search.cc */
 extern tree get_parent_with_private_access 	(tree decl, tree binfo);
 extern bool accessible_base_p			(tree, tree, bool);
 extern tree lookup_base                         (tree, tree, base_access,
@@ -7458,7 +7468,7 @@ extern bool shared_member_p			(tree);
 extern bool any_dependent_bases_p (tree = current_nonlambda_class_type ());
 extern bool maybe_check_overriding_exception_spec (tree, tree);
 
-/* in semantics.c */
+/* in semantics.cc */
 extern void push_deferring_access_checks	(deferring_kind);
 extern void resume_deferring_access_checks	(void);
 extern void stop_deferring_access_checks	(void);
@@ -7708,7 +7718,7 @@ extern tree most_general_lambda			(tree);
 extern tree finish_omp_target			(location_t, tree, tree, bool);
 extern void finish_omp_target_clauses		(location_t, tree, tree *);
 
-/* in tree.c */
+/* in tree.cc */
 extern int cp_tree_operand_length		(const_tree);
 extern int cp_tree_code_length			(enum tree_code);
 extern void cp_free_lang_data 			(tree t);
@@ -7776,6 +7786,8 @@ extern bool array_of_runtime_bound_p		(tree);
 extern bool vla_type_p				(tree);
 extern tree build_array_copy			(tree);
 extern tree build_vec_init_expr			(tree, tree, tsubst_flags_t);
+extern tree expand_vec_init_expr		(tree, tree, tsubst_flags_t,
+						 vec<tree,va_gc>** = nullptr);
 extern void diagnose_non_constexpr_vec_init	(tree);
 extern tree hash_tree_cons			(tree, tree, tree);
 extern tree hash_tree_chain			(tree, tree);
@@ -7861,7 +7873,7 @@ extern tree cxx_copy_lang_qualifiers		(const_tree, const_tree);
 extern void cxx_print_statistics		(void);
 extern bool maybe_warn_zero_as_null_pointer_constant (tree, location_t);
 
-/* in ptree.c */
+/* in ptree.cc */
 extern void cxx_print_xnode			(FILE *, tree, int);
 extern void cxx_print_decl			(FILE *, tree, int);
 extern void cxx_print_type			(FILE *, tree, int);
@@ -7870,7 +7882,7 @@ extern void cxx_print_error_function		(diagnostic_context *,
 						 const char *,
 						 struct diagnostic_info *);
 
-/* in typeck.c */
+/* in typeck.cc */
 /* Says how we should behave when comparing two arrays one of which
    has unknown bounds.  */
 enum compare_bounds_t { bounds_none, bounds_either, bounds_first };
@@ -8047,7 +8059,7 @@ extern tree finish_binary_fold_expr          (tree, tree, int);
 extern tree treat_lvalue_as_rvalue_p	     (tree, bool);
 extern bool decl_in_std_namespace_p	     (tree);
 
-/* in typeck2.c */
+/* in typeck2.cc */
 extern void require_complete_eh_spec_types	(tree, tree);
 extern void cxx_incomplete_type_diagnostic	(location_t, const_tree,
 						 const_tree, diagnostic_t);
@@ -8117,7 +8129,7 @@ extern tree build_functional_cast		(location_t, tree, tree,
 extern tree add_exception_specifier		(tree, tree, tsubst_flags_t);
 extern tree merge_exception_specifiers		(tree, tree);
 
-/* in mangle.c */
+/* in mangle.cc */
 extern void init_mangle				(void);
 extern void mangle_decl				(tree);
 extern const char *mangle_type_string		(tree);
@@ -8140,10 +8152,10 @@ extern void mangle_module_substitution		(int);
 extern void mangle_identifier			(char, tree);
 extern tree mangle_module_global_init		(int);
 
-/* in dump.c */
+/* in dump.cc */
 extern bool cp_dump_tree			(void *, tree);
 
-/* In cp/cp-objcp-common.c.  */
+/* In cp/cp-objcp-common.cc.  */
 
 extern alias_set_type cxx_get_alias_set		(tree);
 extern bool cxx_warn_unused_global_decl		(const_tree);
@@ -8153,7 +8165,7 @@ extern void cxx_initialize_diagnostics		(diagnostic_context *);
 extern int cxx_types_compatible_p		(tree, tree);
 extern bool cxx_block_may_fallthru		(const_tree);
 
-/* in cp-gimplify.c */
+/* in cp-gimplify.cc */
 extern int cp_gimplify_expr			(tree *, gimple_seq *,
 						 gimple_seq *);
 extern void cp_genericize			(tree);
@@ -8180,7 +8192,7 @@ extern tree process_stmt_hotness_attribute	(tree, location_t);
 extern bool simple_empty_class_p		(tree, tree, tree_code);
 extern tree fold_builtin_source_location	(location_t);
 
-/* in name-lookup.c */
+/* in name-lookup.cc */
 extern tree strip_using_decl                    (tree);
 
 /* Tell the binding oracle what kind of binding we are looking for.  */
@@ -8194,7 +8206,7 @@ enum cp_oracle_request
    create bindings when needed by the C compiler.  The oracle is told
    the name and type of the binding to create.  It can call pushdecl
    or the like to ensure the binding is visible; or do nothing,
-   leaving the binding untouched.  c-decl.c takes note of when the
+   leaving the binding untouched.  c-decl.cc takes note of when the
    oracle has been called and will not call it again if it fails to
    create a given binding.  */
 
@@ -8204,7 +8216,7 @@ extern cp_binding_oracle_function *cp_binding_oracle;
 
 /* Set during diagnostics to record the failed constraint. This is a
    TREE_LIST whose VALUE is the constraint and whose PURPOSE are the
-   instantiation arguments Defined in pt.c.  */
+   instantiation arguments Defined in pt.cc.  */
 
 extern tree current_failed_constraint;
 
@@ -8312,18 +8324,18 @@ struct atom_hasher : default_hash_traits<tree>
 /* in logic.cc */
 extern bool subsumes                            (tree, tree);
 
-/* In class.c */
+/* In class.cc */
 extern void set_current_access_from_decl (tree);
 extern void cp_finish_injected_record_type (tree);
 
-/* in vtable-class-hierarchy.c */
+/* in vtable-class-hierarchy.cc */
 extern void vtv_compute_class_hierarchy_transitive_closure (void);
 extern void vtv_generate_init_routine           (void);
 extern void vtv_save_class_info                 (tree);
 extern void vtv_recover_class_info              (void);
 extern void vtv_build_vtable_verify_fndecl      (void);
 
-/* In constexpr.c */
+/* In constexpr.cc */
 /* Representation of entries in the constexpr function definition table.  */
 
 struct GTY((for_user)) constexpr_fundef {
@@ -8379,6 +8391,7 @@ extern tree fold_sizeof_expr			(tree);
 extern void clear_cv_and_fold_caches		(void);
 extern tree unshare_constructor			(tree CXX_MEM_STAT_INFO);
 extern bool decl_implicit_constexpr_p		(tree);
+extern bool replace_decl			(tree *, tree, tree);
 
 /* An RAII sentinel used to restrict constexpr evaluation so that it
    doesn't do anything that causes extra DECL_UID generation.  */
@@ -8403,7 +8416,7 @@ struct uid_sensitive_constexpr_evaluation_checker
 
 void cp_tree_c_finish_parsing ();
 
-/* In cp-ubsan.c */
+/* In cp-ubsan.cc */
 extern void cp_ubsan_maybe_instrument_member_call (tree);
 extern void cp_ubsan_instrument_member_accesses (tree *);
 extern tree cp_ubsan_maybe_instrument_downcast	(location_t, tree, tree, tree);

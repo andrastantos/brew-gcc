@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler, for IBM RS/6000.
-   Copyright (C) 2000-2021 Free Software Foundation, Inc.
+   Copyright (C) 2000-2022 Free Software Foundation, Inc.
    Contributed by Richard Kenner (kenner@vlsi1.ultra.nyu.edu)
 
    This file is part of GCC.
@@ -21,7 +21,7 @@
 #ifndef GCC_RS6000_PROTOS_H
 #define GCC_RS6000_PROTOS_H
 
-/* Declare functions in rs6000.c */
+/* Declare functions in rs6000.cc */
 
 #ifdef RTX_CODE
 
@@ -73,6 +73,7 @@ extern int expand_block_move (rtx[], bool);
 extern bool expand_block_compare (rtx[]);
 extern bool expand_strn_compare (rtx[], int);
 extern bool rs6000_is_valid_mask (rtx, int *, int *, machine_mode);
+extern bool rs6000_is_valid_rotate_dot_mask (rtx mask, machine_mode mode);
 extern bool rs6000_is_valid_and_mask (rtx, machine_mode);
 extern bool rs6000_is_valid_shift_mask (rtx, rtx, machine_mode);
 extern bool rs6000_is_valid_insert_mask (rtx, rtx, machine_mode);
@@ -312,7 +313,7 @@ extern void rs6000_asm_output_dwarf_datarel (FILE *file, int size,
 					     const char *label);
 extern long rs6000_const_f32_to_i32 (rtx operand);
 
-/* Declare functions in rs6000-c.c */
+/* Declare functions in rs6000-c.cc */
 
 extern void rs6000_pragma_longcall (struct cpp_reader *);
 extern void rs6000_cpu_cpp_builtins (struct cpp_reader *);
@@ -324,7 +325,7 @@ extern void rs6000_target_modify_macros (bool, HOST_WIDE_INT, HOST_WIDE_INT);
 extern void (*rs6000_target_modify_macros_ptr) (bool, HOST_WIDE_INT,
 						HOST_WIDE_INT);
 
-/* Declare functions in rs6000-d.c  */
+/* Declare functions in rs6000-d.cc  */
 extern void rs6000_d_target_versions (void);
 extern void rs6000_d_register_target_info (void);
 

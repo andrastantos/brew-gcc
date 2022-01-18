@@ -1,5 +1,5 @@
 /* Support routines for value ranges.
-   Copyright (C) 2019-2021 Free Software Foundation, Inc.
+   Copyright (C) 2019-2022 Free Software Foundation, Inc.
    Major hacks by Aldy Hernandez <aldyh@redhat.com> and
    Andrew MacLeod <amacleod@redhat.com>.
 
@@ -2111,7 +2111,7 @@ vrp_operand_equal_p (const_tree val1, const_tree val2)
   return true;
 }
 
-// ?? These stubs are for ipa-prop.c which use a value_range in a
+// ?? These stubs are for ipa-prop.cc which use a value_range in a
 // hash_traits.  hash-traits.h defines an extern of gt_ggc_mx (T &)
 // instead of picking up the gt_ggc_mx (T *) version.
 void

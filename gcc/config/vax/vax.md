@@ -1,5 +1,5 @@
 ;; Machine description for GNU compiler, VAX Version
-;; Copyright (C) 1987-2021 Free Software Foundation, Inc.
+;; Copyright (C) 1987-2022 Free Software Foundation, Inc.
 
 ;; This file is part of GCC.
 
@@ -1261,7 +1261,7 @@
 ;; The following used to be needed because constant propagation can
 ;; create them starting from the bic insn patterns above.  This is no
 ;; longer a problem.  However, having these patterns allows optimization
-;; opportunities in combine.c.
+;; opportunities in combine.cc.
 
 (define_insn_and_split "*and<mode>3_const_int"
   [(set (match_operand:VAXint 0 "nonimmediate_operand" "=g,g")

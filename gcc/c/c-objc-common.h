@@ -1,5 +1,5 @@
 /* Language hooks common to C and ObjC front ends.
-   Copyright (C) 2004-2021 Free Software Foundation, Inc.
+   Copyright (C) 2004-2022 Free Software Foundation, Inc.
    Contributed by Ziemowit Laski  <zlaski@apple.com>
 
 This file is part of GCC.
@@ -22,7 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 #define GCC_C_OBJC_COMMON
 
 /* Lang hooks that are shared between C and ObjC are defined here.  Hooks
-   specific to C or ObjC go in c-lang.c and objc/objc-lang.c, respectively.  */
+   specific to C or ObjC go in c-lang.cc and objc/objc-lang.cc, respectively.  */
 
 #undef LANG_HOOKS_IDENTIFIER_SIZE
 #define LANG_HOOKS_IDENTIFIER_SIZE C_SIZEOF_STRUCT_LANG_IDENTIFIER

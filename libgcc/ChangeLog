@@ -1,3 +1,31 @@
+2022-01-17  Martin Liska  <mliska@suse.cz>
+
+	* libgcov-driver.c: Rename .c names to .cc.
+
+2022-01-15  David  <gccbugzilla@limegreensocks.com>
+
+	* config/i386/gthr-win32.c (__gthr_i486_lock_cmp_xchg):
+	Remove inlined version, Windows 95 is no longer relevant.
+	* config/i386/gthr-win32.h
+	(__GTHREAD_I486_INLINE_LOCK_PRIMITIVES): unset.
+
+2022-01-14  Claudiu Zissulescu  <claziss@synopsys.com>
+
+	* config/arc/linux-unwind.h (arc_fallback_frame_state): Use
+	DWARF_ALT_FRAME_RETURN_COLUMN macro.
+
+2022-01-04  Florian Weimer  <fweimer@redhat.com>
+
+	* unwind-dw2-fde-dip.c (_Unwind_Find_FDE): Call _dl_find_object
+	if available.
+
+2022-01-02  John David Anglin  <danglin@gcc.gnu.org>
+
+	* config/pa/linux-atomic.c (_ASM_EFAULT): Define.
+	(__kernel_cmpxchg): Nullify illegal iitlbp instruction if error
+	return is not equal _ASM_EFAULT.
+	(__kernel_cmpxchg2): Likewise.
+
 2021-12-17  Iain Sandoe  <iain@sandoe.co.uk>
 
 	* config.host: Add shim declaration header to powerpc*-darwin builds.
@@ -11972,7 +12000,7 @@
 	shared-object.mk, siditi-object.mk, static-object.mk: New files.
 	* configure: Generated.
 
-Copyright (C) 2007-2021 Free Software Foundation, Inc.
+Copyright (C) 2007-2022 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

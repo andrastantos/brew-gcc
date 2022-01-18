@@ -1,5 +1,5 @@
 /* This file contains the list of the debug counter for GCC.
-   Copyright (C) 2006-2021 Free Software Foundation, Inc.
+   Copyright (C) 2006-2022 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -48,7 +48,7 @@ along with GCC; see the file COPYING3.  If not see
    or for each copy instruction in register coalescing,
    or constant-propagation for each insn,
    or a block straightening, etc.
-   See dce.c for an example. With the dbg_cnt () call in dce.c,
+   See dce.cc for an example. With the dbg_cnt () call in dce.cc,
    now a developer can use -fdbg-cnt=dce:N
    to stop doing the dead code elimination after N times.
 

@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler, for IBM RS/6000.
-   Copyright (C) 1992-2021 Free Software Foundation, Inc.
+   Copyright (C) 1992-2022 Free Software Foundation, Inc.
    Contributed by Richard Kenner (kenner@vlsi1.ultra.nyu.edu)
 
    This file is part of GCC.
@@ -98,7 +98,7 @@
 #endif
 
 /* Common ASM definitions used by ASM_SPEC among the various targets for
-   handling -mcpu=xxx switches.  There is a parallel list in driver-rs6000.c to
+   handling -mcpu=xxx switches.  There is a parallel list in driver-rs6000.cc to
    provide the default assembler options if the user uses -mcpu=native, so if
    you make changes here, make them also there.  PR63177: Do not pass -mpower8
    to the assembler if -mpower9-vector was also used.  */
@@ -195,9 +195,9 @@ ASM_OPT_ANY
 
 /* -mcpu=native handling only makes sense with compiler running on
    an PowerPC chip.  If changing this condition, also change
-   the condition in driver-rs6000.c.  */
+   the condition in driver-rs6000.cc.  */
 #if defined(__powerpc__) || defined(__POWERPC__) || defined(_AIX)
-/* In driver-rs6000.c.  */
+/* In driver-rs6000.cc.  */
 extern const char *host_detect_local_cpu (int argc, const char **argv);
 #define EXTRA_SPEC_FUNCTIONS \
   { "local_cpu_detect", host_detect_local_cpu },
@@ -604,6 +604,11 @@ extern int rs6000_vector_align[];
 					 && TARGET_P8_VECTOR		\
 					 && TARGET_POWERPC64)
 
+/* Inlining allows targets to define the meanings of bits in target_info
+   field of ipa_fn_summary by itself, the used bits for rs6000 are listed
+   below.  */
+#define RS6000_FN_TARGET_INFO_HTM 1
+
 /* Whether the various reciprocal divide/square root estimate instructions
    exist, and whether we should automatically generate code for the instruction
    by default.  */
@@ -748,7 +753,7 @@ extern unsigned char rs6000_recip_bits[];
    machine.  If you don't define this, the default is two words.  */
 #define LONG_DOUBLE_TYPE_SIZE rs6000_long_double_type_size
 
-/* Work around rs6000_long_double_type_size dependency in ada/targtyps.c.  */
+/* Work around rs6000_long_double_type_size dependency in ada/targtyps.cc.  */
 #define WIDEST_HARDWARE_FP_SIZE 64
 
 /* Width in bits of a pointer.
@@ -1353,10 +1358,10 @@ extern enum reg_class rs6000_constraints[RS6000_CONSTRAINT_MAX];
 
    The default value for this macro is `STACK_POINTER_OFFSET' plus the
    length of the outgoing arguments.  The default is correct for most
-   machines.  See `function.c' for details.
+   machines.  See `function.cc' for details.
 
    This value must be a multiple of STACK_BOUNDARY (hard coded in
-   `emit-rtl.c').  */
+   `emit-rtl.cc').  */
 #define STACK_DYNAMIC_OFFSET(FUNDECL)					\
   RS6000_ALIGN (crtl->outgoing_args_size.to_constant ()			\
 		+ STACK_POINTER_OFFSET,					\
@@ -1602,7 +1607,7 @@ typedef struct rs6000_args
 /* #define RETURN_ADDR_IN_PREVIOUS_FRAME */
 
 /* Number of bytes into the frame return addresses can be found.  See
-   rs6000_stack_info in rs6000.c for more information on how the different
+   rs6000_stack_info in rs6000.cc for more information on how the different
    abi's store the return address.  */
 #define RETURN_ADDRESS_OFFSET \
   ((DEFAULT_ABI == ABI_V4 ? 4 : 8) << (TARGET_64BIT ? 1 : 0))
@@ -1656,7 +1661,7 @@ typedef struct rs6000_args
    They give nonzero only if REGNO is a hard reg of the suitable class
    or a pseudo reg currently allocated to a suitable hard reg.
    Since they use reg_renumber, they are safe only once reg_renumber
-   has been allocated, which happens in reginfo.c during register
+   has been allocated, which happens in reginfo.cc during register
    allocation.  */
 
 #define REGNO_OK_FOR_INDEX_P(REGNO)				\

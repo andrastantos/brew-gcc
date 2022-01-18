@@ -1,4 +1,4 @@
-#  Copyright (C) 2003-2021 Free Software Foundation, Inc.
+#  Copyright (C) 2003-2022 Free Software Foundation, Inc.
 #  Contributed by Kelley Cook, June 2004.
 #  Original code from Neil Booth, May 2003.
 #
@@ -25,7 +25,7 @@
 # opt-read.awk.
 #
 # Usage: awk -f opt-functions.awk -f opt-read.awk -f optc-gen.awk \
-#            [-v header_name=header.h] < inputfile > options.c
+#            [-v header_name=header.h] < inputfile > options.cc
 
 # Dump that array of options into a C file.
 END {

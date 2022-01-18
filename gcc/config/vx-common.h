@@ -1,5 +1,5 @@
 /* Target-independent configuration for VxWorks and VxWorks AE.   
-   Copyright (C) 2005-2021 Free Software Foundation, Inc.
+   Copyright (C) 2005-2022 Free Software Foundation, Inc.
    Contributed by CodeSourcery, LLC.
 
 This file is part of GCC.
@@ -25,7 +25,7 @@ along with GCC; see the file COPYING3.  If not see
    to be used in port-specific vxworks.h.  */
 
 /* REAL_LIBGCC_SPEC needs to be used since the non-static option is not
-   handled in gcc.c.  */
+   handled in gcc.cc.  */
 #undef REAL_LIBGCC_SPEC
 #define REAL_LIBGCC_SPEC VXWORKS_LIBGCC_SPEC
 #undef STARTFILE_SPEC

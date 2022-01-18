@@ -1,5 +1,5 @@
 /* Header file for the value range relational processing.
-   Copyright (C) 2020-2021 Free Software Foundation, Inc.
+   Copyright (C) 2020-2022 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
 
 This file is part of GCC.
@@ -157,6 +157,7 @@ class relation_chain_head
 public:
   bitmap m_names;		// ssa_names with relations in this block.
   class relation_chain *m_head; // List of relations in block.
+  int m_num_relations;		// Number of relations in block.
   relation_kind find_relation (const_bitmap b1, const_bitmap b2) const;
 };
 

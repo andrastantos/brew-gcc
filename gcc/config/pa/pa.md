@@ -1,5 +1,5 @@
 ;;- Machine description for HP PA-RISC architecture for GCC compiler
-;;   Copyright (C) 1992-2021 Free Software Foundation, Inc.
+;;   Copyright (C) 1992-2022 Free Software Foundation, Inc.
 ;;   Contributed by the Center for Software Science at the University
 ;;   of Utah.
 
@@ -3261,7 +3261,7 @@
 ;; If the count is run-time determined, the register with the byte count
 ;; is clobbered by the copying code, and therefore it is forced to operand 2.
 ;;
-;; We used to clobber operands 0 and 1.  However, a change to regrename.c
+;; We used to clobber operands 0 and 1.  However, a change to regrename.cc
 ;; broke this semantic for pseudo registers.  We can't use match_scratch
 ;; as this requires two registers in the class R1_REGS when the MEMs for
 ;; operands 0 and 1 are both equivalent to symbolic MEMs.  Thus, we are
@@ -3449,7 +3449,7 @@
 ;; If the count is run-time determined, the register with the byte count
 ;; is clobbered by the copying code, and therefore it is forced to operand 2.
 ;;
-;; We used to clobber operands 0 and 1.  However, a change to regrename.c
+;; We used to clobber operands 0 and 1.  However, a change to regrename.cc
 ;; broke this semantic for pseudo registers.  We can't use match_scratch
 ;; as this requires two registers in the class R1_REGS when the MEMs for
 ;; operands 0 and 1 are both equivalent to symbolic MEMs.  Thus, we are
@@ -6663,7 +6663,7 @@
 	      DONE;
 	    }
 	}
-      /* Fallback to using optabs.c's expand_doubleword_shift.  */
+      /* Fallback to using optabs.cc's expand_doubleword_shift.  */
       FAIL;
     }
   if (GET_CODE (operands[2]) != CONST_INT)
@@ -6713,7 +6713,7 @@
 	  DONE;
 	}
     }
-  /* Fallback to using optabs.c's expand_doubleword_shift.  */
+  /* Fallback to using optabs.cc's expand_doubleword_shift.  */
   FAIL;
 })
 
@@ -10366,10 +10366,12 @@ add,l %2,%3,%3\;bv,n %%r0(%3)"
 {
   if (TARGET_SYNC_LIBCALL)
     {
-      rtx mem = operands[0];
-      rtx val = operands[1];
-      if (pa_maybe_emit_compare_and_swap_exchange_loop (NULL_RTX, mem, val))
-	DONE;
+      rtx libfunc = optab_libfunc (sync_lock_test_and_set_optab, QImode);
+      rtx addr = convert_memory_address (Pmode, XEXP (operands[0], 0));
+
+      emit_library_call (libfunc, LCT_NORMAL, VOIDmode, addr, Pmode,
+			 operands[1], QImode);
+      DONE;
     }
   FAIL;
 })
@@ -10384,10 +10386,12 @@ add,l %2,%3,%3\;bv,n %%r0(%3)"
 {
   if (TARGET_SYNC_LIBCALL)
     {
-      rtx mem = operands[0];
-      rtx val = operands[1];
-      if (pa_maybe_emit_compare_and_swap_exchange_loop (NULL_RTX, mem, val))
-	DONE;
+      rtx libfunc = optab_libfunc (sync_lock_test_and_set_optab, HImode);
+      rtx addr = convert_memory_address (Pmode, XEXP (operands[0], 0));
+
+      emit_library_call (libfunc, LCT_NORMAL, VOIDmode, addr, Pmode,
+			 operands[1], HImode);
+      DONE;
     }
   FAIL;
 })
@@ -10402,10 +10406,12 @@ add,l %2,%3,%3\;bv,n %%r0(%3)"
 {
   if (TARGET_SYNC_LIBCALL)
     {
-      rtx mem = operands[0];
-      rtx val = operands[1];
-      if (pa_maybe_emit_compare_and_swap_exchange_loop (NULL_RTX, mem, val))
-	DONE;
+      rtx libfunc = optab_libfunc (sync_lock_test_and_set_optab, SImode);
+      rtx addr = convert_memory_address (Pmode, XEXP (operands[0], 0));
+
+      emit_library_call (libfunc, LCT_NORMAL, VOIDmode, addr, Pmode,
+			 operands[1], SImode);
+      DONE;
     }
   FAIL;
 })
@@ -10453,10 +10459,12 @@ add,l %2,%3,%3\;bv,n %%r0(%3)"
 
   if (TARGET_SYNC_LIBCALL)
     {
-      rtx mem = operands[0];
-      rtx val = operands[1];
-      if (pa_maybe_emit_compare_and_swap_exchange_loop (NULL_RTX, mem, val))
-	DONE;
+      rtx libfunc = optab_libfunc (sync_lock_test_and_set_optab, DImode);
+      rtx addr = convert_memory_address (Pmode, XEXP (operands[0], 0));
+
+      emit_library_call (libfunc, LCT_NORMAL, VOIDmode, addr, Pmode,
+			 operands[1], DImode);
+      DONE;
     }
 
   if (TARGET_64BIT || TARGET_SOFT_FLOAT)

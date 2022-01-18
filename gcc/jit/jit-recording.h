@@ -1,5 +1,5 @@
 /* Internals of libgccjit: classes for recording calls made to the JIT API.
-   Copyright (C) 2013-2021 Free Software Foundation, Inc.
+   Copyright (C) 2013-2022 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -1038,7 +1038,7 @@ private:
 /* An abstract base class for operations that visit all rvalues within an
    expression tree.
    Currently the only implementation is class rvalue_usage_validator within
-   jit-recording.c.  */
+   jit-recording.cc.  */
 
 class rvalue_visitor
 {

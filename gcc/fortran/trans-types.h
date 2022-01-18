@@ -1,5 +1,5 @@
 /* Header for Fortran 95 types backend support.
-   Copyright (C) 2002-2021 Free Software Foundation, Inc.
+   Copyright (C) 2002-2022 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
    and Steven Bosscher <s.bosscher@student.tudelft.nl>
 
@@ -65,7 +65,7 @@ enum gfc_packed {
   PACKED_STATIC
 };
 
-/* trans-types.c */
+/* trans-types.cc */
 void gfc_init_kinds (void);
 void gfc_init_types (void);
 void gfc_init_c_interop_kinds (void);
