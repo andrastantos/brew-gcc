@@ -698,12 +698,15 @@
 
 (define_insn "*call"
   [(call
-    (mem:QI (match_operand:SI 0 "nonmemory_operand" "ir"))
+    (mem:QI (match_operand:SI 0 "nonmemory_operand" "i,r"))
     (match_operand 1 "")
   )
   ]
   ""
-  "$pc <- %0"
+  "@
+  $r3 <- $pc + 14\;mem[$sp] <- $r3\;$pc <- %0
+  $r3 <- $pc + 10\;mem[$sp] <- $r3\;$pc <- %0"
+  [(set_attr "length"        "20,16")]
 )
 
 (define_insn "*call"
@@ -713,7 +716,7 @@
   )
   ]
   ""
-  "$pc <- %0 # this_is_the_label_ref_pattern"
+  "$r3 <- $pc + 14\;mem[$sp] <- $r3\;$pc <- %l0"
 )
 
 (define_expand "call_value"
@@ -731,25 +734,17 @@
 
 (define_insn "*call_value"
   [(set
-    (match_operand 0 "register_operand" "=r")
+    (match_operand 0 "register_operand" "=r,r")
     (call
-      (mem:QI (match_operand:SI 1 "immediate_operand" "i"))
-      (match_operand 2 "" "")))
-  ]
+      (mem:QI (match_operand:SI 1 "nonmemory_operand" "i,r"))
+      (match_operand 2 "" "")
+    )
+  )]
   ""
-  "$pc <- %1"
-  [(set_attr "length"        "6")]
-)
-
-(define_insn "*call_value_indirect"
-  [(set (match_operand 0 "register_operand" "=r")
-        (call (mem:QI (match_operand:SI
-                       1 "register_operand" "r"))
-              (match_operand 2 "" "")))
-  ]
-  ""
-  "$pc <- %1"
-  [(set_attr "length"        "2")]
+  "@
+  $r3 <- $pc + 14\;mem[$sp] <- $r3\;$pc <- %1
+  $r3 <- $pc + 10\;mem[$sp] <- $r3\;$pc <- %1"
+  [(set_attr "length"        "20,16")]
 )
 
 (define_insn "indirect_jump"

@@ -75,6 +75,14 @@ brew_init_machine_status (void)
 //
 ///////////////////////////////////////////////////////////////////////////
 
+/* Returns true if floating point emulation is enabled */
+/* This is controlled by the -msoft-float/-mno-soft-float command-line option. */
+/* Default is HW floating point (no-soft-float)
+bool brew_soft_float()
+{
+  return TARGET_SOFT_FLOAT != 0;
+}
+
 /* Returns the condition code for the inverted comparison (so for example LT for GT) */
 /* NOTE: this is not a negated code! */
 static enum rtx_code
@@ -171,26 +179,55 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
 void brew_expand_call(machine_mode mode, rtx *operands)
 {
   gcc_assert (MEM_P(operands[0]));
-  rtx temp_reg = gen_reg_rtx(mode);
-  // $r3 <- $pc + 16
-  emit_insn(gen_addsi3(
-    temp_reg,
-    pc_rtx, // gen_rtx_REG(mode, BREW_PC), // Can't use pc_rtx here: that's not a valid operand for the addsi3 pattern.
-    GEN_INT(16)
-  ));
+  // By emitting the $sp update here, I'm hoping the compiler
+  // can hoist and merge this with other stack-frame operations.
+  // TODO: this needs to be verified and maybe a peephole needs to
+  //       be written?
   // $sp <- $sp - 4
   emit_insn(gen_subsi3(
     stack_pointer_rtx,
     stack_pointer_rtx,
     GEN_INT(4)
   ));
+  // these three instructions will be emitted in *call_xxx patterns.
+  //rtx temp_reg = gen_reg_rtx(mode);
+  // $r3 <- $pc + 10 or 14 depending on where the branch target is coming from
+  // mem[$sp] <- $r3
+  // $pc <- %0
+}
+
+void brew_expand_call2(machine_mode mode, rtx *operands)
+{
+  gcc_assert (MEM_P(operands[0]));
+  // This version generates the whole call sequence, including
+  // the final jump instruction (because it needs to put the
+  // return label after it.
+
+  // $sp <- $sp - 4
+  emit_insn(gen_subsi3(
+    stack_pointer_rtx,
+    stack_pointer_rtx,
+    GEN_INT(4)
+  ));
+  rtx_code_label *label = gen_label_rtx();
+  rtx temp_reg = gen_reg_rtx(mode);
+  // $r3 <- <ret_label>
+  emit_insn(gen_move_insn(
+    temp_reg,
+    label
+  ));
   // mem[$sp] <- $r3
   emit_insn(gen_move_insn(
     gen_rtx_MEM(Pmode, stack_pointer_rtx),
     temp_reg
   ));
-  // this last instruction will be emitted in *call insn.
-  // $pc <- %0
+  emit_jump_insn(
+    gen_move_insn(
+      pc_rtx,
+      operands[0]
+    )
+  );
+  emit_label(label);
 }
 
 // Determines if we wanted to save/restore the specified register

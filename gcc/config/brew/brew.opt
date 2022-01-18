@@ -18,18 +18,6 @@
 ; along with GCC; see the file COPYING3.  If not see
 ; <http://www.gnu.org/licenses/>.
 
-meb
-Target RejectNegative InverseMask(LITTLE_ENDIAN)
-Generate big-endian code.
-
-mel
-Target RejectNegative Mask(LITTLE_ENDIAN)
-Generate little-endian code.
-
-mmul.x
-Target Mask(HAS_MULX)
-Enable MUL.X and UMUL.X instructions.
-
-; Ignored by the compiler
-mno-crt0
-Target RejectNegative
+msoft-float
+Target Mask(SOFT_FLOAT)
+Generate code with floating point emulation.
