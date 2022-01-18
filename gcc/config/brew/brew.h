@@ -44,9 +44,9 @@
 #define LINK_SPEC "%{h*} %{v:-V}\
                    %{static:-Bstatic} %{shared:-shared} %{symbolic:-Bsymbolic}"
 
-#ifndef MULTILIB_DEFAULTS
-#define MULTILIB_DEFAULTS { "meb" }
-#endif
+//#ifndef MULTILIB_DEFAULTS
+//#define MULTILIB_DEFAULTS {}
+//#endif
 
 /* Layout of Source Language Data Types */
 
@@ -150,7 +150,12 @@ enum reg_class
 
 /* 1 for registers that have pervasive standard uses
    and are not available for the register allocator.  */
-#define FIXED_REGISTERS     { 1, 1, 1, 0, /* $pc,  $sp,  $fp,  $r3  */ \
+// TODO: $r3 is used in the call pattern at the moment.
+//       this could be any register, and $r3 should be
+//       available between calls for the register allocator
+//       but I don't know how to convince GCC not to re-arrange
+//       the call pattern insn, if generated through RTL.
+#define FIXED_REGISTERS     { 1, 1, 1, 1, /* $pc,  $sp,  $fp,  $r3  */ \
                               0, 0, 0, 0, /* $r4,  $r5,  $r6,  $r7  */ \
                               0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
                               0, 0, 0,    /* $r12, $r13, $r14       */ \
@@ -289,8 +294,8 @@ enum reg_class
 
 /* Storage Layout */
 #define BITS_BIG_ENDIAN 0
-#define BYTES_BIG_ENDIAN ( ! TARGET_LITTLE_ENDIAN )
-#define WORDS_BIG_ENDIAN ( ! TARGET_LITTLE_ENDIAN )
+#define BYTES_BIG_ENDIAN 0
+#define WORDS_BIG_ENDIAN 0
 
 /* Alignment required for a function entry point, in bits.  */
 #define FUNCTION_BOUNDARY 16
