@@ -170,7 +170,8 @@ enum reg_class
 
 // This is not defined by GCC, but is used in brew-specific code to 
 // abstract away which register is used as the link register for function calls.
-#define BREW_REG_LINK BREW_R3
+// NOTE: for various practical reasons this constant is defined in brew.md
+//#define BREW_REG_LINK BREW_R3
 
 // The chain register is used if a nested functions address is taken.
 // This is used by GCC trampoline code.
@@ -263,7 +264,7 @@ enum reg_class
 /* Define this macro as a C expression that is nonzero for registers that are
    used by the epilogue or the return pattern.  The stack and frame
    pointer registers are already assumed to be used as needed.  */
-#define EPILOGUE_USES(R) (false)
+#define EPILOGUE_USES(R) (R == BREW_REG_LINK)
 
 /* A C expression whose value is RTL representing the location of the incoming
    return address at the beginning of any function, before the prologue.  This
@@ -479,7 +480,7 @@ enum reg_class
   { \
     builtin_define_std ("brew");                        \
     builtin_define_std ("BREW");                        \
-    builtin_define ("__BREW_LITTLE_ENDIAN__");          \
+    builtin_define ("__BREW__");                        \
   }
 
 #define HAS_LONG_UNCOND_BRANCH true

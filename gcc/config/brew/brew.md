@@ -36,6 +36,12 @@
 ; Most instructions are two bytes long.
 (define_attr "length" "" (const_int 2))
 
+(define_constants
+  [
+    (BREW_REG_LINK 3)
+  ]
+)
+
 ;; -------------------------------------------------------------------------
 ;; nop instruction
 ;; -------------------------------------------------------------------------
@@ -687,9 +693,13 @@
 ;; instruction (namely the actual jump to the call target).
 
 (define_expand "call"
-  [(call
-    (match_operand:QI 0 "memory_operand" "")
-    (match_operand 1 "" "")
+  [(parallel
+    [(call
+      (match_operand:SI 0 "" "")
+      (match_operand 1 "" "")
+    )
+    (clobber (reg:SI BREW_REG_LINK))
+    ]
   )]
   ""
 {
@@ -697,35 +707,44 @@
 })
 
 (define_insn "*call"
-  [(call
-    (mem:QI (match_operand:SI 0 "nonmemory_operand" "i,r"))
-    (match_operand 1 "")
-  )
+  [
+    (call
+      (mem:QI (match_operand:SI 0 "nonmemory_operand" "i,r"))
+      (match_operand 1 "")
+    )
+    (clobber (reg:SI BREW_REG_LINK))
   ]
+
   ""
   "@
-  $r3 <- $pc + 14\;mem[$sp] <- $r3\;$pc <- %0
-  $r3 <- $pc + 10\;mem[$sp] <- $r3\;$pc <- %0"
-  [(set_attr "length"        "20,16")]
+  $r3 <- $pc + 12\;$pc <- %0
+  $r3 <- $pc + 8\;$pc <- %0"
+  [(set_attr "length"        "12,8")]
 )
 
 (define_insn "*call"
-  [(call
-    (label_ref(match_operand 0 "" ""))
-    (match_operand 1 "")
-  )
+  [
+    (call
+      (label_ref(match_operand 0 "" ""))
+      (match_operand 1 "")
+    )
+    (clobber (reg:SI BREW_REG_LINK))
   ]
   ""
-  "$r3 <- $pc + 14\;mem[$sp] <- $r3\;$pc <- %l0"
+  "$r3 <- $pc + 12\;$pc <- %l0"
 )
 
 (define_expand "call_value"
-  [(set
-    (match_operand 0 "" "")
-    (call
-      (match_operand:QI 1 "memory_operand" "")
-      (match_operand 2 "" "")
-    )
+  [(parallel
+    [(set
+        (match_operand 0 "" "")
+        (call
+          (match_operand:SI 1 "" "")
+          (match_operand 2 "" "")
+        )
+      )
+      (clobber (reg:SI BREW_REG_LINK))
+    ]
   )]
   ""
 {
@@ -733,18 +752,21 @@
 })
 
 (define_insn "*call_value"
-  [(set
-    (match_operand 0 "register_operand" "=r,r")
-    (call
-      (mem:QI (match_operand:SI 1 "nonmemory_operand" "i,r"))
-      (match_operand 2 "" "")
+  [
+    (set
+      (match_operand 0 "register_operand" "=r,r")
+      (call
+        (mem:QI (match_operand:SI 1 "nonmemory_operand" "i,r"))
+        (match_operand 2 "")
+      )
     )
-  )]
+    (clobber (reg:SI BREW_REG_LINK))
+  ]
   ""
   "@
-  $r3 <- $pc + 14\;mem[$sp] <- $r3\;$pc <- %1
-  $r3 <- $pc + 10\;mem[$sp] <- $r3\;$pc <- %1"
-  [(set_attr "length"        "20,16")]
+  $r3 <- $pc + 12\;$pc <- %1
+  $r3 <- $pc + 8\;$pc <- %1"
+  [(set_attr "length"        "12,8")]
 )
 
 (define_insn "indirect_jump"
@@ -792,5 +814,5 @@
 (define_insn "returner"
   [(return)]
   "reload_completed"
-  "$pc <- mem[$sp,-4]"
+  "$pc <- $r3"
 )
