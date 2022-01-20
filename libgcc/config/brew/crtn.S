@@ -25,14 +25,14 @@
 # fact return.  Users may put any desired instructions in those sections.
 # This file is the last thing linked into any executable.
 
-	.file		"crtn.S"
+  .file    "crtn.S"
 
-	.section	".init"
+  .section  ".init"
   $r3 <- mem[$sp]
   $sp <- $sp + 4
   $pc <- $r3
-	
-	.section	".fini"
+  
+  .section  ".fini"
   $r3 <- mem[$sp]
   $sp <- $sp + 4
   $pc <- $r3
