@@ -58,6 +58,9 @@ struct GTY(()) machine_function
    int local_vars_size;
    // Total SP adjustment needed. Includes padding.
    int size_for_adjusting_sp;
+   // A bit-mask: 1 for each reg that was saved, 0 for ones that didn't.
+   // bit0 is R0, bit 14 is R14
+   uint32_t reg_save_mask;
  };
 
 static struct machine_function *
@@ -77,7 +80,7 @@ brew_init_machine_status (void)
 
 /* Returns true if floating point emulation is enabled */
 /* This is controlled by the -msoft-float/-mno-soft-float command-line option. */
-/* Default is HW floating point (no-soft-float)
+/* Default is HW floating point (no-soft-float) */
 bool brew_soft_float()
 {
   return TARGET_SOFT_FLOAT != 0;
@@ -176,58 +179,9 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
     }
 }
 
-void brew_expand_call(machine_mode mode, rtx *operands)
+void brew_expand_call(machine_mode /*mode*/, rtx *operands)
 {
-  gcc_assert (MEM_P(operands[0]));
-  // By emitting the $sp update here, I'm hoping the compiler
-  // can hoist and merge this with other stack-frame operations.
-  // TODO: this needs to be verified and maybe a peephole needs to
-  //       be written?
-  // $sp <- $sp - 4
-  emit_insn(gen_subsi3(
-    stack_pointer_rtx,
-    stack_pointer_rtx,
-    GEN_INT(4)
-  ));
-  // these three instructions will be emitted in *call_xxx patterns.
-  //rtx temp_reg = gen_reg_rtx(mode);
-  // $r3 <- $pc + 10 or 14 depending on where the branch target is coming from
-  // mem[$sp] <- $r3
-  // $pc <- %0
-}
-
-void brew_expand_call2(machine_mode mode, rtx *operands)
-{
-  gcc_assert (MEM_P(operands[0]));
-  // This version generates the whole call sequence, including
-  // the final jump instruction (because it needs to put the
-  // return label after it.
-
-  // $sp <- $sp - 4
-  emit_insn(gen_subsi3(
-    stack_pointer_rtx,
-    stack_pointer_rtx,
-    GEN_INT(4)
-  ));
-  rtx_code_label *label = gen_label_rtx();
-  rtx temp_reg = gen_reg_rtx(mode);
-  // $r3 <- <ret_label>
-  emit_insn(gen_move_insn(
-    temp_reg,
-    label
-  ));
-  // mem[$sp] <- $r3
-  emit_insn(gen_move_insn(
-    gen_rtx_MEM(Pmode, stack_pointer_rtx),
-    temp_reg
-  ));
-  emit_jump_insn(
-    gen_move_insn(
-      pc_rtx,
-      operands[0]
-    )
-  );
-  emit_label(label);
+  gcc_assert(MEM_P(operands[0]));
 }
 
 // Determines if we wanted to save/restore the specified register
@@ -235,9 +189,11 @@ void brew_expand_call2(machine_mode mode, rtx *operands)
 static bool
 reg_needs_save_restore(int regno)
 {
+  // We need to save/restore a register if...
   return
-    (df_regs_ever_live_p(regno) && !call_used_or_fixed_reg_p (regno)) ||
-    (regno == BREW_FP);
+    (df_regs_ever_live_p(regno) && (!call_used_or_fixed_reg_p(regno) || regno == BREW_REG_LINK)) || // We clobber the register that should be saved across calls
+    (regno == BREW_REG_LINK /*&& !crtl->is_leaf*/) || // The link register for non-leaf nodes in the call-graph 
+    (regno == BREW_FP); // The frame pointer (TODO: how to eliminate this as much as possible?)
 }
 
 // Compute the size of the local area and the size to be adjusted by the
@@ -254,11 +210,14 @@ brew_compute_frame(void)
     cfun->machine->local_vars_size += stack_alignment - left_over;
 
   cfun->machine->callee_saved_reg_size = 0;
-
+  cfun->machine->reg_save_mask = 0;
   // Save callee-saved registers
-  for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+  for (int regno = BREW_FP; regno < FIRST_PSEUDO_REGISTER; regno++)
     if (reg_needs_save_restore(regno))
-      cfun->machine->callee_saved_reg_size += 4;
+      {
+        cfun->machine->callee_saved_reg_size += 4;
+        cfun->machine->reg_save_mask |= 1 << regno;
+      }
 
   cfun->machine->size_for_adjusting_sp = 
     crtl->args.pretend_args_size +
@@ -286,9 +245,9 @@ brew_expand_prologue (void)
   // Save callee-saved registers.
   // For each register we save, we'll have to decrement SP by 4 and of course
   // make sure that further references are offsetted by that much.
-  for (regno = 1; regno < FIRST_PSEUDO_REGISTER; regno++)
+  for (regno = BREW_FP; regno < FIRST_PSEUDO_REGISTER; regno++)
     {
-      if (reg_needs_save_restore(regno))
+      if ((cfun->machine->reg_save_mask & (1 << regno)) != 0)
         {
           insn = emit_insn(gen_movsi(
             gen_rtx_MEM(Pmode,
@@ -327,8 +286,7 @@ brew_expand_epilogue (void)
 {
   int regno;
 
-  // We have to 'pop' the return address from the stack as well so, adjust SP by 4 extra bytes
-  int save_cnt = cfun->machine->callee_saved_reg_size / 4 + 1;
+  int save_cnt = cfun->machine->callee_saved_reg_size / 4;
   int sp_adjust = cfun->machine->size_for_adjusting_sp + save_cnt * 4;
   if (sp_adjust > 0)
     {
@@ -341,9 +299,9 @@ brew_expand_epilogue (void)
         )
       );
       // Restore registers
-      for (regno = FIRST_PSEUDO_REGISTER; regno-- > 1; )
+      for (regno = FIRST_PSEUDO_REGISTER; regno-- >= BREW_FP; )
         {
-          if (reg_needs_save_restore(regno))
+          if ((cfun->machine->reg_save_mask & (1 << regno)) != 0)
             {
               --save_cnt;
               emit_insn(gen_movsi(
@@ -355,6 +313,8 @@ brew_expand_epilogue (void)
             }
         }
     }
+  // FIXME: do we need this forced use here???
+  emit_use(gen_rtx_REG(Pmode, BREW_REG_LINK));
   // Return: we already adjusted SP, so all we have to do is to get PC from MEM[SP]
   emit_jump_insn (gen_returner ());
 }
@@ -513,7 +473,7 @@ brew_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
 // that hold arguments. Given a new arg, return the number of bytes
 // that fit in argument passing registers.
 static int
-brew_arg_partial_bytes (cumulative_args_t cum_v, const function_arg_info &arg)
+brew_arg_partial_bytes (cumulative_args_t /*cum_v*/, const function_arg_info &/*arg*/)
 {
   // For now, we're simply choosing an all-or-nothing approach:
   //   we either completely put the argument in registers or completely

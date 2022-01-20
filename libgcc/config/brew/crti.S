@@ -25,16 +25,20 @@
 # .init sections.  Users may put any desired instructions in those
 # sections.
 
-	.file		"crti.S"
+  .file      "crti.S"
 
-	.section	".init"
-	.global	_init
-	.type	_init, @function	
-	.p2align	1
+  .section   ".init"
+  .global    _init
+  .type      _init, @function  
+  .p2align   1
 _init:
+  $sp <- $sp - 4
+  mem[$sp] <- $r3
 
-	.section	".fini"
-	.global	_fini
-	.type	_fini,@function
-	.p2align	1
+  .section   ".fini"
+  .global    _fini
+  .type      _fini,@function
+  .p2align   1
 _fini:
+  $sp <- $sp - 4
+  mem[$sp] <- $r3

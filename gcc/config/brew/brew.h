@@ -150,12 +150,7 @@ enum reg_class
 
 /* 1 for registers that have pervasive standard uses
    and are not available for the register allocator.  */
-// TODO: $r3 is used in the call pattern at the moment.
-//       this could be any register, and $r3 should be
-//       available between calls for the register allocator
-//       but I don't know how to convince GCC not to re-arrange
-//       the call pattern insn, if generated through RTL.
-#define FIXED_REGISTERS     { 1, 1, 1, 1, /* $pc,  $sp,  $fp,  $r3  */ \
+#define FIXED_REGISTERS     { 1, 1, 1, 0, /* $pc,  $sp,  $fp,  $r3  */ \
                               0, 0, 0, 0, /* $r4,  $r5,  $r6,  $r7  */ \
                               0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
                               0, 0, 0,    /* $r12, $r13, $r14       */ \
@@ -173,6 +168,10 @@ enum reg_class
                               0, 0, 0,    /* $r12, $r13, $r14       */ \
                               1, 1, }     /* $?fp, $?ap             */
 
+// This is not defined by GCC, but is used in brew-specific code to 
+// abstract away which register is used as the link register for function calls.
+// NOTE: for various practical reasons this constant is defined in brew.md
+//#define BREW_REG_LINK BREW_R3
 
 // The chain register is used if a nested functions address is taken.
 // This is used by GCC trampoline code.
@@ -188,7 +187,7 @@ enum reg_class
 /* The Overall Framework of an Assembler File */
 
 #undef  ASM_SPEC
-#define ASM_SPEC "%{!mfloat:-F} %{mno-float:-NF}"
+#define ASM_SPEC "%{!mno-soft-float:-F} %{msoft-float:-NF}"
 #define ASM_COMMENT_START "#"
 #define ASM_APP_ON ""
 #define ASM_APP_OFF ""
@@ -254,9 +253,9 @@ enum reg_class
 #define REG_PARM_STACK_SPACE(FNDECL) FIXED_STACK_AREA
 
 /* Offset from the argument pointer ($sp for us) register to the
-   first argument's address. Since the caller saves $pc, this is
-   4 bytes for us. */
-#define FIRST_PARM_OFFSET(F) 4
+   first argument's address. Since we use a link register for
+   return address, this is 0 for us. */
+#define FIRST_PARM_OFFSET(F) 0
 
 /* Define this macro to nonzero value if the addresses of local variable slots
    are at negative offsets from the frame pointer.  */
@@ -265,7 +264,7 @@ enum reg_class
 /* Define this macro as a C expression that is nonzero for registers that are
    used by the epilogue or the return pattern.  The stack and frame
    pointer registers are already assumed to be used as needed.  */
-#define EPILOGUE_USES(R) (false)
+#define EPILOGUE_USES(R) (R == BREW_REG_LINK)
 
 /* A C expression whose value is RTL representing the location of the incoming
    return address at the beginning of any function, before the prologue.  This
@@ -273,8 +272,7 @@ enum reg_class
    or a `MEM' representing a location in the stack.  This enables DWARF2
    unwind info for C++ EH.
    For us, before the prologue, RA is at -4($sp).  */
-#define INCOMING_RETURN_ADDR_RTX                                        \
-  gen_frame_mem (Pmode, plus_constant (Pmode, stack_pointer_rtx, UNITS_PER_WORD))
+#define INCOMING_RETURN_ADDR_RTX gen_rtx_REG(Pmode, BREW_REG_LINK)
 
 /* After the prologue, RA is at -4($fp) in the current frame.  */
 // TODO: this was not defined for Moxie for some reason, but was for other targets, such as i386...
@@ -482,7 +480,7 @@ enum reg_class
   { \
     builtin_define_std ("brew");                        \
     builtin_define_std ("BREW");                        \
-    builtin_define ("__BREW_LITTLE_ENDIAN__");          \
+    builtin_define ("__BREW__");                        \
   }
 
 #define HAS_LONG_UNCOND_BRANCH true
