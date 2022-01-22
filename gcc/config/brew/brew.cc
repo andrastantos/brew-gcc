@@ -395,8 +395,11 @@ arg_size_in_register(const function_arg_info &arg, HOST_WIDE_INT reg_args_so_far
 {
   // Per documentation it's best not to pass unnamed parameters
   // in registers.
+  // NOTE: if this is changed, update brew_setup_incoming_varargs accordingly!
   if (!arg.named)
+  {
     return 0;
+  }
 
   // Don't attempt to pass structs and the like through registers
   if (arg.aggregate_type_p())
@@ -549,6 +552,13 @@ brew_legitimate_address_p(
 }
 
 // for TARGET_SETUP_INCOMING_VARARGS
+// We should do two things here:
+//   - push all register-passed *not* named arguments onto the stack
+//   - set *pretend_size to the number of bytes put on the stack
+// Since we *never* put non-named arguments in registers, this
+// is almost a no-op for us.
+// NOTE: this is controlled by arg_size_in_register, so these
+// two functions must be kept in sync.
 static void
 brew_setup_incoming_varargs(
   cumulative_args_t cum_v,
@@ -556,29 +566,8 @@ brew_setup_incoming_varargs(
   int *pretend_size,
   int no_rtl
 ) {
-  CUMULATIVE_ARGS *cum = get_cumulative_args(cum_v);
-  int regs = max_regs_for_args - *cum;
-  
-  gcc_assert(regs >= 0);
-
-  *pretend_size = GET_MODE_SIZE(SImode) * regs;
-  
-  if (no_rtl)
-    return;
-  
-  for (int regno = *cum; regno < max_regs_for_args; regno++)
-    {
-      emit_move_insn(
-        gen_rtx_MEM(SImode,
-          gen_rtx_PLUS(
-            Pmode,
-            gen_rtx_REG(SImode, ARG_POINTER_REGNUM),
-            GEN_INT(UNITS_PER_WORD * (1 + regno))
-          )
-        ),
-        gen_rtx_REG(SImode, regno + first_arg_value_reg)
-      );
-    }
+  *pretend_size = 0;
+  return;
 }
 
 // for TARGET_FUNCTION_VALUE
@@ -772,6 +761,8 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 #define TARGET_FUNCTION_ARG                      brew_function_arg
 #undef  TARGET_FUNCTION_ARG_ADVANCE
 #define TARGET_FUNCTION_ARG_ADVANCE              brew_function_arg_advance
+#undef  TARGET_STRICT_ARGUMENT_NAMING
+#define TARGET_STRICT_ARGUMENT_NAMING            hook_bool_CUMULATIVE_ARGS_true
 // We should use the LRA register allocator, even if Moxie used the old one.
 // FIXME: we should work with both!, set this back to true!!! 
 #undef  TARGET_LRA_P
