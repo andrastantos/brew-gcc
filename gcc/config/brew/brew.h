@@ -78,11 +78,11 @@
    $pc  - a.k.a. $r0 - program counter.
    $sp  - a.k.a. $r1 - stack pointer.
    $fp  - a.k.a. $r2 - frame pointer.
-   $r3  - general purpose 32-bit register.
-   $r4  - general purpose 32-bit register.
-   $r5  - general purpose 32-bit register.
-   $r6  - general purpose 32-bit register.
-   $r7  - general purpose 32-bit register.
+   $r3  - link register.
+   $r4  - first argument/return value register.
+   $r5  - second argument/return value register.
+   $r6  - third argument/return value register.
+   $r7  - fourth argument/return value register.
    $r8  - general purpose 32-bit register.
    $r9  - general purpose 32-bit register.
    $r10 - general purpose 32-bit register.
@@ -115,7 +115,7 @@
 #define BREW_R12    12
 #define BREW_R13    13
 #define BREW_R14    14
-/* TODO: what are these ? */
+// Soft registers containing the conceptual stack and frame pointers
 #define BREW_QFP    15
 #define BREW_QAP    16
 
