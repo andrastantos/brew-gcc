@@ -410,9 +410,6 @@
         }
       else if(MEM_P(operands[1]))
         {
-          // For loads, make sure the destination is a register
-          operands[0] = force_reg(SImode, operands[0]);
-          gcc_assert(REG_P(operands[0]));
           // We should make sure that the address 
           // generated for the load is based on a <reg>+<offset> pattern
           if(MEM_P(XEXP (operands[1], 0)))
@@ -479,9 +476,6 @@
         }
       else if(MEM_P(operands[1]))
         {
-          // For loads, make sure the destination is a register
-          operands[0] = force_reg(HImode, operands[0]);
-          gcc_assert(REG_P(operands[0]));
           // We should make sure that the address 
           // generated for the load is based on a <reg>+<offset> pattern
           if(MEM_P(XEXP (operands[1], 0)))
@@ -532,9 +526,6 @@
         }
       else if(MEM_P(operands[1]))
         {
-          // For loads, make sure the destination is a register
-          operands[0] = force_reg(QImode, operands[0]);
-          gcc_assert(REG_P(operands[0]));
           // We should make sure that the address 
           // generated for the load is based on a <reg>+<offset> pattern
           if(MEM_P(XEXP (operands[1], 0)))
