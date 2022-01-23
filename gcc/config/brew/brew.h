@@ -29,9 +29,10 @@
    support for getting C++ file-scope static object constructed before
    entering `main', followed by the normal svr3/svr4 "finalizer" file,
    which is either `gcrtn.o' or `crtn.o'.  */
+/* We also need to resolve some circular references between libc and libbrew at the end */
 
 #undef  ENDFILE_SPEC
-#define ENDFILE_SPEC "crtend.o%s crtn.o%s"
+#define ENDFILE_SPEC "crtend.o%s crtn.o%s %{!shared:%{!symbolic:-lc -lbrew -lc -lbrew}}"
 
 /* Provide a LIB_SPEC appropriate for svr4.  Here we tack on the default
    standard C library (unless we are building a shared library) and
