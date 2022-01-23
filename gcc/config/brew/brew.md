@@ -708,7 +708,7 @@
 
   ""
   "@
-  $r3 <- $pc + 12\;$pc <- %0
+  $r3 <- $pc + 12\;$pc <- (%0)
   $r3 <- $pc + 8\;$pc <- %0"
   [(set_attr "length"        "12,8")]
 )
@@ -722,7 +722,7 @@
     (clobber (reg:SI BREW_REG_LINK))
   ]
   ""
-  "$r3 <- $pc + 12\;$pc <- %l0"
+  "$r3 <- $pc + 12\;$pc <- (%l0)"
 )
 
 (define_expand "call_value"
@@ -755,7 +755,7 @@
   ]
   ""
   "@
-  $r3 <- $pc + 12\;$pc <- %1
+  $r3 <- $pc + 12\;$pc <- (%1)
   $r3 <- $pc + 8\;$pc <- %1"
   [(set_attr "length"        "12,8")]
 )
@@ -763,14 +763,14 @@
 (define_insn "indirect_jump"
   [(set (pc) (match_operand:SI 0 "nonimmediate_operand" "r"))]
   ""
-  "$pc <-%0"
+  "$pc <- %0"
   [(set_attr "length"        "2")]
 )
 
 (define_insn "jump"
   [(set (pc) (label_ref (match_operand 0 "" "")))]
   ""
-  "$pc <- %l0"
+  "$pc <- (%l0)"
   [(set_attr "length"        "6")]
 )
 
