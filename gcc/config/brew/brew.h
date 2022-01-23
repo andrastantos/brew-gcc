@@ -35,10 +35,10 @@
 
 /* Provide a LIB_SPEC appropriate for svr4.  Here we tack on the default
    standard C library (unless we are building a shared library) and
-   the simulator BSP code.  */
+   the target BSP code (libgloss essentially). */
 
 #undef LIB_SPEC
-#define LIB_SPEC "%{!shared:%{!symbolic:-lc}}"
+#define LIB_SPEC "%{!shared:%{!symbolic:-lc -lbrew}}"
 
 #undef  LINK_SPEC
 #define LINK_SPEC "%{h*} %{v:-V}\
@@ -452,7 +452,10 @@ enum reg_class
 
 /* A C expression which is nonzero if register number NUM is suitable
    for use as an index register in operand addresses.  */
-#define REGNO_OK_FOR_INDEX_P(NUM) BREW_FP
+// NOTE: index registers can be scaled, while base registers can't be.
+//       Because of that we allow pretty much any register to be an base
+//       but none being an index.
+#define REGNO_OK_FOR_INDEX_P(NUM) false
 
 /* The maximum number of bytes that a single instruction can move
    quickly between memory and registers or between two memory
