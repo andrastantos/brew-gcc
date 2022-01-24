@@ -282,15 +282,14 @@
 
 (define_insn "andsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (match_operand:SI 0 "register_operand" "=r,r,r")
     (and:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "1,O,r,i")
+      (match_operand:SI 1 "register_operand" "r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "O,r,i")
     )
   )]
   ""
   "@
-  %0 <- %1
   %0 <- %1 - %1
   %0 <- %1 & %2
   %0 <- %1 & (%2)"
@@ -298,15 +297,14 @@
 
 (define_insn "xorsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (match_operand:SI 0 "register_operand" "=r,r,r")
     (xor:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "1,O,r,i")
+      (match_operand:SI 1 "register_operand" "r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "O,r,i")
     )
   )]
   ""
   "@
-  %0 <- %1 - %1
   %0 <- %1
   %0 <- %1 ^ %2
   %0 <- %1 ^ (%2)"
@@ -314,15 +312,14 @@
 
 (define_insn "iorsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (match_operand:SI 0 "register_operand" "=r,r,r")
     (ior:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "1,O,r,i")
+      (match_operand:SI 1 "register_operand" "r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "O,r,i")
     )
   )]
   ""
   "@
-  %0 <- %1
   %0 <- %1
   %0 <- %1 | %2
   %0 <- %1 | (%2)"
