@@ -561,10 +561,10 @@ brew_legitimate_address_p(
 // two functions must be kept in sync.
 static void
 brew_setup_incoming_varargs(
-  cumulative_args_t cum_v,
+  cumulative_args_t /*cum_v*/,
   const function_arg_info &,
   int *pretend_size,
-  int no_rtl
+  int /*no_rtl*/
 ) {
   *pretend_size = 0;
   return;
@@ -805,14 +805,14 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 static void
 brew_asm_trampoline_template(FILE *f)
 {
-  // Both instructions are 6 bytes, total is 12 bytes
-  fprintf(f, "\t%s <- mem[.Lstatic_chain]\n", reg_names[STATIC_CHAIN_REGNUM]);
-  fprintf(f, "\t$pc <- mem[.Lfunc_address]\n");
-  // 2 words of constant pool: 8 bytes
-  fprintf(f, ".Lstatic_chain:\n");
-  fprintf(f, "\t.long 0\n");
-  fprintf(f, ".Lfunc_address:\n");
-  fprintf(f, "\t.long 0\n");
+  // Both instructions are 6 bytes, we need to align the data-field
+  // to 32-bit boundary (the start is already aligned) because
+  // we will store 32-bit quantities in there run-time and we don't
+  // have support for unaligned stores. Thus the NOP-s...
+  fprintf(f, "\tnop\n");
+  fprintf(f, "\t%s <- 0xdeadbeef\n", reg_names[STATIC_CHAIN_REGNUM]);
+  fprintf(f, "\tnop\n");
+  fprintf(f, "\t$pc <- 0xdeadbeef\n");
 }
 
 // for TARGET_TRAMPOLINE_INIT
@@ -830,10 +830,10 @@ brew_trampoline_init(rtx m_tramp, tree fndecl, rtx chain_value)
 
   // Generate two moves that fill-in the addresses in the trampoline
   rtx mem;
-  int pool = 12;
+  int pool = 4;
   mem = adjust_address(m_tramp, SImode, pool);
   emit_move_insn(mem, chain_value);
-  mem = adjust_address(m_tramp, SImode, pool + 4);
+  mem = adjust_address(m_tramp, SImode, pool + 8);
   rtx fnaddr = XEXP(DECL_RTL(fndecl), 0);
   emit_move_insn (mem, fnaddr);
 

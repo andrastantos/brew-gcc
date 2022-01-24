@@ -357,7 +357,7 @@ enum reg_class
 #define FUNCTION_PROFILER(FILE,LABELNO) (abort (), 0)
 
 /* Trampolines for Nested Functions.  */
-#define TRAMPOLINE_SIZE (6 + 6 + 4 + 4)
+#define TRAMPOLINE_SIZE (2 + 6 + 2 + 6)
 
 /* Alignment required for trampolines, in bits.  */
 #define TRAMPOLINE_ALIGNMENT 32
