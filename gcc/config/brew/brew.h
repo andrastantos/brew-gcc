@@ -49,6 +49,15 @@
 //#define MULTILIB_DEFAULTS {}
 //#endif
 
+/******************************/
+/* Controlling initialization */
+/******************************/
+
+#define HAS_INIT_SECTION
+/* Be conservative in crtstuff.c.  */
+#undef INIT_SECTION_ASM_OP
+#undef FINI_SECTION_ASM_OP
+
 /* Layout of Source Language Data Types */
 
 #define INT_TYPE_SIZE 32

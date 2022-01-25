@@ -25,14 +25,19 @@
 # fact return.  Users may put any desired instructions in those sections.
 # This file is the last thing linked into any executable.
 
-  .file    "crtn.S"
+# We don't use .init and .fini sections to collect code-fragments.
+# We use .init_array and .fini_array for that purpose
+# .init is only used in crt0.S (inside Newlib) to put the entry-point
+# at the beginning of the executable.
 
-  .section  ".init"
-  $r3 <- mem[$sp]
-  $sp <- $sp + 4
-  $pc <- $r3
-  
-  .section  ".fini"
-  $r3 <- mem[$sp]
-  $sp <- $sp + 4
-  $pc <- $r3
+#  .file    "crtn.S"
+#
+#  .section  ".init"
+#  $r3 <- mem[$sp]
+#  $sp <- $sp + 4
+#  $pc <- $r3
+#  
+#  .section  ".fini"
+#  $r3 <- mem[$sp]
+#  $sp <- $sp + 4
+#  $pc <- $r3
