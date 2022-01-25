@@ -21,6 +21,8 @@ extern void abort (void);
 # define PIC_REG  "9"
 #elif defined(AVR)
 /* No pic register.  */
+#elif defined(__moxie__)
+/* No pic register.  */
 #elif defined(__cris__)
 # define PIC_REG  "0"
 #elif defined(__epiphany__)
