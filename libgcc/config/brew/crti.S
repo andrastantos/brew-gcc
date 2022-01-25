@@ -25,20 +25,25 @@
 # .init sections.  Users may put any desired instructions in those
 # sections.
 
-  .file      "crti.S"
+# We don't use .init and .fini sections to collect code-fragments.
+# We use .init_array and .fini_array for that purpose
+# .init is only used in crt0.S (inside Newlib) to put the entry-point
+# at the beginning of the executable.
 
-  .section   ".init"
-  .global    _init
-  .type      _init, @function  
-  .p2align   1
-_init:
-  $sp <- $sp - 4
-  mem[$sp] <- $r3
-
-  .section   ".fini"
-  .global    _fini
-  .type      _fini,@function
-  .p2align   1
-_fini:
-  $sp <- $sp - 4
-  mem[$sp] <- $r3
+#  .file      "crti.S"
+#
+#  .section   ".init"
+#  .global    _init
+#  .type      _init, @function  
+#  .p2align   1
+#_init:
+#  $sp <- $sp - 4
+#  mem[$sp] <- $r3
+#
+#  .section   ".fini"
+#  .global    _fini
+#  .type      _fini,@function
+#  .p2align   1
+#_fini:
+#  $sp <- $sp - 4
+#  mem[$sp] <- $r3
