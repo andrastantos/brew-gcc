@@ -61,11 +61,15 @@ struct GTY(()) machine_function
    // A bit-mask: 1 for each reg that was saved, 0 for ones that didn't.
    // bit0 is R0, bit 14 is R14
    uint32_t reg_save_mask;
+   // Set to true if frame is needed, for example because
+   // __builtin_return_address or __builtin_frame_address is called.
+   bool frame_needed;
  };
 
 static struct machine_function *
 brew_init_machine_status (void)
 {
+  // hopefully this zero-initializes the struct
   return ggc_cleared_alloc<machine_function>();
 }
 
@@ -362,6 +366,24 @@ brew_initial_elimination_offset (int from, int to)
     abort ();
 
   return ret;
+}
+
+/* A C expression whose value is RTL representing the address in a stack frame
+   where the pointer to the caller's frame is stored.  Assume that FRAMEADDR is
+   an RTL expression for the address of the stack frame itself.
+
+   If you don't define this macro, the default is to return the value of
+   FRAMEADDR--that is, the stack frame address is also the address of the stack
+   word that points to the previous frame.  */
+
+/* We store the old $fp at $fp-4, but we also need to record the fact that we *do*
+   need to store $fp there. That is, when we get smart enough to elide it whenever
+   possible.  */
+rtx
+brew_dynamic_chain_address(rtx frameaddr)
+{
+  cfun->machine->frame_needed = 1;
+  return plus_constant(Pmode, frameaddr, -4);
 }
 
 ///////////////////////////////////////////////////////////////////////////

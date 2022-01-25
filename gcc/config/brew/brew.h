@@ -275,14 +275,17 @@ enum reg_class
    For us, before the prologue, RA is at -4($sp).  */
 #define INCOMING_RETURN_ADDR_RTX gen_rtx_REG(Pmode, BREW_REG_LINK)
 
-/* After the prologue, RA is at -4($fp) in the current frame.  */
-// TODO: this was not defined for Moxie for some reason, but was for other targets, such as i386...
-/*
-#define RETURN_ADDR_RTX(COUNT, FRAME)                                            \
-  ((COUNT) == 0                                                                  \
-   ? gen_rtx_MEM (Pmode, plus_constant (Pmode, arg_pointer_rtx, UNITS_PER_WORD)) \
-   : gen_rtx_MEM (Pmode, plus_constant (Pmode, (FRAME), UNITS_PER_WORD)))
-*/
+/* We need these two to make __builtin_return_address work. */
+
+/* RETURN_ADDR_RTX should return the return address for a frame pointer
+   in FRAME. COUNT tells how many frames we've stepped back on the
+   call-chain */
+/* I'm not sure why COUNT would be relevant here.
+   After the prologue, RA is at $fp-8 in the current frame.  */
+#define RETURN_ADDR_RTX(COUNT, FRAME) gen_rtx_MEM(Pmode, plus_constant(Pmode, (FRAME), UNITS_PER_WORD * 2))
+/* A C expression whose value is RTL representing the address in a stack frame
+   where the pointer to the caller's frame is stored. */
+#define DYNAMIC_CHAIN_ADDRESS(FRAMEADDR) brew_dynamic_chain_address(FRAMEADDR)
 
 /* Describe how we implement __builtin_eh_return.  */
 #define EH_RETURN_DATA_REGNO(N)        ((N) < 4 ? (N+4) : INVALID_REGNUM)
