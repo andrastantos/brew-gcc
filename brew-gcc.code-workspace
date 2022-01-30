@@ -11,7 +11,7 @@
     "brew.h": "c",
     "random": "cpp",
     "*.def": "cpp",
-    "flexary5.C": "cpp"
+    "*.inc": "cpp"
   }
 	}
 }
