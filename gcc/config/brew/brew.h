@@ -54,9 +54,19 @@
 /******************************/
 
 #define HAS_INIT_SECTION
-/* Be conservative in crtstuff.c.  */
+
+//#define CTORS_SECTION_ASM_OP "\t.section\t.init_array,\"aw\",%init_array"
+//#define DTORS_SECTION_ASM_OP "\t.section\t.fini_array,\"aw\",%fini_array"
+
+#undef HAVE_INITFINI_ARRAY_SUPPORT
+#define HAVE_INITFINI_ARRAY_SUPPORT 1
+
 #undef INIT_SECTION_ASM_OP
 #undef FINI_SECTION_ASM_OP
+//#define INIT_ARRAY_SECTION_ASM_OP CTORS_SECTION_ASM_OP
+//#define FINI_ARRAY_SECTION_ASM_OP DTORS_SECTION_ASM_OP
+#define INIT_ARRAY_SECTION_ASM_OP 1
+#define FINI_ARRAY_SECTION_ASM_OP 1
 
 /* Layout of Source Language Data Types */
 
@@ -91,15 +101,15 @@
    $r3  - link register.
    $r4  - first argument/return value register.
    $r5  - second argument/return value register.
-   $r6  - third argument/return value register.
-   $r7  - fourth argument/return value register.
-   $r8  - general purpose 32-bit register.
-   $r9  - general purpose 32-bit register.
-   $r10 - general purpose 32-bit register.
+   $r6  - third argument/return value register; EH_RETURN_DATA_REGNO
+   $r7  - fourth argument/return value register; EH_RETURN_DATA_REGNO
+   $r8  - general purpose 32-bit register; EH_RETURN_DATA_REGNO; 
+   $r9  - general purpose 32-bit register; EH_RETURN_DATA_REGNO
+   $r10 - general purpose 32-bit register; EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG
    $r11 - general purpose 32-bit register.
    $r12 - general purpose 32-bit register.
    $r13 - general purpose 32-bit register.
-   $r14 - general purpose 32-bit register.
+   $r14 - general purpose 32-bit register; static chain register
 
 */
 
@@ -128,6 +138,9 @@
 // Soft registers containing the conceptual stack and frame pointers
 #define BREW_QFP    15
 #define BREW_QAP    16
+
+#define EH_RETURN_DATA_FIRST_REG BREW_R6
+#define BREW_STACKADJ_REG BREW_R10
 
 #define FIRST_PSEUDO_REGISTER 17
 #define LAST_PHYSICAL_REG BREW_R14
@@ -174,7 +187,7 @@ enum reg_class
    Aside from that, you can include as many other registers as you like.  */
 #define CALL_USED_REGISTERS { 1, 1, 1, 1, /* $pc,  $sp,  $fp,  $r3  */ \
                               1, 1, 1, 1, /* $r4,  $r5,  $r6,  $r7  */ \
-                              0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
+                              1, 1, 1, 0, /* $r8,  $r9,  $r10, $r11 */ \
                               0, 0, 0,    /* $r12, $r13, $r14       */ \
                               1, 1, }     /* $?fp, $?ap             */
 
@@ -283,6 +296,7 @@ enum reg_class
    unwind info for C++ EH.
    For us, before the prologue, RA is at -4($sp).  */
 #define INCOMING_RETURN_ADDR_RTX gen_rtx_REG(Pmode, BREW_REG_LINK)
+#define DWARF_FRAME_RETURN_COLUMN	DWARF_FRAME_REGNUM(BREW_REG_LINK)
 
 /* We need these two to make __builtin_return_address work. */
 
@@ -291,17 +305,33 @@ enum reg_class
    call-chain */
 /* I'm not sure why COUNT would be relevant here.
    After the prologue, RA is at $fp-8 in the current frame.  */
-#define RETURN_ADDR_RTX(COUNT, FRAME) gen_rtx_MEM(Pmode, plus_constant(Pmode, (FRAME), UNITS_PER_WORD * 2))
+#define RETURN_ADDR_RTX(COUNT, FRAME) brew_return_addr_rtx(COUNT, FRAME)
 /* A C expression whose value is RTL representing the address in a stack frame
    where the pointer to the caller's frame is stored. */
 #define DYNAMIC_CHAIN_ADDRESS(FRAMEADDR) brew_dynamic_chain_address(FRAMEADDR)
 
 /* Describe how we implement __builtin_eh_return.  */
-#define EH_RETURN_DATA_REGNO(N)        ((N) < 4 ? (N+4) : INVALID_REGNUM)
+/* We are grabbing $r6 and $r7 here. The documentation states 2 is the minimum 
+   and ideally we want call-clobbered registers. Apparently most don't reuse
+   registers that are the common return values for functions, so let's avoid
+   $r4 and $r5 */
+#define EH_RETURN_DATA_REGNO(N)        ((N) < 4 ? (N+EH_RETURN_DATA_FIRST_REG) : INVALID_REGNUM)
 
 /* Store the return handler into the call frame.  */
-#define EH_RETURN_HANDLER_RTX                                                \
-  gen_frame_mem (Pmode, plus_constant (Pmode, frame_pointer_rtx, UNITS_PER_WORD))
+/* Typically this is the location in the call frame at which the normal
+   return address is stored. For targets that return by popping an address
+   off the stack, this might be a memory address just below the target call
+   frame rather than inside the current call frame. If defined, 
+   EH_RETURN_STACKADJ_RTX will have already been assigned, so it may be used
+   to calculate the location of the target call frame. */
+/* from mmix: This chosen as "a call-clobbered hard register that is otherwise
+   untouched by the epilogue". Most targets use a register here, not a stack
+   slot. So, we could do that, but it consumes yet another call-clobbered reg.
+*/
+/*#define EH_RETURN_HANDLER_RTX                                                \
+  gen_frame_mem (Pmode, plus_constant (Pmode, frame_pointer_rtx, -2*UNITS_PER_WORD))*/
+#define EH_RETURN_STACKADJ_RTX brew_eh_return_stackadj_rtx()
+#define EH_RETURN_HANDLER_RTX brew_eh_return_handler_rtx()
 
 /* Storage Layout */
 #define BITS_BIG_ENDIAN 0

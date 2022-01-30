@@ -317,6 +317,19 @@ brew_expand_epilogue (void)
             }
         }
     }
+  // For frames that use __builtin_eh_return, the register defined by
+  // EH_RETURN_STACKADJ_RTX is set to 0 for all standard return paths.
+  // On eh_return paths however, the register is set to the value that
+  // should be added to the stack pointer in order to restore the
+  // correct stack pointer for the exception handling frame.
+  // 
+  // For BREW we are going to use BREW_STACKADJ_REG for
+  // EH_RETURN_STACKADJ_RTX, add this onto the stack for eh_return frames.
+  #ifdef EH_RETURN_STACKADJ_RTX
+  if (crtl->calls_eh_return)
+    emit_insn(gen_addsi3(stack_pointer_rtx, stack_pointer_rtx, EH_RETURN_STACKADJ_RTX));
+  #endif
+
   // FIXME: do we need this forced use here???
   emit_use(gen_rtx_REG(Pmode, BREW_REG_LINK));
   // Return: we already adjusted SP, so all we have to do is to get PC from MEM[SP]
@@ -353,14 +366,13 @@ int
 brew_initial_elimination_offset (int from, int to)
 {
   int ret;
-  
-  if (from == FRAME_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
+  if(from == FRAME_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
     {
       // Compute this since we need to use cfun->machine->local_vars_size.
       brew_compute_frame();
       ret = -cfun->machine->callee_saved_reg_size;
     }
-  else if (from == ARG_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
+  else if(from == ARG_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
     ret = 0x00;
   else
     abort ();
@@ -368,7 +380,8 @@ brew_initial_elimination_offset (int from, int to)
   return ret;
 }
 
-/* A C expression whose value is RTL representing the address in a stack frame
+/* DYNAMIC_CHAIN_ADDRESS
+   A C expression whose value is RTL representing the address in a stack frame
    where the pointer to the caller's frame is stored.  Assume that FRAMEADDR is
    an RTL expression for the address of the stack frame itself.
 
@@ -382,8 +395,88 @@ brew_initial_elimination_offset (int from, int to)
 rtx
 brew_dynamic_chain_address(rtx frameaddr)
 {
+  // NOTE: crtl->accesses_prior_frames might already carry this information.
   cfun->machine->frame_needed = 1;
   return plus_constant(Pmode, frameaddr, -4);
+}
+
+
+/* RETURN_ADDR_RTX should return the return address for a frame pointer
+   in FRAME. COUNT tells how many frames we've stepped back on the
+   call-chain */
+/* I'm not sure why COUNT would be relevant here.
+   After the prologue, RA is at $fp-8 in the current frame.  */
+/* This function of course relies on us saving the link register ($lr)
+   in every frame, independent of whether it gets clobbered or not.
+   Right now that's the case (I think), but we might want to re-visit
+   that in the future. In that case, we'll have to modify this function
+   to:
+     if (count != 0)
+       return NULL_RTX;
+   On top of that, we would probably have to set cfun->machine-><<something>>
+   to ensure that we *do* indeed save $lr in it's accessed this way.
+*/
+rtx
+brew_return_addr_rtx(unsigned int count, rtx frame)
+{
+  if (count == 0)
+  {
+    // For some reason, we get the soft frame pointer, if count is 0 and - again -
+    // for some reason that's moving around based on how much we push on the stack
+    // in the prolog. To get to $lr, we need the hard frame pointer in all cases.
+    // If count is not 0, the caller (expand_builtin_return_addr) properly walks
+    // the stack for us and gives us the hard frame pointer for the n-th frame.
+    frame = hard_frame_pointer_rtx;
+
+    // Setting this is also missing, when count is 0. So let's add it.
+    crtl->accesses_prior_frames = 1;
+  }
+  return gen_frame_mem(Pmode, plus_constant (Pmode, frame, -UNITS_PER_WORD*2));
+}
+
+/* Handler for EH_RETURN_HANDLER_RTX */
+/*
+  Others, define things this way:
+    #define EH_RETURN_HANDLER_RTX   RETURN_ADDR_RTX (0, frame_pointer_rtx)
+
+    #define EH_RETURN_HANDLER_RTX						\
+      gen_frame_mem (Pmode,							\
+        plus_constant (Pmode, frame_pointer_rtx, UNITS_PER_WORD))
+
+  In general, it seems to be popular to store the return address in whatever the incoming return address (INCOMING_RETURN_ADDR_RTX) is.
+  This makes sense: on the exception path, we don't need that anymore...
+
+  Some set it to volatile:
+
+    // Implement EH_RETURN_HANDLER_RTX.  The MEM needs to be volatile to prevent it from being deleted.
+    rtx
+    tilegx_eh_return_handler_rtx (void)
+    {
+      rtx tmp = gen_frame_mem (Pmode, hard_frame_pointer_rtx);
+      MEM_VOLATILE_P (tmp) = true;
+      return tmp;
+    }
+*/
+rtx
+brew_eh_return_handler_rtx()
+{
+  // Let's use the return address on the stack
+  rtx ret_val = brew_return_addr_rtx(0, hard_frame_pointer_rtx);
+  MEM_VOLATILE_P(ret_val) = true;
+  return ret_val;
+}
+
+/* Handler for EH_RETURN_STACKADJ_RTX */
+/* This is a register that is used to communicate to the epilog
+   of functions that might have exception handlers in them that
+   they need to adjust $sp by more than the usual amount.
+   It is 0-ed out for normal control-flow, and filled in with a
+   potentially non-0 value for the exception path.
+*/
+rtx
+brew_eh_return_stackadj_rtx()
+{
+  return gen_rtx_REG(Pmode, BREW_STACKADJ_REG);
 }
 
 ///////////////////////////////////////////////////////////////////////////
