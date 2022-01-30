@@ -1048,6 +1048,8 @@ _Unwind_Find_FDE (void *pc, struct dwarf_eh_bases *bases)
   init_object_mutex_once ();
   __gthread_mutex_lock (&object_mutex);
 
+  __builtin_printf("    _Unwind_Find_FDE searching FDE for PC: %p\n", pc);
+
   /* Linear search through the classified objects, to find the one
      containing the pc.  Note that pc_begin is sorted descending, and
      we expect objects to be non-overlapping.  */
@@ -1097,6 +1099,8 @@ _Unwind_Find_FDE (void *pc, struct dwarf_eh_bases *bases)
 				    f->pc_begin, &func);
       bases->func = (void *) func;
     }
+
+  __builtin_printf("    _Unwind_Find_FDE returning: %p\n", f);
 
   return f;
 }
