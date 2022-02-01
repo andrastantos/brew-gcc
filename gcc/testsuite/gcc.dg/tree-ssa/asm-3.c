@@ -5,6 +5,9 @@
 #ifdef __hppa__
 #define REGISTER "1"
 #else
+#ifdef __brew__
+#define REGISTER "10"
+#else
 #ifdef __moxie__
 #define REGISTER "8"
 #else
@@ -12,6 +15,7 @@
 #define REGISTER "3"
 #else
 #define REGISTER "0"
+#endif
 #endif
 #endif
 #endif
