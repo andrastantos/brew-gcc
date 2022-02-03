@@ -17,8 +17,8 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
-extern void  brew_expand_prologue (void);
-extern void  brew_expand_epilogue (void);
+extern void  brew_expand_prologue(void);
+extern void  brew_expand_epilogue(bool is_sibcall);
 extern int   brew_initial_elimination_offset (int, int);
 extern const char *brew_emit_cbranch(machine_mode mode, rtx *operands);
 extern const char *brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands);

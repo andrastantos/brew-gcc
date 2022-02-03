@@ -49,6 +49,10 @@
 #include "target-def.h"
 
 
+#define DEBUG_MARKER do { emit_insn(gen_nop()); emit_insn(gen_nop()); emit_insn(gen_nop()); emit_insn(gen_nop()); emit_insn(gen_nop()); } while(false)
+//#define DEBUG_MARKER
+
+
 // Per-function machine data.
 struct GTY(()) machine_function
  {
@@ -286,7 +290,7 @@ brew_expand_prologue (void)
 }
 
 void
-brew_expand_epilogue (void)
+brew_expand_epilogue(bool is_sibcall)
 {
   int regno;
 
@@ -333,7 +337,14 @@ brew_expand_epilogue (void)
   // FIXME: do we need this forced use here???
   emit_use(gen_rtx_REG(Pmode, BREW_REG_LINK));
   // Return: we already adjusted SP, so all we have to do is to get PC from MEM[SP]
-  emit_jump_insn (gen_returner ());
+  if (!is_sibcall)
+    {
+      emit_jump_insn (gen_returner ());
+    }
+  else
+    {
+      //DEBUG_MARKER;
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -623,9 +634,6 @@ brew_arg_partial_bytes (cumulative_args_t cum_v, const function_arg_info &arg)
   return 0;
 }
 
-//#define EMIT_NOP emit_insn(gen_nop())
-#define EMIT_NOP
-
 // for TARGET_SETUP_INCOMING_VARARGS
 // We should do two things here:
 //   - push all register-passed *not* named arguments onto the stack
@@ -651,11 +659,6 @@ brew_setup_incoming_varargs(
   if (no_rtl)
     return;
   
-  EMIT_NOP;
-  EMIT_NOP;
-  EMIT_NOP;
-  EMIT_NOP;
-  EMIT_NOP;
   for(unsigned int arg_idx = *cum; arg_idx < max_regs_for_args; arg_idx++)
     {
       unsigned int regno = arg_idx + first_arg_value_reg;
@@ -667,11 +670,6 @@ brew_setup_incoming_varargs(
       );
       emit_move_insn(gen_rtx_MEM(SImode, slot), reg);
     }
-  EMIT_NOP;
-  EMIT_NOP;
-  EMIT_NOP;
-  EMIT_NOP;
-  EMIT_NOP;
 }
 
 
@@ -953,6 +951,11 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 #define TARGET_PRINT_OPERAND_ADDRESS             brew_print_operand_address
 #undef  TARGET_CONSTANT_ALIGNMENT
 #define TARGET_CONSTANT_ALIGNMENT                constant_alignment_word_strings
+// We allow sibcalls (tail-calls) in general for now.
+// FIXME: later, with shared libraries, interrupt routines or other fancy stuff
+//        that impacts function prolog/epilog, we might reconsider
+#undef  TARGET_FUNCTION_OK_FOR_SIBCALL
+#define TARGET_FUNCTION_OK_FOR_SIBCALL           hook_bool_tree_tree_true
 
 /////////////////////////////////////////////////////////////////////
 // Trampolines for Nested Functions
