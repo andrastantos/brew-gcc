@@ -43,6 +43,10 @@ void bar(char *name, ...)
 
 int main(void)
 {
+  /* Allocate 64 bytes on the stack to make sure that __builtin_apply
+     can read at least 64 bytes above the return address.  */
+  char dummy[64];
+
   bar("eeee", 5.444567, 8.90765, 4.567789, INTEGER_ARG);
 
   return 0;

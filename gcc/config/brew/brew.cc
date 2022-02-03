@@ -502,50 +502,67 @@ static const HOST_WIDE_INT max_regs_for_args = 4;
 static const int ret_value_reg = BREW_R4;
 static const int first_arg_value_reg = BREW_R4;
 
-// Returns the size of the argument, in number of registers used,
-// if it is to be passed in registres. Returns 0, if arg should be
-// passed on the stack.
-static int
-arg_size_in_register(const function_arg_info &arg, HOST_WIDE_INT reg_args_so_far)
-{
-  // Per documentation it's best not to pass unnamed parameters
-  // in registers.
-  // NOTE: if this is changed, update brew_setup_incoming_varargs accordingly!
-  if (!arg.named)
-  {
-    return 0;
-  }
-
-  // Don't attempt to pass structs and the like through registers
-  if (arg.aggregate_type_p())
-    return 0;
-
-  // Otherwise allow arg to be in registers, if we have enough left.
-  HOST_WIDE_INT arg_size = arg.promoted_size_in_bytes();
-  if (arg_size <= 0)
-    return 0;
-  HOST_WIDE_INT regs_needed = (arg_size + 3) / 4; // Round up arg-size to the next register size
-  // FIXME: force everything larger then 32 bits onto the stack
-  //        this is very conservative, but maybe it fixes some codegen issues?
-  //if (regs_needed > 1)
-  //  return 0;
-  if (regs_needed > max_regs_for_args - reg_args_so_far)
-    return 0;
-  return regs_needed;
-}
-
-// The following two functions work in tandem:
+// The following set functions work in tandem:
 //   brew_function_arg decides in what form the argument should be passed.
 //     It returns either a REG rtx specifying the register to be used or
 //     NULL_RTX if the arg to be passed on the stack.
 //     In helping with deciding *which* register to chose, an argument
 //     cum_v.p (retrieved using get_cumulative_args) is used. This is
-//     defined as a simply 'unsigned int' to count the number of args
-//     that have already been passed in registers.
+//     defined as a simply 'unsigned int' to count the number of registers
+//     that have already been used up for arguments.
 //   brew_function_arg_advance is used to update cum_v.p after the 
 //     decision in the first function is made. It must therefore come
 //     to the same conclusion in terms of using a register or stack
 //     and increment cum_v.p as needed.
+//   brew_pass_by_reference decides if an argument should be pass
+//     by reference (even if the signature asks for by-value).
+//     It is called by GCC but also by arg_size_in_register.
+//     This later call is used to determine if we want to pass
+//     pass the pointer to the reference in a register or not.
+//   brew_arg_partial_bytes should return the number of bytes
+//     that did get passed in registers for a given argument.
+//     It could return 0 in case the argument is fully in registers,
+//     but it *has* to return 0 in case it's fully on the stack.
+//
+// The operation of these functions must also match what 
+// __builtin_apply assumes, which appears to be that the first
+// N bytes of the arguments gets put in registers with argument
+// boundaries matching up with register boundaries.
+
+// Returns the size of the argument, in number of registers used,
+// if it is to be passed in registres. Returns 0, if arg should be
+// passed on the stack. It's possible that an argument only partially
+// fits in registers, in which case the function returns the number
+// of registers that should be used for the part that does fit.
+
+static bool
+brew_pass_by_reference (cumulative_args_t, const function_arg_info &arg);
+
+static int
+arg_size_in_register(cumulative_args_t cum_v, const function_arg_info &arg)
+{
+  // NOTE: we have to make sure that once we start putting arguments on the stack,
+  //       all subsequent arguments are put on the stack. Otherwise __builtin_apply
+  //       will break, because it makes that assumption. That is to say, that
+  //       once this function returns 0, it should always return 0.
+  //       We achieve that by updating 'cum' in case we return 0, but
+  //       that needs to happen on the caller side.
+  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
+  
+  // Otherwise allow arg to be in registers, if we have enough left.
+  HOST_WIDE_INT arg_size = arg.promoted_size_in_bytes();
+  if (arg_size <= 0)
+    return 0;
+  HOST_WIDE_INT regs_needed = (arg_size + UNITS_PER_WORD-1) / UNITS_PER_WORD; // Round up arg-size to the next register size
+
+  // If we pass something by reference, only account for the pointer to it.
+  if (brew_pass_by_reference(cum_v, arg))
+    regs_needed = 1;
+
+  if (regs_needed > max_regs_for_args - *cum)
+    return max_regs_for_args - *cum;
+  return regs_needed;
+}
 
 // for TARGET_FUNCTION_ARG
 // Return the next register to be used to hold a function argument or
@@ -555,23 +572,20 @@ brew_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
 
-  if (arg_size_in_register(arg, *cum) > 0)
+  if (arg_size_in_register(cum_v, arg) > 0)
     return gen_rtx_REG(arg.mode, first_arg_value_reg + *cum);
   else 
     return NULL_RTX;
 }
-
-#define BREW_FUNCTION_ARG_SIZE(MODE, TYPE)        \
-  ((MODE) != BLKmode ? GET_MODE_SIZE (MODE)        \
-   : (unsigned) int_size_in_bytes (TYPE))
 
 // for TARGET_FUNCTION_ARG_ADVANCE
 static void
 brew_function_arg_advance (cumulative_args_t cum_v, const function_arg_info &arg)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-
-  *cum += arg_size_in_register(arg, *cum);
+  int regs_needed = arg_size_in_register(cum_v, arg);
+  *cum += regs_needed;
+  gcc_assert(*cum <= max_regs_for_args);
 }
 
 
@@ -580,10 +594,12 @@ brew_function_arg_advance (cumulative_args_t cum_v, const function_arg_info &arg
 static bool
 brew_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
 {
-  if (arg.aggregate_type_p())
-    return true;
-  HOST_WIDE_INT size = arg.type_size_in_bytes();
-  return size > 16 || size <= 0;
+  return arg.type && TREE_CODE (TYPE_SIZE (arg.type)) != INTEGER_CST;
+
+  //if (arg.aggregate_type_p())
+  //  return true;
+  //HOST_WIDE_INT size = arg.type_size_in_bytes();
+  //return size > max_regs_for_args * UNITS_PER_WORD || size <= 0;
 }
 
 // for TARGET_ARG_PARTIAL_BYTES
@@ -591,33 +607,81 @@ brew_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
 // that hold arguments. Given a new arg, return the number of bytes
 // that fit in argument passing registers.
 static int
-brew_arg_partial_bytes (cumulative_args_t /*cum_v*/, const function_arg_info &/*arg*/)
+brew_arg_partial_bytes (cumulative_args_t cum_v, const function_arg_info &arg)
 {
-  // For now, we're simply choosing an all-or-nothing approach:
-  //   we either completely put the argument in registers or completely
-  //   on the stack.
+  int bytes = arg.promoted_size_in_bytes ();
+  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
+  int bytes_left = (max_regs_for_args - *cum) * UNITS_PER_WORD;
+  
+  if (bytes == -1)
+    return 0;
+
+  if (bytes_left == 0)
+    return 0;
+  if (bytes > bytes_left)
+    return bytes_left;
   return 0;
-//
-//  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-//  int bytes_left, size;
-//
-//  HOST_WIDE_INT regs_needed = arg_size_in_register(arg, *cum);
-//  if (regs_needed == 0)
-//    {
-//      return 0;
-//    }
-//    // It doesn't seem to be the case that we need to consider the pointer for
-//    // forced pass-by-ref arguments. Most targets seem to not handle this case.
-//    //if (brew_pass_by_reference(cum_v, arg) && (*cum < max_regs_for_args))
-//    //  {
-//    //    gcc_assert(false);
-//    //    return 4;
-//    //  }
-//  int bytes = arg.promoted_size_in_bytes();
-//  // Make sure we round up to the next WORD, even for small things
-//  bytes = ((bytes + UNITS_PER_WORD - 1) / UNITS_PER_WORD) * UNITS_PER_WORD;
-//  return bytes;
 }
+
+//#define EMIT_NOP emit_insn(gen_nop())
+#define EMIT_NOP
+
+// for TARGET_SETUP_INCOMING_VARARGS
+// We should do two things here:
+//   - push all register-passed *not* named arguments onto the stack
+//   - set *pretend_size to the number of bytes put on the stack
+// Since we *never* put non-named arguments in registers, this
+// is almost a no-op for us.
+// NOTE: this is controlled by arg_size_in_register, so these
+// two functions must be kept in sync.
+static void
+brew_setup_incoming_varargs(
+  cumulative_args_t cum_v,
+  const function_arg_info &,
+  int *pretend_size,
+  int no_rtl
+) {
+  //*pretend_size = 0;
+  //return;
+
+  CUMULATIVE_ARGS *cum = get_cumulative_args(cum_v);
+  
+  *pretend_size = *cum * UNITS_PER_WORD;
+  
+  if (no_rtl)
+    return;
+  
+  EMIT_NOP;
+  EMIT_NOP;
+  EMIT_NOP;
+  EMIT_NOP;
+  EMIT_NOP;
+  for(unsigned int arg_idx = *cum; arg_idx < max_regs_for_args; arg_idx++)
+    {
+      unsigned int regno = arg_idx + first_arg_value_reg;
+      rtx reg = gen_rtx_REG(SImode, regno);
+      rtx slot = arg_idx == 0 ? gen_rtx_REG(Pmode, ARG_POINTER_REGNUM) : gen_rtx_PLUS(
+        Pmode,
+        gen_rtx_REG(SImode, ARG_POINTER_REGNUM),
+        GEN_INT(UNITS_PER_WORD * arg_idx)
+      );
+      emit_move_insn(gen_rtx_MEM(SImode, slot), reg);
+    }
+  EMIT_NOP;
+  EMIT_NOP;
+  EMIT_NOP;
+  EMIT_NOP;
+  EMIT_NOP;
+}
+
+
+
+
+
+
+
+
+
 
 // Helper function for `brew_legitimate_address_p'
 static bool
@@ -666,24 +730,6 @@ brew_legitimate_address_p(
   return false;
 }
 
-// for TARGET_SETUP_INCOMING_VARARGS
-// We should do two things here:
-//   - push all register-passed *not* named arguments onto the stack
-//   - set *pretend_size to the number of bytes put on the stack
-// Since we *never* put non-named arguments in registers, this
-// is almost a no-op for us.
-// NOTE: this is controlled by arg_size_in_register, so these
-// two functions must be kept in sync.
-static void
-brew_setup_incoming_varargs(
-  cumulative_args_t /*cum_v*/,
-  const function_arg_info &,
-  int *pretend_size,
-  int /*no_rtl*/
-) {
-  *pretend_size = 0;
-  return;
-}
 
 // for TARGET_FUNCTION_VALUE
 // Define how to find the value returned by a function.
