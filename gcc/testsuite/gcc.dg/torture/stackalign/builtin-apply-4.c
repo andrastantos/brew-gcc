@@ -24,6 +24,10 @@ bar (int arg)
 int
 main (int argc, char **argv)
 {
+  /* Allocate 64 bytes on the stack to make sure that __builtin_apply
+     can read at least 64 bytes above the return address.  */
+  char dummy[64];
+
   if (bar (116) != 117.0)
     abort ();
 
