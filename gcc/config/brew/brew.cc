@@ -956,6 +956,9 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 //        that impacts function prolog/epilog, we might reconsider
 #undef  TARGET_FUNCTION_OK_FOR_SIBCALL
 #define TARGET_FUNCTION_OK_FOR_SIBCALL           hook_bool_tree_tree_true
+// We don't have anything against speculation-related security measures
+#undef  TARGET_HAVE_SPECULATION_SAFE_VALUE
+#define TARGET_HAVE_SPECULATION_SAFE_VALUE       speculation_safe_value_not_needed
 
 /////////////////////////////////////////////////////////////////////
 // Trampolines for Nested Functions
