@@ -710,6 +710,7 @@
   [(set_attr "length"        "12,8")]
 )
 
+;; FIXME: DO WE NEED THIS????
 (define_insn "*call"
   [
     (call
@@ -757,6 +758,81 @@
   [(set_attr "length"        "12,8")]
 )
 
+
+
+
+
+
+(define_expand "sibcall"
+  [(parallel
+    [(call
+      (match_operand:SI 0 "" "")
+      (match_operand 1 "" "")
+    )
+    (return)
+    ]
+  )]
+  ""
+{
+  brew_expand_call(Pmode, operands); 
+})
+
+(define_expand "sibcall_value"
+  [(parallel
+    [(set
+        (match_operand 0 "" "")
+        (call
+          (match_operand:SI 1 "" "")
+          (match_operand 2 "" "")
+        )
+      )
+      (return)
+    ]
+  )]
+  ""
+{
+  brew_expand_call(Pmode, operands + 1); 
+})
+
+(define_insn "*sibcall"
+  [
+    (call
+      (mem:QI (match_operand:SI 0 "nonmemory_operand" "i,r"))
+      (match_operand 1 "")
+    )
+    (return)
+  ]
+  ""
+  "@
+  $pc <- (%0)
+  $pc <- %0"
+  [(set_attr "length"        "6,2")]
+)
+
+(define_insn "*sibcall_value"
+  [
+    (set
+      (match_operand 0 "register_operand" "=r,r")
+      (call
+        (mem:QI (match_operand:SI 1 "nonmemory_operand" "i,r"))
+        (match_operand 2 "")
+      )
+    )
+    (return)
+  ]
+  ""
+  "@
+  $pc <- (%1)
+  $pc <- %1"
+  [(set_attr "length"        "6,2")]
+)
+
+
+
+
+
+
+
 (define_insn "indirect_jump"
   [(set (pc) (match_operand:SI 0 "nonimmediate_operand" "r"))]
   ""
@@ -791,10 +867,18 @@
   ""
   "
 {
-  brew_expand_epilogue();
+  brew_expand_epilogue(false);
   DONE;
 }
 ")
+
+(define_expand "sibcall_epilogue"
+  [(return)]
+  ""
+{
+  brew_expand_epilogue(true);
+  DONE;
+})
 
 ;; This pattern is used by brew_expand_epilogue to generate the actual
 ;; return statement. At this point, the stack pointer is already adjusted
