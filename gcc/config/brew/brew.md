@@ -180,29 +180,41 @@
   %0 <- %1 * %2
   %0 <- %1 * (%2)")
 
-(define_insn "mulsi3_highpart"
-  [(set (match_operand:SI 0 "register_operand"                       "=r,r")
-        (truncate:SI
-         (lshiftrt:DI
-          (mult:DI (sign_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
-                   (sign_extend:DI (match_operand:SI 2 "nonmemory_operand"  "r,i")))
-          (const_int 32))))]
-  ""
-  "@
-  %s0 <- upper %s1 * %s2
-  %s0 <- upper %s1 * (%s2)")
-
-(define_insn "umulsi3_highpart"
-  [(set (match_operand:SI 0 "register_operand"                       "=r,r")
-        (truncate:SI
-         (lshiftrt:DI
-          (mult:DI (zero_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
-                   (zero_extend:DI (match_operand:SI 2 "nonmemory_operand"  "r,i")))
-          (const_int 32))))]
-  ""
-  "@
-  %0 <- upper %1 * %2
-  %0 <- upper %1 * (%2)")
+;; FIXME:
+;;    These things, if enabled, cause an internal compiler error in this, if compiled with -O1 or -O2:
+;;       
+;;       extern void bar();
+;;       
+;;       unsigned int t175_2umul (unsigned int y) {
+;;         unsigned int x = (((unsigned int) -1) / 25);
+;;         unsigned int r;
+;;         if (__builtin_umul_overflow (x, y, &r)) bar ();
+;;         return r;
+;;       }
+;;
+;;(define_insn "mulsi3_highpart"
+;;  [(set (match_operand:SI 0 "register_operand"                       "=r,r")
+;;        (truncate:SI
+;;         (lshiftrt:DI
+;;          (mult:DI (sign_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
+;;                   (sign_extend:DI (match_operand:SI 2 "nonmemory_operand"  "r,i")))
+;;          (const_int 32))))]
+;;  ""
+;;  "@
+;;  %s0 <- upper %s1 * %s2
+;;  %s0 <- upper %s1 * (%s2)")
+;;
+;;(define_insn "umulsi3_highpart"
+;;  [(set (match_operand:SI 0 "register_operand"                       "=r,r")
+;;        (truncate:SI
+;;         (lshiftrt:DI
+;;          (mult:DI (zero_extend:DI (match_operand:SI 1 "register_operand"  "r,r"))
+;;                   (zero_extend:DI (match_operand:SI 2 "nonmemory_operand"  "r,i")))
+;;          (const_int 32))))]
+;;  ""
+;;  "@
+;;  %0 <- upper %1 * %2
+;;  %0 <- upper %1 * (%2)")
 
 ;; FIXME: These generate incorrect code at the moment, unfortunately.
 ;;        The most likely reason is that gen_lowpart and gen_highpart (which are
