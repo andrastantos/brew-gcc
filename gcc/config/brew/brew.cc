@@ -966,11 +966,21 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 // Trampolines for Nested Functions
 /////////////////////////////////////////////////////////////////////
 
+// THIS IS THE EXECUTABLE STACK-BASED IMPLEMENTATION
+// Here, the trampline template will be copied to a stack-based variable,
+// it is going to be patched up with the proper values for the static chain
+// and the actual function address and called as a regular function.
+// As a consequence, we need to:
+//  1. Make sure the stack is executable, or at least the region of the stack,
+//     where the trampoline resides is, at least for the duration of the call;
+//  2. Make sure we flush the write-queue and instruction caches, since we're
+//     dealing with self-modifying code here.
+//     FIXME: this is TODO!!!!
 
 // for TARGET_ASM_TRAMPOLINE_TEMPLATE.
 // Output assembler code for a block containing the constant parts
 // of a trampoline, leaving space for the variable parts.
-// Note that STATIC_CHAIN_REGNUM is $r14
+// Note that STATIC_CHAIN_REGNUM is $r8
 static void
 brew_asm_trampoline_template(FILE *f)
 {
@@ -1007,7 +1017,7 @@ brew_trampoline_init(rtx m_tramp, tree fndecl, rtx chain_value)
   emit_move_insn (mem, fnaddr);
 
   // Clear cache for the memory of the trampoline
-  //rtx a_tramp = XEXP(m_tramp, 0); // address of the trampolien
+  //rtx a_tramp = XEXP(m_tramp, 0); // address of the trampoline
   //maybe_emit_call_builtin___clear_cache(
   //  a_tramp,
   //  plus_constant(
@@ -1024,60 +1034,11 @@ brew_trampoline_init(rtx m_tramp, tree fndecl, rtx chain_value)
 #define TARGET_ASM_TRAMPOLINE_TEMPLATE              brew_asm_trampoline_template
 #undef	TARGET_TRAMPOLINE_INIT
 #define TARGET_TRAMPOLINE_INIT                      brew_trampoline_init
+
 // The low bit is ignored when loading $pc ($pc doesn't have bit-0 implemented) so is safe to use.
-#undef TARGET_CUSTOM_FUNCTION_DESCRIPTORS
-#define TARGET_CUSTOM_FUNCTION_DESCRIPTORS          1
+//#undef  TARGET_CUSTOM_FUNCTION_DESCRIPTORS
+//#define TARGET_CUSTOM_FUNCTION_DESCRIPTORS          1
 
-
-
-/***** OLD MOXIE TRAMPOLINE HANDLING
-#undef  TARGET_STATIC_CHAIN
-#define TARGET_STATIC_CHAIN brew_static_chain
-#undef  TARGET_ASM_TRAMPOLINE_TEMPLATE
-#define TARGET_ASM_TRAMPOLINE_TEMPLATE brew_asm_trampoline_template
-#undef  TARGET_TRAMPOLINE_INIT
-#define TARGET_TRAMPOLINE_INIT brew_trampoline_init
-
-static rtx
-brew_static_chain (const_tree ARG_UNUSED (fndecl_or_type), bool incoming_p)
-{
-  rtx addr, mem;
-
-  if (incoming_p)
-    addr = plus_constant (Pmode, arg_pointer_rtx, 2 * UNITS_PER_WORD);
-  else
-    addr = plus_constant (Pmode, stack_pointer_rtx, -UNITS_PER_WORD);
-
-  mem = gen_rtx_MEM (Pmode, addr);
-  MEM_NOTRAP_P (mem) = 1;
-
-  return mem;
-}
-
-static void
-brew_asm_trampoline_template (FILE *f)
-{
-  fprintf (f, "\tpush  $sp, $r0\n");
-  fprintf (f, "\tldi.l $r0, 0x0\n");
-  fprintf (f, "\tsto.l 0x8($fp), $r0\n");
-  fprintf (f, "\tpop   $sp, $r0\n");
-  fprintf (f, "\tjmpa  0x0\n");
-}
-
-static void
-brew_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
-{
-  rtx mem, fnaddr = XEXP (DECL_RTL (fndecl), 0);
-
-  emit_block_move (m_tramp, assemble_trampoline_template (),
-                   GEN_INT (TRAMPOLINE_SIZE), BLOCK_OP_NORMAL);
-
-  mem = adjust_address (m_tramp, SImode, 4);
-  emit_move_insn (mem, chain_value);
-  mem = adjust_address (m_tramp, SImode, 16);
-  emit_move_insn (mem, fnaddr);
-}
-************/
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 
