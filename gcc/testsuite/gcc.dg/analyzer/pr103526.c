@@ -1,3 +1,4 @@
+/* { dg-xfail-if "" { brew-*-* } "*" "" } */
 #include <stdlib.h>
 #include <string.h>
 

@@ -3,7 +3,7 @@
    pointer, (issuing a warning for such invocations).  */
 /* { dg-do compile } */
 /* { dg-additional-options "-Wnonnull" }
-
+/* { dg-xfail-if "" { brew-*-* } "*" "" } */
 /* Verify that calls with fewer or more than 3 arguments to the generic
    __builtin_op_overflow functions are rejected.  */
 

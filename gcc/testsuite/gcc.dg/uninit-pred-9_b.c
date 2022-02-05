@@ -1,5 +1,6 @@
 /* { dg-do compile } */
 /* { dg-options "-Wuninitialized -O2" } */
+/* { dg-xfail-if "" { brew-*-* } "*" "" } */
 
 int g;
 void bar();

@@ -4,6 +4,7 @@
    removed.  */
 
 /* { dg-do "compile" } */
+/* { dg-xfail-if "" { brew-*-* } "*" "" } */
 
 /* Minimal replacement of system headers.  */
 
