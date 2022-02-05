@@ -5,6 +5,7 @@
 
 /* { dg-do "compile" } */
 /* { dg-additional-options "-fsigned-char" } */
+/* { dg-xfail-if "" { brew-*-* } "*" "" } */
 
 /* Minimal replacement of system headers.  */
 
