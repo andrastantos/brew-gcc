@@ -103,13 +103,13 @@
    $r5  - second argument/return value register.
    $r6  - third argument/return value register; EH_RETURN_DATA_REGNO
    $r7  - fourth argument/return value register; EH_RETURN_DATA_REGNO
-   $r8  - general purpose 32-bit register; EH_RETURN_DATA_REGNO; 
-   $r9  - general purpose 32-bit register; EH_RETURN_DATA_REGNO
+   $r8  - general purpose 32-bit register; static chain register;
+   $r9  - general purpose 32-bit register; 
    $r10 - general purpose 32-bit register; EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG
    $r11 - general purpose 32-bit register.
    $r12 - general purpose 32-bit register.
    $r13 - general purpose 32-bit register.
-   $r14 - general purpose 32-bit register; static chain register
+   $r14 - general purpose 32-bit register; 
 
 */
 
@@ -198,7 +198,11 @@ enum reg_class
 
 // The chain register is used if a nested functions address is taken.
 // This is used by GCC trampoline code.
-#define STATIC_CHAIN_REGNUM BREW_R14 
+// NOTE: instead of reserving a register, we could override TARGET_STATIC_CHAIN
+//       and use a stack-location for the static chain value.
+//       (the static chain is the address of the frame of the enclosing function)
+//       Moxie uses this approach.
+#define STATIC_CHAIN_REGNUM BREW_R8
 
 /* We can't copy to or from our CC register. */
 #define AVOID_CCMODE_COPIES 1
@@ -315,7 +319,7 @@ enum reg_class
    and ideally we want call-clobbered registers. Apparently most don't reuse
    registers that are the common return values for functions, so let's avoid
    $r4 and $r5 */
-#define EH_RETURN_DATA_REGNO(N)        ((N) < 4 ? (N+EH_RETURN_DATA_FIRST_REG) : INVALID_REGNUM)
+#define EH_RETURN_DATA_REGNO(N)        ((N) < 2 ? (N+EH_RETURN_DATA_FIRST_REG) : INVALID_REGNUM)
 
 /* Store the return handler into the call frame.  */
 /* Typically this is the location in the call frame at which the normal
