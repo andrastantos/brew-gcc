@@ -951,11 +951,13 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 #define TARGET_PRINT_OPERAND_ADDRESS             brew_print_operand_address
 #undef  TARGET_CONSTANT_ALIGNMENT
 #define TARGET_CONSTANT_ALIGNMENT                constant_alignment_word_strings
-// We allow sibcalls (tail-calls) in general for now.
+// We don't allow sibcalls (tail-calls) in general for now.
+// FIXME: we right now generate incorrect sibcall returns at least in
+//        certain cases. For now sibcalls are disabled.
 // FIXME: later, with shared libraries, interrupt routines or other fancy stuff
 //        that impacts function prolog/epilog, we might reconsider
 #undef  TARGET_FUNCTION_OK_FOR_SIBCALL
-#define TARGET_FUNCTION_OK_FOR_SIBCALL           hook_bool_tree_tree_true
+#define TARGET_FUNCTION_OK_FOR_SIBCALL           hook_bool_tree_tree_false
 // We don't have anything against speculation-related security measures
 #undef  TARGET_HAVE_SPECULATION_SAFE_VALUE
 #define TARGET_HAVE_SPECULATION_SAFE_VALUE       speculation_safe_value_not_needed
