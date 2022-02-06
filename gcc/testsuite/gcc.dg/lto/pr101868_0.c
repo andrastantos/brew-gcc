@@ -26,6 +26,8 @@ int
 main(int argc, char **argv)
 {
         argc--;
+        if (argc < 0)
+          argc = 0;
         that(0, argc);
 
         rb_check_type(argc, argc);
