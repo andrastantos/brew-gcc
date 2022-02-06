@@ -10,7 +10,7 @@
 /* { dg-additional-options "-no-pie" { target pie_enabled } } */
 /* { dg-require-effective-target nonlocal_goto } */
 /* { dg-skip-if "" { arm*-*-uclinuxfdpiceabi } "*" "" } */
-/* { dg-xfail-if "" { brew-*-* } "*" "" } */
+/* { dg-skip-if "No PIC support" { brew-*-* } "*" "" } */
 
 extern void abort (void);
 

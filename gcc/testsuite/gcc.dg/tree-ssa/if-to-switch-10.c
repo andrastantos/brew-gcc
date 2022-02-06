@@ -1,6 +1,6 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -fdump-tree-iftoswitch-optimized --param case-values-threshold=5" } */
-/* { dg-xfail-if "" { brew-*-* } "*" "" } */
+/* { dg-skip-if "Some if-conversions fail." { brew-*-* } "*" "" } */
 
 int global;
 int foo ();

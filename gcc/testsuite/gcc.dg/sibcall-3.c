@@ -9,6 +9,7 @@
 /* -mlongcall disables sibcall patterns.  */
 /* { dg-skip-if "" { powerpc*-*-* } { "-mlongcall" } { "" } } */
 /* { dg-options "-O2 -foptimize-sibling-calls" } */
+/* { dg-skip-if "sibcall optimizations are disabled at the moment" { brew-*-* } "*" "" } */
 
 /* The option -foptimize-sibling-calls is the default, but serves as
    marker.  This test is xfailed on targets without sibcall patterns
