@@ -1,6 +1,7 @@
 /* { dg-do link } */
 /* { dg-options "-O3" } */
 /* { dg-additional-sources "pr102892-2.c" } */
+/* { dg-skip-if "" { brew-*-* } "*" "" } */
 
 static long b[2][1] = {0};
 

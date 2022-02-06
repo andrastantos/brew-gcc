@@ -3,6 +3,7 @@
 /* { dg-skip-if "" { *-*-* } { "-fno-fat-lto-objects" } { "" } } */
 /* { dg-skip-if "" { *-*-* } { "-O0" } { "" } } */
 /* { dg-require-effective-target indirect_jumps } */
+/* { dg-skip-if "no _setjmp syscall" { brew-*-* } } */
 
 struct __jmp_buf_tag {};
 typedef struct __jmp_buf_tag jmp_buf[1];

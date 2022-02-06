@@ -6,7 +6,7 @@
 /* { dg-do run } */
 /* { dg-skip-if "not IEEE float layout" { "pdp11-*-*" } } */
 /* { dg-additional-options "-O2 -Wall -Wno-pedantic -fprintf-return-value" } */
-/* { dg-xfail-if "Newlib doesn't support some C99 format specs" { brew-*-* } "*" "" } */
+/* { dg-skip-if "Newlib doesn't support some C99 format specs" { brew-*-* } "*" "" } */
 
 #ifndef LINE
 #  define LINE   0

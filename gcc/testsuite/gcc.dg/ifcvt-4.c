@@ -4,7 +4,7 @@
 /* { dg-additional-options "-mtune-ctrl=^one_if_conv_insn" { target { i?86-*-* x86_64-*-* } } } */
 /* { dg-skip-if "Multiple set if-conversion not guaranteed on all subtargets" { "arm*-*-* avr-*-* hppa*64*-*-* s390-*-* visium-*-*" riscv*-*-* msp430-*-* nios2-*-*} }  */
 /* { dg-skip-if "" { "s390x-*-*" } { "-m31" } }  */
-/* { dg-xfail-if "" { brew-*-* } "*" "" } */
+/* { dg-skip-if "" { brew-*-* } "*" "" } */
 
 typedef int word __attribute__((mode(word)));
 

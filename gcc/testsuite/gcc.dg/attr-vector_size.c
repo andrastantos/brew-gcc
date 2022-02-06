@@ -2,6 +2,7 @@
    PR c/89798 - excessive vector_size silently accepted and truncated
    { dg-do compile { target int32plus } }
    { dg-options "-Wall -Wno-unused" } */
+/* { dg-skip-if "" { brew-*-* } "*" "" } */
 
 #define ASSERT(e)    _Static_assert (e, #e)
 #define VEC(N)       __attribute__ ((vector_size (N)))

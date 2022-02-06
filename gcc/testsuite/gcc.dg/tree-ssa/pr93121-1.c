@@ -1,7 +1,7 @@
 /* PR libstdc++/93121 */
 /* { dg-do compile { target { ilp32 || lp64 } } } */
 /* { dg-options "-O2 -fdump-tree-optimized" } */
-/* { dg-xfail-if "" { brew-*-* } "*" "" } */
+/* { dg-skip-if "" { brew-*-* } } */
 
 union U { int a[3]; short c[6]; struct S { int d; int a : 2; int f : 1; int b : 24; int c : 5; int e; } b; };
 const union U u = { .b = { 0x7efa3412, 3, 0, 0x50eca8, 0xb, 0x1eeffeed } };

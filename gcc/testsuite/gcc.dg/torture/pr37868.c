@@ -1,6 +1,7 @@
 /* { dg-do run } */
 /* { dg-options "-fno-strict-aliasing" } */
 /* { dg-skip-if "unaligned access" { arc*-*-* epiphany-*-* nds32*-*-* sparc*-*-* sh*-*-* tic6x-*-* } } */
+/* { dg-skip-if "unalinged access" { brew-*-* } } */
 
 extern void abort (void);
 #if (__SIZEOF_INT__ <= 2)
