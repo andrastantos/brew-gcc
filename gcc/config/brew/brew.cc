@@ -198,10 +198,20 @@ static bool
 reg_needs_save_restore(int regno)
 {
   // We need to save/restore a register if...
-  return
-    (df_regs_ever_live_p(regno) && (!call_used_or_fixed_reg_p(regno) || regno == BREW_REG_LINK)) || // We clobber the register that should be saved across calls
-    (regno == BREW_REG_LINK /*&& !crtl->is_leaf*/) || // The link register for non-leaf nodes in the call-graph 
-    (regno == BREW_FP); // The frame pointer (TODO: how to eliminate this as much as possible?)
+  
+  // We clobber the register that should be saved across calls
+  if (df_regs_ever_live_p(regno) && (!call_used_or_fixed_reg_p(regno) || regno == BREW_REG_LINK))
+    return true;
+  // The link register for non-leaf nodes in the call-graph 
+  if (regno == BREW_REG_LINK && (!crtl->is_leaf || crtl->calls_eh_return))
+    return true;
+  // If this could be a register for returning EH-related info (and the function uses __builtin_eh_return).
+  if (EH_RETURN_DATA_REGNO(regno-EH_RETURN_DATA_FIRST_REG) != INVALID_REGNUM && (crtl->calls_eh_return))
+    return true;
+  // The frame pointer (TODO: how to eliminate this as much as possible?)
+  if (regno == BREW_FP)
+    return true;
+  return false;
 }
 
 // Compute the size of the local area and the size to be adjusted by the
