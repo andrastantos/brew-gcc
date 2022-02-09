@@ -65,9 +65,6 @@ struct GTY(()) machine_function
    // A bit-mask: 1 for each reg that was saved, 0 for ones that didn't.
    // bit0 is R0, bit 14 is R14
    uint32_t reg_save_mask;
-   // Set to true if frame is needed, for example because
-   // __builtin_return_address or __builtin_frame_address is called.
-   bool frame_needed;
  };
 
 static struct machine_function *
@@ -203,7 +200,7 @@ reg_needs_save_restore(int regno)
   if (df_regs_ever_live_p(regno) && (!call_used_or_fixed_reg_p(regno) || regno == BREW_REG_LINK))
     return true;
   // The link register for non-leaf nodes in the call-graph 
-  if (regno == BREW_REG_LINK && (!crtl->is_leaf || crtl->calls_eh_return))
+  if (regno == BREW_REG_LINK && (!crtl->is_leaf || crtl->calls_eh_return || crtl->accesses_prior_frames))
     return true;
   // If this could be a register for returning EH-related info (and the function uses __builtin_eh_return).
   if (EH_RETURN_DATA_REGNO(regno-EH_RETURN_DATA_FIRST_REG) != INVALID_REGNUM && (crtl->calls_eh_return))
@@ -416,8 +413,10 @@ brew_initial_elimination_offset (int from, int to)
 rtx
 brew_dynamic_chain_address(rtx frameaddr)
 {
-  // NOTE: crtl->accesses_prior_frames might already carry this information.
-  cfun->machine->frame_needed = 1;
+  // NOTE: crtl->accesses_prior_frames will be set if __builtin_return_address is called.
+  //       That we will check in epilog/prolog generation to ensure that we actually spill
+  //       the link register into this frame location.
+
   return plus_constant(Pmode, frameaddr, -4);
 }
 
