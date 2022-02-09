@@ -139,7 +139,7 @@
 #define BREW_QFP    15
 #define BREW_QAP    16
 
-#define EH_RETURN_DATA_FIRST_REG BREW_R6
+#define EH_RETURN_DATA_FIRST_REG BREW_R13 // TODO: change this to the first call-saved register
 #define BREW_STACKADJ_REG BREW_R10
 
 #define FIRST_PSEUDO_REGISTER 17
@@ -319,7 +319,7 @@ enum reg_class
    and ideally we want call-clobbered registers. Apparently most don't reuse
    registers that are the common return values for functions, so let's avoid
    $r4 and $r5 */
-#define EH_RETURN_DATA_REGNO(N)        ((N) < 2 ? (N+EH_RETURN_DATA_FIRST_REG) : INVALID_REGNUM)
+#define EH_RETURN_DATA_REGNO(N)        (((N) < 2 && (N) >= 0) ? (N+EH_RETURN_DATA_FIRST_REG) : INVALID_REGNUM)
 
 /* Store the return handler into the call frame.  */
 /* Typically this is the location in the call frame at which the normal
