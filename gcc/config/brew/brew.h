@@ -105,7 +105,7 @@
    $r7  - fourth argument/return value register; EH_RETURN_DATA_REGNO
    $r8  - general purpose 32-bit register; static chain register;
    $r9  - general purpose 32-bit register; used in thunks for virtual inheritance. Must be call-clobbered
-   $r10 - general purpose 32-bit register; EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG
+   $r10 - general purpose 32-bit register; TARGET_STRUCT_VALUE_RTX; EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG. Must be call-clobbered
    $r11 - general purpose 32-bit register.
    $r12 - general purpose 32-bit register.
    $r13 - general purpose 32-bit register.
@@ -145,8 +145,10 @@
 #define FIRST_PSEUDO_REGISTER 17
 #define LAST_PHYSICAL_REG BREW_R14
 
-#define BREW_FIRST_ARG_REGNO 4
-#define BREW_LAST_ARG_REGNO 7
+#define BREW_FIRST_ARG_REGNO BREW_R4
+#define BREW_LAST_ARG_REGNO BREW_R7
+
+#define BREW_STRUCT_VALUE_REG BREW_R10
 
 enum reg_class
 {

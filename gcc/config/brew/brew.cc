@@ -647,8 +647,6 @@ brew_arg_partial_bytes (cumulative_args_t cum_v, const function_arg_info &arg)
 // We should do two things here:
 //   - push all register-passed *not* named arguments onto the stack
 //   - set *pretend_size to the number of bytes put on the stack
-// Since we *never* put non-named arguments in registers, this
-// is almost a no-op for us.
 // NOTE: this is controlled by arg_size_in_register, so these
 // two functions must be kept in sync.
 static void
@@ -771,7 +769,18 @@ brew_function_value_regno_p(const unsigned int regno)
   return (regno == ret_value_reg);
 }
 
-// for TARGET_OPTION_OVERRIDE worker.
+// For TARGET_STRUCT_VALUE_RTX.
+// This target hook should return the location of the structure value address (normally
+// a mem or reg), or 0 if the address is passed as an “invisible” first argument. Note that
+// fndecl may be NULL, for libcalls. You do not need to define this target hook if the
+// address is always passed as an “invisible” first argument.
+static rtx
+brew_struct_value_rtx (tree fntype ATTRIBUTE_UNUSED, int incoming ATTRIBUTE_UNUSED)
+{
+  return gen_rtx_REG (Pmode, BREW_STRUCT_VALUE_REG);
+}
+
+// for TARGET_OPTION_OVERRIDE
 static void
 brew_option_override (void)
 {
@@ -945,6 +954,9 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 #define TARGET_LIBCALL_VALUE                     brew_libcall_value
 #undef  TARGET_FUNCTION_VALUE_REGNO_P
 #define TARGET_FUNCTION_VALUE_REGNO_P            brew_function_value_regno_p
+#undef  TARGET_STRUCT_VALUE_RTX
+#define TARGET_STRUCT_VALUE_RTX                  brew_struct_value_rtx
+
 // FIXME:
 // Moxie says the FP is always required. Right now our prolog/epilogue code assumes that too,
 // but that's incorrect: instead we should eliminate FP as much as possible and set this to
@@ -1057,7 +1069,6 @@ brew_trampoline_init(rtx m_tramp, tree fndecl, rtx chain_value)
 /////////////////////////////////////////////////////////////////////////////
 
 /* The TARGET_ASM_OUTPUT_MI_THUNK worker.  */
-
 static void
 brew_asm_output_mi_thunk(
   FILE *stream,
@@ -1067,45 +1078,35 @@ brew_asm_output_mi_thunk(
   tree funcdecl
 )
 {
-  /*
   const char *fnname = IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(thunkdecl));
 
   assemble_start_function(thunkdecl, fnname);
   // Make sure unwind info is emitted for the thunk if needed.
   final_start_function(emit_barrier (), stream, 1);
 
-  HOST_WIDE_INT final_adjust = delta + vcall_offset;
-  if (final_adjust != 0)
-    fprintf(
-      stream,
-      "\t%s <- %s + (" HOST_WIDE_INT_PRINT_DEC ") # THUNK ADJUSTMENT delta: %ld vcall_offset %ld\n",
-      reg_names[BREW_FIRST_ARG_REGNO+1], 
-      reg_names[BREW_FIRST_ARG_REGNO+1], 
-      final_adjust,
-      delta,
-      vcall_offset
-    );
-  fprintf (stream, "\t$pc <- ");
-  assemble_name(stream, XSTR (XEXP (DECL_RTL (funcdecl), 0), 0));
-  fprintf (stream, "\n");
-
-  final_end_function ();
-  assemble_end_function(thunkdecl, fnname);
-  */
-  const char *fnname = IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(thunkdecl));
-
-  assemble_start_function(thunkdecl, fnname);
-  // Make sure unwind info is emitted for the thunk if needed.
-  final_start_function(emit_barrier (), stream, 1);
-
-  const int THIS_ARG = BREW_FIRST_ARG_REGNO+1;
+  // On brew, 'this' or any function argument gets bumped from $r4 to $r5 if
+  // the return of the function is an aggregate.
+  // In those cases the first 'argument' is a pointer to the storage of the
+  // return value.
+  // Well, changed my mind: dedicated $r10 for the structure value pointer
+  // so this is fixed at this point.
+  // The rationale is this: shifting of the arguments by one, based on the
+  // return value wracks havoc (maybe?) with vaarg functions, and I don't
+  // want to complicate that code even further. I don't even know how to get
+  // to that information in the vaarg spilling code. If needed, apparently
+  // ARM(32) used the shifting style structure value pointer, so maybe
+  // something can be learned from there...
+  // Also, the behavior of the structure value pointer is controlled by 
+  //  brew_struct_value_rtx and TARGET_STRUCT_VALUE_RTX.
+  //int this_arg = aggregate_value_p(TREE_TYPE(TREE_TYPE(funcdecl)),funcdecl) ? BREW_FIRST_ARG_REGNO + 1 : BREW_FIRST_ARG_REGNO;
+  int this_arg = BREW_FIRST_ARG_REGNO;
   if(delta != 0)
     {
       fprintf(
         stream,
         "\t%s <- %s + (" HOST_WIDE_INT_PRINT_DEC ") # DELTA ADJUSTMENT\n",
-        reg_names[THIS_ARG],
-        reg_names[THIS_ARG],
+        reg_names[this_arg],
+        reg_names[this_arg],
         delta
       );
     }
@@ -1116,7 +1117,7 @@ brew_asm_output_mi_thunk(
         stream,
         "\t%s <- mem32[%s] # VCALL ADJUSTMENT\n",
         reg_names[BREW_R9],
-        reg_names[THIS_ARG]
+        reg_names[this_arg]
       );
       // load required entry from vtable
       fprintf(
@@ -1124,14 +1125,14 @@ brew_asm_output_mi_thunk(
         "\t%s <- mem32[%s + (" HOST_WIDE_INT_PRINT_DEC ")]\n",
         reg_names[BREW_R9],
         reg_names[BREW_R9],
-        vcall_offset / UNITS_PER_WORD
+        vcall_offset
       );
       // update this ptr
       fprintf(
         stream,
         "\t%s <- %s + %s\n",
-        reg_names[THIS_ARG],
-        reg_names[THIS_ARG],
+        reg_names[this_arg],
+        reg_names[this_arg],
         reg_names[BREW_R9]
       );
     }
@@ -1142,55 +1143,6 @@ brew_asm_output_mi_thunk(
   final_end_function ();
   assemble_end_function(thunkdecl, fnname);
 }
-
-/* Output the assembler code for a thunk function.  THUNK_DECL is the
-   declaration for the thunk function itself, FUNCTION is the decl for
-   the target function.  DELTA is an immediate constant offset to be
-   added to THIS.  If VCALL_OFFSET is nonzero, the word at
-   *(*this + vcall_offset) should be added to THIS.  */
-/*
-static void
-brew_asm_output_mi_thunk(
-  FILE *stream ATTRIBUTE_UNUSED,
-  tree thunk,
-  HOST_WIDE_INT delta,
-  HOST_WIDE_INT vcall_offset,
-  tree function ATTRIBUTE_UNUSED
-)
-{
-  const char *fnname = IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(thunk));
-  rtx xops[3];
-  // The this parameter is passed as the first argument.
-  rtx this_rtx = gen_rtx_REG(Pmode, BREW_FIRST_ARG_REGNO);
-
-  assemble_start_function (thunk, fnname);
-  // Adjust the this parameter by a fixed constant.
-  if(delta != 0)
-    {
-      xops[1] = this_rtx;
-      xops[0] = GEN_INT(delta);
-      output_asm_insn("%1 <- %1 + %0", xops);
-    }
-
-  // Adjust the this parameter by a value stored in the vtable.
-  if (vcall_offset != 0)
-    {
-      rtx tmp = gen_rtx_REG(Pmode, BREW_R9);
-      xops[2] = tmp;
-      xops[0] = GEN_INT(vcall_offset / UNITS_PER_WORD);
-      output_asm_insn("%2 <- mem32[%1]", xops); // load vtbl address into tmp
-      output_asm_insn("%2 <- mem32[%2 + (%0)]", xops); // load required entry from vtable
-      output_asm_insn("%1 <- %1 + %2", xops); // update this ptr.
-    }
-
-  xops[0] = XEXP(DECL_RTL(function), 0);
-  output_asm_insn("$pc <- %P0", xops);
-
-  assemble_end_function (thunk, fnname);
-}
-*/
-
-
 
 #undef  TARGET_ASM_OUTPUT_MI_THUNK
 #define TARGET_ASM_OUTPUT_MI_THUNK      brew_asm_output_mi_thunk
