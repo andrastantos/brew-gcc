@@ -104,7 +104,7 @@
    $r6  - third argument/return value register; EH_RETURN_DATA_REGNO
    $r7  - fourth argument/return value register; EH_RETURN_DATA_REGNO
    $r8  - general purpose 32-bit register; static chain register;
-   $r9  - general purpose 32-bit register; 
+   $r9  - general purpose 32-bit register; used in thunks for virtual inheritance. Must be call-clobbered
    $r10 - general purpose 32-bit register; EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG
    $r11 - general purpose 32-bit register.
    $r12 - general purpose 32-bit register.
@@ -144,6 +144,9 @@
 
 #define FIRST_PSEUDO_REGISTER 17
 #define LAST_PHYSICAL_REG BREW_R14
+
+#define BREW_FIRST_ARG_REGNO 4
+#define BREW_LAST_ARG_REGNO 7
 
 enum reg_class
 {
@@ -470,7 +473,7 @@ enum reg_class
 
 /* A C expression that is nonzero if REGNO is the number of a hard
    register in which function arguments are sometimes passed.  */
-#define FUNCTION_ARG_REGNO_P(r) (r >= BREW_R4 && r <= BREW_R7)
+#define FUNCTION_ARG_REGNO_P(r) (r >= BREW_FIRST_ARG_REGNO && r <= BREW_LAST_ARG_REGNO)
 
 /* A macro whose definition is the name of the class to which a valid
    base register must belong.  A base register is one used in an

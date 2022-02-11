@@ -459,8 +459,8 @@ brew_return_addr_rtx(unsigned int count, rtx frame)
   Others, define things this way:
     #define EH_RETURN_HANDLER_RTX   RETURN_ADDR_RTX (0, frame_pointer_rtx)
 
-    #define EH_RETURN_HANDLER_RTX						\
-      gen_frame_mem (Pmode,							\
+    #define EH_RETURN_HANDLER_RTX                                                \
+      gen_frame_mem (Pmode,                                                        \
         plus_constant (Pmode, frame_pointer_rtx, UNITS_PER_WORD))
 
   In general, it seems to be popular to store the return address in whatever the incoming return address (INCOMING_RETURN_ADDR_RTX) is.
@@ -1039,14 +1039,167 @@ brew_trampoline_init(rtx m_tramp, tree fndecl, rtx chain_value)
 
 
 
-#undef	TARGET_ASM_TRAMPOLINE_TEMPLATE
+#undef  TARGET_ASM_TRAMPOLINE_TEMPLATE
 #define TARGET_ASM_TRAMPOLINE_TEMPLATE              brew_asm_trampoline_template
-#undef	TARGET_TRAMPOLINE_INIT
+#undef  TARGET_TRAMPOLINE_INIT
 #define TARGET_TRAMPOLINE_INIT                      brew_trampoline_init
 
 // The low bit is ignored when loading $pc ($pc doesn't have bit-0 implemented) so is safe to use.
 //#undef  TARGET_CUSTOM_FUNCTION_DESCRIPTORS
 //#define TARGET_CUSTOM_FUNCTION_DESCRIPTORS          1
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// C++ stuff
+//
+/////////////////////////////////////////////////////////////////////////////
+
+/* The TARGET_ASM_OUTPUT_MI_THUNK worker.  */
+
+static void
+brew_asm_output_mi_thunk(
+  FILE *stream,
+  tree thunkdecl ATTRIBUTE_UNUSED,
+  HOST_WIDE_INT delta,
+  HOST_WIDE_INT vcall_offset,
+  tree funcdecl
+)
+{
+  /*
+  const char *fnname = IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(thunkdecl));
+
+  assemble_start_function(thunkdecl, fnname);
+  // Make sure unwind info is emitted for the thunk if needed.
+  final_start_function(emit_barrier (), stream, 1);
+
+  HOST_WIDE_INT final_adjust = delta + vcall_offset;
+  if (final_adjust != 0)
+    fprintf(
+      stream,
+      "\t%s <- %s + (" HOST_WIDE_INT_PRINT_DEC ") # THUNK ADJUSTMENT delta: %ld vcall_offset %ld\n",
+      reg_names[BREW_FIRST_ARG_REGNO+1], 
+      reg_names[BREW_FIRST_ARG_REGNO+1], 
+      final_adjust,
+      delta,
+      vcall_offset
+    );
+  fprintf (stream, "\t$pc <- ");
+  assemble_name(stream, XSTR (XEXP (DECL_RTL (funcdecl), 0), 0));
+  fprintf (stream, "\n");
+
+  final_end_function ();
+  assemble_end_function(thunkdecl, fnname);
+  */
+  const char *fnname = IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(thunkdecl));
+
+  assemble_start_function(thunkdecl, fnname);
+  // Make sure unwind info is emitted for the thunk if needed.
+  final_start_function(emit_barrier (), stream, 1);
+
+  const int THIS_ARG = BREW_FIRST_ARG_REGNO+1;
+  if(delta != 0)
+    {
+      fprintf(
+        stream,
+        "\t%s <- %s + (" HOST_WIDE_INT_PRINT_DEC ") # DELTA ADJUSTMENT\n",
+        reg_names[THIS_ARG],
+        reg_names[THIS_ARG],
+        delta
+      );
+    }
+  if (vcall_offset != 0)
+    {
+      // load vtbl address into tmp
+      fprintf(
+        stream,
+        "\t%s <- mem32[%s] # VCALL ADJUSTMENT\n",
+        reg_names[BREW_R9],
+        reg_names[THIS_ARG]
+      );
+      // load required entry from vtable
+      fprintf(
+        stream,
+        "\t%s <- mem32[%s + (" HOST_WIDE_INT_PRINT_DEC ")]\n",
+        reg_names[BREW_R9],
+        reg_names[BREW_R9],
+        vcall_offset / UNITS_PER_WORD
+      );
+      // update this ptr
+      fprintf(
+        stream,
+        "\t%s <- %s + %s\n",
+        reg_names[THIS_ARG],
+        reg_names[THIS_ARG],
+        reg_names[BREW_R9]
+      );
+    }
+  fprintf (stream, "\t$pc <- ");
+  assemble_name(stream, XSTR (XEXP (DECL_RTL (funcdecl), 0), 0));
+  fprintf (stream, " # THUNK JUMP\n");
+
+  final_end_function ();
+  assemble_end_function(thunkdecl, fnname);
+}
+
+/* Output the assembler code for a thunk function.  THUNK_DECL is the
+   declaration for the thunk function itself, FUNCTION is the decl for
+   the target function.  DELTA is an immediate constant offset to be
+   added to THIS.  If VCALL_OFFSET is nonzero, the word at
+   *(*this + vcall_offset) should be added to THIS.  */
+/*
+static void
+brew_asm_output_mi_thunk(
+  FILE *stream ATTRIBUTE_UNUSED,
+  tree thunk,
+  HOST_WIDE_INT delta,
+  HOST_WIDE_INT vcall_offset,
+  tree function ATTRIBUTE_UNUSED
+)
+{
+  const char *fnname = IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(thunk));
+  rtx xops[3];
+  // The this parameter is passed as the first argument.
+  rtx this_rtx = gen_rtx_REG(Pmode, BREW_FIRST_ARG_REGNO);
+
+  assemble_start_function (thunk, fnname);
+  // Adjust the this parameter by a fixed constant.
+  if(delta != 0)
+    {
+      xops[1] = this_rtx;
+      xops[0] = GEN_INT(delta);
+      output_asm_insn("%1 <- %1 + %0", xops);
+    }
+
+  // Adjust the this parameter by a value stored in the vtable.
+  if (vcall_offset != 0)
+    {
+      rtx tmp = gen_rtx_REG(Pmode, BREW_R9);
+      xops[2] = tmp;
+      xops[0] = GEN_INT(vcall_offset / UNITS_PER_WORD);
+      output_asm_insn("%2 <- mem32[%1]", xops); // load vtbl address into tmp
+      output_asm_insn("%2 <- mem32[%2 + (%0)]", xops); // load required entry from vtable
+      output_asm_insn("%1 <- %1 + %2", xops); // update this ptr.
+    }
+
+  xops[0] = XEXP(DECL_RTL(function), 0);
+  output_asm_insn("$pc <- %P0", xops);
+
+  assemble_end_function (thunk, fnname);
+}
+*/
+
+
+
+#undef  TARGET_ASM_OUTPUT_MI_THUNK
+#define TARGET_ASM_OUTPUT_MI_THUNK      brew_asm_output_mi_thunk
+#undef  TARGET_ASM_CAN_OUTPUT_MI_THUNK
+#define TARGET_ASM_CAN_OUTPUT_MI_THUNK  default_can_output_mi_thunk_no_vcall
+
+
+
+
 
 
 struct gcc_target targetm = TARGET_INITIALIZER;
