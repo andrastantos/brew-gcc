@@ -1122,7 +1122,7 @@ brew_asm_output_mi_thunk(
       // load required entry from vtable
       fprintf(
         stream,
-        "\t%s <- mem32[%s + (" HOST_WIDE_INT_PRINT_DEC ")]\n",
+        "\t%s <- mem32[%s, (" HOST_WIDE_INT_PRINT_DEC ")]\n",
         reg_names[BREW_R9],
         reg_names[BREW_R9],
         vcall_offset
@@ -1147,7 +1147,7 @@ brew_asm_output_mi_thunk(
 #undef  TARGET_ASM_OUTPUT_MI_THUNK
 #define TARGET_ASM_OUTPUT_MI_THUNK      brew_asm_output_mi_thunk
 #undef  TARGET_ASM_CAN_OUTPUT_MI_THUNK
-#define TARGET_ASM_CAN_OUTPUT_MI_THUNK  default_can_output_mi_thunk_no_vcall
+#define TARGET_ASM_CAN_OUTPUT_MI_THUNK  hook_bool_const_tree_hwi_hwi_const_tree_true
 
 
 
