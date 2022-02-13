@@ -4,7 +4,7 @@
 #if defined(__hppa__) || defined(__v850__)
 #define REGISTER "1"
 #else
-#ifdef __brew__
+#ifdef __BREW__
 #define REGISTER "1"
 #else
 #ifdef __moxie__

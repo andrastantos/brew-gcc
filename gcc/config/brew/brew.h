@@ -21,6 +21,10 @@
 #ifndef GCC_BREW_H
 #define GCC_BREW_H
 
+#ifndef OPTION_GLIBC
+#include "../linux.h"
+#endif
+
 #undef  STARTFILE_SPEC
 #define STARTFILE_SPEC "%{!mno-crt0:crt0%O%s} crti.o%s crtbegin.o%s"
 
@@ -531,11 +535,10 @@ enum reg_class
 
 /* Run-time Target Specification */
 
-#define TARGET_CPU_CPP_BUILTINS() \
-  { \
-    builtin_define_std ("brew");                        \
-    builtin_define_std ("BREW");                        \
-    builtin_define ("__BREW__");                        \
+#define TARGET_CPU_CPP_BUILTINS()                                 \
+  {                                                               \
+    builtin_define("__BREW__");                                   \
+    if (brew_soft_float()) builtin_define("__BREW_SOFT_FLOAT__"); \
   }
 
 #define HAS_LONG_UNCOND_BRANCH true
