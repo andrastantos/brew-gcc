@@ -3,6 +3,7 @@
    for pairs of library functions defined in system headers.
    { dg-do compile { target c++11 } }
    { dg-options "-O2 -Wall" } */
+// { dg-skip-if "" { brew-*-* } }
 
 #include <memory>
 #include <string>

@@ -97,7 +97,7 @@ __aeabi_idiv0 (int return_value)
 #elif defined (__moxie__)
   /* Not all moxie configurations may raise exceptions.  */
 # define DO_TEST 0
-#elif defined (__brew__)
+#elif defined (__BREW__)
   /* Not all brew configurations may raise exceptions.  */
 # define DO_TEST 0
 #elif defined (__or1k__)

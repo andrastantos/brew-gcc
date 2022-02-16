@@ -1,5 +1,6 @@
 // Test for the warning of exposing types from an anonymous namespace
 // { dg-do compile }
+// { dg-skip-if "" { brew-*-* } }
 //
 #include <memory>
 #include "anonymous-namespace-3.h"

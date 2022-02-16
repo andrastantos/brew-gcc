@@ -1,5 +1,6 @@
 // { dg-require-effective-target c++17 }
 // { dg-options "-Og -Wall" }
+// { dg-xfail-if "" { brew-*-* } }
 
 #include <optional>
 #include <memory>
