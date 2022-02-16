@@ -1,3 +1,5 @@
+// { dg-xfail-if "" { brew-*-* } }
+
 #if !__has_include(<coroutine>) \
   && __has_include(<experimental/coroutine>) // for __clang__
 #include <experimental/coroutine>
@@ -14,8 +16,8 @@ namespace std {
 
 std::shared_ptr<char> cppDemangle(const char *abiName)
 {
-  int status;    
-  char *ret = abi::__cxa_demangle(abiName, 0, 0, &status);  
+  int status;
+  char *ret = abi::__cxa_demangle(abiName, 0, 0, &status);
 
   /* NOTE: must free() the returned char when done with it! */
   std::shared_ptr<char> retval;
@@ -28,7 +30,7 @@ struct Id{};
 struct Task
 {
   struct promise_type
-  {        
+  {
     void return_void() const noexcept {}
 
     static void is_int (std::string x) {
@@ -77,7 +79,7 @@ struct Task
     {
         if (m_handle.address()) { m_handle.destroy(); }
     }
-    
+
     promise_handle m_handle{};
 };
 

@@ -1,5 +1,6 @@
 // PR c++/48726
 // { dg-do compile { target c++11 } }
+// { dg-xfail-if "" { brew-*-* } }
 
 #include <memory>
 #include <initializer_list>

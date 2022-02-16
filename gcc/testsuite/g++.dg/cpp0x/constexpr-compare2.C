@@ -1,6 +1,7 @@
 // PR c++/69681
 // { dg-do compile { target c++11 } }
 // { dg-additional-options "-fdelete-null-pointer-checks" }
+// { dg-xfail-if "" { brew-*-* } }
 
 void f();
 void g();
