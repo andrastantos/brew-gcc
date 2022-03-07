@@ -45,3 +45,18 @@
     (match_test "ival == -1")
   )
 )
+
+(define_constraint "T"
+  "A 16-bit signed constant"
+  (and (match_code "const_int")
+       (match_test "ival >= -0x8000 && ival <= 0x7fff")))
+
+(define_constraint "P"
+  "A 16-bit signed address offset"
+  (and (match_code "const_int")
+       (match_test "ival >= -0x8000*2 && ival <= 0x7fff*2")))
+
+(define_constraint "K"
+  "Address offsets for link setup"
+  (and (match_code "const_int")
+       (match_test "ival >= 0 && ival <= 28")))

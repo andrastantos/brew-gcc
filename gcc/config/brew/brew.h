@@ -21,9 +21,9 @@
 #ifndef GCC_BREW_H
 #define GCC_BREW_H
 
-#ifndef OPTION_GLIBC
-#include "../linux.h"
-#endif
+//#ifndef OPTION_GLIBC
+//#include "../linux.h"
+//#endif
 
 #undef  STARTFILE_SPEC
 #define STARTFILE_SPEC "%{!mno-crt0:crt0%O%s} crti.o%s crtbegin.o%s"
@@ -97,36 +97,40 @@
 #undef  WCHAR_TYPE_SIZE
 #define WCHAR_TYPE_SIZE BITS_PER_WORD
 
+// NOTE: these register defines need to be kept in sync with the ones in
+//       brew-decode.c and brew_abi.h in binutils.
+
 /* Registers...
 
-   $pc  - a.k.a. $r0 - program counter.
-   $sp  - a.k.a. $r1 - stack pointer.
-   $fp  - a.k.a. $r2 - frame pointer.
-   $r3  - link register.
-   $r4  - first argument/return value register.
-   $r5  - second argument/return value register.
-   $r6  - third argument/return value register; EH_RETURN_DATA_REGNO
-   $r7  - fourth argument/return value register; EH_RETURN_DATA_REGNO
-   $r8  - general purpose 32-bit register; static chain register;
-   $r9  - general purpose 32-bit register; used in thunks for virtual inheritance. Must be call-clobbered
-   $r10 - general purpose 32-bit register; TARGET_STRUCT_VALUE_RTX; EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG. Must be call-clobbered
-   $r11 - general purpose 32-bit register.
-   $r12 - general purpose 32-bit register.
-   $r13 - general purpose 32-bit register.
-   $r14 - general purpose 32-bit register; 
+   $sp  - call-saved register a.k.a. $r0 - stack pointer.
+   $fp  - call-saved register a.k.a. $r1 - frame pointer.
+   $r2  - call-saved general purpose register.
+   $r3  - call-saved link register.
+   $r4  - call-clobbered first argument/return value register.
+   $r5  - call-clobbered second argument/return value register.
+   $r6  - call-clobbered third argument/return value register;
+   $r7  - call-clobbered fourth argument/return value register;
+   $r8  - call-clobbered general purpose; static chain register
+   $r9  - call-clobbered general purpose; used in thunks for virtual inheritance. Must be call-clobbered
+   $r10 - call-clobbered general purpose; struct value address (return value area pointer for large return values). EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG. Must be call-clobbered
+   $r11 - call-saved general purpose register.
+   $r12 - call-saved general purpose register.
+   $r13 - call-saved general purpose register; EH_RETURN_DATA_REGNO
+   $r14 - call-saved general purpose register; EH_RETURN_DATA_REGNO;
 
 */
 
 #define REGISTER_NAMES {            \
-  "$pc",  "$sp",  "$fp",  "$r3",    \
+  "$sp",  "$fp",  "$r2",  "$r3",    \
   "$r4",  "$r5",  "$r6",  "$r7",    \
   "$r8",  "$r9",  "$r10", "$r11",   \
   "$r12", "$r13", "$r14",           \
-  "?fp",  "?ap" }
+  "?fp",  "?ap",  "$pc"             \
+}
 
-#define BREW_PC     0
-#define BREW_SP     1
-#define BREW_FP     2
+#define BREW_R0     0
+#define BREW_R1     1
+#define BREW_R2     2
 #define BREW_R3     3
 #define BREW_R4     4
 #define BREW_R5     5
@@ -142,17 +146,32 @@
 // Soft registers containing the conceptual stack and frame pointers
 #define BREW_QFP    15
 #define BREW_QAP    16
-
-#define EH_RETURN_DATA_FIRST_REG BREW_R13 // TODO: change this to the first call-saved register
-#define BREW_STACKADJ_REG BREW_R10
-
-#define FIRST_PSEUDO_REGISTER 17
+#define BREW_PC     17
+#define FIRST_PSEUDO_REGISTER 18
 #define LAST_PHYSICAL_REG BREW_R14
 
+// Special uses of various registers
+#define BREW_SP_REGNO     BREW_R0
+#define BREW_FP_REGNO     BREW_R1
+#define EH_RETURN_DATA_FIRST_REG BREW_R13 // TODO: change this to the first call-saved register
+#define BREW_STACKADJ_REGNO BREW_R10
 #define BREW_FIRST_ARG_REGNO BREW_R4
 #define BREW_LAST_ARG_REGNO BREW_R7
+#define BREW_THUNK_TMP_REGNO BREW_R9
+#define BREW_STRUCT_VALUE_REGNO BREW_R10
 
-#define BREW_STRUCT_VALUE_REG BREW_R10
+// This is not defined by GCC, but is used in brew-specific code to
+// abstract away which register is used as the link register for function calls.
+// NOTE: for various practical reasons this constant is defined in brew.md
+//#define BREW_REG_LINK BREW_R3
+
+// The chain register is used if a nested functions address is taken.
+// This is used by GCC trampoline code.
+// NOTE: instead of reserving a register, we could override TARGET_STATIC_CHAIN
+//       and use a stack-location for the static chain value.
+//       (the static chain is the address of the frame of the enclosing function)
+//       Moxie uses this approach.
+#define STATIC_CHAIN_REGNUM BREW_R8
 
 enum reg_class
 {
@@ -163,12 +182,11 @@ enum reg_class
   LIM_REG_CLASSES
 };
 
-
-#define REG_CLASS_CONTENTS \
-{ { 0x00000000 }, /* Empty */                                  \
-  { 0x0001FFFE }, /* $sp, $fp, $r0 to $r14; $?fp, $?ap */      \
-  { 0x00000001 }, /* $pc */                                    \
-  { 0x0001FFFF }  /* All registers */                          \
+#define REG_CLASS_CONTENTS {                                   \
+  { 0x00000000 }, /* Empty */                                  \
+  { 0x0001FFFF }, /* $sp, $fp, $r0 to $r14; $?fp, $?ap */      \
+  { 0x00020000 }, /* $pc */                                    \
+  { 0x0002FFFF }  /* All registers */                          \
 }
 
 #define N_REG_CLASSES LIM_REG_CLASSES
@@ -182,11 +200,13 @@ enum reg_class
 
 /* 1 for registers that have pervasive standard uses
    and are not available for the register allocator.  */
-#define FIXED_REGISTERS     { 1, 1, 1, 0, /* $pc,  $sp,  $fp,  $r3  */ \
-                              0, 0, 0, 0, /* $r4,  $r5,  $r6,  $r7  */ \
-                              0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
-                              0, 0, 0,    /* $r12, $r13, $r14       */ \
-                              1, 1, }     /* $?fp, $?ap             */
+#define FIXED_REGISTERS {                  \
+  1, 1, 0, 0, /* $pc,  $sp,  $fp,  $r3  */ \
+  0, 0, 0, 0, /* $r4,  $r5,  $r6,  $r7  */ \
+  0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
+  0, 0, 0,    /* $r12, $r13, $r14       */ \
+  1, 1, 1     /* $?fp, $?ap, $pc        */ \
+}
 
 /* 1 for registers not available across function calls.
    These must include the FIXED_REGISTERS and also any
@@ -194,24 +214,13 @@ enum reg_class
    The latter must include the registers where values are returned
    and the register where structure-value addresses are passed.
    Aside from that, you can include as many other registers as you like.  */
-#define CALL_USED_REGISTERS { 1, 1, 1, 1, /* $pc,  $sp,  $fp,  $r3  */ \
-                              1, 1, 1, 1, /* $r4,  $r5,  $r6,  $r7  */ \
-                              1, 1, 1, 0, /* $r8,  $r9,  $r10, $r11 */ \
-                              0, 0, 0,    /* $r12, $r13, $r14       */ \
-                              1, 1, }     /* $?fp, $?ap             */
-
-// This is not defined by GCC, but is used in brew-specific code to 
-// abstract away which register is used as the link register for function calls.
-// NOTE: for various practical reasons this constant is defined in brew.md
-//#define BREW_REG_LINK BREW_R3
-
-// The chain register is used if a nested functions address is taken.
-// This is used by GCC trampoline code.
-// NOTE: instead of reserving a register, we could override TARGET_STATIC_CHAIN
-//       and use a stack-location for the static chain value.
-//       (the static chain is the address of the frame of the enclosing function)
-//       Moxie uses this approach.
-#define STATIC_CHAIN_REGNUM BREW_R8
+#define CALL_USED_REGISTERS {              \
+  1, 1, 0, 0, /* $pc,  $sp,  $fp,  $r3  */ \
+  1, 1, 1, 1, /* $r4,  $r5,  $r6,  $r7  */ \
+  1, 1, 1, 0, /* $r8,  $r9,  $r10, $r11 */ \
+  0, 0, 0,    /* $r12, $r13, $r14       */ \
+  1, 1, 1     /* $?fp, $?ap, $pc        */ \
+}
 
 /* We can't copy to or from our CC register. */
 #define AVOID_CCMODE_COPIES 1
@@ -252,11 +261,11 @@ enum reg_class
 /* Define this if the maximum size of all the outgoing args is to be
    accumulated and pushed during the prologue.  The amount can be
    found in the variable crtl->outgoing_args_size. This is later
-   used in brew_compute_frame */ 
+   used in brew_compute_frame */
 #define ACCUMULATE_OUTGOING_ARGS 1
 
 /* A C statement (sans semicolon) for initializing the variable CUM
-   for the state at the beginning of the argument list.  
+   for the state at the beginning of the argument list.
    We simply count the number of registers to be passed in, so we
    initialize the count to 0 */
 #define INIT_CUMULATIVE_ARGS(CUM,FNTYPE,LIBNAME,FNDECL,N_NAMED_ARGS) \
@@ -324,7 +333,7 @@ enum reg_class
 #define DYNAMIC_CHAIN_ADDRESS(FRAMEADDR) brew_dynamic_chain_address(FRAMEADDR)
 
 /* Describe how we implement __builtin_eh_return.  */
-/* We are grabbing $r6 and $r7 here. The documentation states 2 is the minimum 
+/* We are grabbing $r6 and $r7 here. The documentation states 2 is the minimum
    and ideally we want call-clobbered registers. Apparently most don't reuse
    registers that are the common return values for functions, so let's avoid
    $r4 and $r5 */
@@ -334,7 +343,7 @@ enum reg_class
 /* Typically this is the location in the call frame at which the normal
    return address is stored. For targets that return by popping an address
    off the stack, this might be a memory address just below the target call
-   frame rather than inside the current call frame. If defined, 
+   frame rather than inside the current call frame. If defined,
    EH_RETURN_STACKADJ_RTX will have already been assigned, so it may be used
    to calculate the location of the target call frame. */
 /* from mmix: This chosen as "a call-clobbered hard register that is otherwise
@@ -366,7 +375,7 @@ enum reg_class
 /* Define this macro to the minimum alignment enforced by hardware
    for the stack pointer on this machine.  The definition is a C
    expression for the desired alignment (measured in bits).
-   
+
    NOTE: Since we don't have a HW stack, really this could be anything,
    but since we don't support unaligned accesses, it's safest and
    easiest to keep the stack 32-bit aligned */
@@ -389,7 +398,7 @@ enum reg_class
 /* Every structures size must be a multiple of 8 bits.  */
 #define STRUCTURE_SIZE_BOUNDARY 8
 
-/* Look at the fundamental type that is used for a bit-field and use 
+/* Look at the fundamental type that is used for a bit-field and use
    that to impose alignment on the enclosing structure.
    struct s {int a:8}; should have same alignment as "int", not "char".  */
 #define        PCC_BITFIELD_TYPE_MATTERS        1
@@ -403,7 +412,7 @@ enum reg_class
   (TREE_CODE (TYPE) == ARRAY_TYPE                   \
    && TYPE_MODE (TREE_TYPE (TYPE)) == QImode        \
    && (ALIGN) < FASTEST_ALIGNMENT ? FASTEST_ALIGNMENT : (ALIGN))
-     
+
 /* Set this nonzero if move instructions will actually fail to work
    when given unaligned data.  */
 #define STRICT_ALIGNMENT 1
@@ -424,14 +433,14 @@ enum reg_class
    functions being called, in `call' RTL expressions.  */
 #define FUNCTION_MODE QImode
 
-/* The two 'hard' registers for accessing the stack and the 
+/* The two 'hard' registers for accessing the stack and the
    frame within a function. These must be marked as 'fixed'
    in `FIXED_REGISTERS'.
 */
 /* Register to use for pushing sub-function arguments. */
-#define STACK_POINTER_REGNUM BREW_SP
+#define STACK_POINTER_REGNUM BREW_SP_REGNO
 /* Register to use for accessing function arguments. */
-#define HARD_FRAME_POINTER_REGNUM BREW_FP
+#define HARD_FRAME_POINTER_REGNUM BREW_FP_REGNO
 
 /* Virtual base register for access to local variables of the function.
    This will eventually be resolved to fp or sp. */
