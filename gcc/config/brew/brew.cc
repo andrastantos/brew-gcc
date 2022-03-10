@@ -158,16 +158,16 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
     {
       switch (code)
         {
-        case NE: return "if %s1 == %s2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case EQ: return "if %s1 != %s2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case GE: return "if %s1 < %s2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case GT: return "if %s1 <= %s2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case LE: return "if %s1 > %s2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case LT: return "if %s1 >= %s2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case GEU: if (compare_to_zero) return "$pc <- 1f\\;1:\\;pc <- %l3"; else return "if %1 < %2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case GTU: return "if %1 <= %2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case LEU: return "if %1 > %2 $pc <- 1f\\;1:\\;pc <- %l3";
-        case LTU: if (compare_to_zero) return ""; else return "if %1 >= %2 $pc <- 1f\\;1:\\;pc <- %l3";
+        case NE: return "if %s1 == %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case EQ: return "if %s1 != %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case GE: return "if %s1 < %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case GT: return "if %s1 <= %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case LE: return "if %s1 > %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case LT: return "if %s1 >= %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case GEU: if (compare_to_zero) return "$pc <- 1f\n1:\n\t$pc <- %l3"; else return "if %1 < %2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case GTU: return "if %1 <= %2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case LEU: return "if %1 > %2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case LTU: if (compare_to_zero) return ""; else return "if %1 >= %2 $pc <- 1f\n1:\n\t$pc <- %l3";
         default:
           gcc_unreachable ();
         }
@@ -441,8 +441,7 @@ brew_dynamic_chain_address(rtx frameaddr)
   // NOTE: crtl->accesses_prior_frames will be set if __builtin_return_address is called.
   //       That we will check in epilog/prolog generation to ensure that we actually spill
   //       the link register into this frame location.
-
-  return plus_constant(Pmode, frameaddr, -4);
+  return plus_constant(Pmode, frameaddr, -UNITS_PER_WORD);
 }
 
 

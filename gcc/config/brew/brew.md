@@ -38,7 +38,7 @@
 
 (define_constants
   [
-    (BREW_REG_LINK 3)
+    (BREW_REG_LINK 2)
   ]
 )
 
@@ -60,7 +60,7 @@
     (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
     (plus:SI
       (match_operand:SI 1 "register_operand" "r,r,r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "O,L,M,r,i,T")
+      (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
     )
   )]
   ""
@@ -69,9 +69,9 @@
   %0 <- %1 + 1
   %0 <- %1 - 1
   %0 <- %1 + %2
-  %0 <- %1 + (%2)
-  %0 <- short %1 + (%2)"
-  [(set_attr "length" "2,2,2,2,6,4")]
+  %0 <- short %1 + (%2)
+  %0 <- %1 + (%2)"
+  [(set_attr "length" "2,2,2,2,4,6")]
 )
 
 (define_insn "*add_reg_pc"
@@ -91,7 +91,7 @@
     (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
     (minus:SI
       (match_operand:SI 1 "register_operand" "r,r,r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "O,L,M,r,i,T")
+      (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
     )
   )]
   ""
@@ -100,9 +100,9 @@
   %0 <- %1 - 1
   %0 <- %1 + 1
   %0 <- %1 - %2
-  %0 <- %1 + (-%2)
-  %0 <- short %1 + (-%2)"
-  [(set_attr "length" "2,2,2,2,6,4")]
+  %0 <- short %1 - (%2)
+  %0 <- %1 - (%2)"
+  [(set_attr "length" "2,2,2,2,4,6")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -114,7 +114,7 @@
     (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
     (mult:SI
       (match_operand:SI 1 "register_operand" "r,r,r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "O,L,M,r,i,T")
+      (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
     )
   )]
   ""
@@ -123,9 +123,9 @@
   %0 <- %1
   %0 <- -%1
   %0 <- %1 * %2
-  %0 <- %1 * (%2)
-  %0 <- short %1 * (%2)"
-  [(set_attr "length" "2,2,2,2,6,4")]
+  %0 <- short %1 * (%2)
+  %0 <- %1 * (%2)"
+  [(set_attr "length" "2,2,2,2,4,6")]
 )
 
 ;; FIXME:
@@ -245,16 +245,16 @@
     (match_operand:SI 0 "register_operand" "=r,r,r,r")
     (and:SI
       (match_operand:SI 1 "register_operand" "r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "O,r,i,T")
+      (match_operand:SI 2 "nonmemory_operand" "O,r,L,i")
     )
   )]
   ""
   "@
   %0 <- %1 - %1
   %0 <- %1 & %2
-  %0 <- %1 & (%2)
-  %0 <- short %1 & (%2)"
-  [(set_attr "length" "2,2,6,4")]
+  %0 <- short %1 & (%2)
+  %0 <- %1 & (%2)"
+  [(set_attr "length" "2,2,4,6")]
 )
 
 (define_insn "xorsi3"
@@ -262,16 +262,16 @@
     (match_operand:SI 0 "register_operand" "=r,r,r,r")
     (xor:SI
       (match_operand:SI 1 "register_operand" "r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "O,r,i,T")
+      (match_operand:SI 2 "nonmemory_operand" "O,r,L,i")
     )
   )]
   ""
   "@
   %0 <- %1
   %0 <- %1 ^ %2
-  %0 <- %1 ^ (%2)
-  %0 <- short %1 ^ (%2)"
-  [(set_attr "length" "2,2,6,4")]
+  %0 <- short %1 ^ (%2)
+  %0 <- %1 ^ (%2)"
+  [(set_attr "length" "2,2,4,6")]
 )
 
 (define_insn "iorsi3"
@@ -279,16 +279,16 @@
     (match_operand:SI 0 "register_operand" "=r,r,r,r")
     (ior:SI
       (match_operand:SI 1 "register_operand" "r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "O,r,i,T")
+      (match_operand:SI 2 "nonmemory_operand" "O,r,L,i")
     )
   )]
   ""
   "@
   %0 <- %1
   %0 <- %1 | %2
-  %0 <- %1 | (%2)
-  %0 <- short %1 | (%2)"
-  [(set_attr "length" "2,2,6,4")]
+  %0 <- short %1 | (%2)
+  %0 <- %1 | (%2)"
+  [(set_attr "length" "2,2,4,6")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -299,48 +299,48 @@
   [(set
     (match_operand:SI 0 "register_operand" "=r,r,r")
     (ashift:SI
-      (match_operand:SI 1 "nonmemory_operand" "r,i,T")
+      (match_operand:SI 1 "nonmemory_operand" "r,L,i")
       (match_operand:SI 2 "register_operand"  "r,r,r")
     )
   )]
   ""
   "@
   %0 <- %1 << %2
-  %0 <- (%1) << %2
-  %0 <- short (%1) << %2"
-  [(set_attr "length" "2,6,4")]
+  %0 <- short (%1) << %2
+  %0 <- (%1) << %2"
+  [(set_attr "length" "2,4,6")]
 )
 
 (define_insn "ashrsi3"
   [(set
     (match_operand:SI 0 "register_operand" "=r,r,r")
     (ashiftrt:SI
-      (match_operand:SI 1 "nonmemory_operand" "r,i,T")
+      (match_operand:SI 1 "nonmemory_operand" "r,L,i")
       (match_operand:SI 2 "register_operand"  "r,r,r")
     )
   )]
   ""
   "@
   %s0 <- %s1 >> %2
-  %s0 <- (%s1) >> %2
-  %s0 <- short (%s1) >> %2"
-  [(set_attr "length" "2,6,4")]
+  %s0 <- short (%s1) >> %2
+  %s0 <- (%s1) >> %2"
+  [(set_attr "length" "2,4,6")]
 )
 
 (define_insn "lshrsi3"
   [(set
     (match_operand:SI 0 "register_operand" "=r,r,r")
     (lshiftrt:SI
-      (match_operand:SI 1 "nonmemory_operand" "r,i,T")
+      (match_operand:SI 1 "nonmemory_operand" "r,L,i")
       (match_operand:SI 2 "register_operand"  "r,r,r")
     )
   )]
   ""
   "@
   %0 <- %1 >> %2
-  %0 <- (%1) >> %2
-  %0 <- short (%1) >> %2"
-  [(set_attr "length" "2,6,4")]
+  %0 <- short (%1) >> %2
+  %0 <- (%1) >> %2"
+  [(set_attr "length" "2,4,6")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -387,17 +387,17 @@
 (define_insn "*movsi_general"
   [(set
     (match_operand:SI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:SI 1 "general_operand"        "O,i,T,r,r,m")
+    (match_operand:SI 1 "general_operand"        "O,L,i,r,r,m")
   )]
   ""
   "@
    %0 <- %0 ^ %0
-   %0 <- (%1)
    %0 <- short (%1)
+   %0 <- (%1)
    %0 <- %1
    mem[%0] <- %1
    %0 <- mem[%1]"
-  [(set_attr "length" "2,6,4,2,6,6")]
+  [(set_attr "length" "2,4,6,2,6,6")]
 )
 
 (define_expand "movhi"
@@ -432,17 +432,17 @@
 (define_insn "*movhi_general"
   [(set
     (match_operand:HI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:HI 1 "general_operand"        "O,i,T,r,r,m")
+    (match_operand:HI 1 "general_operand"        "O,L,i,r,r,m")
   )]
   ""
   "@
    %0 <- %0 - %0
-   %0 <- (%1)
    %0 <- short (%1)
+   %0 <- (%1)
    %0 <- %1
    mem16[%0] <- %1
    %0 <- mem16[%1]"
-  [(set_attr "length" "2,6,4,2,6,6")]
+  [(set_attr "length" "2,4,6,2,6,6")]
 )
 
 
@@ -483,17 +483,17 @@
 (define_insn "*movqi_general"
   [(set
     (match_operand:QI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:QI 1 "general_operand"        "O,i,T,r,r,m")
+    (match_operand:QI 1 "general_operand"        "O,L,i,r,r,m")
   )]
   ""
   "@
    %0 <- %0 - %0
-   %0 <- (%1)
+   %0 <- short (%1)
    %0 <- (%1)
    %0 <- %1
    mem8[%0] <- %1
    %0 <- mem8[%1]"
-  [(set_attr "length" "2,6,4,2,6,6")]
+  [(set_attr "length" "2,4,6,2,6,6")]
 )
 
 
@@ -510,7 +510,7 @@
   )]
   ""
   "@
-   %0 <- short %1 & 0xffff
+   %0 <- %1 & 0xffff
    %0 <- mem16[%1]"
   [(set_attr "length" "4,6")])
 
@@ -578,12 +578,16 @@
   [(set
     (attr "length")
     (if_then_else
-      (lt (abs (minus (pc) (match_dup 3))) (const_int 32767))
+      (and
+        (ge (minus (match_dup 3) (pc)) (const_int -32768))
+        (le (minus (match_dup 3) (pc)) (const_int 32767))
+      )
       (const_int 4)
       (const_int 10)
     )
   )]
 )
+;;      (lt (abs (minus (pc) (match_dup 3))) (const_int 32767))
 
 ;; -------------------------------------------------------------------------
 ;; Branch instructions (these apparently must be defined according to chapter
@@ -651,7 +655,7 @@
 (define_insn "*call"
   [
     (call
-      (mem:QI (match_operand:SI 0 "nonmemory_operand" "i,T,r"))
+      (mem:QI (match_operand:SI 0 "nonmemory_operand" "L,i,r"))
       (match_operand 1 "")
     )
     (clobber (reg:SI BREW_REG_LINK))
@@ -659,10 +663,10 @@
 
   ""
   "@
-  $r3 <- $pc + 8\;$pc <- (%0)
-  $r3 <- $pc + 6\;$pc <- short (%0)
-  $r3 <- $pc + 4\;$pc <- %0"
-  [(set_attr "length"        "8,6,4")]
+  $lr <- $pc + 6\;if $r0 == $r0 $pc <- (%0)
+  $lr <- $pc + 8\;$pc <- (%0)
+  $lr <- $pc + 4\;$pc <- %0"
+  [(set_attr "length"        "6,8,4")]
 )
 
 ;; FIXME: DO WE NEED THIS????
@@ -675,7 +679,7 @@
 ;;    (clobber (reg:SI BREW_REG_LINK))
 ;;  ]
 ;;  ""
-;;  "$r3 <- $pc + 8\;$pc <- (%l0)"
+;;  "$lr <- $pc + 8\;$pc <- (%l0)"
 ;;  [(set_attr "length"        "8")]
 ;;)
 
@@ -701,7 +705,7 @@
     (set
       (match_operand 0 "register_operand" "=r,r,r")
       (call
-        (mem:QI (match_operand:SI 1 "nonmemory_operand" "i,T,r"))
+        (mem:QI (match_operand:SI 1 "nonmemory_operand" "L,i,r"))
         (match_operand 2 "")
       )
     )
@@ -709,10 +713,10 @@
   ]
   ""
   "@
-  $r3 <- $pc + 8\;$pc <- (%1)
-  $r3 <- $pc + 6\;$pc <- short (%1)
-  $r3 <- $pc + 4\;$pc <- %1"
-  [(set_attr "length"        "8,6,4")]
+  $lr <- $pc + 6\;if $r0 == $r0 $pc <- (%1)
+  $lr <- $pc + 8\;$pc <- (%1)
+  $lr <- $pc + 4\;$pc <- %1"
+  [(set_attr "length"        "6,8,4")]
 )
 
 
@@ -754,17 +758,17 @@
 (define_insn "*sibcall"
   [
     (call
-      (mem:QI (match_operand:SI 0 "nonmemory_operand" "i,T,r"))
+      (mem:QI (match_operand:SI 0 "nonmemory_operand" "L,i,r"))
       (match_operand 1 "")
     )
     (return)
   ]
   ""
   "@
+  if $r0 == $r0 $pc <- (%0)
   $pc <- (%0)
-  $pc <- short (%0)
   $pc <- %0"
-  [(set_attr "length"        "6,4,2")]
+  [(set_attr "length"        "4,6,2")]
 )
 
 (define_insn "*sibcall_value"
@@ -772,7 +776,7 @@
     (set
       (match_operand 0 "register_operand" "=r,r,r")
       (call
-        (mem:QI (match_operand:SI 1 "nonmemory_operand" "i,T,r"))
+        (mem:QI (match_operand:SI 1 "nonmemory_operand" "L,i,r"))
         (match_operand 2 "")
       )
     )
@@ -780,10 +784,10 @@
   ]
   ""
   "@
+  if $r0 == $r0 $pc <- (%1)
   $pc <- (%1)
-  $pc <- short (%1)
   $pc <- %1"
-  [(set_attr "length"        "6,4,2")]
+  [(set_attr "length"        "4,6,2")]
 )
 
 
@@ -811,13 +815,17 @@
   [(set
     (attr "length")
     (if_then_else
-      (lt (abs (minus (pc) (match_dup 0))) (const_int 32767))
+      (and
+        (ge (minus (match_dup 0) (pc)) (const_int -32768))
+        (le (minus (match_dup 0) (pc)) (const_int 32767))
+      )
       (const_int 4)
       (const_int 6)
     )
   )]
 )
 
+;;       (lt (abs (minus (pc) (match_dup 0))) (const_int 32767))
 
 ;; -------------------------------------------------------------------------
 ;; Prologue & Epilogue
@@ -857,5 +865,5 @@
 (define_insn "returner"
   [(return)]
   "reload_completed"
-  "$pc <- $r3"
+  "$pc <- $lr"
 )
