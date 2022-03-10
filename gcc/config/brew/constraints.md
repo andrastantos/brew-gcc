@@ -30,7 +30,7 @@
   )
 )
 
-(define_constraint "L"
+(define_constraint "I"
   "The constant 1"
   (and
     (match_code "const_int")
@@ -46,17 +46,18 @@
   )
 )
 
-(define_constraint "T"
-  "A 16-bit signed constant"
-  (and (match_code "const_int")
-       (match_test "ival >= -0x8000 && ival <= 0x7fff")))
-
-(define_constraint "P"
-  "A 16-bit signed address offset"
-  (and (match_code "const_int")
-       (match_test "ival >= -0x8000*2 && ival <= 0x7fff*2")))
+(define_constraint "L"
+  "A signed 16-bit immediate."
+  (and
+    (match_code "const_int")
+    (match_test "IN_RANGE (ival, -32768, 32767)")
+  )
+)
 
 (define_constraint "K"
   "Address offsets for link setup"
-  (and (match_code "const_int")
-       (match_test "ival >= 0 && ival <= 28")))
+  (and
+    (match_code "const_int")
+    (match_test "IN_RANGE (ival, 0, 28)")
+  )
+)

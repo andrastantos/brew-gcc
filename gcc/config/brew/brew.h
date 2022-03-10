@@ -103,9 +103,9 @@
 /* Registers...
 
    $sp  - call-saved register a.k.a. $r0 - stack pointer.
-   $fp  - call-saved register a.k.a. $r1 - frame pointer.
-   $r2  - call-saved general purpose register.
-   $r3  - call-saved link register.
+   $fp  - call-saved register a.k.a. $r1 - frame pointer. NOTE: we depend on it being $r1 in the stack-frame: brew_dynamic_chain_address assumes it's in the 1st save slot.
+   $lr  - call-saved register a.k.a. $r2 - link register. NOTE: we depend on it being $r2 in the stack-frame: brew_return_addr_rtx assumes it's in the 2nd save slot.
+   $r3  - call-saved general purpose register.
    $r4  - call-clobbered first argument/return value register.
    $r5  - call-clobbered second argument/return value register.
    $r6  - call-clobbered third argument/return value register;
@@ -121,7 +121,7 @@
 */
 
 #define REGISTER_NAMES {            \
-  "$sp",  "$fp",  "$r2",  "$r3",    \
+  "$sp",  "$fp",  "$lr",  "$r3",    \
   "$r4",  "$r5",  "$r6",  "$r7",    \
   "$r8",  "$r9",  "$r10", "$r11",   \
   "$r12", "$r13", "$r14",           \
@@ -163,7 +163,7 @@
 // This is not defined by GCC, but is used in brew-specific code to
 // abstract away which register is used as the link register for function calls.
 // NOTE: for various practical reasons this constant is defined in brew.md
-//#define BREW_REG_LINK BREW_R3
+//#define BREW_REG_LINK BREW_R2
 
 // The chain register is used if a nested functions address is taken.
 // This is used by GCC trampoline code.
@@ -201,7 +201,7 @@ enum reg_class
 /* 1 for registers that have pervasive standard uses
    and are not available for the register allocator.  */
 #define FIXED_REGISTERS {                  \
-  1, 1, 0, 0, /* $pc,  $sp,  $fp,  $r3  */ \
+  1, 1, 0, 0, /* $sp,  $fp,  $lr,  $r3  */ \
   0, 0, 0, 0, /* $r4,  $r5,  $r6,  $r7  */ \
   0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
   0, 0, 0,    /* $r12, $r13, $r14       */ \
@@ -215,7 +215,7 @@ enum reg_class
    and the register where structure-value addresses are passed.
    Aside from that, you can include as many other registers as you like.  */
 #define CALL_USED_REGISTERS {              \
-  1, 1, 0, 0, /* $pc,  $sp,  $fp,  $r3  */ \
+  1, 1, 0, 0, /* $sp,  $fp,  $lr,  $r3  */ \
   1, 1, 1, 1, /* $r4,  $r5,  $r6,  $r7  */ \
   1, 1, 1, 0, /* $r8,  $r9,  $r10, $r11 */ \
   0, 0, 0,    /* $r12, $r13, $r14       */ \
