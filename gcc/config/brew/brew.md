@@ -49,7 +49,8 @@
 (define_insn "nop"
   [(const_int 0)]
   ""
-  "nop")
+  "nop"
+)
 
 ;; -------------------------------------------------------------------------
 ;; Plus and minus instructions
@@ -57,9 +58,9 @@
 
 (define_insn "addsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r,r,r,r")
     (plus:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r,r,r")
+      (match_operand:SI 1 "register_operand"  "r,r,r,r,r,r")
       (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
     )
   )]
@@ -88,9 +89,9 @@
 
 (define_insn "subsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r,r,r,r")
     (minus:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r,r,r")
+      (match_operand:SI 1 "register_operand"  "r,r,r,r,r,r")
       (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
     )
   )]
@@ -111,9 +112,9 @@
 
 (define_insn "mulsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r,r,r,r")
     (mult:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r,r,r")
+      (match_operand:SI 1 "register_operand"  "r,r,r,r,r,r")
       (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
     )
   )]
@@ -224,7 +225,8 @@
     )
   )]
   ""
-  "%0 <- ~%1")
+  "%0 <- ~%1"
+)
 
 (define_insn "bswapsi2"
   [(set
@@ -234,7 +236,8 @@
     )
   )]
   ""
-  "%0 <- bswap %1")
+  "%0 <- bswap %1"
+)
 
 ;; -------------------------------------------------------------------------
 ;; Logical operators
@@ -242,9 +245,9 @@
 
 (define_insn "andsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r,r")
     (and:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r")
+      (match_operand:SI 1 "register_operand"  "r,r,r,r")
       (match_operand:SI 2 "nonmemory_operand" "O,r,L,i")
     )
   )]
@@ -259,9 +262,9 @@
 
 (define_insn "xorsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r,r")
     (xor:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r")
+      (match_operand:SI 1 "register_operand"  "r,r,r,r")
       (match_operand:SI 2 "nonmemory_operand" "O,r,L,i")
     )
   )]
@@ -276,9 +279,9 @@
 
 (define_insn "iorsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r,r")
     (ior:SI
-      (match_operand:SI 1 "register_operand" "r,r,r,r")
+      (match_operand:SI 1 "register_operand"  "r,r,r,r")
       (match_operand:SI 2 "nonmemory_operand" "O,r,L,i")
     )
   )]
@@ -297,7 +300,7 @@
 
 (define_insn "ashlsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r")
     (ashift:SI
       (match_operand:SI 1 "nonmemory_operand" "r,L,i")
       (match_operand:SI 2 "register_operand"  "r,r,r")
@@ -313,7 +316,7 @@
 
 (define_insn "ashrsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r")
     (ashiftrt:SI
       (match_operand:SI 1 "nonmemory_operand" "r,L,i")
       (match_operand:SI 2 "register_operand"  "r,r,r")
@@ -329,7 +332,7 @@
 
 (define_insn "lshrsi3"
   [(set
-    (match_operand:SI 0 "register_operand" "=r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r")
     (lshiftrt:SI
       (match_operand:SI 1 "nonmemory_operand" "r,L,i")
       (match_operand:SI 2 "register_operand"  "r,r,r")
@@ -512,7 +515,7 @@
   "@
    %0 <- %1 & 0xffff
    %0 <- mem16[%1]"
-  [(set_attr "length" "4,6")])
+  [(set_attr "length" "6,6")])
 
 (define_insn "zero_extendqisi2"
   [(set

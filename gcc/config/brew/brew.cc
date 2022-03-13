@@ -158,16 +158,16 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
     {
       switch (code)
         {
-        case NE: return "if %s1 == %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case EQ: return "if %s1 != %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case GE: return "if %s1 < %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case GT: return "if %s1 <= %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case LE: return "if %s1 > %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case LT: return "if %s1 >= %s2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case GEU: if (compare_to_zero) return "$pc <- 1f\n1:\n\t$pc <- %l3"; else return "if %1 < %2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case GTU: return "if %1 <= %2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case LEU: return "if %1 > %2 $pc <- 1f\n1:\n\t$pc <- %l3";
-        case LTU: if (compare_to_zero) return ""; else return "if %1 >= %2 $pc <- 1f\n1:\n\t$pc <- %l3";
+        case NE: return "if %s1 == %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case EQ: return "if %s1 != %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case GE: return "if %s1 < %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case GT: return "if %s1 <= %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case LE: return "if %s1 > %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case LT: return "if %s1 >= %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case GEU: if (compare_to_zero) return "$pc <- 1f\n\t$pc <- %l3\n1:"; else return "if %1 < %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case GTU: return "if %1 <= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case LEU: return "if %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case LTU: if (compare_to_zero) return ""; else return "if %1 >= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         default:
           gcc_unreachable ();
         }
