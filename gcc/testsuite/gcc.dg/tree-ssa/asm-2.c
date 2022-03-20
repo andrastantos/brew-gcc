@@ -5,7 +5,7 @@
 #define REGISTER "1"
 #else
 #ifdef __BREW__
-#define REGISTER "1"
+#define REGISTER "2"
 #else
 #ifdef __moxie__
 #define REGISTER "2"
