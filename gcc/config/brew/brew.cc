@@ -140,12 +140,12 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
     {
       switch (code)
         {
-        case NE: return "if %s1 != %s2 $pc <- %l3";
-        case EQ: return "if %s1 == %s2 $pc <- %l3";
-        case GE: return "if %s1 >= %s2 $pc <- %l3";
-        case GT: return "if %s1 > %s2 $pc <- %l3";
-        case LE: return "if %s1 <= %s2 $pc <- %l3";
-        case LT: return "if %s1 < %s2 $pc <- %l3";
+        case NE: return "if %1 != %2 $pc <- %l3";
+        case EQ: return "if %1 == %2 $pc <- %l3";
+        case GE: return "if signed %1 >= %2 $pc <- %l3";
+        case GT: return "if signed %1 > %2 $pc <- %l3";
+        case LE: return "if signed %1 <= %2 $pc <- %l3";
+        case LT: return "if signed %1 < %2 $pc <- %l3";
         case GEU: if (compare_to_zero) return "$pc <- %l3"; else return "if %1 >= %2 $pc <- %l3";
         case GTU: return "if %1 > %2 $pc <- %l3";
         case LEU: return "if %1 <= %2 $pc <- %l3";
@@ -158,12 +158,12 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
     {
       switch (code)
         {
-        case NE: return "if %s1 == %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case EQ: return "if %s1 != %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case GE: return "if %s1 < %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case GT: return "if %s1 <= %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case LE: return "if %s1 > %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case LT: return "if %s1 >= %s2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case NE: return "if %1 == %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case EQ: return "if %1 != %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case GE: return "if signed %1 < %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case GT: return "if signed %1 <= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case LE: return "if signed %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case LT: return "if signed %1 >= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case GEU: if (compare_to_zero) return "$pc <- 1f\n\t$pc <- %l3\n1:"; else return "if %1 < %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case GTU: return "if %1 <= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case LEU: return "if %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
@@ -194,12 +194,12 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
 
   switch (condition)
     {
-    case NE:  return reverse ? brew_emit_bcond(mode, EQ,  false, operands) : "if %s1 != %s2 $pc <- %l3";
-    case EQ:  return reverse ? brew_emit_bcond(mode, NE,  false, operands) : "if %s1 == %s2 $pc <- %l3";
-    case GE:  return reverse ? brew_emit_bcond(mode, LT,  false, operands) : "if %s1 >= %s2 $pc <- %l3";
-    case GT:  return reverse ? brew_emit_bcond(mode, LE,  false, operands) : "if %s1 > %s2 $pc <- %l3";
-    case LE:  return reverse ? brew_emit_bcond(mode, GT,  false, operands) : "if %s1 <= %s2 $pc <- %l3";
-    case LT:  return reverse ? brew_emit_bcond(mode, GE,  false, operands) : "if %s1 < %s2 $pc <- %l3";
+    case NE:  return reverse ? brew_emit_bcond(mode, EQ,  false, operands) : "if %1 != %2 $pc <- %l3";
+    case EQ:  return reverse ? brew_emit_bcond(mode, NE,  false, operands) : "if %1 == %2 $pc <- %l3";
+    case GE:  return reverse ? brew_emit_bcond(mode, LT,  false, operands) : "if signed %1 >= %2 $pc <- %l3";
+    case GT:  return reverse ? brew_emit_bcond(mode, LE,  false, operands) : "if signed %1 > %2 $pc <- %l3";
+    case LE:  return reverse ? brew_emit_bcond(mode, GT,  false, operands) : "if signed %1 <= %2 $pc <- %l3";
+    case LT:  return reverse ? brew_emit_bcond(mode, GE,  false, operands) : "if signed %1 < %2 $pc <- %l3";
     case GEU: return reverse ? brew_emit_bcond(mode, LTU, false, operands) : "$pc <- %l3";
     case GTU: return reverse ? brew_emit_bcond(mode, LEU, false, operands) : "if %1 > %2 $pc <- %l3";
     case LEU: return reverse ? brew_emit_bcond(mode, GTU, false, operands) : "if %1 <= %2 $pc <- %l3";
@@ -228,13 +228,34 @@ reg_needs_save_restore(int regno)
   if (regno == BREW_REG_LINK && (!crtl->is_leaf || crtl->calls_eh_return || crtl->accesses_prior_frames))
     return true;
   // If this could be a register for returning EH-related info (and the function uses __builtin_eh_return).
-  if (EH_RETURN_DATA_REGNO(regno-EH_RETURN_DATA_FIRST_REG) != INVALID_REGNUM && (crtl->calls_eh_return))
+  if (EH_RETURN_DATA_REGNO(regno-BREW_REG_EH_RETURN_DATA0) != INVALID_REGNUM && (crtl->calls_eh_return))
     return true;
   // The frame pointer (TODO: how to eliminate this as much as possible?)
-  if (regno == BREW_FP_REGNO)
+  if (regno == BREW_REG_FP)
     return true;
   return false;
 }
+
+// Order of registers saved on the stack. Largely arbitrary, but the first two entries are important:
+//     brew_dynamic_chain_address assumes $fp is in the 1st save slot.
+//     brew_return_addr_rtx assumes assumes $lr is in the 2nd save slot.
+static const size_t reg_frame_order[] = {
+  BREW_REG_FP,
+  BREW_REG_LINK,
+  BREW_REG_R0,
+  BREW_REG_R1,
+  BREW_REG_R2,
+  BREW_REG_R3,
+  BREW_REG_R4,
+  BREW_REG_R5,
+  BREW_REG_R6,
+  BREW_REG_R7,
+  BREW_REG_R8,
+  BREW_REG_R9,
+  BREW_REG_R10,
+  BREW_REG_R11,
+  BREW_REG_R13
+};
 
 // Compute the size of the local area and the size to be adjusted by the
 // prologue and epilogue.
@@ -252,12 +273,15 @@ brew_compute_frame(void)
   cfun->machine->callee_saved_reg_size = 0;
   cfun->machine->reg_save_mask = 0;
   // Save callee-saved registers
-  for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-    if (reg_needs_save_restore(regno))
-      {
-        cfun->machine->callee_saved_reg_size += 4;
-        cfun->machine->reg_save_mask |= 1 << regno;
-      }
+  for (size_t r = 0; r < ARRAY_SIZE(reg_frame_order); ++r)
+    {
+      size_t regno = reg_frame_order[r];
+      if (reg_needs_save_restore(regno))
+        {
+          cfun->machine->callee_saved_reg_size += 4;
+          cfun->machine->reg_save_mask |= 1 << regno;
+        }
+    }
 
   cfun->machine->size_for_adjusting_sp =
     crtl->args.pretend_args_size +
@@ -273,7 +297,6 @@ brew_compute_frame(void)
 void
 brew_expand_prologue (void)
 {
-  int regno;
   rtx insn;
 
   brew_compute_frame();
@@ -285,8 +308,9 @@ brew_expand_prologue (void)
   // Save callee-saved registers.
   // For each register we save, we'll have to decrement SP by 4 and of course
   // make sure that further references are offsetted by that much.
-  for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+  for (size_t r = 0; r < ARRAY_SIZE(reg_frame_order); ++r)
     {
+      size_t regno = reg_frame_order[r];
       if ((cfun->machine->reg_save_mask & (1 << regno)) != 0)
         {
           insn = emit_insn(gen_movsi(
@@ -324,8 +348,6 @@ brew_expand_prologue (void)
 void
 brew_expand_epilogue(bool is_sibcall)
 {
-  int regno;
-
   int save_cnt = cfun->machine->callee_saved_reg_size / 4;
   int sp_adjust = cfun->machine->size_for_adjusting_sp + save_cnt * 4;
   if (sp_adjust > 0)
@@ -339,8 +361,9 @@ brew_expand_epilogue(bool is_sibcall)
         )
       );
       // Restore registers
-      for (regno = FIRST_PSEUDO_REGISTER; regno-- >= 0; )
+      for (int r = ARRAY_SIZE(reg_frame_order)-1; r >= 0; --r )
         {
+          size_t regno = reg_frame_order[r];
           if ((cfun->machine->reg_save_mask & (1 << regno)) != 0)
             {
               --save_cnt;
@@ -359,7 +382,7 @@ brew_expand_epilogue(bool is_sibcall)
   // should be added to the stack pointer in order to restore the
   // correct stack pointer for the exception handling frame.
   //
-  // For BREW we are going to use BREW_STACKADJ_REGNO for
+  // For BREW we are going to use BREW_REG_STRUCT_VAL_ADDR for
   // EH_RETURN_STACKADJ_RTX, add this onto the stack for eh_return frames.
   #ifdef EH_RETURN_STACKADJ_RTX
   if (crtl->calls_eh_return)
@@ -520,7 +543,7 @@ brew_eh_return_handler_rtx()
 rtx
 brew_eh_return_stackadj_rtx()
 {
-  return gen_rtx_REG(Pmode, BREW_STACKADJ_REGNO);
+  return gen_rtx_REG(Pmode, BREW_REG_STRUCT_VAL_ADDR);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -543,8 +566,8 @@ brew_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
 }
 
 static const HOST_WIDE_INT max_regs_for_args = 4;
-static const int ret_value_reg = BREW_FIRST_ARG_REGNO;
-static const int first_arg_value_reg = BREW_FIRST_ARG_REGNO;
+static const int ret_value_reg = BREW_REG_ARG0;
+static const int first_arg_value_reg = BREW_REG_ARG0;
 
 // The following set functions work in tandem:
 //   brew_function_arg decides in what form the argument should be passed.
@@ -802,7 +825,7 @@ brew_function_value_regno_p(const unsigned int regno)
 static rtx
 brew_struct_value_rtx (tree fntype ATTRIBUTE_UNUSED, int incoming ATTRIBUTE_UNUSED)
 {
-  return gen_rtx_REG (Pmode, BREW_STRUCT_VALUE_REGNO);
+  return gen_rtx_REG (Pmode, BREW_REG_STRUCT_VAL_ADDR);
 }
 
 // for TARGET_OPTION_OVERRIDE
@@ -846,10 +869,6 @@ brew_print_operand (FILE *file, rtx x, int code)
           internal_error ("internal error: bad register: %d", regno);
         switch (code)
           {
-          case 's':
-          case 'f':
-            fprintf (file, "%c%c%s", reg_names[regno][0], (char)(code), reg_names[regno]+1);
-            break;
           case 0:
             fprintf (file, "%s", reg_names[regno]);
             break;
@@ -863,8 +882,6 @@ brew_print_operand (FILE *file, rtx x, int code)
     case MEM:
       switch (code)
         {
-        case 's':
-        case 'f':
         case 0:
           output_address(GET_MODE (XEXP (operand, 0)), XEXP (operand, 0));
           break;
@@ -877,8 +894,6 @@ brew_print_operand (FILE *file, rtx x, int code)
     default:
       switch (code)
         {
-        case 's':
-        case 'f':
         case 0:
           // No need to handle all strange variants
           // let output_addr_const do it for us.
@@ -911,7 +926,7 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
       switch (GET_CODE(XEXP(x, 1)))
         {
         case CONST_INT:
-          fprintf(file, "%s,%ld", reg_names[REGNO(XEXP(x, 0))], INTVAL(XEXP(x, 1)));
+          fprintf(file, "%s + %ld", reg_names[REGNO(XEXP(x, 0))], INTVAL(XEXP(x, 1)));
           break;
         case SYMBOL_REF:
           output_addr_const(file, XEXP(x, 1));
@@ -926,7 +941,7 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
             )
               {
                 output_addr_const(file, XEXP (plus, 0));
-                fprintf(file,"%s,%ld", reg_names[REGNO(XEXP(x, 0))], INTVAL(XEXP(plus, 1)));
+                fprintf(file,"%s + %ld", reg_names[REGNO(XEXP(x, 0))], INTVAL(XEXP(plus, 1)));
               }
             else
               abort();
@@ -1123,8 +1138,8 @@ brew_asm_output_mi_thunk(
   // something can be learned from there...
   // Also, the behavior of the structure value pointer is controlled by
   //  brew_struct_value_rtx and TARGET_STRUCT_VALUE_RTX.
-  //int this_arg = aggregate_value_p(TREE_TYPE(TREE_TYPE(funcdecl)),funcdecl) ? BREW_FIRST_ARG_REGNO + 1 : BREW_FIRST_ARG_REGNO;
-  int this_arg = BREW_FIRST_ARG_REGNO;
+  //int this_arg = aggregate_value_p(TREE_TYPE(TREE_TYPE(funcdecl)),funcdecl) ? BREW_REG_ARG0 + 1 : BREW_REG_ARG0;
+  int this_arg = BREW_REG_ARG0;
   if(delta != 0)
     {
       fprintf(
@@ -1141,15 +1156,15 @@ brew_asm_output_mi_thunk(
       fprintf(
         stream,
         "\t%s <- mem32[%s] # VCALL ADJUSTMENT\n",
-        reg_names[BREW_THUNK_TMP_REGNO],
+        reg_names[BREW_REG_THUNK],
         reg_names[this_arg]
       );
       // load required entry from vtable
       fprintf(
         stream,
-        "\t%s <- mem32[%s, (" HOST_WIDE_INT_PRINT_DEC ")]\n",
-        reg_names[BREW_THUNK_TMP_REGNO],
-        reg_names[BREW_THUNK_TMP_REGNO],
+        "\t%s <- mem32[%s + " HOST_WIDE_INT_PRINT_DEC "]\n",
+        reg_names[BREW_REG_THUNK],
+        reg_names[BREW_REG_THUNK],
         vcall_offset
       );
       // update this ptr
@@ -1158,7 +1173,7 @@ brew_asm_output_mi_thunk(
         "\t%s <- %s + %s\n",
         reg_names[this_arg],
         reg_names[this_arg],
-        reg_names[BREW_THUNK_TMP_REGNO]
+        reg_names[BREW_REG_THUNK]
       );
     }
   fprintf (stream, "\t$pc <- ");

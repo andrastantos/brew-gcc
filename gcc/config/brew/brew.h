@@ -101,69 +101,68 @@
 //       brew-decode.c and brew_abi.h in binutils.
 
 /* Registers...
-
-   $sp  - call-saved register a.k.a. $r0 - stack pointer.
-   $fp  - call-saved register a.k.a. $r1 - frame pointer. NOTE: we depend on it being $r1 in the stack-frame: brew_dynamic_chain_address assumes it's in the 1st save slot.
-   $lr  - call-saved register a.k.a. $r2 - link register. NOTE: we depend on it being $r2 in the stack-frame: brew_return_addr_rtx assumes it's in the 2nd save slot.
-   $r3  - call-saved general purpose register.
+   $r0  - call-clobbered general purpose register; used in thunks for virtual inheritance. Must be call-clobbered
+   $r1  - call-clobbered general purpose register; struct value address (return value area pointer for large return values). EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG. Must be call-clobbered
+   $r2  - call-clobbered general purpose register; static chain register
+   $r3  - call-clobbered general purpose register
    $r4  - call-clobbered first argument/return value register.
    $r5  - call-clobbered second argument/return value register.
    $r6  - call-clobbered third argument/return value register;
    $r7  - call-clobbered fourth argument/return value register;
-   $r8  - call-clobbered general purpose; static chain register
-   $r9  - call-clobbered general purpose; used in thunks for virtual inheritance. Must be call-clobbered
-   $r10 - call-clobbered general purpose; struct value address (return value area pointer for large return values). EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG. Must be call-clobbered
-   $r11 - call-saved general purpose register.
-   $r12 - call-saved general purpose register.
-   $r13 - call-saved general purpose register; EH_RETURN_DATA_REGNO
-   $r14 - call-saved general purpose register; EH_RETURN_DATA_REGNO;
 
+   $r8  - call-saved general purpose register; EH_RETURN_DATA_REGNO
+   $r9  - call-saved general purpose register; EH_RETURN_DATA_REGNO;
+   $r10 - call-saved general purpose register
+   $r11 - call-saved general purpose register
+   $r12 - call-saved register a.k.a. $fp - frame pointer. NOTE: we depend on it being $r1 in the stack-frame: brew_dynamic_chain_address assumes it's in the 1st save slot.
+   $r13 - call-saved register a.k.a. $sp - stack pointer.
+   $r14 - call-saved register a.k.a. $lr - link register. NOTE: we depend on it being $r2 in the stack-frame: brew_return_addr_rtx assumes it's in the 2nd save slot.
 */
 
 #define REGISTER_NAMES {            \
-  "$sp",  "$fp",  "$lr",  "$r3",    \
-  "$r4",  "$r5",  "$r6",  "$r7",    \
+  "$r0",  "$r1",  "$r2",  "$r3",    \
+  "$a0",  "$a1",  "$a2",  "$a3",    \
   "$r8",  "$r9",  "$r10", "$r11",   \
-  "$r12", "$r13", "$r14",           \
+  "$fp",  "$sp",  "$lr",            \
   "?fp",  "?ap",  "$pc"             \
 }
 
-#define BREW_R0     0
-#define BREW_R1     1
-#define BREW_R2     2
-#define BREW_R3     3
-#define BREW_R4     4
-#define BREW_R5     5
-#define BREW_R6     6
-#define BREW_R7     7
-#define BREW_R8     8
-#define BREW_R9     9
-#define BREW_R10    10
-#define BREW_R11    11
-#define BREW_R12    12
-#define BREW_R13    13
-#define BREW_R14    14
+#define BREW_REG_R0     0
+#define BREW_REG_R1     1
+#define BREW_REG_R2     2
+#define BREW_REG_R3     3
+#define BREW_REG_R4     4
+#define BREW_REG_R5     5
+#define BREW_REG_R6     6
+#define BREW_REG_R7     7
+#define BREW_REG_R8     8
+#define BREW_REG_R9     9
+#define BREW_REG_R10    10
+#define BREW_REG_R11    11
+#define BREW_REG_R12    12
+#define BREW_REG_R13    13
+#define BREW_REG_R14    14
 // Soft registers containing the conceptual stack and frame pointers
 #define BREW_QFP    15
 #define BREW_QAP    16
 #define BREW_PC     17
 #define FIRST_PSEUDO_REGISTER 18
-#define LAST_PHYSICAL_REG BREW_R14
+#define LAST_PHYSICAL_REG BREW_REG_R14
 
 // Special uses of various registers
-#define BREW_SP_REGNO     BREW_R0
-#define BREW_FP_REGNO     BREW_R1
-#define EH_RETURN_DATA_FIRST_REG BREW_R13 // TODO: change this to the first call-saved register
-#define BREW_STACKADJ_REGNO BREW_R10
-#define BREW_FIRST_ARG_REGNO BREW_R4
-#define BREW_LAST_ARG_REGNO BREW_R7
-#define BREW_THUNK_TMP_REGNO BREW_R9
-#define BREW_STRUCT_VALUE_REGNO BREW_R10
-
-// This is not defined by GCC, but is used in brew-specific code to
-// abstract away which register is used as the link register for function calls.
-// NOTE: for various practical reasons this constant is defined in brew.md
-//#define BREW_REG_LINK BREW_R2
+#define BREW_REG_THUNK           0
+#define BREW_REG_STRUCT_VAL_ADDR 1
+#define BREW_REG_STATIC_CHAIN    2
+#define BREW_REG_ARG0            4
+#define BREW_REG_ARG1            5
+#define BREW_REG_ARG2            6
+#define BREW_REG_ARG3            7
+#define BREW_REG_EH_RETURN_DATA0 8 // TODO: change this to the first call-saved register - TODO: this is done, but why was that important ???
+#define BREW_REG_EH_RETURN_DATA1 9
+#define BREW_REG_FP              12
+#define BREW_REG_SP              13
+// #define BREW_REG_LINK         14 NOTE: for various practical reasons this constant is defined in brew.md
+#define BREW_REG_SYSCALL_ERRNO   14
 
 // The chain register is used if a nested functions address is taken.
 // This is used by GCC trampoline code.
@@ -171,7 +170,7 @@
 //       and use a stack-location for the static chain value.
 //       (the static chain is the address of the frame of the enclosing function)
 //       Moxie uses this approach.
-#define STATIC_CHAIN_REGNUM BREW_R8
+#define STATIC_CHAIN_REGNUM BREW_REG_STATIC_CHAIN
 
 enum reg_class
 {
@@ -184,7 +183,7 @@ enum reg_class
 
 #define REG_CLASS_CONTENTS {                                   \
   { 0x00000000 }, /* Empty */                                  \
-  { 0x0001FFFF }, /* $sp, $fp, $r0 to $r14; $?fp, $?ap */      \
+  { 0x0001FFFF }, /* $r0 to $r14; $?fp, $?ap */                \
   { 0x00020000 }, /* $pc */                                    \
   { 0x0002FFFF }  /* All registers */                          \
 }
@@ -201,10 +200,10 @@ enum reg_class
 /* 1 for registers that have pervasive standard uses
    and are not available for the register allocator.  */
 #define FIXED_REGISTERS {                  \
-  1, 1, 0, 0, /* $sp,  $fp,  $lr,  $r3  */ \
+  0, 0, 0, 0, /* $r0,  $r1,  $r2,  $r3  */ \
   0, 0, 0, 0, /* $r4,  $r5,  $r6,  $r7  */ \
   0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
-  0, 0, 0,    /* $r12, $r13, $r14       */ \
+  1, 1, 0,    /* $fp,  $sp,  $lr        */ \
   1, 1, 1     /* $?fp, $?ap, $pc        */ \
 }
 
@@ -214,11 +213,13 @@ enum reg_class
    The latter must include the registers where values are returned
    and the register where structure-value addresses are passed.
    Aside from that, you can include as many other registers as you like.  */
+// NOTE: the list of NOT CALL_USED_REGISTERS must match the ones saved in
+//       libc/machine/brew/setjmp.S in NewLib.
 #define CALL_USED_REGISTERS {              \
-  1, 1, 0, 0, /* $sp,  $fp,  $lr,  $r3  */ \
+  1, 1, 1, 1, /* $r0,  $r1,  $r2,  $r3  */ \
   1, 1, 1, 1, /* $r4,  $r5,  $r6,  $r7  */ \
-  1, 1, 1, 0, /* $r8,  $r9,  $r10, $r11 */ \
-  0, 0, 0,    /* $r12, $r13, $r14       */ \
+  0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
+  1, 1, 0,    /* $fp,  $sp,  $lr        */ \
   1, 1, 1     /* $?fp, $?ap, $pc        */ \
 }
 
@@ -337,7 +338,7 @@ enum reg_class
    and ideally we want call-clobbered registers. Apparently most don't reuse
    registers that are the common return values for functions, so let's avoid
    $r4 and $r5 */
-#define EH_RETURN_DATA_REGNO(N)        (((N) < 2 && (N) >= 0) ? (N+EH_RETURN_DATA_FIRST_REG) : INVALID_REGNUM)
+#define EH_RETURN_DATA_REGNO(N)        (((N) < 2 && (N) >= 0) ? (N+BREW_REG_EH_RETURN_DATA0) : INVALID_REGNUM)
 
 /* Store the return handler into the call frame.  */
 /* Typically this is the location in the call frame at which the normal
@@ -438,9 +439,9 @@ enum reg_class
    in `FIXED_REGISTERS'.
 */
 /* Register to use for pushing sub-function arguments. */
-#define STACK_POINTER_REGNUM BREW_SP_REGNO
+#define STACK_POINTER_REGNUM BREW_REG_SP
 /* Register to use for accessing function arguments. */
-#define HARD_FRAME_POINTER_REGNUM BREW_FP_REGNO
+#define HARD_FRAME_POINTER_REGNUM BREW_REG_FP
 
 /* Virtual base register for access to local variables of the function.
    This will eventually be resolved to fp or sp. */
@@ -488,7 +489,7 @@ enum reg_class
 
 /* A C expression that is nonzero if REGNO is the number of a hard
    register in which function arguments are sometimes passed.  */
-#define FUNCTION_ARG_REGNO_P(r) (r >= BREW_FIRST_ARG_REGNO && r <= BREW_LAST_ARG_REGNO)
+#define FUNCTION_ARG_REGNO_P(r) (r >= BREW_REG_ARG0 && r <= BREW_REG_ARG3)
 
 /* A macro whose definition is the name of the class to which a valid
    base register must belong.  A base register is one used in an
