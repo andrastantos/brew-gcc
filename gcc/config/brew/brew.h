@@ -178,6 +178,7 @@ enum reg_class
   GENERAL_REGS,
   SPECIAL_REGS,
   ALL_REGS,
+  TINY_OFS_REGS,
   LIM_REG_CLASSES
 };
 
@@ -185,7 +186,8 @@ enum reg_class
   { 0x00000000 }, /* Empty */                                  \
   { 0x0001FFFF }, /* $r0 to $r14; $?fp, $?ap */                \
   { 0x00020000 }, /* $pc */                                    \
-  { 0x0002FFFF }  /* All registers */                          \
+  { 0x0002FFFF }, /* All registers */                          \
+  { (1 << BREW_REG_FP) | (1 << BREW_REG_SP) } /* registers that can use tiny offsets */ \
 }
 
 #define N_REG_CLASSES LIM_REG_CLASSES

@@ -31,3 +31,11 @@
     )
   )
 )
+
+;; A predicate that matches memory operands with a base register of $fp, $sp $?fp and $?ap
+(define_predicate "brew_tiny_memory_operand"
+  (and
+    (match_operand 0 "memory_operand")
+    (match_test "MEM_P(op) && brew_legitimate_tiny_address_p(XEXP(op, 0))")
+  )
+)

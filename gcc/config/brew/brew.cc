@@ -783,6 +783,50 @@ brew_legitimate_address_p(
   return false;
 }
 
+// Helper function for `brew_legitimate_tiny_address_p'
+static bool
+brew_reg_ok_for_tiny_base_p(const_rtx reg)
+{
+  int regno = REGNO(reg);
+
+  return
+    regno == BREW_REG_FP ||
+    regno == BREW_REG_SP ||
+    regno == BREW_QFP ||
+    regno == BREW_QAP;
+}
+
+
+// A variant of the above that accepts expressions for tiny addressing modes
+// This is used in predicates.md
+
+#define DB(x) { printf("brew_legitimate_tiny_address_p %s = %s\n", #x, (x)?"true":"false"); if (!(x)) return false; }
+bool
+brew_legitimate_tiny_address_p(
+  rtx x
+) {
+  //printf("brew_legitimate_tiny_address_p --------------------\n");
+  //DB(GET_CODE(x) == PLUS);
+  //DB(REG_P(XEXP(x, 0)));
+  //DB(brew_reg_ok_for_tiny_base_p(XEXP(x, 0)));
+  //DB(CONST_INT_P(XEXP(x, 1)));
+  //DB(IN_RANGE(INTVAL(XEXP(x, 1)) / 4, -64, 63));
+  //printf("                        INTVAL(XEXP(x,1)): %ld\n",INTVAL(XEXP(x,1)));
+  //DB((INTVAL(XEXP(x,1)) & 3) == 0);
+  //printf("brew_legitimate_tiny_address_p !!! ALL OK !!!\n");
+  // Accept <reg>+<offset> pattern if the offset is the right kind
+  if (
+    GET_CODE(x) == PLUS &&
+    REG_P(XEXP(x, 0)) &&
+    brew_reg_ok_for_tiny_base_p(XEXP(x, 0)) &&
+    CONST_INT_P(XEXP(x, 1)) &&
+    IN_RANGE(INTVAL(XEXP(x, 1)) / 4, -64, 63) &&
+    (INTVAL(XEXP(x,1)) & 3) == 0
+  )
+    return true;
+  return false;
+}
+
 
 // for TARGET_FUNCTION_VALUE
 // Define how to find the value returned by a function.
