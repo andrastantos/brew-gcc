@@ -22,6 +22,12 @@
 ;; Constraints
 ;; -------------------------------------------------------------------------
 
+(define_register_constraint
+  "a"
+  "TINY_OFS_REGS"
+  "Registers with tiny offsets"
+)
+
 (define_constraint "O"
   "The constant zero"
   (and
@@ -35,6 +41,22 @@
   (and
     (match_code "const_int")
     (match_test "ival == 1")
+  )
+)
+
+(define_constraint "J"
+  "Tiny constant offset (8-bits)"
+  (and
+    (match_code "const_int")
+    (match_test "IN_RANGE (ival / 4, -64, 63)")
+  )
+)
+
+(define_constraint "N"
+  "Tiny immediate (4-bits, one's complement)"
+  (and
+    (match_code "const_int")
+    (match_test "IN_RANGE (ival, -7, 7)")
   )
 )
 
@@ -58,6 +80,6 @@
   "Address offsets for link setup"
   (and
     (match_code "const_int")
-    (match_test "IN_RANGE (ival, 0, 28)")
+    (match_test "IN_RANGE (ival / 2, 0, 14)")
   )
 )

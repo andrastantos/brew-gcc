@@ -50,21 +50,19 @@
 
 (define_insn "addsi3"
   [(set
-    (match_operand:SI 0 "register_operand"   "=r,r,r,r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r,r")
     (plus:SI
-      (match_operand:SI 1 "register_operand"  "r,r,r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
+      (match_operand:SI 1 "register_operand"  "r,r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "N,r,L,i")
     )
   )]
   ""
   "@
-  %0 <- %1
-  %0 <- %1 + 1
-  %0 <- %1 - 1
+  %0 <- tiny %1 + %2
   %0 <- %1 + %2
   %0 <- short %1 + %2
   %0 <- %1 + %2"
-  [(set_attr "length" "2,2,2,2,4,6")]
+  [(set_attr "length" "2,2,4,6")]
 )
 
 (define_insn "*add_reg_pc"
@@ -81,21 +79,19 @@
 
 (define_insn "subsi3"
   [(set
-    (match_operand:SI 0 "register_operand"   "=r,r,r,r,r,r")
+    (match_operand:SI 0 "register_operand"   "=r,r,r,r")
     (minus:SI
-      (match_operand:SI 1 "register_operand"  "r,r,r,r,r,r")
-      (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
+      (match_operand:SI 1 "register_operand"  "r,r,r,r")
+      (match_operand:SI 2 "nonmemory_operand" "N,r,L,i")
     )
   )]
   ""
   "@
-  %0 <- %1
-  %0 <- %1 - 1
-  %0 <- %1 + 1
+  %0 <- tiny %1 + -%2
   %0 <- %1 - %2
   %0 <- short %1 - %2
   %0 <- %1 - %2"
-  [(set_attr "length" "2,2,2,2,4,6")]
+  [(set_attr "length" "2,2,4,6")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -379,14 +375,34 @@
     }
 }")
 
+(define_insn "*movsi_tiny_store"
+  [(set
+    (match_operand:SI 0 "brew_tiny_memory_operand"  "=m")
+    (match_operand:SI 1 "register_operand"          "r")
+  )]
+  ""
+  "mem[tiny %0] <- %1"
+  [(set_attr "length" "2")]
+)
+
+(define_insn "*movsi_tiny_load"
+  [(set
+    (match_operand:SI 0 "register_operand"          "=r")
+    (match_operand:SI 1 "brew_tiny_memory_operand"  "m")
+  )]
+  ""
+  "%0 <- mem[tiny %1]"
+  [(set_attr "length" "2")]
+)
+
 (define_insn "*movsi_general"
   [(set
     (match_operand:SI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:SI 1 "general_operand"        "O,L,i,r,r,m")
+    (match_operand:SI 1 "general_operand"        "N,L,i,r,r,m")
   )]
   ""
   "@
-   %0 <- %0 ^ %0
+   %0 <- tiny %1
    %0 <- short %1
    %0 <- %1
    %0 <- %1
@@ -394,6 +410,11 @@
    %0 <- mem[%1]"
   [(set_attr "length" "2,4,6,2,6,6")]
 )
+
+
+
+
+
 
 (define_expand "movhi"
   [(set
@@ -427,11 +448,11 @@
 (define_insn "*movhi_general"
   [(set
     (match_operand:HI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:HI 1 "general_operand"        "O,L,i,r,r,m")
+    (match_operand:HI 1 "general_operand"        "N,L,i,r,r,m")
   )]
   ""
   "@
-   %0 <- %0 - %0
+   %0 <- tiny %1
    %0 <- short %1
    %0 <- %1
    %0 <- %1
@@ -478,11 +499,11 @@
 (define_insn "*movqi_general"
   [(set
     (match_operand:QI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:QI 1 "general_operand"        "O,L,i,r,r,m")
+    (match_operand:QI 1 "general_operand"        "N,L,i,r,r,m")
   )]
   ""
   "@
-   %0 <- %0 - %0
+   %0 <- tiny %1
    %0 <- short %1
    %0 <- %1
    %0 <- %1
