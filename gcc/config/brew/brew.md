@@ -375,30 +375,10 @@
     }
 }")
 
-(define_insn "*movsi_tiny_store"
-  [(set
-    (match_operand:SI 0 "brew_tiny_memory_operand"  "=m")
-    (match_operand:SI 1 "register_operand"          "r")
-  )]
-  ""
-  "mem[tiny %0] <- %1"
-  [(set_attr "length" "2")]
-)
-
-(define_insn "*movsi_tiny_load"
-  [(set
-    (match_operand:SI 0 "register_operand"          "=r")
-    (match_operand:SI 1 "brew_tiny_memory_operand"  "m")
-  )]
-  ""
-  "%0 <- mem[tiny %1]"
-  [(set_attr "length" "2")]
-)
-
 (define_insn "*movsi_general"
   [(set
-    (match_operand:SI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:SI 1 "general_operand"        "N,L,i,r,r,m")
+    (match_operand:SI 0 "nonimmediate_operand"  "=r,r,r,r,A,T,B,W,r,r,r,r,m,r")
+    (match_operand:SI 1 "general_operand"        "N,L,i,r,r,r,r,r,A,T,B,W,r,m")
   )]
   ""
   "@
@@ -406,9 +386,17 @@
    %0 <- short %1
    %0 <- %1
    %0 <- %1
-   mem[%0] <- %1
-   %0 <- mem[%1]"
-  [(set_attr "length" "2,4,6,2,6,6")]
+   mem[%0] <- %1 #A
+   mem[tiny %0] <- %1 #T
+   mem[%0] <- %1 #B
+   mem[%0] <- %1 #W
+   %0 <- mem[%1] #A
+   %0 <- mem[tiny %1] #T
+   %0 <- mem[%1] #B
+   %0 <- mem[%1] #W
+   THIS IS AN ERROR !!!! mem[%0] <- %1 #m
+   THIS IS AN ERROR !!!! %0 <- mem[%1] #m"
+  [(set_attr "length" "2,4,6,2,6,2,4,2,6,2,4,2,6,6")]
 )
 
 
@@ -447,8 +435,8 @@
 
 (define_insn "*movhi_general"
   [(set
-    (match_operand:HI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:HI 1 "general_operand"        "N,L,i,r,r,m")
+    (match_operand:HI 0 "nonimmediate_operand"  "=r,r,r,r,A,B,W,r,r,r,m,r")
+    (match_operand:HI 1 "general_operand"        "N,L,i,r,r,r,r,A,B,W,r,m")
   )]
   ""
   "@
@@ -457,8 +445,14 @@
    %0 <- %1
    %0 <- %1
    mem16[%0] <- %1
-   %0 <- mem16[%1]"
-  [(set_attr "length" "2,4,6,2,6,6")]
+   mem16[%0] <- %1
+   mem16[%0] <- %1
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]
+   THIS IS AN ERROR !!!! mem16[%0] <- %1
+   THIS IS AN ERROR !!!! %0 <- mem16[%1]"
+  [(set_attr "length" "2,4,6,2,6,4,2,6,4,2,6,6")]
 )
 
 
@@ -498,8 +492,8 @@
 
 (define_insn "*movqi_general"
   [(set
-    (match_operand:QI 0 "nonimmediate_operand"  "=r,r,r,r,m,r")
-    (match_operand:QI 1 "general_operand"        "N,L,i,r,r,m")
+    (match_operand:QI 0 "nonimmediate_operand"  "=r,r,r,r,A,B,W,r,r,r,m,r")
+    (match_operand:QI 1 "general_operand"        "N,L,i,r,r,r,r,A,B,W,r,m")
   )]
   ""
   "@
@@ -508,8 +502,14 @@
    %0 <- %1
    %0 <- %1
    mem8[%0] <- %1
-   %0 <- mem8[%1]"
-  [(set_attr "length" "2,4,6,2,6,6")]
+   mem8[%0] <- %1
+   mem8[%0] <- %1
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]
+   THIS IS AN ERROR !!!! mem8[%0] <- %1
+   THIS IS AN ERROR !!!! %0 <- mem8[%1]"
+  [(set_attr "length" "2,4,6,2,6,4,2,6,4,2,6,6")]
 )
 
 
@@ -519,55 +519,67 @@
 
 (define_insn "zero_extendhisi2"
   [(set
-    (match_operand:SI 0 "register_operand"      "=r,r")
+    (match_operand:SI 0 "register_operand"      "=r,r,r,r,r")
     (zero_extend:SI
-      (match_operand:HI 1 "nonimmediate_operand" "r,m")
+      (match_operand:HI 1 "nonimmediate_operand" "r,A,B,W,m")
     )
   )]
   ""
   "@
    %0 <- %1 & 0xffff
-   %0 <- mem16[%1]"
-  [(set_attr "length" "6,6")])
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]
+   %0 <- mem16[%1]
+   THIS IS AN ERROR !!!! %0 <- mem16[%1]"
+  [(set_attr "length" "6,6,4,2,6")])
 
 (define_insn "zero_extendqisi2"
   [(set
-    (match_operand:SI 0 "register_operand"      "=r,r")
+    (match_operand:SI 0 "register_operand"      "=r,r,r,r,rr")
     (zero_extend:SI
-      (match_operand:QI 1 "nonimmediate_operand" "r,m")
+      (match_operand:QI 1 "nonimmediate_operand" "r,A,B,W,m")
     )
   )]
   ""
   "@
    %0 <- short %1 & 0xff
-   %0 <- mem8[%1]"
-  [(set_attr "length" "4,6")])
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]
+   %0 <- mem8[%1]
+   THIS IS AN ERROR !!!! %0 <- mem8[%1]"
+  [(set_attr "length" "4,6,4,2,6")])
 
 (define_insn "extendhisi2"
   [(set
-    (match_operand:SI 0 "register_operand"      "=r,r")
+    (match_operand:SI 0 "register_operand"      "=r,r,r,r,r")
     (sign_extend:SI
-      (match_operand:HI 1 "nonimmediate_operand" "r,m")
+      (match_operand:HI 1 "nonimmediate_operand" "r,A,B,W,m")
     )
   )]
   ""
   "@
    %0 <- wsi %1
-   %0 <- smem16[%1]"
-  [(set_attr "length" "2,6")])
+   %0 <- smem16[%1]
+   %0 <- smem16[%1]
+   %0 <- smem16[%1]
+   THIS IS AN ERROR !!!! %0 <- smem16[%1]"
+  [(set_attr "length" "2,6,4,2,6")])
 
 (define_insn "extendqisi2"
   [(set
-    (match_operand:SI 0 "register_operand"      "=r,r")
+    (match_operand:SI 0 "register_operand"      "=r,r,r,r,r")
     (sign_extend:SI
-      (match_operand:QI 1 "nonimmediate_operand" "r,m")
+      (match_operand:QI 1 "nonimmediate_operand" "r,A,B,W,m")
     )
   )]
   ""
   "@
    %0 <- bsi %1
-   %0 <- smem8[%1]"
-  [(set_attr "length" "2,6")])
+   %0 <- smem8[%1]
+   %0 <- smem8[%1]
+   %0 <- smem8[%1]
+   THIS IS AN ERROR !!!! %0 <- smem8[%1]"
+  [(set_attr "length" "2,6,4,2,6")])
 
 ;; -------------------------------------------------------------------------
 ;; Conditional branch

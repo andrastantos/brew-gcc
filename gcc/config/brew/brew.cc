@@ -762,13 +762,7 @@ brew_legitimate_address_p(
   gcc_assert(ADDR_SPACE_GENERIC_P(as));
 
   // Accept <reg>+<offset> pattern
-  if (
-    GET_CODE(x) == PLUS &&
-    REG_P(XEXP(x, 0)) &&
-    brew_reg_ok_for_base_p(XEXP(x, 0), strict_p) &&
-    CONST_INT_P(XEXP(x, 1)) &&
-    IN_RANGE(INTVAL(XEXP (x, 1)), -32768, 32767)
-  )
+  if (brew_legitimate_offset_address_p(x, strict_p))
     return true;
   // Accept a <reg> pattern
   if (REG_P(x) && brew_reg_ok_for_base_p(x, strict_p))
@@ -802,9 +796,8 @@ brew_reg_ok_for_tiny_base_p(const_rtx reg)
 
 #define DB(x) { printf("brew_legitimate_tiny_address_p %s = %s\n", #x, (x)?"true":"false"); if (!(x)) return false; }
 bool
-brew_legitimate_tiny_address_p(
-  rtx x
-) {
+brew_legitimate_tiny_address_p(rtx x)
+{
   //printf("brew_legitimate_tiny_address_p --------------------\n");
   //DB(GET_CODE(x) == PLUS);
   //DB(REG_P(XEXP(x, 0)));
@@ -814,18 +807,41 @@ brew_legitimate_tiny_address_p(
   //printf("                        INTVAL(XEXP(x,1)): %ld\n",INTVAL(XEXP(x,1)));
   //DB((INTVAL(XEXP(x,1)) & 3) == 0);
   //printf("brew_legitimate_tiny_address_p !!! ALL OK !!!\n");
-  // Accept <reg>+<offset> pattern if the offset is the right kind
+  // Accept <reg>+<offset> pattern if base is $fp or $sp and the offset is in the right range
   if (
     GET_CODE(x) == PLUS &&
     REG_P(XEXP(x, 0)) &&
     brew_reg_ok_for_tiny_base_p(XEXP(x, 0)) &&
     CONST_INT_P(XEXP(x, 1)) &&
-    IN_RANGE(INTVAL(XEXP(x, 1)) / 4, -64, 63) &&
+    IN_RANGE(INTVAL(XEXP(x, 1)), -256, 252) &&
     (INTVAL(XEXP(x,1)) & 3) == 0
   )
     return true;
   return false;
 }
+
+bool
+brew_legitimate_offset_address_p(rtx x, bool strict_p)
+{
+  //printf("brew_legitimate_offset_address_p --------------------\n");
+  //DB(GET_CODE(x) == PLUS);
+  //DB(REG_P(XEXP(x, 0)));
+  //DB(brew_reg_ok_for_base_p(XEXP(x, 0), strict_p));
+  //DB(CONST_INT_P(XEXP(x, 1)));
+  //DB(IN_RANGE(INTVAL(XEXP(x, 1)), -32768, 32767));
+  //printf("brew_legitimate_offset_address_p !!! ALL OK !!!\n");
+  // Accept <reg>+<offset> pattern if the offset is in the right range
+  if (
+    GET_CODE(x) == PLUS &&
+    REG_P(XEXP(x, 0)) &&
+    brew_reg_ok_for_base_p(XEXP(x, 0), strict_p) &&
+    CONST_INT_P(XEXP(x, 1)) &&
+    IN_RANGE(INTVAL(XEXP(x, 1)), -32768, 32767)
+  )
+    return true;
+  return false;
+}
+
 
 
 // for TARGET_FUNCTION_VALUE
