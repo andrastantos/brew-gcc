@@ -288,10 +288,10 @@
 
 (define_insn "ashlsi3"
   [(set
-    (match_operand:SI 0 "register_operand"   "=r,r,r")
+    (match_operand:SI 0 "register_operand"           "=r,r,r")
     (ashift:SI
-      (match_operand:SI 1 "nonmemory_operand" "r,L,i")
-      (match_operand:SI 2 "register_operand"  "r,r,r")
+      (match_operand:SI 1 "nonmemory_operand"         "r,r,i")
+      (match_operand:SI 2 "brew_short_shift_operand"  "r,L,r")
     )
   )]
   ""
@@ -304,10 +304,10 @@
 
 (define_insn "ashrsi3"
   [(set
-    (match_operand:SI 0 "register_operand"   "=r,r,r")
+    (match_operand:SI 0 "register_operand"           "=r,r,r")
     (ashiftrt:SI
-      (match_operand:SI 1 "nonmemory_operand" "r,L,i")
-      (match_operand:SI 2 "register_operand"  "r,r,r")
+      (match_operand:SI 1 "nonmemory_operand"         "r,r,i")
+      (match_operand:SI 2 "brew_short_shift_operand"  "r,L,r")
     )
   )]
   ""
@@ -320,10 +320,10 @@
 
 (define_insn "lshrsi3"
   [(set
-    (match_operand:SI 0 "register_operand"   "=r,r,r")
+    (match_operand:SI 0 "register_operand"           "=r,r,r")
     (lshiftrt:SI
-      (match_operand:SI 1 "nonmemory_operand" "r,L,i")
-      (match_operand:SI 2 "register_operand"  "r,r,r")
+        (match_operand:SI 1 "nonmemory_operand"         "r,r,i")
+      (match_operand:SI 2 "brew_short_shift_operand"  "r,L,r")
     )
   )]
   ""
@@ -558,7 +558,7 @@
   )]
   ""
   "@
-   %0 <- wsi %1
+   %0 <- wse %1
    %0 <- smem16[%1]
    %0 <- smem16[%1]
    %0 <- smem16[%1]
@@ -574,7 +574,7 @@
   )]
   ""
   "@
-   %0 <- bsi %1
+   %0 <- bse %1
    %0 <- smem8[%1]
    %0 <- smem8[%1]
    %0 <- smem8[%1]
