@@ -1757,13 +1757,13 @@ moxie-*-moxiebox*)
 brew-*-elf)
 	gas=yes
 	gnu_ld=yes
-	tm_file="dbxelf.h elfos.h newlib-stdint.h ${tm_file}"
+	tm_file="elfos.h newlib-stdint.h ${tm_file}"
 	tmake_file="${tmake_file} brew/t-brew"
 	;;
 brew-*-newlib)
 	gas=yes
 	gnu_ld=yes
-	tm_file="dbxelf.h elfos.h newlib-stdint.h ${tm_file}"
+	tm_file="elfos.h newlib-stdint.h ${tm_file}"
 	tmake_file="${tmake_file} brew/t-brew"
 	;;
 h8300-*-elf*)
