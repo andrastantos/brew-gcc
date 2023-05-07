@@ -32,3 +32,13 @@
   )
 )
 
+(define_predicate "brew_short_shift_operand"
+  (ior
+    (match_code "reg,subreg")
+    (and
+      (match_code "const_int")
+      (match_test "IN_RANGE(INTVAL(op), -0x8000, 0x7fff)")
+    )
+  )
+)
+
