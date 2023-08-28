@@ -216,16 +216,16 @@
   "%0 <- ~%1"
 )
 
-(define_insn "bswapsi2"
-  [(set
-    (match_operand:SI 0 "register_operand" "=r")
-    (bswap:SI
-      (match_operand:SI 1 "register_operand" "r")
-    )
-  )]
-  ""
-  "%0 <- lane_swizzle %1, 0123"
-)
+;;(define_insn "bswapsi2"
+;;  [(set
+;;    (match_operand:SI 0 "register_operand" "=r")
+;;    (bswap:SI
+;;      (match_operand:SI 1 "register_operand" "r")
+;;    )
+;;  )]
+;;  ""
+;;  "%0 <- lane_swizzle %1, 0123"
+;;)
 
 ;; -------------------------------------------------------------------------
 ;; Logical operators
