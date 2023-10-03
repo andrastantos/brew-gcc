@@ -692,7 +692,7 @@
   ""
   "@
   $lr <- $pc + 6\;if $r0 == $r0 $pc <- (%0)
-  $lr <- $pc + 8\;$pc <- (%0)
+  call (%0)
   $lr <- $pc + 4\;$pc <- %0"
   [(set_attr "length"        "6,8,4")]
 )
@@ -707,7 +707,7 @@
 ;;    (clobber (reg:SI BREW_REG_LINK))
 ;;  ]
 ;;  ""
-;;  "$lr <- $pc + 8\;$pc <- (%l0)"
+;;  "call (%l0)"
 ;;  [(set_attr "length"        "8")]
 ;;)
 
@@ -742,7 +742,7 @@
   ""
   "@
   $lr <- $pc + 6\;if $r0 == $r0 $pc <- (%1)
-  $lr <- $pc + 8\;$pc <- (%1)
+  call (%1)
   $lr <- $pc + 4\;$pc <- %1"
   [(set_attr "length"        "6,8,4")]
 )
