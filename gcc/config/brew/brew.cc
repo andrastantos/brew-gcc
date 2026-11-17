@@ -1249,6 +1249,13 @@ brew_asm_output_mi_thunk(
 #undef  TARGET_ASM_CAN_OUTPUT_MI_THUNK
 #define TARGET_ASM_CAN_OUTPUT_MI_THUNK  hook_bool_const_tree_hwi_hwi_const_tree_true
 
+/* Mark every object file with a .note.GNU-stack section, so the linker
+   doesn't assume an executable stack (and warn about it) when such objects
+   are linked with ones that carry the note.  The note is made executable
+   only if the file creates trampolines on the stack.  */
+#undef  TARGET_ASM_FILE_END
+#define TARGET_ASM_FILE_END             file_end_indicate_exec_stack
+
 
 
 
