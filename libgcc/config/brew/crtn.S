@@ -41,3 +41,6 @@
 #  $r3 <- mem[$sp]
 #  $sp <- $sp + 4
 #  $pc <- $r3
+
+/* This object does not need an executable stack.  */
+  .section .note.GNU-stack,"",@progbits
