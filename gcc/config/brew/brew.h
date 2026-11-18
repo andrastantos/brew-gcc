@@ -79,9 +79,9 @@
 #define LONG_TYPE_SIZE 32
 #define LONG_LONG_TYPE_SIZE 64
 
-#define FLOAT_TYPE_SIZE 32
-#define DOUBLE_TYPE_SIZE 64
-#define LONG_DOUBLE_TYPE_SIZE 64
+/* float is SFmode, double and long double are DFmode: the default
+   TARGET_C_MODE_FOR_FLOATING_TYPE (FLOAT/DOUBLE/LONG_DOUBLE_TYPE_SIZE
+   are poisoned since GCC 15).  */
 
 #define DEFAULT_SIGNED_CHAR 0
 

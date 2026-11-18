@@ -2,7 +2,8 @@
    Verify that even without -Wsystem-headers the warning is issued
    for pairs of library functions defined in system headers.
    { dg-do compile { target c++11 } }
-   { dg-options "-O2 -Wall" } */
+   { dg-options "-O2 -Wall" }
+   { dg-skip-if "requires hosted libstdc++ for string" { ! hostedlib } } */
 // { dg-skip-if "" { brew-*-* } }
 
 #include <memory>

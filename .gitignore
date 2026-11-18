@@ -38,6 +38,7 @@ cscope.out
 
 .local.vimrc
 .lvimrc
+.vscode
 
 .clang-format
 .clang-tidy
@@ -72,3 +73,5 @@ stamp-*
 /gettext*
 
 *.texi
+# ADDITIONS from GCCRS front-end
+libgrust/*/target/

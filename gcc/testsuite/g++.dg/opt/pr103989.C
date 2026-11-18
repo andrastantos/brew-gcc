@@ -1,6 +1,7 @@
 // { dg-require-effective-target c++17 }
 // { dg-options "-Og -Wall" }
 // { dg-xfail-if "" { brew-*-* } }
+// { dg-skip-if "requires hosted libstdc++ for memory shared_ptr" { ! hostedlib } }
 
 #include <optional>
 #include <memory>

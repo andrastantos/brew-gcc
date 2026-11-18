@@ -1,5 +1,5 @@
 // { dg-xfail-if "" { brew-*-* } }
-
+// { dg-skip-if "requires hosted libstdc++ for cstdio" { ! hostedlib } }
 #if !__has_include(<coroutine>) \
   && __has_include(<experimental/coroutine>) // for __clang__
 #include <experimental/coroutine>
