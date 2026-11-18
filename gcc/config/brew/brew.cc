@@ -227,7 +227,8 @@ reg_needs_save_restore(int regno)
   // The link register for non-leaf nodes in the call-graph
   if (regno == BREW_REG_LINK && (!crtl->is_leaf || crtl->calls_eh_return || crtl->accesses_prior_frames))
     return true;
-  // If this could be a register for returning EH-related info (and the function uses __builtin_eh_return).
+  // The EH data registers in functions that use __builtin_eh_return: the
+  // unwinder installs the handler's values by overwriting their save slots.
   if (EH_RETURN_DATA_REGNO(regno-BREW_REG_EH_RETURN_DATA0) != INVALID_REGNUM && (crtl->calls_eh_return))
     return true;
   // The frame pointer (TODO: how to eliminate this as much as possible?)
@@ -742,9 +743,18 @@ brew_reg_ok_for_base_p(const_rtx reg, bool strict_p)
   int regno = REGNO(reg);
 
   if (strict_p)
-    return
-      HARD_REGNO_OK_FOR_BASE_P(regno) ||
-      HARD_REGNO_OK_FOR_BASE_P(reg_renumber[regno]);
+    {
+      // A pseudo is only OK if it was allocated to a suitable hard register.
+      // reg_renumber only exists while register allocation results are
+      // available, so don't assume it does.
+      if (!HARD_REGISTER_NUM_P(regno))
+        {
+          if (!reg_renumber)
+            return false;
+          regno = reg_renumber[regno];
+        }
+      return HARD_REGNO_OK_FOR_BASE_P(regno);
+    }
   else
     return
       !HARD_REGISTER_NUM_P(regno) ||
@@ -1102,7 +1112,7 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 // for TARGET_ASM_TRAMPOLINE_TEMPLATE.
 // Output assembler code for a block containing the constant parts
 // of a trampoline, leaving space for the variable parts.
-// Note that STATIC_CHAIN_REGNUM is $r8
+// Note that STATIC_CHAIN_REGNUM is $r2
 static void
 brew_asm_trampoline_template(FILE *f)
 {

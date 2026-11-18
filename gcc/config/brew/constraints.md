@@ -91,7 +91,11 @@
   "A register-offset address."
   (and
     (match_code "mem")
-    (match_test "brew_legitimate_offset_address_p(XEXP(op, 0), true)")
+;; Strict checking only makes sense during and after register allocation:
+;; before it, the base is usually a pseudo (late_combine checks constraints
+;; before RA since GCC 15).
+    (match_test "brew_legitimate_offset_address_p(XEXP(op, 0),
+                                                  reload_completed || lra_in_progress)")
   )
 )
 

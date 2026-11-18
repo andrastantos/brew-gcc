@@ -103,15 +103,15 @@
 /* Registers...
    $r0  - call-clobbered general purpose register; used in thunks for virtual inheritance. Must be call-clobbered
    $r1  - call-clobbered general purpose register; struct value address (return value area pointer for large return values). EH_RETURN_STACKADJ_RTX BREW_STACKADJ_REG. Must be call-clobbered
-   $r2  - call-clobbered general purpose register; static chain register
-   $r3  - call-clobbered general purpose register
+   $r2  - call-clobbered general purpose register; static chain register; EH_RETURN_DATA_REGNO
+   $r3  - call-clobbered general purpose register; EH_RETURN_DATA_REGNO
    $r4  - call-clobbered first argument/return value register.
    $r5  - call-clobbered second argument/return value register.
    $r6  - call-clobbered third argument/return value register;
    $r7  - call-clobbered fourth argument/return value register;
 
-   $r8  - call-saved general purpose register; EH_RETURN_DATA_REGNO
-   $r9  - call-saved general purpose register; EH_RETURN_DATA_REGNO;
+   $r8  - call-saved general purpose register
+   $r9  - call-saved general purpose register
    $r10 - call-saved general purpose register
    $r11 - call-saved general purpose register
    $r12 - call-saved register a.k.a. $fp - frame pointer. NOTE: we depend on it being $r1 in the stack-frame: brew_dynamic_chain_address assumes it's in the 1st save slot.
@@ -157,8 +157,13 @@
 #define BREW_REG_ARG1            5
 #define BREW_REG_ARG2            6
 #define BREW_REG_ARG3            7
-#define BREW_REG_EH_RETURN_DATA0 8 // TODO: change this to the first call-saved register - TODO: this is done, but why was that important ???
-#define BREW_REG_EH_RETURN_DATA1 9
+// The EH data registers must be call-clobbered: the unwinder overwrites them
+// when it enters a landing pad, so call-saved ones would be clobbered for the
+// landing pad function's caller.  Don't use $r1 (EH_RETURN_STACKADJ_RTX) or
+// the return value registers (the epilogue of functions calling
+// __builtin_eh_return restores these registers on the normal path too).
+#define BREW_REG_EH_RETURN_DATA0 2
+#define BREW_REG_EH_RETURN_DATA1 3
 #define BREW_REG_FP              12
 #define BREW_REG_SP              13
 // #define BREW_REG_LINK         14 NOTE: for various practical reasons this constant is defined in brew.md
@@ -336,10 +341,8 @@ enum reg_class
 #define DYNAMIC_CHAIN_ADDRESS(FRAMEADDR) brew_dynamic_chain_address(FRAMEADDR)
 
 /* Describe how we implement __builtin_eh_return.  */
-/* We are grabbing $r6 and $r7 here. The documentation states 2 is the minimum
-   and ideally we want call-clobbered registers. Apparently most don't reuse
-   registers that are the common return values for functions, so let's avoid
-   $r4 and $r5 */
+/* $r2 and $r3 (see BREW_REG_EH_RETURN_DATA0).  Two is the minimum, and
+   there is no use for more.  */
 #define EH_RETURN_DATA_REGNO(N)        (((N) < 2 && (N) >= 0) ? (N+BREW_REG_EH_RETURN_DATA0) : INVALID_REGNUM)
 
 /* Store the return handler into the call frame.  */
