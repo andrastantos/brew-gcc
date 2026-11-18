@@ -73,5 +73,3 @@ stamp-*
 /gettext*
 
 *.texi
-# ADDITIONS from GCCRS front-end
-libgrust/*/target/
