@@ -757,7 +757,8 @@ brew_legitimate_address_p(
   machine_mode mode ATTRIBUTE_UNUSED,
   rtx x,
   bool strict_p,
-  addr_space_t as
+  addr_space_t as,
+  code_helper = ERROR_MARK
 ) {
   gcc_assert(ADDR_SPACE_GENERIC_P(as));
 

@@ -1,6 +1,7 @@
-2023-04-26  Release Manager
+2023-05-18  Jonathan Wakely  <jwakely@redhat.com>
 
-	* GCC 13.1.0 released.
+	PR bootstrap/105831
+	* bin/reg-hunt: Use = operator instead of ==.
 
 2010-06-27  Ralf Wildenhues  <Ralf.Wildenhues@gmx.de>
 

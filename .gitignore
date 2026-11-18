@@ -69,5 +69,6 @@ stamp-*
 /mpc*
 /gmp*
 /isl*
+/gettext*
 
 *.texi

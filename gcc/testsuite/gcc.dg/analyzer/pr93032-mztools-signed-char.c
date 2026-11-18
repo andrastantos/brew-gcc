@@ -8,6 +8,9 @@
 /* { dg-xfail-if "" { brew-*-* } "*" "" } */
 /* { dg-skip-if "" { brew-*-* } "*" "" } */
 
+/* TODO (PR analyzer/112528): remove need for this.  */
+/* { dg-additional-options "--param analyzer-max-enodes-per-program-point=40 --param analyzer-bb-explosion-factor=10" } */
+
 /* Minimal replacement of system headers.  */
 
 typedef __SIZE_TYPE__ size_t;
