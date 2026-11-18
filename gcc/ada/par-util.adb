@@ -197,6 +197,19 @@ package body Util is
       end if;
    end Check_Bad_Layout;
 
+   -------------------------
+   -- Check_Bad_Layout_At --
+   -------------------------
+
+   procedure Check_Bad_Layout_At (Scan_State : Saved_Scan_State) is
+      S : Saved_Scan_State;
+   begin
+      Save_Scan_State (S);
+      Restore_Scan_State (Scan_State);
+      Check_Bad_Layout;
+      Restore_Scan_State (S);
+   end Check_Bad_Layout_At;
+
    --------------------------
    -- Check_Future_Keyword --
    --------------------------
@@ -227,14 +240,6 @@ package body Util is
       then
          if Token_Name in Ada_2012_Reserved_Words then
             Error_Msg_N ("& is a reserved word in Ada 2012?y?", Token_Node);
-         end if;
-      end if;
-
-      if Ada_Version < Ada_With_All_Extensions then
-         if Token_Name in GNAT_Extensions_Reserved_Words then
-            Error_Msg_N
-              ("& is a reserved word with all extensions enabled?",
-               Token_Node);
          end if;
       end if;
 

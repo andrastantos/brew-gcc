@@ -3197,12 +3197,22 @@ package body Sem_Ch3 is
    begin
       if Present (Aspect_Specifications (Parent (Def))) then
          declare
-            Asp : Node_Id;
+            Asp  : Node_Id;
+            Expr : Node_Id;
+
          begin
             Asp := First (Aspect_Specifications (Parent (Def)));
             while Present (Asp) loop
                if Chars (Identifier (Asp)) = Name_Unsigned_Base_Range then
-                  Is_Unsigned_Base_Range_Type_Decl := True;
+                  Expr := Expression (Asp);
+
+                  if Present (Expr) then
+                     Analyze_And_Resolve (Expr, Standard_Boolean);
+                  end if;
+
+                  Is_Unsigned_Base_Range_Type_Decl :=
+                    No (Expression (Asp))
+                      or else Is_True (Static_Boolean (Expr));
                   exit;
                end if;
 
@@ -4865,6 +4875,19 @@ package body Sem_Ch3 is
               ("formal parameter cannot be implicitly converted to "
                & "class-wide type when Extensions_Visible is False", E);
          end if;
+
+         --  Cannot invoke a C++ constructor in the return statement of
+         --  a function with foreign convention, because the extra formal
+         --  BIP_Object_Access is not available.
+
+         if Is_CPP_Constructor_Call (E)
+           and then Is_Return_Object (Id)
+           and then Has_Foreign_Convention (Return_Applies_To (Scope (Id)))
+         then
+            Error_Msg_N
+              ("C++ constructor call in return statement of "
+               &  "function with foreign convention", E);
+         end if;
       end if;
 
       --  If the No_Streams restriction is set, check that the type of the
@@ -5782,6 +5805,8 @@ package body Sem_Ch3 is
          Set_Treat_As_Volatile (Id, Treat_As_Volatile (T));
          Set_Is_Generic_Type (Id, Is_Generic_Type (Base_Type (T)));
          Set_Convention (Id, Convention (T));
+         Set_Linker_Section_Pragma
+           (Id, Linker_Section_Pragma (Base_Type (T)));
       end Copy_Parent_Attributes;
 
    --  Start of processing for Analyze_Subtype_Declaration
@@ -6021,6 +6046,7 @@ package body Sem_Ch3 is
                   Set_No_Tagged_Streams_Pragma
                                         (Id, No_Tagged_Streams_Pragma (T));
                   Set_Is_Abstract_Type  (Id, Is_Abstract_Type (T));
+                  Set_Is_CPP_Class      (Id, Is_CPP_Class (T));
                   Set_Class_Wide_Type   (Id, Class_Wide_Type (T));
 
                   if Is_Interface (T) then
@@ -10114,6 +10140,13 @@ package body Sem_Ch3 is
         (Derived_Type, Has_Non_Standard_Rep     (Parent_Base));
       Set_Has_Primitive_Operations
         (Derived_Type, Has_Primitive_Operations (Parent_Base));
+
+      if Ekind (Derived_Type) = E_Record_Type then
+         Set_Is_Unchecked_Union
+           (Derived_Type, Is_Unchecked_Union (Parent_Base));
+         Set_Has_Unchecked_Union
+           (Derived_Type, Has_Unchecked_Union (Parent_Base));
+      end if;
 
       --  Set fields for private derived types
 
@@ -19105,9 +19138,6 @@ package body Sem_Ch3 is
       elsif Nkind (P) /= N_Component_Declaration
         and then Def_Kind = N_Subtype_Indication
       then
-         --  Base name of subtype on object name, which will be unique in
-         --  the current scope.
-
          --  If this is a duplicate declaration, return base type, to avoid
          --  generating duplicate anonymous types.
 
@@ -19116,53 +19146,28 @@ package body Sem_Ch3 is
             return Entity (Subtype_Mark (Obj_Def));
          end if;
 
+         --  During preanalysis, for example within a pre/postcondition,
+         --  provide just enough information to use the subtype.
+
+         if Preanalysis_Active then
+            return
+              Process_Subtype
+                (Obj_Def,
+                 Related_Nod,
+                 Excludes_Null => Null_Exclusion_Present (P));
+         end if;
+
+         --  Base name of subtype on object name, which will be unique in
+         --  the current scope.
+
          Nam :=
             New_External_Name
              (Chars (Defining_Identifier (Related_Nod)), 'S', 0, 'T');
 
          T := Make_Defining_Identifier (Sloc (P), Nam);
 
-         --  If In_Spec_Expression, for example within a pre/postcondition,
-         --  provide enough information for use of the subtype without
-         --  depending on full analysis and freezing, which will happen when
-         --  building the corresponding subprogram.
-
-         if In_Spec_Expression then
-            Analyze (Subtype_Mark (Obj_Def));
-
-            declare
-               Base_T  : constant Entity_Id := Entity (Subtype_Mark (Obj_Def));
-               New_Def : constant Node_Id   := New_Copy_Tree (Obj_Def);
-               Decl    : constant Node_Id   :=
-                 Make_Subtype_Declaration (Sloc (P),
-                   Defining_Identifier => T,
-                   Subtype_Indication  => New_Def);
-
-            begin
-               Set_Etype  (T, Base_T);
-               Mutate_Ekind  (T, Subtype_Kind (Ekind (Base_T)));
-               Set_Parent (T, Decl);
-               Set_Scope (T, Current_Scope);
-
-               if Ekind (T) = E_Array_Subtype then
-                  Constrain_Array (T, New_Def, Related_Nod, T, 'P');
-
-               elsif Ekind (T) = E_Record_Subtype then
-                  Set_First_Entity (T, First_Entity (Base_T));
-                  Set_Has_Discriminants (T, Has_Discriminants (Base_T));
-                  Set_Is_Constrained (T);
-               end if;
-
-               Insert_Before (Related_Nod, Decl);
-            end;
-
-            return T;
-         end if;
-
          --  When generating code, insert subtype declaration ahead of
-         --  declaration that generated it. Similar behavior required under
-         --  preanalysis (including strict preanalysis) to perform the
-         --  minimum decoration, and avoid reporting spurious errors.
+         --  declaration that generated it.
 
          Insert_Action (Obj_Def,
            Make_Subtype_Declaration (Sloc (P),
@@ -19185,7 +19190,7 @@ package body Sem_Ch3 is
          --  of discriminated private type without a full view.
 
          else
-            Insert_Actions (Obj_Def, Freeze_Entity (Base_Type (T), P));
+            Freeze_Before (Obj_Def, Base_Type (T));
          end if;
 
       --  Ada 2005 AI-406: the object definition in an object declaration
@@ -19245,6 +19250,11 @@ package body Sem_Ch3 is
 
       else
          Find_Type (S);
+         if not Is_Entity_Name (S) then
+            pragma Assert (Serious_Errors_Detected > 0);
+            --  Avoid passing bad argument to Entity
+            return Any_Type;
+         end if;
          Typ := Entity (S);
       end if;
 
@@ -19964,6 +19974,11 @@ package body Sem_Ch3 is
          if not Is_Tagged then
             Append_Elmt (Old_C, Assoc_List);
             Append_Elmt (New_C, Assoc_List);
+
+            if Plain_Discrim then
+               Append_Elmt (Discriminal (Old_C), Assoc_List);
+               Append_Elmt (Discriminal (New_C), Assoc_List);
+            end if;
          end if;
       end Inherit_Component;
 
@@ -20995,10 +21010,10 @@ package body Sem_Ch3 is
       --  Ada 2005 (AI-287, AI-318): Relax the strictness of the front end in
       --  case of limited aggregates (including extension aggregates), and
       --  function calls. The function call may have been given in prefixed
-      --  notation, in which case the original node is an indexed component.
-      --  If the function is parameterless, the original node was an explicit
-      --  dereference. The function may also be parameterless, in which case
-      --  the source node is just an identifier.
+      --  notation, in which case the original node is an indexed component,
+      --  or a selected component if the function is parameterless, or even
+      --  an explicit dereference. Finally, for a direct unprefixed call to
+      --  a parameterless function, the original node is just an identifier.
 
       --  A branch of a conditional expression may have been removed if the
       --  condition is statically known. This happens during expansion, and
@@ -21023,7 +21038,7 @@ package body Sem_Ch3 is
             return Present (Entity (Original_Node (Exp)))
               and then Ekind (Entity (Original_Node (Exp))) = E_Function;
 
-         when N_Qualified_Expression =>
+         when N_Expression_With_Actions | N_Qualified_Expression =>
             return
               OK_For_Limited_Init_In_05
                 (Typ, Expression (Original_Node (Exp)));

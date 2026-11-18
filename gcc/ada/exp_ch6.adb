@@ -5755,6 +5755,12 @@ package body Exp_Ch6 is
      --  cause a temporary to be created.
 
    begin
+      --  The decision will be made after the EWA node is expanded
+
+      if Nkind (Par) = N_Expression_With_Actions then
+         return;
+      end if;
+
       --  Optimization: if the returned value is returned again, then no need
       --  to copy/readjust/finalize, we can just pass the value through (see
       --  Expand_Simple_Function_Return), and thus no attachment is needed.
@@ -5781,13 +5787,8 @@ package body Exp_Ch6 is
 
       --  Note that object declarations are also distributed into conditional
       --  expressions, but we may be invoked before this distribution is done.
-      --  However that's not the case for the declarations of return objects,
-      --  see the twin Is_Optimizable_Declaration predicates that are present
-      --  in Expand_N_Case_Expression and Expand_N_If_Expression of Exp_Ch4.
 
-      elsif Nkind (Uncond_Par) = N_Object_Declaration
-        and then not Is_Return_Object (Defining_Identifier (Uncond_Par))
-      then
+      elsif Is_Distributable_Declaration  (Uncond_Par) then
          return;
       end if;
 
@@ -5820,6 +5821,18 @@ package body Exp_Ch6 is
 
       if Nkind (Par) = N_Assignment_Statement
         and then (N = Name (Par) or else No_Ctrl_Actions (Par))
+      then
+         return;
+      end if;
+
+      --  Do not expand the name of an object renaming declaration at library
+      --  level if the call does not return on the secondary stack, since the
+      --  renaming will eventually be turned into a regular object declaration
+      --  in Expand_N_Object_Renaming_Declaration.
+
+      if Nkind (Par) = N_Object_Renaming_Declaration
+        and then not Use_Sec_Stack
+        and then Is_Library_Level_Entity (Defining_Identifier (Par))
       then
          return;
       end if;
@@ -8103,13 +8116,14 @@ package body Exp_Ch6 is
          return;
       end if;
 
-      --  Cases where the call is not a member of a statement list. This also
-      --  includes the cases where the call is an actual in another function
-      --  call, or is an index, or is an operand of an if-expression, i.e. is
-      --  in an expression context.
+      --  Cases where the call is not a member of a statement list, or cases
+      --  where the call is an actual in an attribute reference, or in another
+      --  function call, or is an index, or is an operand of an if-expression,
+      --  i.e. is in an expression context.
 
       if not Is_List_Member (N)
-        or else Nkind (Context) in N_Function_Call
+        or else Nkind (Context) in N_Attribute_Reference
+                                 | N_Function_Call
                                  | N_If_Expression
                                  | N_Indexed_Component
       then
@@ -8295,19 +8309,14 @@ package body Exp_Ch6 is
    procedure Install_Class_Preconditions_Check (Call_Node : Node_Id) is
       Loc : constant Source_Ptr := Sloc (Call_Node);
 
-      function Build_Dynamic_Check_Helper_Call return Node_Id;
-      --  Build call to the helper runtime function of the nearest ancestor
-      --  of the target subprogram that dynamically evaluates the merged
-      --  or-else preconditions.
-
       function Build_Error_Message (Subp_Id : Entity_Id) return Node_Id;
       --  Build message associated with the class-wide precondition of Subp_Id
       --  indicating the call that caused it.
 
-      function Build_Static_Check_Helper_Call return Node_Id;
+      function Build_Helper_Call (Dynamic : Boolean) return Node_Id;
       --  Build call to the helper runtime function of the nearest ancestor
-      --  of the target subprogram that dynamically evaluates the merged
-      --  or-else preconditions.
+      --  of the target subprogram that statically or dynamically (depending on
+      --  the Dynamic flag) evaluates the merged or-else preconditions.
 
       function Class_Preconditions_Subprogram
         (Spec_Id : Entity_Id;
@@ -8319,39 +8328,6 @@ package body Exp_Ch6 is
       --  calls; if False it searches for the helper that statically evaluates
       --  preconditions; return Empty when not available (which means that no
       --  preconditions check is required).
-
-      -------------------------------------
-      -- Build_Dynamic_Check_Helper_Call --
-      -------------------------------------
-
-      function Build_Dynamic_Check_Helper_Call return Node_Id is
-         Spec_Id   : constant Entity_Id := Entity (Name (Call_Node));
-         CW_Subp   : constant Entity_Id :=
-                       Class_Preconditions_Subprogram (Spec_Id,
-                         Dynamic => True);
-         Helper_Id : constant Entity_Id :=
-                       Dynamic_Call_Helper (CW_Subp);
-         Actuals   : constant List_Id := New_List;
-         A         : Node_Id   := First_Actual (Call_Node);
-
-      begin
-         while Present (A) loop
-
-            --  Ensure that the evaluation of the actuals will not produce
-            --  side effects.
-
-            Remove_Side_Effects (A);
-
-            Append_To (Actuals, New_Copy_Tree (A));
-
-            Next_Actual (A);
-         end loop;
-
-         return
-           Make_Function_Call (Loc,
-             Name => New_Occurrence_Of (Helper_Id, Loc),
-             Parameter_Associations => Actuals);
-      end Build_Dynamic_Check_Helper_Call;
 
       -------------------------
       -- Build_Error_Message --
@@ -8434,11 +8410,11 @@ package body Exp_Ch6 is
          return Make_String_Literal (Loc, Name_Buffer (1 .. Name_Len));
       end Build_Error_Message;
 
-      ------------------------------------
-      -- Build_Static_Check_Helper_Call --
-      ------------------------------------
+      -----------------------
+      -- Build_Helper_Call --
+      -----------------------
 
-      function Build_Static_Check_Helper_Call return Node_Id is
+      function Build_Helper_Call (Dynamic : Boolean) return Node_Id is
          Actuals   : constant List_Id := New_List;
          A         : Node_Id;
          Helper_Id : Entity_Id;
@@ -8456,11 +8432,14 @@ package body Exp_Ch6 is
          --  Common case
 
          else
-            CW_Subp := Class_Preconditions_Subprogram (Spec_Id,
-                         Dynamic => False);
+            CW_Subp := Class_Preconditions_Subprogram (Spec_Id, Dynamic);
          end if;
 
-         Helper_Id := Static_Call_Helper (CW_Subp);
+         if Dynamic then
+            Helper_Id := Dynamic_Call_Helper (CW_Subp);
+         else
+            Helper_Id := Static_Call_Helper (CW_Subp);
+         end if;
 
          F := First_Formal (Helper_Id);
          A := First_Actual (Call_Node);
@@ -8489,7 +8468,7 @@ package body Exp_Ch6 is
            Make_Function_Call (Loc,
              Name => New_Occurrence_Of (Helper_Id, Loc),
              Parameter_Associations => Actuals);
-      end Build_Static_Check_Helper_Call;
+      end Build_Helper_Call;
 
       ------------------------------------
       -- Class_Preconditions_Subprogram --
@@ -8632,11 +8611,7 @@ package body Exp_Ch6 is
 
       --  Build and install the check
 
-      if Dynamic_Check then
-         Cond := Build_Dynamic_Check_Helper_Call;
-      else
-         Cond := Build_Static_Check_Helper_Call;
-      end if;
+      Cond := Build_Helper_Call (Dynamic_Check);
 
       if Exception_Locations_Suppressed then
          Fail :=
@@ -10315,8 +10290,7 @@ package body Exp_Ch6 is
 
       return not Restriction_Active (No_Finalization)
         and then (Needs_Finalization (Typ) or else Is_Tagged_Type (Typ))
-        and then not Has_Relaxed_Finalization (Typ)
-        and then not Has_Foreign_Convention (Typ);
+        and then not Has_Relaxed_Finalization (Typ);
    end Needs_BIP_Collection;
 
    --------------------------

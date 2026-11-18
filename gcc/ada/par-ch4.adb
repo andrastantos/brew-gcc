@@ -482,12 +482,7 @@ package body Ch4 is
          elsif Token = Tok_Identifier then
             Attr_Name := Token_Name;
 
-            --  Attribute Unsigned_Base_Range temporarily disabled
-
-            if not Is_Attribute_Name (Attr_Name)
-              or else (Attr_Name = Name_Unsigned_Base_Range
-                         and then not Debug_Flag_Dot_U)
-            then
+            if not Is_Attribute_Name (Attr_Name) then
                if Apostrophe_Should_Be_Semicolon then
                   Expr_Form := EF_Name;
                   return Name_Node;
@@ -2140,19 +2135,19 @@ package body Ch4 is
    end P_Expression;
 
    --  This function is identical to the normal P_Expression, except that it
-   --  also permits the appearance of a case, conditional, or quantified
+   --  also permits the appearance of a conditional, quantified, or declare
    --  expression if the call immediately follows a left paren, and followed
    --  by a right parenthesis. These forms are allowed if these conditions
    --  are not met, but an error message will be issued.
 
    function P_Expression_If_OK return Node_Id is
    begin
-      --  Case of conditional, case or quantified expression
+      --  Case of conditional, quantified, or declare expression
 
       if Token in Tok_Case | Tok_If | Tok_For | Tok_Declare then
          return P_Unparen_Cond_Expr_Etc;
 
-      --  Normal case, not case/conditional/quantified expression
+      --  Normal case: not a conditional, quantified, or declare expression
 
       else
          return P_Expression;
@@ -2660,7 +2655,7 @@ package body Ch4 is
          end;
       end if;
 
-      --  If all extensions are enabled and we have a deep delta aggregate
+      --  If core extensions are enabled and we have a deep delta aggregate
       --  whose type is an array type with an element type that is a
       --  record type, then we can encounter legal things like
       --    with delta (Some_Index_Expression).Some_Component
@@ -2673,7 +2668,7 @@ package body Ch4 is
         and then Prev_Token = Tok_Right_Paren
         and then Serious_Errors_Detected = 0
         and then Inside_Delta_Aggregate
-        and then All_Extensions_Allowed
+        and then Core_Extensions_Allowed
       then
          if Token = Tok_Dot then
             Node2 := New_Node (N_Selected_Component, Token_Ptr);

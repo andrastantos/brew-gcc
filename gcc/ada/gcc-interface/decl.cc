@@ -814,12 +814,8 @@ gnat_to_gnu_entity (Entity_Id gnat_entity, tree gnu_expr, bool definition)
 	  }
 
 	/* If an alignment is specified, use it if valid.  Note that exceptions
-	   are objects but don't have an alignment and there is also no point in
-	   setting it for an address clause, since the final type of the object
-	   will be a reference type.  */
-	if (Known_Alignment (gnat_entity)
-	    && kind != E_Exception
-	    && No (Address_Clause (gnat_entity)))
+	   are objects but don't have an alignment.  */
+	if (Known_Alignment (gnat_entity) && kind != E_Exception)
 	  align = validate_alignment (Alignment (gnat_entity), gnat_entity,
 				      TYPE_ALIGN (gnu_type));
 
@@ -1488,12 +1484,6 @@ gnat_to_gnu_entity (Entity_Id gnat_entity, tree gnu_expr, bool definition)
 			     DECL_CHAIN (TYPE_FIELDS (TREE_TYPE (gnu_expr))),
 			     false);
 		  }
-
-		/* Give a warning if the size is constant but too large.  */
-		if (TREE_CODE (TYPE_SIZE_UNIT (gnu_alloc_type)) == INTEGER_CST
-		    && !valid_constant_size_p (TYPE_SIZE_UNIT (gnu_alloc_type)))
-		  post_error ("??Storage_Error will be raised at run time!",
-			      gnat_entity);
 
 		gnu_expr
 		  = build_allocator (gnu_alloc_type, gnu_expr, gnu_type,

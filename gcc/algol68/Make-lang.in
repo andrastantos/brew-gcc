@@ -219,7 +219,7 @@ ga68.pod: algol68/ga68.texi
 algol68.srcextra:
 
 algol68.all.cross: ga68$(exeext)
-algol68.start.encap: ga68$(exeect)
+algol68.start.encap: ga68$(exeext)
 algol68.rest.encap:
 algol68.info: doc/ga68.info doc/ga68-internals.info doc/ga68-coding-guidelines.info
 algol68.dvi: doc/ga68.dvi doc/ga68-internals.dvi doc/ga68-coding-guidelines.dvi
@@ -279,10 +279,10 @@ algol68.install-info: $(DESTDIR)$(infodir)/ga68.info \
                       $(DESTDIR)$(infodir)/ga68-coding-guidelines.info
 
 algol68.install-html: $(build_htmldir)/ga68 $(build_htmldir)/ga68-internals \
-                      $(build_htmldir)/ga68-coding-guidelines.info
+                      $(build_htmldir)/ga68-coding-guidelines
 	@$(NORMAL_INSTALL)
 	test -z "$(htmldir)" || $(mkinstalldirs) "$(DESTDIR)$(htmldir)"
-	@for p in $(build_htmldir)/ga68; do \
+	@for p in $(build_htmldir)/ga68 $(build_htmldir)/ga68-internals $(build_htmldir)/ga68-coding-guidelines; do \
 	  if test -f "$$p" || test -d "$$p"; then d=""; else d="$(srcdir)/"; fi; \
 	  f=$(html__strip_dir) \
 	  if test -d "$$d$$p"; then \

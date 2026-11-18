@@ -1207,12 +1207,13 @@ package body Ch12 is
 
          elsif Token = Tok_Left_Paren then
             Error_Msg_GNAT_Extension
-              ("expression default for formal subprograms", Token_Ptr);
+              ("expression default for formal subprograms", Token_Ptr,
+               Is_Core_Extension => True);
 
             if Nkind (Spec_Node) = N_Function_Specification then
                Scan;  --  past "("
 
-               Set_Expression (Def_Node, P_Expression);
+               Set_Expression (Def_Node, P_Expression_If_OK);
 
                if Token /= Tok_Right_Paren then
                   Error_Msg_SC ("missing "")"" at end of expression default");

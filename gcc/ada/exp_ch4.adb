@@ -839,7 +839,7 @@ package body Exp_Ch4 is
 
       if Is_Entity_Name (Exp)
         and then Has_Anonymous_Access_Discriminant (Etype (Exp))
-        and then Static_Accessibility_Level (Exp, Object_Decl_Level)
+        and then Static_Accessibility_Level (Exp, Zero_On_Dynamic_Level)
                    > Static_Accessibility_Level (N, Object_Decl_Level)
       then
          --  A dynamic check and a warning are generated when we are within
@@ -5162,9 +5162,6 @@ package body Exp_Ch4 is
       --  Return True if we can copy objects of this type when expanding a case
       --  expression.
 
-      function Is_Optimizable_Declaration (N : Node_Id) return Boolean;
-      --  Return True if N is an object declaration that can be optimized
-
       ------------------
       -- Is_Copy_Type --
       ------------------
@@ -5173,20 +5170,6 @@ package body Exp_Ch4 is
       begin
          return Is_Elementary_Type (Underlying_Type (Typ));
       end Is_Copy_Type;
-
-      --------------------------------
-      -- Is_Optimizable_Declaration --
-      --------------------------------
-
-      function Is_Optimizable_Declaration (N : Node_Id) return Boolean is
-      begin
-         return Nkind (N) = N_Object_Declaration
-           and then not (Is_Entity_Name (Object_Definition (N))
-                          and then Is_Class_Wide_Type
-                                     (Entity (Object_Definition (N))))
-           and then not Is_Return_Object (Defining_Identifier (N))
-           and then not Is_Copy_Type (Typ);
-      end Is_Optimizable_Declaration;
 
       --  Local variables
 
@@ -5265,7 +5248,8 @@ package body Exp_Ch4 is
                            Unqualified_Unconditional_Parent (N);
          begin
             if Nkind (Uncond_Par) = N_Simple_Return_Statement
-              or else Is_Optimizable_Declaration (Uncond_Par)
+              or else (Is_Distributable_Declaration (Uncond_Par)
+                        and then not Is_Copy_Type (Typ))
               or else (Parent_Is_Regular_Aggregate (Uncond_Par)
                         and then not Is_Copy_Type (Typ))
             then
@@ -5286,7 +5270,7 @@ package body Exp_Ch4 is
          elsif Nkind (Par) = N_Simple_Return_Statement then
             Optimize_Return_Stmt := True;
 
-         elsif Is_Optimizable_Declaration (Par) then
+         elsif Is_Distributable_Declaration (Par) then
             Optimize_Object_Decl := True;
 
          else
@@ -5622,57 +5606,76 @@ package body Exp_Ch4 is
    --------------------------------------
 
    procedure Expand_N_Expression_With_Actions (N : Node_Id) is
-      Acts : constant List_Id := Actions (N);
+      Acts : constant List_Id    := Actions (N);
+      Loc  : constant Source_Ptr := Sloc (N);
+      Typ  : constant Entity_Id  := Etype (N);
 
-      procedure Force_Boolean_Evaluation (Expr : Node_Id);
-      --  Force the evaluation of Boolean expression Expr
+      function Is_Copy_Type (Typ : Entity_Id) return Boolean;
+      --  Return True if we can copy objects of this type when expanding the
+      --  node. The function must return False for limited types for semantic
+      --  reasons, and more generally should do so for all by-reference types.
+      --  Of course the run-time performance of the copy operation should also
+      --  be taken into account, but the expansion of conditional expressions
+      --  may choose to create EWA nodes instead of conditional statements to
+      --  deal with the actions, in which case these EWA nodes also need to be
+      --  preserved for semantic reasons. In practice, this means that the
+      --  subset of types accepted by this Is_Copy_Type predicate must contain
+      --  the union of the subsets of types accepted by its homonyms in the
+      --  Expand_N_Case_Expression and Expand_N_If_Expression procedures, in
+      --  other words must return True when at least one of them returns true.
+      --  This implementation is that of Expand_N_If_Expression.Is_Copy_Type,
+      --  which already accepts a superset of the types accepted by its twin
+      --  Expand_N_Case_Expression.Is_Copy_Type predicate.
 
-      ------------------------------
-      -- Force_Boolean_Evaluation --
-      ------------------------------
+      ------------------
+      -- Is_Copy_Type --
+      ------------------
 
-      procedure Force_Boolean_Evaluation (Expr : Node_Id) is
-         Loc       : constant Source_Ptr := Sloc (N);
-         Flag_Decl : Node_Id;
-         Flag_Id   : Entity_Id;
+      function Is_Copy_Type (Typ : Entity_Id) return Boolean is
+         Utyp : constant Entity_Id := Underlying_Type (Typ);
 
       begin
-         --  Relocate the expression to the actions list by capturing its value
-         --  in a Boolean flag. Generate:
-         --    Flag : constant Boolean := Expr;
+         return Is_Definite_Subtype (Utyp)
+           and then not Is_By_Reference_Type (Utyp);
+      end Is_Copy_Type;
 
-         Flag_Id := Make_Temporary (Loc, 'F');
+      --  Local variables
 
-         Flag_Decl :=
-           Make_Object_Declaration (Loc,
-             Defining_Identifier => Flag_Id,
-             Constant_Present    => True,
-             Object_Definition   => New_Occurrence_Of (Standard_Boolean, Loc),
-             Expression          => Relocate_Node (Expr));
-
-         Append (Flag_Decl, Acts);
-         Analyze (Flag_Decl);
-
-         --  Replace the expression with a reference to the flag
-
-         Rewrite (Expression (N), New_Occurrence_Of (Flag_Id, Loc));
-         Analyze (Expression (N));
-      end Force_Boolean_Evaluation;
+      Temp_Decl : Node_Id;
+      Temp_Id   : Entity_Id;
+      Temp_Ref  : Node_Id;
 
    --  Start of processing for Expand_N_Expression_With_Actions
 
    begin
+      --  A check is first needed since the subtype of the EWA node and the
+      --  subtype of the expression may differ (for example, the EWA node
+      --  may have a null-excluding access subtype).
+
+      Apply_Constraint_Check (Expression (N), Typ);
+
+      --  Deal with case where there are no actions. In this case we simply
+      --  rewrite the node with its expression since we don't need the actions
+      --  and the specification of this node does not allow a null action list.
+
+      --  Note: we use Rewrite instead of Replace, because Codepeer is using
+      --  the expanded tree and relying on being able to retrieve the original
+      --  tree in cases like this. This raises a whole lot of issues of whether
+      --  we have problems elsewhere, which will be addressed in the future???
+
+      if Is_Empty_List (Acts) then
+         Rewrite (N, Relocate_Node (Expression (N)));
+         Analyze_And_Resolve (N, Typ);
+
       --  Do not evaluate the expression when it denotes an entity because the
-      --  expression_with_actions node will be replaced by the reference.
+      --  EWA node will simply be replaced by the reference. Likewise if it was
+      --  rewritten as a raise node. But nevertheless process transient objects
+      --  found within the actions of the EWA node.
 
-      if Is_Entity_Name (Expression (N)) then
-         null;
-
-      --  Do not evaluate the expression when there are no actions because the
-      --  expression_with_actions node will be replaced by the expression.
-
-      elsif Is_Empty_List (Acts) then
-         null;
+      elsif Is_Entity_Name (Expression (N))
+        or else Nkind (Expression (N)) in N_Raise_xxx_Error
+      then
+         Process_Transients_In_Expression (N, Acts);
 
       --  Force the evaluation of the expression by capturing its value in a
       --  temporary. This ensures that aliases of transient objects do not leak
@@ -5698,42 +5701,53 @@ package body Exp_Ch4 is
       --  Once this transformation is performed, it is safe to finalize the
       --  transient object at the end of the actions list.
 
-      --  Note that Force_Evaluation does not remove side effects in operators
-      --  because it assumes that all operands are evaluated and side effect
-      --  free. This is not the case when an operand depends implicitly on the
-      --  transient object through the use of access types.
+      elsif Is_Copy_Type (Typ) then
+         --  Relocate the expression to the actions list by capturing its value
+         --  in a temporary. Generate:
+         --
+         --    Temp : constant Exp_Typ := Exp;
 
-      elsif Is_Boolean_Type (Etype (Expression (N))) then
-         Force_Boolean_Evaluation (Expression (N));
+         Temp_Id := Make_Temporary (Loc, 'F');
 
-      --  The expression of an expression_with_actions node may not necessarily
-      --  be Boolean when the node appears in an if expression. In this case do
-      --  the usual forced evaluation to encapsulate potential aliasing.
+         Temp_Decl :=
+           Make_Object_Declaration (Loc,
+             Defining_Identifier => Temp_Id,
+             Constant_Present    => True,
+             Object_Definition   =>
+               New_Occurrence_Of (Etype (Expression (N)), Loc),
+             Expression          => Relocate_Node (Expression (N)));
+
+         Append (Temp_Decl, Acts);
+         Analyze (Temp_Decl);
+
+         Temp_Ref := New_Occurrence_Of (Temp_Id, Loc);
+
+         --  Copy the Do_Range_Check flag that may have been set above
+
+         Set_Do_Range_Check (Temp_Ref, Do_Range_Check (Expression (N)));
+
+         --  Replace the expression with a reference to the temporary
+
+         Rewrite (Expression (N), Temp_Ref);
+
+         --  Process transient objects found within the actions of the EWA node
+
+         Process_Transients_In_Expression (N, Acts);
+
+      --  Otherwise insert the actions and replace the EWA by its expression.
+      --  This is necessary for limited types, and desirable for by-reference
+      --  types, because we cannot or should not create a temporary for them.
+      --  This means that the management of transient objects is deferred to
+      --  the enclosing context where the actions are inserted.
 
       else
-         --  A check is also needed since the subtype of the EWA node and the
-         --  subtype of the expression may differ (for example, the EWA node
-         --  may have a null-excluding access subtype).
-
-         Apply_Constraint_Check (Expression (N), Etype (N));
-         Force_Evaluation (Expression (N));
-      end if;
-
-      --  Process transient objects found within the actions of the EWA node
-
-      Process_Transients_In_Expression (N, Acts);
-
-      --  Deal with case where there are no actions. In this case we simply
-      --  rewrite the node with its expression since we don't need the actions
-      --  and the specification of this node does not allow a null action list.
-
-      --  Note: we use Rewrite instead of Replace, because Codepeer is using
-      --  the expanded tree and relying on being able to retrieve the original
-      --  tree in cases like this. This raises a whole lot of issues of whether
-      --  we have problems elsewhere, which will be addressed in the future???
-
-      if Is_Empty_List (Acts) then
+         Insert_Actions (N, Acts);
          Rewrite (N, Relocate_Node (Expression (N)));
+         Analyze_And_Resolve (N, Typ);
+
+         --  Note that the result is never static
+
+         Set_Is_Static_Expression (N, False);
       end if;
    end Expand_N_Expression_With_Actions;
 
@@ -5762,9 +5776,6 @@ package body Exp_Ch4 is
       --  Return True if we can copy objects of this type when expanding an if
       --  expression.
 
-      function Is_Optimizable_Declaration (N : Node_Id) return Boolean;
-      --  Return True if N is an object declaration that can be optimized
-
       function OK_For_Single_Subtype (T1, T2 : Entity_Id) return Boolean;
       --  Return true if it is acceptable to use a single subtype for two
       --  dependent expressions of subtype T1 and T2 respectively, which are
@@ -5781,20 +5792,6 @@ package body Exp_Ch4 is
          return Is_Definite_Subtype (Utyp)
            and then not Is_By_Reference_Type (Utyp);
       end Is_Copy_Type;
-
-      --------------------------------
-      -- Is_Optimizable_Declaration --
-      --------------------------------
-
-      function Is_Optimizable_Declaration (N : Node_Id) return Boolean is
-      begin
-         return Nkind (N) = N_Object_Declaration
-           and then not (Is_Entity_Name (Object_Definition (N))
-                          and then Is_Class_Wide_Type
-                                     (Entity (Object_Definition (N))))
-           and then not Is_Return_Object (Defining_Identifier (N))
-           and then not Is_Copy_Type (Typ);
-      end Is_Optimizable_Declaration;
 
       ---------------------------
       -- OK_For_Single_Subtype --
@@ -5885,7 +5882,8 @@ package body Exp_Ch4 is
                            Unqualified_Unconditional_Parent (N);
          begin
             if Nkind (Uncond_Par) = N_Simple_Return_Statement
-              or else Is_Optimizable_Declaration (Uncond_Par)
+              or else (Is_Distributable_Declaration (Uncond_Par)
+                        and then not Is_Copy_Type (Typ))
               or else (Parent_Is_Regular_Aggregate (Uncond_Par)
                         and then not Is_Copy_Type (Typ))
             then
@@ -5906,7 +5904,7 @@ package body Exp_Ch4 is
          elsif Nkind (Par) = N_Simple_Return_Statement then
             Optimize_Return_Stmt := True;
 
-         elsif Is_Optimizable_Declaration (Par) then
+         elsif Is_Distributable_Declaration (Par) then
             Optimize_Object_Decl := True;
 
          else
@@ -8610,6 +8608,8 @@ package body Exp_Ch4 is
 
          if Validity_Check_Operands
            and then not Is_Known_Valid (Component_Type (Typl))
+           and then not
+             Is_Check_Suppressed (Component_Type (Typl), Validity_Check)
          then
             declare
                Save_Force_Validity_Checks : constant Boolean :=

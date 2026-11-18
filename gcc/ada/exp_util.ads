@@ -651,7 +651,13 @@ package Exp_Util is
    --  although they are not master constructs in the language.
 
    function Find_Optional_Prim_Op
-     (T : Entity_Id; Name : Name_Id) return Entity_Id;
+     (T             : Entity_Id;
+      Name          : Name_Id;
+      Controlled_Op : Boolean := False) return Entity_Id;
+   --  Same as Find_Prim_Op but, if Controlled_Op is True, returns a primitive
+   --  only if it has the signature of the three primitives of controlled types
+   --  Initialize/Adjust/Finalize, and returns Empty if not found.
+
    function Find_Optional_Prim_Op
      (T    : Entity_Id;
       Name : TSS_Name_Type) return Entity_Id;
@@ -829,6 +835,13 @@ package Exp_Util is
    function Is_Conversion_Or_Reference_To_Formal (N : Node_Id) return Boolean;
    --  Return True if N is a type conversion, or a dereference thereof, or a
    --  reference to a formal parameter.
+
+   function Is_Distributable_Declaration (N : Node_Id) return Boolean;
+   --  Return True if N is an object declaration that can be distributed into
+   --  the dependent expressions of a conditional expression, given that the
+   --  conditional expression is the initialization expression of N. Such a
+   --  distribution avoids a copy operation and is required for limited types
+   --  and, more generally, desirable for all by-reference types.
 
    function Is_Expanded_Class_Wide_Interface_Object_Decl
       (N : Node_Id) return Boolean;

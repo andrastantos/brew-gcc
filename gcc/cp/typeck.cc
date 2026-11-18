@@ -4162,7 +4162,8 @@ cp_build_array_ref (location_t loc, tree array, tree idx,
     return error_mark_node;
 
   /* 0[array] */
-  if (TREE_CODE (TREE_TYPE (idx)) == ARRAY_TYPE)
+  if (TREE_CODE (TREE_TYPE (idx)) == ARRAY_TYPE
+      && TREE_CODE (TREE_TYPE (array)) != ARRAY_TYPE)
     {
       std::swap (array, idx);
 
@@ -11475,6 +11476,11 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
 
   if (processing_template_decl)
     {
+      /* If in expansion statement body, we don't know if the body
+	 will be instantiated at all.  */
+      if (in_expansion_stmt)
+	goto dependent;
+
       current_function_returns_value = 1;
 
       if (check_for_bare_parameter_packs (retval))

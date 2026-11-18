@@ -1,3 +1,57 @@
+2026-08-07  Release Manager
+
+	* GCC 16.2.0 released.
+
+2026-07-20  Jakub Jelinek  <jakub@redhat.com>
+
+	Backported from master:
+	2026-07-20  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126309
+	* c-lex.cc: Implement CWG3020 - Missing specification for
+	__has_cpp_attribute(indeterminate).
+	(c_common_has_attribute): Handle __has_cpp_attribute (indeterminate).
+
+2026-07-14  Jakub Jelinek  <jakub@redhat.com>
+
+	Backported from master:
+	2026-07-14  Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/124948
+	* c-common.cc (sync_resolve_size): Return -1 for fetch ops
+	on _BitInt types with padding bits where the target requires
+	extension into the padding bits.
+	(atomic_bitint_fetch_using_cas_loop): Handle also __sync_*
+	fetch builtins.
+
+2026-07-05  Martin Uecker  <uecker@tugraz.at>
+
+	Backported from master:
+	2026-06-04  Martin Uecker  <uecker@tugraz.at>
+
+	PR c/125072
+	* c-ubsan.cc (get_index_from_offset,get_index_from_pointer_addr_expr,
+	is_instrumentable_pointer_array_address): Return factor.
+	(ubsan_maybe_instrument_array_ref): Apply factor.
+
+2026-04-30  Release Manager
+
+	* GCC 16.1.0 released.
+
+2026-04-22  Jakub Jelinek  <jakub@redhat.com>
+
+	* c-cppbuiltin.cc (c_cpp_builtins): Bump __cpp_impl_reflection value
+	from 202506L to 202603L.
+
+2026-04-22  Jakub Jelinek  <jakub@redhat.com>
+
+	PR sanitizer/124969
+	* c-ubsan.cc (get_index_from_pointer_addr_expr): For
+	VOID_TYPE_P (pointee_type) use size_one_node instead of
+	TYPE_SIZE_UNIT (pointee_type) as pointee_size.  Punt for
+	!COMPLETE_OR_VOID_TYPE_P (pointee_type).  Formatting fix.  Use
+	CONVERT_EXPR_P (x) instead of CONVERT_EXPR_CODE_P (TREE_CODE (x)).
+
 2026-04-07  Sandra Loosemore  <sloosemore@baylibre.com>
 
 	PR other/124784

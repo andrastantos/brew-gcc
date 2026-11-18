@@ -51,5 +51,4 @@ package Sem_Ch5 is
    --  an unconditional transfer of control or an apparent infinite loop. It
    --  checks to see if the statement is followed by some other statement, and
    --  if so generates an appropriate warning for unreachable code.
-
 end Sem_Ch5;

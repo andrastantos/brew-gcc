@@ -16063,6 +16063,7 @@ cp_build_range_for_decls (location_t loc, tree range_expr, tree *end_p,
 		  DECL_INTERFACE_KNOWN (range_temp) = 1;
 		  DECL_DECLARED_CONSTEXPR_P (range_temp) = 1;
 		  TREE_READONLY (range_temp) = 1;
+		  DECL_IGNORED_P (range_temp) = 1;
 		}
 	    }
 	  else
@@ -16092,6 +16093,7 @@ cp_build_range_for_decls (location_t loc, tree range_expr, tree *end_p,
       TREE_STATIC (begin) = 1;
       DECL_DECLARED_CONSTEXPR_P (begin) = 1;
       TREE_READONLY (begin) = 1;
+      DECL_IGNORED_P (begin) = 1;
     }
   pushdecl (begin);
   cp_finish_decl (begin, begin_expr,
@@ -29824,6 +29826,7 @@ cp_parser_class_specifier (cp_parser* parser)
       case CPP_SEMICOLON:
       case CPP_MULT:
       case CPP_AND:
+      case CPP_AND_AND:
       case CPP_OPEN_PAREN:
       case CPP_CLOSE_PAREN:
       case CPP_COMMA:
@@ -34723,7 +34726,7 @@ cp_parser_constraint_expression (cp_parser *parser)
 {
   processing_constraint_expression_sentinel parsing_constraint;
   ++processing_template_decl;
-  cp_expr expr = cp_parser_binary_expression (parser, false, true,
+  cp_expr expr = cp_parser_binary_expression (parser, false, false,
 					      PREC_NOT_OPERATOR, NULL);
   --processing_template_decl;
   if (check_for_bare_parameter_packs (expr))

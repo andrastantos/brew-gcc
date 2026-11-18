@@ -1795,6 +1795,8 @@ struct attr_state
 {
   /* True if we parsed a musttail attribute for return.  */
   bool musttail_p;
+
+  void reset () { musttail_p = false; }
 };
 
 static bool c_parser_nth_token_starts_std_attributes (c_parser *,
@@ -7648,7 +7650,7 @@ c_parser_compound_statement_nostart (c_parser *parser)
   bool in_omp_loop_block
     = omp_for_parse_state ? omp_for_parse_state->want_nested_loop : false;
   tree sl = NULL_TREE;
-  attr_state a = {};
+  attr_state astate = {};
 
   if (c_parser_next_token_is (parser, CPP_CLOSE_BRACE))
     {
@@ -7740,6 +7742,7 @@ c_parser_compound_statement_nostart (c_parser *parser)
 	      sl = push_stmt_list ();
 	      parser->error = false;
 	      before_labels = get_before_labels ();
+	      astate.reset ();
 	      continue;
 	    }
 	  else if (want_nested_loop
@@ -7773,6 +7776,7 @@ c_parser_compound_statement_nostart (c_parser *parser)
 		}
 	      parser->error = false;
 	      before_labels = get_before_labels ();
+	      astate.reset ();
 	      continue;
 	    }
 	  else if (c_parser_next_token_is (parser, CPP_SEMICOLON))
@@ -7784,6 +7788,7 @@ c_parser_compound_statement_nostart (c_parser *parser)
 	      /* FIXME:  Maybe issue a warning or something here?  */
 	      c_parser_consume_token (parser);
 	      before_labels = get_before_labels ();
+	      astate.reset ();
 	      continue;
 	    }
 	}
@@ -7795,7 +7800,7 @@ c_parser_compound_statement_nostart (c_parser *parser)
       if (have_std_attrs)
 	{
 	  std_attrs = c_parser_std_attribute_specifier_sequence (parser);
-	  std_attrs = c_parser_handle_musttail (parser, std_attrs, a);
+	  std_attrs = c_parser_handle_musttail (parser, std_attrs, astate);
 	}
       if (c_parser_next_token_is_keyword (parser, RID_CASE)
 	  || c_parser_next_token_is_keyword (parser, RID_DEFAULT)
@@ -7937,6 +7942,7 @@ c_parser_compound_statement_nostart (c_parser *parser)
               error_at (loc, "%<else%> without a previous %<if%>");
               c_parser_consume_token (parser);
 	      before_labels = get_before_labels ();
+	      astate.reset ();
               continue;
             }
         }
@@ -7949,7 +7955,7 @@ c_parser_compound_statement_nostart (c_parser *parser)
 	  mark_valid_location_for_stdc_pragma (false);
 	  if (!omp_for_parse_state)
 	    c_parser_statement_after_labels (parser, NULL, before_labels,
-					     NULL, a);
+					     NULL, astate);
 	  else
 	    {
 	      /* In canonical loop nest form, nested loops can only appear
@@ -7966,6 +7972,7 @@ c_parser_compound_statement_nostart (c_parser *parser)
 	}
 
       parser->error = false;
+      astate.reset ();
     }
   if (last_label)
     pedwarn_c11 (label_loc, OPT_Wfree_labels,
@@ -10639,6 +10646,26 @@ c_parser_cast_expression (c_parser *parser, struct c_expr *after)
     return c_parser_unary_expression (parser);
 }
 
+
+/* Like mark_exp_read but skip marking VAR_DECLs and PARM_DECLs
+   depending on the warning mode.  This helper function is
+   used in c_parser_unary_expression and
+   and c_parser_postfix_expression_after_primary for
+   pre/post-increment/decrement operations.
+ */
+
+static void
+mark_exp_read_cond (tree exp)
+{
+  if ((VAR_P (exp) || TREE_CODE (exp) == PARM_DECL)
+      && (VAR_P (exp) ? warn_unused_but_set_variable
+		      : warn_unused_but_set_parameter) > 1)
+    return;
+
+  mark_exp_read (exp);
+}
+
+
 /* Parse an unary expression (C90 6.3.3, C99 6.5.3, C11 6.5.3).
 
    unary-expression:
@@ -10696,31 +10723,15 @@ c_parser_unary_expression (c_parser *parser)
       c_parser_consume_token (parser);
       exp_loc = c_parser_peek_token (parser)->location;
       op = c_parser_cast_expression (parser, NULL);
-      if ((VAR_P (op.value) || TREE_CODE (op.value) == PARM_DECL)
-	  && !DECL_READ_P (op.value)
-	  && (VAR_P (op.value) ? warn_unused_but_set_variable
-			       : warn_unused_but_set_parameter) > 1)
-	{
-	  op = default_function_array_read_conversion (exp_loc, op);
-	  DECL_READ_P (op.value) = 0;
-	}
-      else
-	op = default_function_array_read_conversion (exp_loc, op);
+      mark_exp_read_cond (op.value);
+      op = default_function_array_conversion (exp_loc, op);
       return parser_build_unary_op (op_loc, PREINCREMENT_EXPR, op);
     case CPP_MINUS_MINUS:
       c_parser_consume_token (parser);
       exp_loc = c_parser_peek_token (parser)->location;
       op = c_parser_cast_expression (parser, NULL);
-      if ((VAR_P (op.value) || TREE_CODE (op.value) == PARM_DECL)
-	  && !DECL_READ_P (op.value)
-	  && (VAR_P (op.value) ? warn_unused_but_set_variable
-			       : warn_unused_but_set_parameter) > 1)
-	{
-	  op = default_function_array_read_conversion (exp_loc, op);
-	  DECL_READ_P (op.value) = 0;
-	}
-      else
-	op = default_function_array_read_conversion (exp_loc, op);
+      mark_exp_read_cond (op.value);
+      op = default_function_array_conversion (exp_loc, op);
       return parser_build_unary_op (op_loc, PREDECREMENT_EXPR, op);
     case CPP_AND:
       c_parser_consume_token (parser);
@@ -14190,17 +14201,8 @@ c_parser_postfix_expression_after_primary (c_parser *parser,
 	  start = expr.get_start ();
 	  finish = c_parser_peek_token (parser)->get_finish ();
 	  c_parser_consume_token (parser);
-	  if ((VAR_P (expr.value) || TREE_CODE (expr.value) == PARM_DECL)
-	      && !DECL_READ_P (expr.value)
-	      && (VAR_P (expr.value) ? warn_unused_but_set_variable
-				     : warn_unused_but_set_parameter) > 1
-	      && TREE_CODE (TREE_TYPE (expr.value)) != ARRAY_TYPE)
-	    {
-	      expr = default_function_array_read_conversion (expr_loc, expr);
-	      DECL_READ_P (expr.value) = 0;
-	    }
-	  else
-	    expr = default_function_array_read_conversion (expr_loc, expr);
+	  mark_exp_read_cond (expr.value);
+	  expr = default_function_array_conversion (expr_loc, expr);
 	  expr.value = build_unary_op (op_loc, POSTINCREMENT_EXPR,
 				       expr.value, false);
 	  set_c_expr_source_range (&expr, start, finish);
@@ -14212,17 +14214,8 @@ c_parser_postfix_expression_after_primary (c_parser *parser,
 	  start = expr.get_start ();
 	  finish = c_parser_peek_token (parser)->get_finish ();
 	  c_parser_consume_token (parser);
-	  if ((VAR_P (expr.value) || TREE_CODE (expr.value) == PARM_DECL)
-	      && !DECL_READ_P (expr.value)
-	      && (VAR_P (expr.value) ? warn_unused_but_set_variable
-				     : warn_unused_but_set_parameter) > 1
-	      && TREE_CODE (TREE_TYPE (expr.value)) != ARRAY_TYPE)
-	    {
-	      expr = default_function_array_read_conversion (expr_loc, expr);
-	      DECL_READ_P (expr.value) = 0;
-	    }
-	  else
-	    expr = default_function_array_read_conversion (expr_loc, expr);
+	  mark_exp_read_cond (expr.value);
+	  expr = default_function_array_conversion (expr_loc, expr);
 	  expr.value = build_unary_op (op_loc, POSTDECREMENT_EXPR,
 				       expr.value, false);
 	  set_c_expr_source_range (&expr, start, finish);

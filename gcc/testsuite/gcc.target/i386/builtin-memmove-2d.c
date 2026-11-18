@@ -1,6 +1,5 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -mgeneral-regs-only -march=x86-64 -mtune=generic -minline-all-stringops" } */
-/* { dg-add-options check_function_bodies } */
 /* Keep labels and directives ('.cfi_startproc', '.cfi_endproc').  */
 /* { dg-final { check-function-bodies "**" "" "" { target { lp64 } } {^\t?\.} } } */
 
@@ -94,7 +93,7 @@
 **.L20:
 **	.cfi_def_cfa_offset 40
 **	cmpq	\$32, %rdx
-**	jb	.L9
+**	jbe	.L9
 **	movq	%rbx, \(%rsp\)
 **	movq	%r14, 16\(%rsp\)
 **	.cfi_offset 3, -40

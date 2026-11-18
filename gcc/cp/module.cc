@@ -2645,7 +2645,7 @@ public:
       /* If not ERROR_MARK, a rewrite candidate for this operator.  */
       tree_code rewrite = ERROR_MARK;
       /* Argument list for the call.  */
-      vec<tree, va_gc>* args = make_tree_vector ();
+      vec<tree, va_gc>* args = nullptr;
     };
     vec<dep_adl_info> dep_adl_entity_list;
 
@@ -2970,6 +2970,8 @@ static char const *const merge_kind_name[MK_hwm] =
 struct merge_key {
   cp_ref_qualifier ref_q : 2;
   unsigned coro_disc : 2;  /* Discriminator for coroutine transforms.  */
+  unsigned iobj_p : 1;
+  unsigned xobj_p : 1;
   unsigned index;
 
   tree ret;  /* Return type, if appropriate.  */
@@ -2978,7 +2980,7 @@ struct merge_key {
   tree constraints;  /* Constraints.  */
 
   merge_key ()
-    :ref_q (REF_QUAL_NONE), coro_disc (0), index (0),
+    :ref_q (REF_QUAL_NONE), coro_disc (0), iobj_p (0), xobj_p (0), index (0),
      ret (NULL_TREE), args (NULL_TREE),
      constraints (NULL_TREE)
   {
@@ -6872,6 +6874,8 @@ trees_out::core_vals (tree t)
 
     case PTRMEM_CST:
       WT (((lang_tree_node *)t)->ptrmem.member);
+      if (state)
+	state->write_location (*this, ((lang_tree_node *)t)->ptrmem.locus);
       break;
 
     case STATIC_ASSERT:
@@ -6933,6 +6937,9 @@ trees_out::core_vals (tree t)
     case TRAIT_EXPR:
       WT (((lang_tree_node *)t)->trait_expression.type1);
       WT (((lang_tree_node *)t)->trait_expression.type2);
+      if (state)
+	state->write_location
+	  (*this, ((lang_tree_node *)t)->trait_expression.locus);
       if (streaming_p ())
 	WU (((lang_tree_node *)t)->trait_expression.kind);
       break;
@@ -7443,7 +7450,8 @@ trees_in::core_vals (tree t)
       break;
 
     case PTRMEM_CST:
-      RT (((lang_tree_node *)t)->ptrmem.member);
+      RTU (((lang_tree_node *)t)->ptrmem.member);
+      ((lang_tree_node *)t)->ptrmem.locus = state->read_location (*this);
       break;
 
     case STATIC_ASSERT:
@@ -7493,6 +7501,8 @@ trees_in::core_vals (tree t)
     case TRAIT_EXPR:
       RT (((lang_tree_node *)t)->trait_expression.type1);
       RT (((lang_tree_node *)t)->trait_expression.type2);
+      ((lang_tree_node *)t)->trait_expression.locus
+	= state->read_location (*this);
       RUC (cp_trait_kind, ((lang_tree_node *)t)->trait_expression.kind);
       break;
 
@@ -9424,6 +9434,11 @@ trees_out::decl_node (tree decl, walk_kind ref)
     case TYPE_DECL:
       if (DECL_TINFO_P (decl))
 	goto tinfo;
+      /* c++/125768: For an imported typedef, also mark the original type
+	 reachable in case it was instantiated here.  */
+      if (!streaming_p () && DECL_ORIGINAL_TYPE (decl)
+	  && (DECL_LANG_SPECIFIC (decl) && DECL_MODULE_IMPORT_P (decl)))
+	tree_node (DECL_ORIGINAL_TYPE (decl));
       break;
     }
 
@@ -10864,6 +10879,7 @@ trees_in::tree_node (bool is_use)
 	    int tag = insert (res);
 	    dump (dumper::TREE)
 	      && dump ("Created nttp object:%d %N", tag, name);
+	    vec_safe_push (post_load_decls, res);
 	  }
       }
       break;
@@ -11889,6 +11905,8 @@ trees_out::key_mergeable (int tag, merge_kind mk, tree decl, tree inner,
 
 	      key.ref_q = type_memfn_rqual (fn_type);
 	      key.coro_disc = get_coroutine_discriminator (inner);
+	      key.iobj_p = DECL_IOBJ_MEMBER_FUNCTION_P (inner);
+	      key.xobj_p = DECL_XOBJ_MEMBER_FUNCTION_P (inner);
 	      key.args = TYPE_ARG_TYPES (fn_type);
 
 	      if (tree reqs = get_constraints (inner))
@@ -12026,11 +12044,13 @@ trees_out::key_mergeable (int tag, merge_kind mk, tree decl, tree inner,
       if (streaming_p ())
 	{
 	  /* Check we have enough bits for the index.  */
-	  gcc_checking_assert (key.index < (1u << (sizeof (unsigned) * 8 - 4)));
+	  gcc_checking_assert (key.index < (1u << (sizeof (unsigned) * 8 - 6)));
 
 	  unsigned code = ((key.ref_q << 0)
 			   | (key.coro_disc << 2)
-			   | (key.index << 4));
+			   | (key.iobj_p << 4)
+			   | (key.xobj_p << 5)
+			   | (key.index << 6));
 	  u (code);
 	}
 
@@ -12109,6 +12129,8 @@ check_mergeable_decl (merge_kind mk, tree decl, tree ovl, merge_key const &key)
 	    if ((!key.ret
 		 || same_type_p (key.ret, fndecl_declared_return_type (m_inner)))
 		&& type_memfn_rqual (m_type) == key.ref_q
+		&& key.iobj_p == DECL_IOBJ_MEMBER_FUNCTION_P (m_inner)
+		&& key.xobj_p == DECL_XOBJ_MEMBER_FUNCTION_P (m_inner)
 		&& compparms (key.args, TYPE_ARG_TYPES (m_type))
 		&& get_coroutine_discriminator (m_inner) == key.coro_disc
 		/* Reject if old is a "C" builtin and new is not "C".
@@ -12149,6 +12171,20 @@ check_mergeable_decl (merge_kind mk, tree decl, tree ovl, merge_key const &key)
 		       && (TYPE_NAME (ENUM_UNDERLYING_TYPE (TREE_TYPE (m_inner)))
 			   == key.ret))
 		found = match;
+	    }
+	  /* With -freflection, typedef struct { } A is now represented the same
+	     as typedef struct A_ { } A except the TYPE_DECL for A_ is invisible
+	     to name lookup, so we won't be able to find and match it directly.
+	     But we will find the in-TU A (m_inner), through which we can obtain
+	     the in-TU A_ when d_inner is the streamed-in A_.  */
+	  else if (flag_reflection
+		   && TYPE_DECL_WAS_UNNAMED (d_inner)
+		   && DECL_ORIGINAL_TYPE (m_inner))
+	    {
+	      tree orig = TYPE_NAME (DECL_ORIGINAL_TYPE (m_inner));
+	      if (TYPE_DECL_WAS_UNNAMED (orig)
+		  && DECL_NAME (orig) == DECL_NAME (d_inner))
+		found = orig;
 	    }
 	  break;
 
@@ -12234,7 +12270,9 @@ trees_in::key_mergeable (int tag, merge_kind mk, tree decl, tree inner,
       unsigned code = u ();
       key.ref_q = cp_ref_qualifier ((code >> 0) & 3);
       key.coro_disc = (code >> 2) & 3;
-      key.index = code >> 4;
+      key.iobj_p = (code >> 4) & 1;
+      key.xobj_p = (code >> 5) & 1;
+      key.index = code >> 6;
 
       if (mk == MK_enum)
 	key.ret = tree_node ();
@@ -12509,8 +12547,13 @@ trees_in::check_abi_tags (tree existing, tree decl, tree &eattr, tree &dattr)
       if (dtags)
 	dtags = TREE_VALUE (dtags);
 
-      /* We only error if mangling wouldn't consider the tags equivalent.  */
-      if (!equal_abi_tags (etags, dtags))
+      /* We only error if mangling wouldn't consider the tags equivalent.
+	 Since tags might have been inherited during mangling, ignore
+	 inherited tags if there's a mangled-ness mismatch.  */
+      bool ignore_inherited_p
+	= (DECL_ASSEMBLER_NAME_SET_P (STRIP_TEMPLATE (existing))
+	   != DECL_ASSEMBLER_NAME_SET_P (STRIP_TEMPLATE (decl)));
+      if (!equal_abi_tags (etags, dtags, ignore_inherited_p))
 	{
 	  auto_diagnostic_group d;
 	  if (dtags)
@@ -12588,7 +12631,7 @@ trees_in::is_matching_decl (tree existing, tree decl, bool is_typedef)
 	  goto mismatch;
 	}
 
-      tree e_type = TREE_TYPE (e_inner);
+      tree& e_type = TREE_TYPE (e_inner);
       tree d_type = TREE_TYPE (d_inner);
 
       for (tree e_args = TYPE_ARG_TYPES (e_type),
@@ -12627,18 +12670,13 @@ trees_in::is_matching_decl (tree existing, tree decl, bool is_typedef)
 	      dump (dumper::MERGE)
 		&& dump ("Propagating instantiated noexcept to %N", existing);
 	      gcc_checking_assert (existing == e_inner);
-	      TREE_TYPE (existing) = d_type;
+	      e_type = build_exception_variant (e_type, d_spec);
 
 	      /* Propagate to existing clones.  */
 	      tree clone;
 	      FOR_EACH_CLONE (clone, existing)
-		{
-		  if (TREE_TYPE (clone) == e_type)
-		    TREE_TYPE (clone) = d_type;
-		  else
-		    TREE_TYPE (clone)
-		      = build_exception_variant (TREE_TYPE (clone), d_spec);
-		}
+		TREE_TYPE (clone)
+		  = build_exception_variant (TREE_TYPE (clone), d_spec);
 	    }
 	}
       else if (!DECL_MAYBE_DELETED (d_inner)
@@ -12661,7 +12699,7 @@ trees_in::is_matching_decl (tree existing, tree decl, bool is_typedef)
 	  gcc_checking_assert (existing == e_inner);
 	  FNDECL_USED_AUTO (existing) = true;
 	  DECL_SAVED_AUTO_RETURN_TYPE (existing) = TREE_TYPE (e_type);
-	  TREE_TYPE (existing) = change_return_type (TREE_TYPE (d_type), e_type);
+	  e_type = change_return_type (TREE_TYPE (d_type), e_type);
 	}
       else if (d_undeduced && !e_undeduced)
 	/* EXISTING was deduced, leave it alone.  */;
@@ -13702,9 +13740,8 @@ trees_in::read_class_def (tree defn, tree maybe_template)
 		{
 		  CLASSTYPE_BEFRIENDING_CLASSES (type_dup)
 		    = CLASSTYPE_BEFRIENDING_CLASSES (type);
-		  if (!ANON_AGGR_TYPE_P (type))
-		    CLASSTYPE_TYPEINFO_VAR (type_dup)
-		      = CLASSTYPE_TYPEINFO_VAR (type);
+		  SET_CLASSTYPE_TYPEINFO_VAR (type_dup,
+					      CLASSTYPE_TYPEINFO_VAR (type));
 		}
 	      for (tree v = type; v; v = TYPE_NEXT_VARIANT (v))
 		TYPE_LANG_SPECIFIC (v) = ls;
@@ -13745,7 +13782,7 @@ trees_in::read_class_def (tree defn, tree maybe_template)
 		       to the as-base FIELD_DECL copy.  */
 		    gcc_checking_assert (ANON_AGGR_TYPE_FIELD (anon_type));
 		  else
-		    ANON_AGGR_TYPE_FIELD (anon_type) = decl;
+		    SET_ANON_AGGR_TYPE_FIELD (anon_type, decl);
 		}
 
 	      if (TREE_CODE (decl) == USING_DECL
@@ -15150,6 +15187,12 @@ depset::hash::add_namespace_entities (tree ns, bitmap partitions)
   for (tree udir : NAMESPACE_LEVEL (ns)->using_directives)
     if (TREE_CODE (udir) == USING_DECL && DECL_MODULE_PURVIEW_P (udir))
       {
+	/* Unless it's a (TU-local) anonymous namespace.
+
+	   FIXME instead of checking here, they should be
+	   is_tu_local_entity.  */
+	if (!TREE_PUBLIC (USING_DECL_DECLS (udir)))
+	  continue;
 	make_dependency (USING_DECL_DECLS (udir), depset::EK_NAMESPACE);
 	if (DECL_MODULE_EXPORT_P (udir))
 	  count++;
@@ -15222,14 +15265,22 @@ void
 depset::hash::add_dependent_adl_entities (tree expr)
 {
   gcc_checking_assert (!is_key_order ());
+
+  /* This is not needed for header units where everything is
+     visible to name lookup, nothing is discarded.  */
+  if (header_module_p ())
+    return;
+
   if (TREE_CODE (current->get_entity ()) != TEMPLATE_DECL)
     return;
 
   dep_adl_info info;
+  auto_vec<tree, 3> args;
   switch (TREE_CODE (expr))
     {
     case CALL_EXPR:
-      if (!KOENIG_LOOKUP_P (expr))
+      if (!KOENIG_LOOKUP_P (expr)
+	  || !type_dependent_expression_p_push (expr))
 	return;
       info.name = CALL_EXPR_FN (expr);
       if (!info.name)
@@ -15241,7 +15292,7 @@ depset::hash::add_dependent_adl_entities (tree expr)
       if (!identifier_p (info.name))
 	info.name = OVL_NAME (info.name);
       for (int ix = 0; ix < call_expr_nargs (expr); ix++)
-	vec_safe_push (info.args, CALL_EXPR_ARG (expr, ix));
+	args.safe_push (CALL_EXPR_ARG (expr, ix));
       break;
 
     case LE_EXPR:
@@ -15278,10 +15329,12 @@ depset::hash::add_dependent_adl_entities (tree expr)
     case TRUTH_ANDIF_EXPR:
     case TRUTH_ORIF_EXPR:
     overloadable_expr:
+      if (!type_dependent_expression_p_push (expr))
+	return;
       info.name = ovl_op_identifier (TREE_CODE (expr));
       gcc_checking_assert (tree_operand_length (expr) == 2);
-      vec_safe_push (info.args, TREE_OPERAND (expr, 0));
-      vec_safe_push (info.args, TREE_OPERAND (expr, 1));
+      args.safe_push (TREE_OPERAND (expr, 0));
+      args.safe_push (TREE_OPERAND (expr, 1));
       break;
 
     default:
@@ -15290,10 +15343,20 @@ depset::hash::add_dependent_adl_entities (tree expr)
 
   /* If all arguments are type-dependent we don't need to do
      anything further, we won't find new entities.  */
-  processing_template_decl_sentinel ptds;
-  ++processing_template_decl;
-  if (!any_type_dependent_arguments_p (info.args))
+  bool all_type_dependent = true;
+  for (tree arg : args)
+    if (!type_dependent_expression_p_push (arg))
+      {
+	all_type_dependent = false;
+	break;
+      }
+  if (all_type_dependent)
     return;
+
+  gcc_checking_assert (!info.args);
+  info.args = make_tree_vector ();
+  for (tree arg : args)
+    vec_safe_push (info.args, arg);
 
   /* We need to defer name lookup until after walking, otherwise
      we get confused by stray TREE_VISITEDs.  */
@@ -15673,7 +15736,9 @@ depset::hash::find_dependencies (module_state *module)
 		      tree lookup = lookup_arg_dependent (info.name, NULL_TREE,
 							  info.args, true);
 		      for (tree fn : lkp_range (lookup))
-			add_dependency (make_dependency (fn, EK_DECL));
+			/* We don't need to add_dependency, just have
+			   make_dependency build an ADL binding.  */
+			make_dependency (fn, EK_DECL);
 
 		      if (info.rewrite)
 			{
@@ -15681,7 +15746,7 @@ depset::hash::find_dependencies (module_state *module)
 			  lookup = lookup_arg_dependent (rewrite_name, NULL_TREE,
 							 info.args, true);
 			  for (tree fn : lkp_range (lookup))
-			    add_dependency (make_dependency (fn, EK_DECL));
+			    make_dependency (fn, EK_DECL);
 			}
 		      release_tree_vector (info.args);
 		    }
@@ -20509,6 +20574,17 @@ post_load_processing ()
       tree decl = post_load_decls->pop ();
 
       dump () && dump ("Post-load processing of %N", decl);
+
+      if (VAR_P (decl) && DECL_NTTP_OBJECT_P (decl))
+	{
+	  if (!DECL_SIZE (decl))
+	    {
+	      push_to_top_level ();
+	      cp_finish_decl (decl, DECL_INITIAL (decl), false, NULL_TREE, 0);
+	      pop_from_top_level ();
+	    }
+	  continue;
+	}
 
       gcc_checking_assert (DECL_MAYBE_IN_CHARGE_CDTOR_P (decl));
       expand_or_defer_fn (decl);

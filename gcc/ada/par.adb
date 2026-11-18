@@ -839,10 +839,10 @@ function Par (Configuration_Pragmas : Boolean) return List_Id is
 
       function P_Expression_If_OK return Node_Id;
       --  Scans out an expression allowing an unparenthesized case expression,
-      --  if expression, or quantified expression to appear without enclosing
-      --  parentheses. However, if such an expression is not preceded by a left
-      --  paren, and followed by a right paren, an error message will be output
-      --  noting that parenthesization is required.
+      --  if expression, quantified expression, or declare expression to appear
+      --  without enclosing parentheses. However, if such an expression is not
+      --  preceded by a left paren, and followed by a right paren, an error
+      --  message will be output noting that parenthesization is required.
 
       function P_Expression_No_Right_Paren return Node_Id;
       --  Scans out an expression in contexts where the expression cannot be
@@ -1323,6 +1323,9 @@ function Par (Configuration_Pragmas : Boolean) return List_Id is
       --  and declarations. Checks if current token is at start of line and
       --  is exdented from the current expected end column, and if so an
       --  error message is generated.
+
+      procedure Check_Bad_Layout_At (Scan_State : Saved_Scan_State);
+      --  Same as Check_Bad_Layout with Scan_State as the current scan state
 
       procedure Check_Misspelling_Of (T : Token_Type);
       pragma Inline (Check_Misspelling_Of);

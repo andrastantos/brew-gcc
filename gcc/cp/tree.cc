@@ -280,7 +280,7 @@ lvalue_kind (const_tree ref)
     case MODOP_EXPR:
       /* We expect to see unlowered MODOP_EXPRs only during
 	 template processing.  */
-      gcc_assert (processing_template_decl);
+      gcc_checking_assert (processing_template_decl);
       if (CLASS_TYPE_P (TREE_TYPE (TREE_OPERAND (ref, 0))))
 	goto default_;
       else
@@ -2153,12 +2153,9 @@ strip_typedefs_expr (tree t, bool *remove_attributes, unsigned int flags)
 
     case LAMBDA_EXPR:
     case STMT_EXPR:
-      return t;
-
+    /* ^^alias represents the alias itself, not the underlying type.  */
     case REFLECT_EXPR:
-      /* ^^alias represents the alias itself, not the underlying type.  */
-      if (TYPE_P (REFLECT_EXPR_HANDLE (t)))
-	return t;
+      return t;
 
     default:
       break;
@@ -3856,6 +3853,15 @@ build_min_non_dep_op_overload (enum tree_code op,
 	  tree spaceship_non_dep = (TREE_CODE (non_dep) == CALL_EXPR
 				    ? CALL_EXPR_ARG (non_dep, reversed ? 1 : 0)
 				    : TREE_OPERAND (non_dep, reversed ? 1 : 0));
+
+	  tree int_promotion = NULL_TREE;
+	  if (TREE_CODE (spaceship_non_dep) == NOP_EXPR)
+	    {
+	      gcc_checking_assert (TREE_CODE (non_dep) != CALL_EXPR);
+	      int_promotion = TREE_TYPE (spaceship_non_dep);
+	      spaceship_non_dep = TREE_OPERAND (spaceship_non_dep, 0);
+	    }
+
 	  gcc_checking_assert (TREE_CODE (spaceship_non_dep) == CALL_EXPR);
 	  tree spaceship_op0 = va_arg (p, tree);
 	  tree spaceship_op1 = va_arg (p, tree);
@@ -3878,6 +3884,8 @@ build_min_non_dep_op_overload (enum tree_code op,
 	    {
 	      gcc_checking_assert (COMPARISON_CLASS_P (non_dep)
 				   || TREE_CODE (non_dep) == SPACESHIP_EXPR);
+	      if (int_promotion)
+		op0 = build_nop (int_promotion, op0);
 	      if (reversed)
 		std::swap (op0, op1);
 	      return build_min_non_dep (TREE_CODE (non_dep), non_dep, op0, op1);
@@ -4515,20 +4523,7 @@ cp_tree_equal (tree t1, tree t2)
       return true;
 
     case REFLECT_EXPR:
-      {
-	if (REFLECT_EXPR_KIND (t1) != REFLECT_EXPR_KIND (t2))
-	  return false;
-	tree h1 = REFLECT_EXPR_HANDLE (t1);
-	tree h2 = REFLECT_EXPR_HANDLE (t2);
-	if (!cp_tree_equal (h1, h2))
-	  return false;
-	/* ^^alias represents the alias itself, not the underlying type.  */
-	if (TYPE_P (h1)
-	    && (typedef_variant_p (h1) || typedef_variant_p (h2))
-	    && TYPE_NAME (h1) != TYPE_NAME (h2))
-	  return false;
-	return true;
-      }
+      return compare_reflections (t1, t2);
 
     default:
       break;
@@ -4912,7 +4907,25 @@ trivial_type_p (const_tree t)
     return scalarish_type_p (t);
 }
 
-/* Returns 1 iff type T is an implicit-lifetime type, as defined in
+/* Returns true iff FN (which is a special member function) is
+   an eligible special member function, as defined in [special]/6.
+   The "no special member function of the same kind whose associated
+   constraints, if any, are satisfied is more constrained" condition
+   is not checked, this is checked during add_method instead.  */
+
+static bool
+eligible_special_member_function_p (tree fn)
+{
+  /* The function is not deleted.  */
+  if (DECL_DELETED_FN (fn))
+    return false;
+  /* The associated constraints, if any, are satisfied.  */
+  if (!constraints_satisfied_p (fn))
+    return false;
+  return true;
+}
+
+/* Returns true iff type T is an implicit-lifetime type, as defined in
    [basic.types.general] and [class.prop].  */
 
 bool
@@ -4927,6 +4940,7 @@ implicit_lifetime_type_p (tree t)
   if (!CLASS_TYPE_P (t))
     return false;
   t = TYPE_MAIN_VARIANT (t);
+  /* It is an aggregate whose destructor is not user-provided.  */
   if (CP_AGGREGATE_TYPE_P (t)
       && (!CLASSTYPE_DESTRUCTOR (t)
 	  || !user_provided_p (CLASSTYPE_DESTRUCTOR (t))))
@@ -4939,6 +4953,8 @@ implicit_lifetime_type_p (tree t)
     return false;
   if (CLASSTYPE_LAZY_DESTRUCTOR (t))
     lazily_declare_fn (sfk_destructor, t);
+  /* It has at least one trivial eligible constructor and a trivial,
+     non-deleted destructor.  */
   tree fn = CLASSTYPE_DESTRUCTOR (t);
   if (!fn || DECL_DELETED_FN (fn))
     return false;
@@ -4948,7 +4964,7 @@ implicit_lifetime_type_p (tree t)
       fn = *iter;
       if ((default_ctor_p (fn) || copy_fn_p (fn) || move_fn_p (fn))
 	  && trivial_fn_p (fn)
-	  && !DECL_DELETED_FN (fn))
+	  && eligible_special_member_function_p (fn))
 	return true;
     }
   return false;
@@ -6251,6 +6267,10 @@ cp_walk_subtrees (tree *tp, int *walk_subtrees_p, walk_tree_fn func,
 	  WALK_SUBTREE (DECL_SIZE (decl));
 	  WALK_SUBTREE (DECL_SIZE_UNIT (decl));
 	}
+      if (is_typedef_decl (TREE_OPERAND (t, 0)))
+	/* We avoid walking into typedefs above, but we do want to walk
+	   into them if we're looking at the actual declaration.  */
+	WALK_SUBTREE (DECL_ORIGINAL_TYPE (TREE_OPERAND (t, 0)));
       break;
 
     case LAMBDA_EXPR:

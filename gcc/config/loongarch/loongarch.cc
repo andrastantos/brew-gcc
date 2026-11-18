@@ -5108,8 +5108,37 @@ loongarch_split_vector_move (rtx dest, rtx src)
   machine_mode mode = GET_MODE (dest);
   bool lsx_p = LSX_SUPPORTED_MODE_P (mode);
 
-  if (FP_REG_RTX_P (dest))
+  if (FP_REG_RTX_P (dest) && GP_REG_RTX_P (src))
     {
+    /* Since the LoongArch architecture has not yet implemented vector
+       parameter passing, the following operations are required when
+       a function returns a vector type that needs to be passed to a
+       vector register.
+
+       As shown in the following instruction sequence:
+
+       (call_insn 5 6 12 2 (parallel [
+	     (set (reg:V2DI 4 $r4)
+		  (call (mem:SI (symbol_ref:DI ("bar"))
+				(const_int 0 [0])))
+		  (clobber (reg:SI 1 $r1)))]))
+       (insn 12 5 7 2 (set (reg:V2DI 32 $f0)
+			   (reg:V2DI 4 $r4)))
+
+       insn 12 will be split here as follows:
+       (insn 15 5 16 2 (set (reg:V2DI 32 $f0)
+			    (vec_merge:V2DI
+				(vec_duplicate:V2DI (reg:DI 4 $r4))
+				(reg:V2DI 32 $f0)
+				(const_int 1 [0x1]))))
+       (insn 16 15 7 2 (set (reg:V2DI 32 $f0)
+			    (vec_merge:V2DI
+				(vec_duplicate:V2DI (reg:DI 5 $r5 [+8 ]))
+				(reg:V2DI 32 $f0)
+				(const_int 2 [0x2]))))
+
+       This can be reproduced with the test case lsx-mov-2.c.
+     */
       gcc_assert (!MEM_P (src));
 
       rtx (*gen_vinsgr2vr_d) (rtx, rtx, rtx, rtx);
@@ -5138,8 +5167,12 @@ loongarch_split_vector_move (rtx dest, rtx src)
 					  GEN_INT (1 << index)));
 	}
     }
-  else if (FP_REG_RTX_P (src))
+  else if (FP_REG_RTX_P (src) && GP_REG_RTX_P (dest))
     {
+      /* Transfer vector data from vector registers to GPRs, generally
+	 for vector argument handling.
+	 This can be reproduced with the test case lsx-mov-1.c.
+       */
       gcc_assert (!MEM_P (dest));
 
       rtx (*gen_vpickve2gr_d) (rtx, rtx, rtx);
@@ -5166,7 +5199,7 @@ loongarch_split_vector_move (rtx dest, rtx src)
 	  emit_insn (gen_vpickve2gr_d (d, new_src, GEN_INT (index)));
 	}
     }
-  else
+  else if (GP_REG_RTX_P (src) && GP_REG_RTX_P (dest))
     {
       /* This part of the code is designed to handle the following situations:
 	 (set (reg:V2DI 4 $r4)
@@ -6722,7 +6755,9 @@ loongarch_print_operand (FILE *file, rtx op, int letter)
 
 
     case 'c':
-      if (CONST_INT_P (op))
+      if (SYMBOL_REF_P (op))
+	output_addr_const (asm_out_file, op);
+      else if (CONST_INT_P (op))
 	fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (op));
       else
 	output_operand_lossage ("unsupported operand for code '%c'", letter);
@@ -6935,12 +6970,14 @@ loongarch_print_operand (FILE *file, rtx op, int letter)
 	case E_V4SFmode:
 	case E_V8SImode:
 	case E_V8SFmode:
+	case E_SImode:
 	  fprintf (file, "w");
 	  break;
 	case E_V2DImode:
 	case E_V2DFmode:
 	case E_V4DImode:
 	case E_V4DFmode:
+	case E_DImode:
 	  fprintf (file, "d");
 	  break;
 	default:
@@ -12108,6 +12145,55 @@ loongarch_option_same_function_versions (string_slice str1, const_tree,
 				&feature_mask2, NULL);
 
   return feature_mask1 == feature_mask2;
+}
+
+/* Output assembly to materialize the address of the stack canary value
+   into reg.  The third argument, tmp, should be and should only be
+   non-NULL if the extreme code model is effective for the canary.  If
+   the fourth arugment, load, is true, the canary value is loaded into
+   the register.
+
+   The assembly cannot be splitted due to security reason.  */
+void
+loongarch_output_asm_load_canary (rtx reg, rtx canary, rtx tmp)
+{
+  gcc_checking_assert (ssp_operand (canary, VOIDmode));
+  gcc_checking_assert ((!tmp) == ssp_normal_operand (canary, VOIDmode));
+  gcc_checking_assert (register_operand (reg, Pmode));
+
+  rtx op[] = {reg, canary, tmp};
+  bool got = (loongarch_classify_symbol (canary) == SYMBOL_GOT_DISP);
+  bool need_ld = false;
+
+  if (la_opt_explicit_relocs != EXPLICIT_RELOCS_ALWAYS)
+    {
+      if (got)
+	output_asm_insn (tmp ? "la.global\t%0,%2,%1" : "la.global\t%0,%1",
+			 op);
+      else
+	output_asm_insn (tmp ? "la.local\t%0,%2,%1" : "la.local\t%0,%1",
+			 op);
+
+      need_ld = true;
+    }
+  else
+    {
+      output_asm_insn ("pcalau12i\t%0,%r1", op);
+      if (!tmp)
+	output_asm_insn ("ld.%v0\t%0,%0,%L1", op);
+      else
+	{
+	  output_asm_insn ("addi.d\t%2,$r0,%L1", op);
+	  output_asm_insn ("lu32i.d\t%2,%R1", op);
+	  output_asm_insn ("lu52i.d\t%2,%2,%H1", op);
+	  output_asm_insn ("ldx.d\t%0,%0,%2", op);
+	}
+
+      need_ld = got;
+    }
+
+  if (need_ld)
+    output_asm_insn ("ld.%v0\t%0,%0,0", op);
 }
 
 /* Initialize the GCC target structure.  */

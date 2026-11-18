@@ -3,7 +3,7 @@
 
 #include <flat_map>
 
-#if __cpp_lib_flat_map != 202207L
+#if __cpp_lib_flat_map != 202511L
 # error "Feature-test macro __cpp_lib_flat_map has wrong value in <flat_map>"
 #endif
 
@@ -13,6 +13,7 @@
 #include <testsuite_allocator.h>
 #include <testsuite_hooks.h>
 #include <testsuite_iterators.h>
+#include <string>
 #include <tuple>
 
 struct Gt {
@@ -283,6 +284,127 @@ test09()
   using value_type = std::pair<int, int>;
 }
 
+constexpr
+void
+test10()
+{
+  // PR libstdc++/125374 - flat_map unconditionally moves from lvalue keys in
+  // _M_try_emplace
+  std::flat_map<std::string, int, std::less<>> m;
+  std::string k = "hello";
+  m[k] = 1;
+  VERIFY (k == "hello");
+  k = "world";
+  m.try_emplace(k, 2);
+  VERIFY (k == "world");
+}
+
+template<typename T>
+struct throwing_vector : std::vector<T>
+{
+  static inline bool throw_on_move = false;
+
+  throwing_vector() = default;
+  throwing_vector(const throwing_vector&) = default;
+  throwing_vector& operator=(const throwing_vector&) = default;
+
+  throwing_vector(throwing_vector&& other)
+  : std::vector<T>(std::move(other))
+  {
+    if (throw_on_move)
+      throw std::runtime_error("move ctor");
+  }
+
+  throwing_vector&
+  operator=(throwing_vector&& other)
+  {
+    static_cast<std::vector<T>&>(*this) = std::move(other);
+    if (throw_on_move)
+      throw std::runtime_error("move assign");
+    return *this;
+  }
+};
+
+template<template<typename> class KC, template<typename> class MC>
+void
+test11()
+{
+#if __cpp_exceptions
+  using flat_map = std::flat_map<int, int, std::less<int>, KC<int>, MC<int>>;
+
+  auto is_really_empty = [](const flat_map& m) {
+    return m.empty() && m.keys().empty() && m.values().empty();
+  };
+  throwing_vector<int>::throw_on_move = true;
+
+  // Verify invariant preservation upon throwing move construction.
+  flat_map source;
+  source.insert({{1, 100}, {2, 200}});
+  try
+    {
+      flat_map target(std::move(source));
+      VERIFY( false );
+    }
+  catch (const std::runtime_error&)
+    {
+      VERIFY( is_really_empty(source) );
+    }
+
+  // Verify invariant preservation upon throwing move assignment.
+  source = {{1, 100}, {2, 200}};
+  flat_map target;
+  target.insert({{3, 300}, {4, 400}});
+  try
+    {
+      target = std::move(source);
+      VERIFY( false );
+    }
+  catch (const std::runtime_error&)
+    {
+      VERIFY( is_really_empty(source) );
+      VERIFY( is_really_empty(target) );
+    }
+
+  // Verify invariant preservation upon throwing swap.
+  source = {{1, 100}, {2, 200}};
+  target = {{3, 300}, {4, 400}};
+  try
+    {
+      source.swap(target);
+      VERIFY( false );
+    }
+  catch (const std::runtime_error&)
+    {
+      VERIFY( is_really_empty(source) );
+      VERIFY( is_really_empty(target) );
+    }
+#endif
+}
+
+constexpr
+void
+test12()
+{
+  // Verify usability of flat_map::insert_range(sorted_unique_t, Rg&&).
+  std::flat_map<int, int> m = {{2, 200}};
+  std::pair<int, int> s[] = {{1, 100}, {3, 300}};
+  m.insert_range(std::sorted_unique, s);
+  VERIFY( std::ranges::equal(m.keys(), (int[]){1, 2, 3}) );
+  VERIFY( std::ranges::equal(m.values(), (int[]){100, 200, 300}) );
+}
+
+void
+test13()
+{
+  // Verify usability of flat_map::operator=(initializer_list).
+  throwing_vector<int>::throw_on_move = true;
+  std::flat_map<int, int, std::less<int>, throwing_vector<int>> s;
+  std::initializer_list<std::pair<int, int>> il = {{2, 1}, {3, 2}, {1, 3}};
+  s = il;
+  VERIFY( std::ranges::equal(s.keys(), (int[]){1, 2, 3}) );
+  VERIFY( std::ranges::equal(s.values(), (int[]){3, 1, 2}) );
+}
+
 void
 test()
 {
@@ -298,6 +420,11 @@ test()
   test07();
   test08();
   test09();
+  test10();
+  test11<std::vector, throwing_vector>();
+  test11<throwing_vector, std::vector>();
+  test12();
+  test13();
 }
 
 constexpr
@@ -313,6 +440,12 @@ test_constexpr()
   test07();
   test08();
   test09();
+#if __cpp_lib_constexpr_string >= 201907L
+  test10();
+#endif
+  // test11() is non-constexpr
+  test12();
+  // test13() is non-constexpr
   return true;
 }
 

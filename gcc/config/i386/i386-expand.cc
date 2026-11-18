@@ -10454,7 +10454,7 @@ ix86_expand_movmem (rtx operands[])
 {
   /* Since there are much less registers available in 32-bit mode, don't
      inline movmem in 32-bit mode.  */
-  if (!TARGET_64BIT)
+  if (!TARGET_64BIT || optimize_insn_for_size_p ())
     return false;
 
   rtx dst = operands[0];
@@ -10585,12 +10585,12 @@ ix86_expand_movmem (rtx operands[])
 				 more_8x_vec_label);
 
       rtx_code_label *last_4x_vec_label = nullptr;
-      if (min_size == 0 || min_size < 4 * move_max)
+      if (min_size == 0 || min_size <= 4 * move_max)
 	last_4x_vec_label = gen_label_rtx ();
 
-      /* Jump to LAST_4X_VEC_LABEL if size < 4 * MOVE_MAX.  */
+      /* Jump to LAST_4X_VEC_LABEL if size <= 4 * MOVE_MAX.  */
       if (last_4x_vec_label)
-	emit_cmp_and_jump_insns (count_exp, GEN_INT (4 * move_max), LTU,
+	emit_cmp_and_jump_insns (count_exp, GEN_INT (4 * move_max), LEU,
 				 nullptr, count_mode, 1,
 				 last_4x_vec_label);
 
@@ -15243,7 +15243,7 @@ ix86_expand_builtin (tree exp, rtx target, rtx subtarget,
 	else
 	  {
 	    if (INTVAL (op3) != 0)
-	      warning (0, "invalid forth argument to"
+	      warning (0, "invalid fourth argument to"
 			  " %<__builtin_ia32_prefetch%>; using zero");
 
 	    if (!address_operand (op0, VOIDmode))
@@ -18917,6 +18917,11 @@ ix86_expand_vector_set (bool mmx_ok, rtx target, rtx val, int elt)
   machine_mode mmode = VOIDmode;
   rtx (*gen_blendm) (rtx, rtx, rtx, rtx);
 
+  if (!IN_RANGE (elt, 0, GET_MODE_NUNITS (mode)))
+    {
+      emit_move_insn (target, target);
+      return;
+    }
   switch (mode)
     {
     case E_V2SImode:
@@ -27061,12 +27066,15 @@ ix86_gen_ccmp_first (rtx_insn **prep_seq, rtx_insn **gen_seq,
     op_mode = GET_MODE (op1);
 
   /* We only supports following scalar comparisons that use just 1
-     instruction: DI/SI/QI/HI/DF/SF/HF.
-     Unordered/Ordered compare cannot be corretly indentified by
+     instruction: DI/SI/HI/QI/XF/DF/SF/HF.
+     Unordered/Ordered compare cannot be correctly identified by
      ccmp so they are not supported.  */
-  if (!(op_mode == DImode || op_mode == SImode || op_mode == HImode
-	|| op_mode == QImode || op_mode == DFmode || op_mode == SFmode
-	|| op_mode == HFmode)
+  if (!(op_mode == DImode || op_mode == SImode
+	|| op_mode == HImode || op_mode == QImode
+	|| ((op_mode == XFmode || op_mode == DFmode || op_mode == SFmode)
+	    && (TARGET_80387
+		|| (SSE_FLOAT_MODE_P (op_mode) && TARGET_SSE_MATH)))
+	|| (op_mode == HFmode && TARGET_AVX512FP16))
       || code == ORDERED
       || code == UNORDERED)
     {

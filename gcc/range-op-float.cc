@@ -759,6 +759,9 @@ operator_not_equal::fold_range (irange &r, tree type,
       // Avoid frelop_early_resolve() below as it could fold to FALSE
       // without regards to NANs.  This would be incorrect if trying
       // to fold x_5 != x_5 without prior knowledge of NANs.
+      // Still, if either operand is undefined, return VARYING.
+      if (empty_range_varying (r, type, op1, op2))
+	return true;
     }
   else if (frelop_early_resolve (r, type, op1, op2, trio, VREL_NE))
     return true;
@@ -2370,7 +2373,7 @@ float_widen_lhs_range (tree type, const frange &lhs)
     return ret;
   REAL_VALUE_TYPE lb = lhs.lower_bound ();
   REAL_VALUE_TYPE ub = lhs.upper_bound ();
-  if (real_isfinite (&lb))
+  if (real_isfinite (&lb) || !real_isneg (&lb))
     {
       frange_nextafter (TYPE_MODE (type), lb, dconstninf);
       if (real_isinf (&lb))
@@ -2384,7 +2387,9 @@ float_widen_lhs_range (tree type, const frange &lhs)
 	  lb = dconstm1;
 	  SET_REAL_EXP (&lb, FLOAT_MODE_FORMAT (TYPE_MODE (type))->emax + 1);
 	}
-      if (!flag_rounding_math && !MODE_COMPOSITE_P (TYPE_MODE (type)))
+      if (!flag_rounding_math
+	  && !MODE_COMPOSITE_P (TYPE_MODE (type))
+	  && real_isfinite (&lhs.lower_bound ()))
 	{
 	  /* If not -frounding-math nor IBM double double, actually widen
 	     just by 0.5ulp rather than 1ulp.  */
@@ -2393,7 +2398,7 @@ float_widen_lhs_range (tree type, const frange &lhs)
 	  real_arithmetic (&lb, RDIV_EXPR, &tem, &dconst2);
 	}
     }
-  if (real_isfinite (&ub))
+  if (real_isfinite (&ub) || real_isneg (&ub))
     {
       frange_nextafter (TYPE_MODE (type), ub, dconstinf);
       if (real_isinf (&ub))
@@ -2402,7 +2407,9 @@ float_widen_lhs_range (tree type, const frange &lhs)
 	  ub = dconst1;
 	  SET_REAL_EXP (&ub, FLOAT_MODE_FORMAT (TYPE_MODE (type))->emax + 1);
 	}
-      if (!flag_rounding_math && !MODE_COMPOSITE_P (TYPE_MODE (type)))
+      if (!flag_rounding_math
+	  && !MODE_COMPOSITE_P (TYPE_MODE (type))
+	  && real_isfinite (&lhs.upper_bound ()))
 	{
 	  /* If not -frounding-math nor IBM double double, actually widen
 	     just by 0.5ulp rather than 1ulp.  */

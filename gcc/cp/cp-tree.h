@@ -429,7 +429,7 @@ extern GTY(()) tree cp_global_trees[CPTI_MAX];
       TARGET_EXPR_IMPLICIT_P (in TARGET_EXPR)
       TEMPLATE_PARM_PARAMETER_PACK (in TEMPLATE_PARM_INDEX)
       ATTR_IS_DEPENDENT (in the TREE_LIST for an attribute)
-      ABI_TAG_IMPLICIT (in the TREE_LIST for the argument of abi_tag)
+      ABI_TAG_NOT_MANGLED (in the TREE_LIST for the argument of abi_tag)
       LAMBDA_CAPTURE_EXPLICIT_P (in a TREE_LIST in LAMBDA_EXPR_CAPTURE_LIST)
       PARENTHESIZED_LIST_P (in the TREE_LIST for a parameter-declaration-list)
       CONSTRUCTOR_IS_DIRECT_INIT (in CONSTRUCTOR)
@@ -480,6 +480,7 @@ extern GTY(()) tree cp_global_trees[CPTI_MAX];
       BASELINK_FUNCTIONS_MAYBE_INCOMPLETE_P (in BASELINK)
       BIND_EXPR_VEC_DTOR (in BIND_EXPR)
       ATOMIC_CONSTR_EXPR_FROM_CONCEPT_P (in ATOMIC_CONSTR)
+      ABI_TAG_INHERITED (in the TREE_LIST for the argument of abi_tag)
       STATIC_INIT_DECOMP_BASE_P (in the TREE_LIST for {static,tls}_aggregates)
       MUST_NOT_THROW_THROW_P (in MUST_NOT_THROW_EXPR)
       LAMBDA_EXPR_CONST_QUAL_P (in LAMBDA_EXPR)
@@ -2682,6 +2683,9 @@ struct GTY(()) lang_type {
   tree primary_base;
   vec<tree_pair_s, va_gc> *vcall_indices;
   tree vtables;
+  /* CLASSTYPE_TYPEINFO_VAR and/or ANON_AGGR_TYPE_FIELD.  If both,
+     this is a TREE_LIST with the former as TREE_VALUE and the latter
+     as TREE_PURPOSE.  */
   tree typeinfo_var;
   vec<tree, va_gc> *vbases;
   tree as_base;
@@ -3075,11 +3079,44 @@ struct GTY(()) lang_type {
 #define CLASSTYPE_VTABLES(NODE) \
   (LANG_TYPE_CLASS_CHECK (NODE)->vtables)
 
+/* Helper for CLASSTYPE_TYPEINFO_VAR.  */
+
+inline tree
+get_classtype_typeinfo_var (tree typeinfo_var)
+{
+  if (typeinfo_var == NULL_TREE)
+    return NULL_TREE;
+  if (TREE_CODE (typeinfo_var) == TREE_LIST)
+    return TREE_VALUE (typeinfo_var);
+  if (VAR_P (typeinfo_var))
+    return typeinfo_var;
+  return NULL_TREE;
+}
+
 /* The std::type_info variable representing this class, or NULL if no
    such variable has been created.  This field is only set for the
    TYPE_MAIN_VARIANT of the class.  */
 #define CLASSTYPE_TYPEINFO_VAR(NODE) \
-  (LANG_TYPE_CLASS_CHECK (NODE)->typeinfo_var)
+  get_classtype_typeinfo_var (LANG_TYPE_CLASS_CHECK (NODE)->typeinfo_var)
+
+/* Helper for SET_CLASSTYPE_TYPEINFO_VAR.  */
+
+inline tree &
+set_classtype_typeinfo_var (tree &typeinfo_var)
+{
+  if (typeinfo_var == NULL_TREE)
+    return typeinfo_var;
+  if (TREE_CODE (typeinfo_var) == FIELD_DECL)
+    typeinfo_var = build_tree_list (typeinfo_var, NULL_TREE);
+  if (TREE_CODE (typeinfo_var) == TREE_LIST)
+    return TREE_VALUE (typeinfo_var);
+  return typeinfo_var;
+}
+
+/* Setter for that.  */
+#define SET_CLASSTYPE_TYPEINFO_VAR(NODE, VAR) \
+  (set_classtype_typeinfo_var (LANG_TYPE_CLASS_CHECK (NODE)->typeinfo_var) \
+   = (VAR))
 
 /* Accessor macros for the BINFO_VIRTUALS list.  */
 
@@ -3962,8 +3999,14 @@ struct GTY(()) lang_decl {
 #define ATTR_IS_DEPENDENT(NODE) TREE_LANG_FLAG_0 (TREE_LIST_CHECK (NODE))
 
 /* In a TREE_LIST in the argument of attribute abi_tag, indicates that the tag
-   was inherited from a template parameter, not explicitly indicated.  */
-#define ABI_TAG_IMPLICIT(NODE) TREE_LANG_FLAG_0 (TREE_LIST_CHECK (NODE))
+   was inherited from a template parameter, not explicitly indicated.
+   These are not mangled because they're already represented in the mangling
+   of the template argument.  */
+#define ABI_TAG_NOT_MANGLED(NODE) TREE_LANG_FLAG_0 (TREE_LIST_CHECK (NODE))
+
+/* In a TREE_LIST in the argument of attribute abi_tag, indicates that the tag
+ * was added by check_abi_tags, not explicitly specified.  */
+#define ABI_TAG_INHERITED(NODE) TREE_LANG_FLAG_1 (TREE_LIST_CHECK (NODE))
 
 /* In a TREE_LIST for a parameter-declaration-list, indicates that all the
    parameters in the list have declarators enclosed in ().  */
@@ -5407,9 +5450,42 @@ get_vec_init_expr (tree t)
 #define ANON_UNION_TYPE_P(NODE) \
   (TREE_CODE (NODE) == UNION_TYPE && ANON_AGGR_TYPE_P (NODE))
 
+/* Helper for ANON_AGGR_TYPE_FIELD.  */
+
+inline tree
+get_anon_aggr_type_field (tree typeinfo_var)
+{
+  if (typeinfo_var == NULL_TREE)
+    return NULL_TREE;
+  if (TREE_CODE (typeinfo_var) == TREE_LIST)
+    return TREE_PURPOSE (typeinfo_var);
+  if (TREE_CODE (typeinfo_var) == FIELD_DECL)
+    return typeinfo_var;
+  return NULL_TREE;
+}
+
 /* For an ANON_AGGR_TYPE_P the single FIELD_DECL it is used with.  */
 #define ANON_AGGR_TYPE_FIELD(NODE) \
-  (LANG_TYPE_CLASS_CHECK (NODE)->typeinfo_var)
+  get_anon_aggr_type_field (LANG_TYPE_CLASS_CHECK (NODE)->typeinfo_var)
+
+/* Helper for SET_ANON_AGGR_TYPE_FIELD.  */
+
+inline tree &
+set_anon_aggr_type_field (tree &typeinfo_var)
+{
+  if (typeinfo_var == NULL_TREE)
+    return typeinfo_var;
+  if (VAR_P (typeinfo_var))
+    typeinfo_var = build_tree_list (NULL_TREE, typeinfo_var);
+  if (TREE_CODE (typeinfo_var) == TREE_LIST)
+    return TREE_PURPOSE (typeinfo_var);
+  return typeinfo_var;
+}
+
+/* Setter for that.  */
+#define SET_ANON_AGGR_TYPE_FIELD(NODE, FIELD) \
+  (set_anon_aggr_type_field (LANG_TYPE_CLASS_CHECK (NODE)->typeinfo_var) \
+   = (FIELD))
 
 /* Define fields and accessors for nodes representing declared names.  */
 
@@ -8503,7 +8579,8 @@ extern tree finish_base_specifier		(tree, tree, bool, tree);
 extern void finish_member_declaration		(tree);
 extern bool outer_automatic_var_p		(tree);
 extern bool parsing_lambda_declarator		();
-extern tree process_outer_var_ref		(tree, tsubst_flags_t, bool force_use = false);
+extern tree process_outer_var_ref		(tree, tsubst_flags_t,
+						 bool = false);
 extern cp_expr finish_id_expression		(tree, tree, tree,
 						 cp_id_kind *,
 						 bool, bool, bool *,
@@ -8585,7 +8662,9 @@ extern bool pointer_interconvertible_base_of_p	(tree, tree, bool = false);
 extern tree fold_builtin_is_pointer_inverconvertible_with_class (location_t, int, tree *);
 extern tree fold_builtin_is_string_literal	(location_t, int, tree *);
 extern tree finish_structured_binding_size	(location_t, tree, tsubst_flags_t);
-extern tree finish_trait_expr			(location_t, enum cp_trait_kind, tree, tree);
+extern tree finish_trait_expr			(location_t, enum cp_trait_kind,
+						 tree, tree,
+						 tsubst_flags_t = tf_warning_or_error);
 extern tree finish_trait_type			(enum cp_trait_kind, tree, tree, tsubst_flags_t);
 extern tree build_lambda_expr                   (void);
 extern tree build_lambda_object			(tree);
@@ -9114,7 +9193,7 @@ extern void mangle_module_substitution		(int);
 extern int mangle_module_component		(tree id, bool partition);
 extern tree mangle_module_global_init		(int);
 extern unsigned HOST_WIDE_INT range_expr_nelts	(tree);
-extern bool equal_abi_tags			(tree, tree);
+extern bool equal_abi_tags			(tree, tree, bool);
 
 /* in dump.cc */
 extern bool cp_dump_tree			(void *, tree);
@@ -9432,6 +9511,7 @@ extern void coro_set_ramp_function		(tree, tree);
 
 /* In reflect.cc */
 extern void init_reflection ();
+extern tree maybe_update_function_parm (tree);
 extern bool metafunction_p (tree) ATTRIBUTE_PURE;
 extern tree direct_base_derived (tree) ATTRIBUTE_PURE;
 extern tree process_metafunction (const constexpr_ctx *, tree, tree,

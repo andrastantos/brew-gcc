@@ -12708,12 +12708,7 @@ package body Sem_Prag is
 
       --  Deal with unrecognized pragma
 
-      --  Pragma Unsigned_Base_Range temporarily disabled
-
-      if not Is_Pragma_Name (Pname)
-        or else (Pname = Name_Unsigned_Base_Range
-                  and then not Debug_Flag_Dot_U)
-      then
+      if not Is_Pragma_Name (Pname) then
          declare
             Msg_Issued : Boolean := False;
          begin
@@ -29133,6 +29128,10 @@ package body Sem_Prag is
       ----------------------
 
       function Check_References (Nod : Node_Id) return Traverse_Result is
+         CW_Disp_Typ : constant Entity_Id :=
+           (if Present (Disp_Typ)
+             then Class_Wide_Type (Disp_Typ)
+             else Empty);
       begin
          if Nkind (Nod) = N_Function_Call
            and then Is_Entity_Name (Name (Nod))
@@ -29159,7 +29158,7 @@ package body Sem_Prag is
                   --  A return object of the type is illegal as well
 
                   if Etype (Func) = Disp_Typ
-                    or else Etype (Func) = Class_Wide_Type (Disp_Typ)
+                    or else Etype (Func) = CW_Disp_Typ
                   then
                      Error_Msg_NE
                        ("operation in class-wide condition must be primitive "
@@ -29171,7 +29170,7 @@ package body Sem_Prag is
          elsif Is_Entity_Name (Nod)
            and then
              (Etype (Nod) = Disp_Typ
-               or else Etype (Nod) = Class_Wide_Type (Disp_Typ))
+               or else Etype (Nod) = CW_Disp_Typ)
            and then Ekind (Entity (Nod)) in E_Constant | E_Variable
          then
             Error_Msg_NE
@@ -29180,7 +29179,7 @@ package body Sem_Prag is
 
          elsif Nkind (Nod) = N_Explicit_Dereference
            and then (Etype (Nod) = Disp_Typ
-                      or else Etype (Nod) = Class_Wide_Type (Disp_Typ))
+                      or else Etype (Nod) = CW_Disp_Typ)
            and then (not Is_Entity_Name (Prefix (Nod))
                       or else not Is_Formal (Entity (Prefix (Nod))))
          then

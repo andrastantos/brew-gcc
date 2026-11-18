@@ -1,6 +1,5 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -march=x86-64-v4 -mmove-max=512 -mtune=generic -minline-all-stringops" } */
-/* { dg-add-options check_function_bodies } */
 /* Keep labels and directives ('.cfi_startproc', '.cfi_endproc').  */
 /* { dg-final { check-function-bodies "**" "" "" { target { lp64 } } {^\t?\.} } } */
 
@@ -73,7 +72,7 @@
 **	.p2align 3
 **.L17:
 **	cmpq	\$256, %rdx
-**	jb	.L8
+**	jbe	.L8
 **	vmovdqu64	\(%rsi\), %zmm7
 **	vmovdqu64	64\(%rsi\), %zmm6
 **	vmovdqu64	-64\(%rsi,%rdx\), %zmm3

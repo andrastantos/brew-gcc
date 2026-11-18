@@ -4237,7 +4237,7 @@ vect_analyze_slp_reduc_chain (loop_vec_info vinfo,
   do
     {
       stmt_vec_info stmt = next_stmt;
-      gimple_match_op op;
+      gimple_match_op op, orig_op;
       if (!gimple_extract_op (STMT_VINFO_STMT (stmt), &op))
 	gcc_unreachable ();
       tree reduc_def = gimple_arg (STMT_VINFO_STMT (stmt),
@@ -4245,14 +4245,15 @@ vect_analyze_slp_reduc_chain (loop_vec_info vinfo,
       next_stmt = vect_stmt_to_vectorize (vinfo->lookup_def (reduc_def));
       gcc_assert (is_a <gphi *> (STMT_VINFO_STMT (next_stmt))
 		  || STMT_VINFO_REDUC_IDX (next_stmt) != -1);
-      if (!gimple_extract_op (STMT_VINFO_STMT (vect_orig_stmt (stmt)), &op))
+      if (!gimple_extract_op (STMT_VINFO_STMT (vect_orig_stmt (stmt)),
+			      &orig_op))
 	gcc_unreachable ();
       if (CONVERT_EXPR_CODE_P (op.code)
 	  && tree_nop_conversion_p (op.type, TREE_TYPE (op.ops[0]))
 	  && (first
 	      || is_a <gphi *> (STMT_VINFO_STMT (next_stmt))))
 	;
-      else if (code != op.code)
+      else if (code != orig_op.code)
 	{
 	  fail = true;
 	  break;
@@ -4281,32 +4282,39 @@ vect_analyze_slp_reduc_chain (loop_vec_info vinfo,
       auto_vec<chain_op_t> chain;
       auto_vec<std::pair<tree_code, gimple *> > worklist;
       gimple *op_stmt = NULL, *other_op_stmt = NULL;
-      vect_slp_linearize_chain (vinfo, worklist, chain, (tree_code)code,
-				scalar_stmts[0]->stmt, op_stmt, other_op_stmt,
-				NULL);
-
-      scalar_stmts.truncate (0);
-      stmt_vec_info tail = NULL;
-      for (auto el : chain)
+      if (is_a <gassign *> (scalar_stmts[0]->stmt)
+	  /* We cannot linearize an operation that vect_slp_linearize_chain
+	     would not put on its worklist.  */
+	  && gimple_assign_rhs_code (scalar_stmts[0]->stmt) == (tree_code)code)
 	{
-	  if (el.dt == vect_external_def
-	      || el.dt == vect_constant_def
-	      || el.code != (tree_code) code)
+	  vect_slp_linearize_chain (vinfo, worklist, chain, (tree_code)code,
+				    scalar_stmts[0]->stmt, op_stmt,
+				    other_op_stmt,
+				    NULL);
+
+	  scalar_stmts.truncate (0);
+	  stmt_vec_info tail = NULL;
+	  for (auto el : chain)
 	    {
-	      scalar_stmts.release ();
-	      return false;
+	      if (el.dt == vect_external_def
+		  || el.dt == vect_constant_def
+		  || el.code != (tree_code) code)
+		{
+		  scalar_stmts.release ();
+		  return false;
+		}
+	      stmt_vec_info stmt = vinfo->lookup_def (el.op);
+	      if (STMT_VINFO_REDUC_IDX (stmt) != -1
+		  || STMT_VINFO_REDUC_DEF (stmt))
+		{
+		  gcc_assert (tail == NULL);
+		  tail = stmt;
+		  continue;
+		}
+	      scalar_stmts.safe_push (stmt);
 	    }
-	  stmt_vec_info stmt = vinfo->lookup_def (el.op);
-	  if (STMT_VINFO_REDUC_IDX (stmt) != -1
-	      || STMT_VINFO_REDUC_DEF (stmt))
-	    {
-	      gcc_assert (tail == NULL);
-	      tail = stmt;
-	      continue;
-	    }
-	  scalar_stmts.safe_push (stmt);
+	  gcc_assert (tail);
 	}
-      gcc_assert (tail);
 
       /* When this linearization didn't produce a chain see if stripping
 	 a wrapping sign conversion produces one.  */
@@ -4336,7 +4344,7 @@ vect_analyze_slp_reduc_chain (loop_vec_info vinfo,
 				    stmt, op_stmt, other_op_stmt, NULL);
 
 	  scalar_stmts.truncate (0);
-	  tail = NULL;
+	  stmt_vec_info tail = NULL;
 	  for (auto el : chain)
 	    {
 	      if (el.dt == vect_external_def

@@ -223,6 +223,7 @@ static bool uses_outer_template_parms (tree);
 static tree alias_ctad_tweaks (tree, tree);
 static tree inherited_ctad_tweaks (tree, tree, tsubst_flags_t);
 static tree deduction_guides_for (tree, bool&, tsubst_flags_t);
+static void mark_template_arguments_used_1 (tree);
 
 /* Make the current scope suitable for access checking when we are
    processing T.  T can be FUNCTION_DECL for instantiated function
@@ -7439,18 +7440,22 @@ invalid_tparm_referent_p (tree type, tree expr, tsubst_flags_t complain)
 			"because %qD has no linkage", expr, type, decl);
 	    return true;
 	  }
-	/* C++17: For a non-type template-parameter of reference or pointer
-	   type, the value of the constant expression shall not refer to (or
-	   for a pointer type, shall not be the address of):
-	   * a subobject (4.5),
-	   * a temporary object (15.2),
-	   * a string literal (5.13.5),
-	   * the result of a typeid expression (8.2.8), or
-	   * a predefined __func__ variable (11.4.1).  */
+	/* For a constant template parameter of reference or pointer type,
+	   or for each non-static data member of reference or pointer type
+	   in a constant template parameter of class type or subobject thereof,
+	   the reference or pointer value shall not refer or point to
+	   (respectively):
+	   -- a temporary object,
+	   -- a string literal object,
+	   -- the result of a typeid expression,
+	   -- a predefined __func__ variable, or
+	   -- a subobject of one of the above.  */
 	else if (VAR_P (decl) && DECL_ARTIFICIAL (decl)
 		 && !DECL_NTTP_OBJECT_P (decl))
 	  {
-	    gcc_checking_assert (DECL_TINFO_P (decl) || DECL_FNAME_P (decl));
+	    gcc_checking_assert (DECL_TINFO_P (decl)
+				 || DECL_FNAME_P (decl)
+				 || DECL_IGNORED_P (decl));
 	    if (complain & tf_error)
 	      error ("the address of %qD is not a valid template argument",
 		     decl);
@@ -7582,6 +7587,9 @@ get_template_parm_object (tree expr, tree name, bool check_init/*=true*/)
       /* FIXME setting TREE_CONSTANT on refs breaks the back end.  */
       if (!TYPE_REF_P (type))
 	TREE_CONSTANT (decl) = true;
+      pushdecl_top_level (decl);
+      /* The caller must call cp_finish_decl to complete its processing.  */
+      return decl;
     }
 
   pushdecl_top_level_and_finish (decl, expr);
@@ -16011,11 +16019,26 @@ tsubst_decl (tree t, tree args, tsubst_flags_t complain,
 	    cp_apply_type_quals_to_decl (cp_type_quals (type), r);
 
 	    if (DECL_C_BIT_FIELD (r))
-	      /* For bit-fields, DECL_BIT_FIELD_REPRESENTATIVE gives the
-		 number of bits.  */
-	      DECL_BIT_FIELD_REPRESENTATIVE (r)
-		= tsubst_expr (DECL_BIT_FIELD_REPRESENTATIVE (t), args,
-			       complain, in_decl);
+	      {
+		/* For bit-fields, DECL_BIT_FIELD_REPRESENTATIVE gives the
+		   number of bits.  */
+		tree width
+		  = tsubst_expr (DECL_BIT_FIELD_REPRESENTATIVE (t), args,
+				 complain, in_decl);
+		if (width
+		    && width != error_mark_node
+		    && !type_dependent_expression_p (width)
+		    && !INTEGRAL_OR_UNSCOPED_ENUMERATION_TYPE_P
+			 (TREE_TYPE (width)))
+		  {
+		    if (complain & tf_error)
+		      error_at (DECL_SOURCE_LOCATION (t),
+		      		"width of bit-field %qD has non-integral "
+				"type %qT", r, TREE_TYPE (width));
+		    RETURN (error_mark_node);
+		  }
+		DECL_BIT_FIELD_REPRESENTATIVE (r) = width;
+	      }
 	    if (DECL_INITIAL (t))
 	      {
 		/* Set up DECL_TEMPLATE_INFO so that we can get at the
@@ -16079,6 +16102,7 @@ tsubst_decl (tree t, tree args, tsubst_flags_t complain,
 		  r = error_mark_node;
 		  break;
 		}
+	      name = copy_node (name);
 	      for (tree& elt : tree_vec_range (name))
 		elt = make_conv_op_name (elt);
 	      variadic_p = true;
@@ -16899,24 +16923,29 @@ tsubst_splice_scope (tree t, tree args, tsubst_flags_t complain, tree in_decl)
   tree r = tsubst (SPLICE_SCOPE_EXPR (t), args, complain, in_decl);
   if (r == error_mark_node)
     return r;
+  const bool type_p = SPLICE_SCOPE_TYPE_P (t);
   if (dependent_splice_p (r))
-    return make_splice_scope (r, SPLICE_SCOPE_TYPE_P (t));
-  if (SPLICE_SCOPE_TYPE_P (t) && ctad_template_p (r))
+    r = make_splice_scope (r, type_p);
+  else if (type_p && ctad_template_p (r))
     r = make_template_placeholder (r);
-  if (SPLICE_SCOPE_TYPE_P (t)
+  if (type_p
       ? !valid_splice_type_p (r)
       : !valid_splice_scope_p (r))
     {
       if (complain & tf_error)
 	{
 	  const location_t loc = EXPR_LOCATION (SPLICE_SCOPE_EXPR (t));
-	  if (SPLICE_SCOPE_TYPE_P (t))
+	  if (type_p)
 	    error_at (loc, "%qE is not usable in a splice type", r);
 	  else
 	    error_at (loc, "%qE is not usable in a splice scope", r);
 	}
       return error_mark_node;
     }
+
+  if (type_p)
+    r = cp_build_qualified_type (r, cp_type_quals (t) | cp_type_quals (r),
+				 complain | tf_ignore_bad_quals);
 
   return r;
 }
@@ -16957,12 +16986,14 @@ tsubst_splice_expr (tree t, tree args, tsubst_flags_t complain, tree in_decl)
 
   if (SPLICE_EXPR_ADDRESS_P (t))
     {
+      push_deferring_access_checks (dk_no_check);
       if (BASELINK_P (op))
 	op = build_offset_ref (BINFO_TYPE (BASELINK_ACCESS_BINFO (op)), op,
 			       /*address_p=*/true, complain);
       else if (DECL_NONSTATIC_MEMBER_P (op))
 	op = build_offset_ref (DECL_CONTEXT (op), op,
 			       /*address_p=*/true, complain);
+      pop_deferring_access_checks ();
     }
 
   if (outer_automatic_var_p (op))
@@ -18238,12 +18269,12 @@ tsubst_baselink (tree baselink, tree object_type,
    true if the qualified-id will be a postfix-expression in-and-of
    itself; false if more of the postfix-expression follows the
    QUALIFIED_ID.  ADDRESS_P is true if the qualified-id is the operand
-   of "&".  NAME_LOOKUP_P is true if we intend to perform name lookup.  */
+   of "&".  REFLECTING_P is true if this SCOPE_REF is an operand of ^^.  */
 
 static tree
 tsubst_qualified_id (tree qualified_id, tree args,
 		     tsubst_flags_t complain, tree in_decl,
-		     bool done, bool address_p, bool name_lookup_p = true)
+		     bool done, bool address_p, bool reflecting_p = false)
 {
   tree expr;
   tree scope;
@@ -18322,7 +18353,9 @@ tsubst_qualified_id (tree qualified_id, tree args,
       else
 	expr = lookup_qualified_name (scope, expr, LOOK_want::NORMAL, false);
       if (TREE_CODE (TREE_CODE (expr) == TEMPLATE_DECL
-		     ? DECL_TEMPLATE_RESULT (expr) : expr) == TYPE_DECL)
+		     ? DECL_TEMPLATE_RESULT (expr) : expr) == TYPE_DECL
+	  /* For ^^T::X, we'll take both types and non-types.  */
+	  && !reflecting_p)
 	{
 	  if (complain & tf_error)
 	    {
@@ -18368,7 +18401,7 @@ tsubst_qualified_id (tree qualified_id, tree args,
 				 expr, input_location);
   /* For ^^S::mem, we do not want to create the dummy object that
      finish_non_static_data_member would give us.  */
-  else if (TYPE_P (scope) && name_lookup_p)
+  else if (TYPE_P (scope) && !reflecting_p)
     {
       expr = (adjust_result_of_qualified_name_lookup
 	      (expr, scope, current_nonlambda_class_type ()));
@@ -19774,7 +19807,15 @@ tsubst_stmt (tree t, tree args, tsubst_flags_t complain, tree in_decl)
 			if (tsubst_decomp_names (decl, pattern_decl, args,
 						 complain, in_decl, decomp)
 			    == error_mark_node)
-			  decomp = NULL;
+			  {
+			    decomp = NULL;
+			    /* As in cp_finish_decomp.  */
+			    if (TREE_STATIC (decl))
+			      {
+				tree id = get_identifier ("<decomp>");
+				SET_DECL_ASSEMBLER_NAME (decl, id);
+			      }
+			  }
 		      }
 
 		    init = tsubst_init (init, decl, args, complain, in_decl);
@@ -19942,9 +19983,12 @@ tsubst_stmt (tree t, tree args, tsubst_flags_t complain, tree in_decl)
 	    TEMPLATE_FOR_INIT_STMT (stmt) = pop_stmt_list (init);
 	    add_stmt (stmt);
 	    TEMPLATE_FOR_BODY (stmt) = do_pushlevel (sk_block);
+	    auto save_in_expansion_stmt = in_expansion_stmt;
+	    in_expansion_stmt = true;
 	    bool prev = note_iteration_stmt_body_start ();
 	    RECUR (TEMPLATE_FOR_BODY (t));
 	    note_iteration_stmt_body_end (prev);
+	    in_expansion_stmt = save_in_expansion_stmt;
 	    TEMPLATE_FOR_BODY (stmt)
 	      = do_poplevel (TEMPLATE_FOR_BODY (stmt));
 	  }
@@ -23352,10 +23396,13 @@ tsubst_expr (tree t, tree args, tsubst_flags_t complain, tree in_decl)
 	     instantiated entities and so no need to tsubst the annotation
 	     attribute and we rely on pointer equality of that.  */
 	  ;
+	else if (kind == REFLECT_BASE)
+	  /* Don't substitute; class_bases_of is never called for a dependent
+	     type.  */;
 	else if (TREE_CODE (h) == SCOPE_REF)
 	  h = tsubst_qualified_id (h, args, complain, in_decl,
 				   /*done=*/true, /*address_p=*/false,
-				   /*name_lookup_p=*/false);
+				   /*reflecting_p=*/true);
 	else
 	  {
 	    /* [expr.reflect] The id-expression of a reflect-expression is
@@ -23495,6 +23542,14 @@ mark_template_arguments_used (tree tmpl, tree args)
   /* We already marked outer arguments when specializing the context.  */
   args = INNERMOST_TEMPLATE_ARGS (args);
 
+  mark_template_arguments_used_1 (args);
+}
+
+/* Main recursive part of the above.  */
+
+static void
+mark_template_arguments_used_1 (tree args)
+{
   for (tree arg : tree_vec_range (args))
     {
       /* A (pointer/reference to) function or variable NTTP argument.  */
@@ -23535,6 +23590,8 @@ mark_template_arguments_used (tree tmpl, tree args)
 	  cp_walk_tree_without_duplicates (&DECL_INITIAL (arg),
 					   mark_used_r, nullptr);
 	}
+      else if (TREE_CODE (arg) == NONTYPE_ARGUMENT_PACK)
+	mark_template_arguments_used_1 (ARGUMENT_PACK_ARGS (arg));
     }
 }
 
@@ -23899,6 +23956,16 @@ check_non_deducible_conversions (tree parms, const tree *args, unsigned nargs,
 	  tree arg = args[ia];
 	  conversion **conv_p = convs ? &convs[ia+offset] : NULL;
 	  int lflags = conv_flags (ia, nargs, fn, arg, flags);
+
+	  /* As in add_function_candidate, don't consider conversion to an
+	     unrelated type when LOOKUP_DEFAULTED.  */
+	  if ((flags & LOOKUP_DEFAULTED)
+	      && ia == 0
+	      && (DECL_CONSTRUCTOR_P (fn)
+		  || DECL_ASSIGNMENT_OPERATOR_P (fn))
+	      && !reference_related_p (non_reference (parm),
+				       DECL_CONTEXT (fn)))
+	    return 1;
 
 	  if (check_non_deducible_conversion (parm, arg, strict, lflags,
 					      conv_p, explain_p, noninst_only_p))
@@ -25388,6 +25455,8 @@ resolve_nondeduced_context (tree orig_expr, tsubst_flags_t complain)
 	}
       if (good == 1)
 	{
+	  if (!mark_used (goodfn, complain) && !(complain & tf_error))
+	    return error_mark_node;
 	  expr = goodfn;
 	  if (baselink)
 	    expr = build_baselink (BASELINK_BINFO (baselink),
@@ -33667,6 +33736,7 @@ finish_expansion_stmt (tree expansion_stmt, tree args,
 	      TREE_STATIC (iter) = 1;
 	      DECL_DECLARED_CONSTEXPR_P (iter) = 1;
 	      TREE_READONLY (iter) = 1;
+	      DECL_IGNORED_P (iter) = 1;
 	    }
 	  pushdecl (iter);
 	  cp_finish_decl (iter, iter_init, /*is_constant_init*/false,

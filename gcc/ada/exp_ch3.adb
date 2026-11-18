@@ -4865,13 +4865,15 @@ package body Exp_Ch3 is
 
       --  Derived types that have no type extension can use the initialization
       --  procedure of their parent and do not need a procedure of their own.
+      --  Same for derivations of unchecked_union types.
       --  This is only correct if there are no representation clauses for the
       --  type or its parent, and if the parent has in fact been frozen so
       --  that its initialization procedure exists.
 
       if Is_Derived_Type (Rec_Type)
         and then not Is_Tagged_Type (Rec_Type)
-        and then not Is_Unchecked_Union (Rec_Type)
+        and then Is_Unchecked_Union (Rec_Type)
+                   = Is_Unchecked_Union (Etype (Rec_Type))
         and then not Has_New_Non_Standard_Rep (Rec_Type)
         and then not Parent_Subtype_Renaming_Discrims
         and then Present (Base_Init_Proc (Etype (Rec_Type)))
@@ -8491,6 +8493,44 @@ package body Exp_Ch3 is
             --  class that has no virtual methods is an untagged limited
             --  record type.
 
+            --  a) C++ constructor call placed in a return statement. The
+            --     BIP_Object_Access param of the enclosing function has
+            --     the pointer to the object; convert it to the type of the
+            --     first formal of the called C++ constructor.
+
+            elsif Is_CPP_Constructor_Call (Expr)
+              and then Is_Return_Object (Def_Id)
+            then
+               declare
+                  Encl_Func   : constant Entity_Id :=
+                                  Return_Applies_To (Scope (Def_Id));
+                  BIP_Object  : constant Node_Id :=
+                                  Build_In_Place_Formal (Encl_Func,
+                                    BIP_Object_Access);
+                  Id_Ctor     : constant Entity_Id := Entity (Name (Expr));
+                  Id_Ref      : constant Node_Id :=
+                                  Unchecked_Convert_To (Etype (Id_Ctor),
+                                    Make_Explicit_Dereference (Loc,
+                                      New_Occurrence_Of (BIP_Object, Loc)));
+                  BIP_Obj_Ref : constant Node_Id :=
+                                  Make_Explicit_Dereference (Loc,
+                                    New_Occurrence_Of (BIP_Object, Loc));
+
+               begin
+                  Insert_List_Before_And_Analyze (N,
+                    Build_Initialization_Call (N, Id_Ref, Typ,
+                      Constructor_Ref => Expr));
+
+                  --  Generate:
+                  --    obj : T := renames BIP_Object_Access.all;
+
+                  Analyze (BIP_Obj_Ref);
+                  Rewrite_Object_Declaration_As_Renaming (N, BIP_Obj_Ref);
+                  return;
+               end;
+
+            --  b) C++ constructor call not placed in a return statement
+
             elsif Is_CPP_Constructor_Call (Expr) then
                declare
                   Id_Ref : constant Node_Id := New_Occurrence_Of (Def_Id, Loc);
@@ -9313,7 +9353,7 @@ package body Exp_Ch3 is
          end if;
 
       --  If this is the return object of a function returning on the secondary
-      --  stack, convert the declaration to a renaming of the dereference of ah
+      --  stack, convert the declaration to a renaming of the dereference of an
       --  allocator for the secondary stack.
 
       --    Result : T [:= <expression>];
@@ -9404,7 +9444,7 @@ package body Exp_Ch3 is
          end;
 
       --  If this is the return object of a function returning a by-reference
-      --  type, convert the declaration to a renaming of the dereference of ah
+      --  type, convert the declaration to a renaming of the dereference of an
       --  allocator for the return stack.
 
       --    Result : T [:= <expression>];
@@ -9477,10 +9517,10 @@ package body Exp_Ch3 is
          end;
       end if;
 
-      --  Final transformation - turn the object declaration into a renaming
-      --  if appropriate. If this is the completion of a deferred constant
-      --  declaration, then this transformation generates what would be
-      --  illegal code if written by hand, but that's OK.
+      --  Final transformation: turn the object declaration into a renaming if
+      --  needed. If this is the completion of a deferred constant declaration,
+      --  this transformation generates what would be illegal code if written
+      --  by hand, but that's OK.
 
       if Rewrite_As_Renaming then
          Rewrite_Object_Declaration_As_Renaming (N, Expr_Q);
@@ -11683,6 +11723,7 @@ package body Exp_Ch3 is
             Func_Id := Defining_Unit_Name (Specification (Func_Decl));
 
             Mutate_Ekind (Func_Id, E_Function);
+            Set_Has_Controlling_Result (Func_Id);
             Set_Is_Wrapper (Func_Id);
 
             --  Corresponding_Spec will be set again to the same value during

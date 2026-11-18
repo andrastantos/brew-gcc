@@ -1546,12 +1546,16 @@ standard_conversion (tree to, tree from, tree expr, bool c_cast_p,
 
       if (!same_type_p (fbase, tbase))
 	{
-	  from = build_memfn_type (fstat,
-				   tbase,
-				   cp_type_quals (tbase),
-				   type_memfn_rqual (tofn));
-	  from = build_ptrmemfunc_type (build_pointer_type (from));
-	  conv = build_conv (ck_pmem, from, conv);
+	  tree first = to;
+	  if (!same_type_p (tstat, fstat))
+	    {
+	      first = build_memfn_type (fstat,
+					tbase,
+					cp_type_quals (tbase),
+					type_memfn_rqual (tofn));
+	      first = build_ptrmemfunc_type (build_pointer_type (first));
+	    }
+	  conv = build_conv (ck_pmem, first, conv);
 	  conv->base_p = true;
 	}
       if (fnptr_conv_p (tstat, fstat))
@@ -10715,10 +10719,18 @@ build_over_call (struct z_candidate *cand, int flags, tsubst_flags_t complain)
              func(NULL);
            }
       */
-      bool const conversion_warning = !(null_node_p (current_arg)
-					&& DECL_TEMPLATE_INFO (fn)
-					&& cand->template_decl
-					&& !cand->explicit_targs);
+      bool conversion_warning = !(null_node_p (current_arg)
+				  && DECL_TEMPLATE_INFO (fn)
+				  && cand->template_decl
+				  && !cand->explicit_targs);
+
+      /* Also don't warn about (x <=> y) < 0 (c++/100903).  */
+      if (conversion_warning
+	  && integer_zerop (current_arg)
+	  && warn_zero_as_null_pointer_constant
+	  && !warning_enabled_at (DECL_SOURCE_LOCATION (fn),
+				  OPT_Wzero_as_null_pointer_constant))
+	conversion_warning = false;
 
       tsubst_flags_t const arg_complain
 	= conversion_warning ? complain : complain & ~tf_warning;

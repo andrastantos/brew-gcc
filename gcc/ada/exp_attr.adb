@@ -781,9 +781,12 @@ package body Exp_Attr is
          if Field_Nam in Name_uObject | Name_uParent | Name_uTag then
             null;
 
-         --  Do not process fields without any scalar components
+         --  Do not process fields without any scalar components, or whose type
+         --  is an unchecked union since we cannot know where they are.
 
-         elsif not Scalar_Part_Present (Field_Typ) then
+         elsif not Scalar_Part_Present (Field_Typ)
+           or else Is_Unchecked_Union (Field_Typ)
+         then
             null;
 
          --  Otherwise the field needs to be validated. Use Make_Identifier
@@ -2233,6 +2236,8 @@ package body Exp_Attr is
          Formal_Typ : constant Entity_Id := Etype (Formal);
          Is_Written : constant Boolean   := Ekind (Formal) /= E_In_Parameter;
 
+         Call : Node_Id;
+
       begin
          --  The expansion depends on Item, the second actual, which is
          --  the object being streamed in or out.
@@ -2286,8 +2291,8 @@ package body Exp_Attr is
          --  operation is not inherited), we are all set, and can use the
          --  argument unchanged.
 
-         if not Is_Class_Wide_Type (Entity (Pref))
-           and then not Is_Class_Wide_Type (Etype (Item))
+         if not Is_Class_Wide_Type (Item_Typ)
+           and then not Is_Class_Wide_Type (Formal_Typ)
            and then Base_Type (Item_Typ) /= Base_Type (Formal_Typ)
          then
             --  Perform an unchecked conversion when either the argument or
@@ -2333,11 +2338,21 @@ package body Exp_Attr is
 
          --  And now rewrite the call
 
-         Rewrite (N,
-           Make_Procedure_Call_Statement (Loc,
-             Name                   => New_Occurrence_Of (Pname, Loc),
-             Parameter_Associations => Exprs));
+         Call := Make_Procedure_Call_Statement (Loc,
+           Name                   => New_Occurrence_Of (Pname, Loc),
+           Parameter_Associations => Exprs);
 
+         --  If the attribute has not been specified for a CW type, then we
+         --  must dispatch to the attribute of the specific type identified
+         --  by the tag of Item.
+
+         if Is_Class_Wide_Type (Entity (Pref))
+           and then Is_Dispatching_Operation (Pname)
+         then
+            Set_Controlling_Argument (Call, Item);
+         end if;
+
+         Rewrite (N, Call);
          Analyze (N);
       end Rewrite_Attribute_Proc_Call;
 
@@ -3552,6 +3567,25 @@ package body Exp_Attr is
             Rewrite (N,
               New_Occurrence_Of
                 (Extra_Constrained (Formal_Ent), Loc));
+
+         --  Extra formals are not created for Unchecked_Union parameters
+
+         elsif Present (Formal_Ent)
+           and then Ekind (Formal_Ent) /= E_In_Parameter
+           and then Is_Unchecked_Union (Base_Type (Etype (Formal_Ent)))
+         then
+            if Comes_From_Source (N) then
+               Error_Msg_N
+                 ("constraints cannot be determined for Unchecked_Union??", N);
+               Error_Msg_N
+                 ("\Program_Error will be raised for ''Constrained??", N);
+            end if;
+
+            Insert_Action (N,
+              Make_Raise_Program_Error (Loc,
+                Reason => PE_Unchecked_Union_Restriction));
+
+            Rewrite (N, New_Occurrence_Of (Boolean_Literals (False), Loc));
 
          --  If the prefix is an access to object, the attribute applies to
          --  the designated object, so rewrite with an explicit dereference.
@@ -4931,9 +4965,9 @@ package body Exp_Attr is
 
             --  Dispatching case with class-wide type
 
-            elsif Is_Class_Wide_Type (P_Type) then
+            elsif Is_Class_Wide_Type (U_Type) then
 
-               if Is_Mutably_Tagged_Type (P_Type) then
+               if Is_Mutably_Tagged_Type (U_Type) then
 
                   --  In mutably tagged case, rewrite
                   --    T'Class'Input (Strm)
@@ -4983,7 +5017,7 @@ package body Exp_Attr is
                end if;
 
                Read_Controlling_Tag (P_Type, Cntrl);
-               Fname := Find_Prim_Op (Root_Type (P_Type), TSS_Stream_Input);
+               Fname := Find_Prim_Op (U_Type, TSS_Stream_Input);
 
             --  For tagged types, use the primitive Input function
 
@@ -6622,8 +6656,7 @@ package body Exp_Attr is
                end if;
 
             --  Tagged type case, use the primitive Put_Image function. Note
-            --  that this will dispatch in the class-wide case which is what we
-            --  want.
+            --  that this will dispatch in the class-wide case as required.
 
             elsif Is_Tagged_Type (U_Type) then
                Pname := Find_Optional_Prim_Op (U_Type, TSS_Put_Image);
@@ -7044,7 +7077,7 @@ package body Exp_Attr is
                end;
 
             --  Tagged type case, use the primitive Read function. Note that
-            --  this will dispatch in the class-wide case which is what we want
+            --  this will dispatch in the class-wide case as required.
 
             elsif Is_Tagged_Type (U_Type) then
 
@@ -8770,7 +8803,7 @@ package body Exp_Attr is
                end;
 
             --  Tagged type case, use the primitive Write function. Note that
-            --  this will dispatch in the class-wide case which is what we want
+            --  this will dispatch in the class-wide case as required.
 
             elsif Is_Tagged_Type (U_Type) then
 

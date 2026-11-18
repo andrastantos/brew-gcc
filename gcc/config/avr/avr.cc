@@ -249,9 +249,6 @@ bool avr_need_clear_bss_p = false;
 bool avr_need_copy_data_p = false;
 bool avr_has_rodata_p = false;
 
-/* To track if we satisfy __call_main from AVR-LibC.  */
-bool avr_no_call_main_p = false;
-
 /* Counts how often pass avr-fuse-add has been executed.  Is is kept in
    sync with cfun->machine->n_avr_fuse_add_executed and serves as an
    insn condition for shift insn splitters.  */
@@ -10544,7 +10541,7 @@ avr_out_fract (rtx_insn *insn, rtx operands[], bool intsigned, int *plen)
 	{
 	  avr_asm_len ("clr __tmp_reg__" CR_TAB
 		       "sbrc %1,0"       CR_TAB
-		       "dec __tmp_reg__", xop, plen, 1);
+		       "dec __tmp_reg__", xop, plen, 3);
 	  sn = src.regno;
 	  if (sn < s0)
 	    {
@@ -10559,7 +10556,7 @@ avr_out_fract (rtx_insn *insn, rtx operands[], bool intsigned, int *plen)
 	    avr_asm_len ("clt"                CR_TAB
 			 "bld __tmp_reg__,7"  CR_TAB
 			 "adc %0,__tmp_reg__",
-			 &all_regs_rtx[s0], plen, 1);
+			 &all_regs_rtx[s0], plen, 3);
 	  else
 	    avr_asm_len ("lsr __tmp_reg" CR_TAB
 			 "add %0,__tmp_reg__",
@@ -10758,8 +10755,8 @@ avr_out_fract (rtx_insn *insn, rtx operands[], bool intsigned, int *plen)
 	  xop[2] = all_regs_rtx[s0];
 	  if (!lsb_in_tmp_reg && !MAY_CLOBBER (s0))
 	    avr_asm_len ("mov __tmp_reg__,%2", xop, plen, 1);
-	  avr_asm_len ("tst %0" CR_TAB "brpl 0f",
-		       &all_regs_rtx[src.regno_msb], plen, 2);
+	  avr_asm_len ("tst %0" CR_TAB
+		       "brpl 0f", &all_regs_rtx[src.regno_msb], plen, 2);
 	  if (!lsb_in_tmp_reg)
 	    {
 	      unsigned sn = src.regno;
@@ -11906,7 +11903,9 @@ avr_insert_attributes (tree node, tree *attributes)
 	      *attributes = tree_cons (get_identifier ("section"),
 				       arg, *attributes);
 	    }
-	  avr_no_call_main_p = true;
+	  if (!lookup_attribute ("used", *attributes))
+	    *attributes = tree_cons (get_identifier ("used"),
+				     NULL_TREE, *attributes);
 	}
     } // -mno-call-main
 #endif // AVR-LibC
@@ -12467,15 +12466,6 @@ avr_file_end (void)
 
   if (avr_need_clear_bss_p)
     fputs (".global __do_clear_bss\n", asm_out_file);
-
-  /* Don't let __call_main call main() and exit().
-     Defining this symbol will keep the code from being pulled
-     in from lib<mcu>.a as requested by AVR-LibC's gcrt1.S.
-     We invoke main() by other means: putting it in .init9.  */
-
-  if (avr_no_call_main_p)
-    fputs (".global __call_main\n"
-	   "__call_main = 0\n", asm_out_file);
 }
 
 

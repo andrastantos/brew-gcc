@@ -1047,10 +1047,9 @@ package body Exp_Imgv is
          return;
       end if;
 
-      --  If Image should be transformed using Put_Image, then do so. See
-      --  Exp_Put_Image for details.
+      --  If Image must be turned into Put_Image, then do so
 
-      if Exp_Put_Image.Image_Should_Call_Put_Image (N) then
+      if Exp_Put_Image.Image_Must_Call_Put_Image (N) then
          Establish_Transient_Scope (N, Manage_Sec_Stack => True);
          Rewrite (N, Exp_Put_Image.Build_Image_Call (N));
          Analyze_And_Resolve (N, Standard_String, Suppress => All_Checks);
@@ -1061,11 +1060,10 @@ package body Exp_Imgv is
 
       --  Ada 2022 allows 'Image on private types, so fetch the underlying
       --  type to obtain the structure of the type. We use the base type,
-      --  not the root type for discrete types, to handle properly derived
-      --  types, but we use the root type for enumeration types, because the
-      --  literal map is attached to the root. Should be inherited ???
+      --  not the root type, for discrete types in order to handle derived
+      --  types, except for character types for which this is not needed.
 
-      if Is_Real_Type (Ptyp) or else Is_Enumeration_Type (Ptyp) then
+      if Is_Real_Type (Ptyp) or else Is_Character_Type (Ptyp) then
          Rtyp := Underlying_Type (Root_Type (Ptyp));
       else
          Rtyp := Underlying_Type (Base_Type (Ptyp));
@@ -1076,7 +1074,7 @@ package body Exp_Imgv is
 
       Enum_Case := False;
 
-      if Rtyp = Standard_Boolean then
+      if Is_Boolean_Type (Rtyp) then
          --  Use inline expansion if the -gnatd_x switch is not passed to the
          --  compiler. Otherwise expand into a call to the runtime.
 
@@ -1861,10 +1859,9 @@ package body Exp_Imgv is
          return;
       end if;
 
-      --  If Image should be transformed using Put_Image, then do so. See
-      --  Exp_Put_Image for details.
+      --  If Image must be turned into Put_Image, then do so
 
-      if Exp_Put_Image.Image_Should_Call_Put_Image (N) then
+      if Exp_Put_Image.Image_Must_Call_Put_Image (N) then
          Establish_Transient_Scope (N, Manage_Sec_Stack => True);
          Rewrite (N, Exp_Put_Image.Build_Image_Call (N));
          Analyze_And_Resolve (N, Standard_Wide_String, Suppress => All_Checks);
@@ -1971,10 +1968,9 @@ package body Exp_Imgv is
          return;
       end if;
 
-      --  If Image should be transformed using Put_Image, then do so. See
-      --  Exp_Put_Image for details.
+      --  If Image must be turned into Put_Image, then do so
 
-      if Exp_Put_Image.Image_Should_Call_Put_Image (N) then
+      if Exp_Put_Image.Image_Must_Call_Put_Image (N) then
          Establish_Transient_Scope (N, Manage_Sec_Stack => True);
          Rewrite (N, Exp_Put_Image.Build_Image_Call (N));
          Analyze_And_Resolve

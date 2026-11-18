@@ -4120,14 +4120,27 @@ gfc_dump_parse_tree (gfc_namespace *ns, FILE *file)
   show_namespace (ns);
 }
 
-/* This part writes BIND(C) prototypes and declatations, and prototypes
-   for EXTERNAL preocedures, for use in a C programs.  */
+/* This part writes BIND(C) prototypes and declarations, and prototypes
+   for EXTERNAL procedures, for use in a C programs.  */
 
 static void write_interop_decl (gfc_symbol *);
 static void write_proc (gfc_symbol *, bool);
 static void show_external_symbol (gfc_gsymbol *, void *);
 static void write_type (gfc_symbol *sym);
 static void write_funptr_fcn (gfc_symbol *);
+
+/* Helper function determining if the characteristics of a formal argument of a
+   bind(C) procedure is such that its C prototype needs struct CFI_cdesc_t.  */
+
+static bool
+needs_CFI_cdesc (gfc_typespec *ts, gfc_array_spec *as)
+{
+  return ((as && (as->type == AS_ASSUMED_RANK
+		  || as->type == AS_ASSUMED_SHAPE
+		  || as->type == AS_DEFERRED))
+	  || (ts->type == BT_CHARACTER
+	      && (ts->deferred || ts->u.cl->length == NULL)));
+}
 
 /* Do we need to write out an #include <ISO_Fortran_binding.h> or not?  */
 
@@ -4153,7 +4166,7 @@ has_cfi_cdesc (gfc_gsymbol *gsym, void *p)
     {
       gfc_symbol *s;
       s = f->sym;
-      if (s->as && (s->as->type == AS_ASSUMED_RANK || s->as->type == AS_ASSUMED_SHAPE))
+      if (needs_CFI_cdesc (&s->ts, s->as))
 	{
 	  *data_p = true;
 	  return;
@@ -4286,7 +4299,7 @@ get_c_type_name (gfc_typespec *ts, gfc_array_spec *as, const char **pre,
   *post = "";
   *type_name = "<error>";
 
-  if (as && (as->type == AS_ASSUMED_RANK || as->type == AS_ASSUMED_SHAPE))
+  if (needs_CFI_cdesc (ts, as))
     {
       *asterisk = true;
       *post = "";

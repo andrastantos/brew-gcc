@@ -3085,7 +3085,7 @@ get_sym_storage_size (gfc_symbol *sym, bool *size_known)
    units of the actual argument up to the end of the array.  */
 
 static unsigned long
-get_expr_storage_size (gfc_expr *e, bool *size_known)
+get_expr_storage_size (gfc_expr *e, bool *size_known, long int *charlen)
 {
   int i;
   long int strlen, elements;
@@ -3094,6 +3094,7 @@ get_expr_storage_size (gfc_expr *e, bool *size_known)
   gfc_ref *ref;
 
   *size_known = false;
+  *charlen = -1;
 
   if (e == NULL)
     return 0;
@@ -3109,6 +3110,7 @@ get_expr_storage_size (gfc_expr *e, bool *size_known)
 	strlen = e->value.character.length;
       else
 	return 0;
+      *charlen = strlen;
     }
   else
     strlen = 1; /* Length per element.  */
@@ -3365,6 +3367,7 @@ gfc_compare_actual_formal (gfc_actual_arglist **ap, gfc_formal_arglist *formal,
   gfc_formal_arglist *f;
   int i, n, na;
   unsigned long actual_size, formal_size;
+  long int charlen;
   bool full_array = false;
   gfc_array_ref *actual_arr_ref;
   gfc_array_spec *fas, *aas;
@@ -3681,8 +3684,16 @@ gfc_compare_actual_formal (gfc_actual_arglist **ap, gfc_formal_arglist *formal,
       if (a->expr->expr_type == EXPR_NULL && a->expr->ts.type == BT_UNKNOWN)
 	goto skip_size_check;
 
-      actual_size = get_expr_storage_size (a->expr, &actual_size_known);
+      actual_size = get_expr_storage_size (a->expr, &actual_size_known, &charlen);
       formal_size = get_sym_storage_size (f->sym, &formal_size_known);
+
+      /* If the formal is a scalar character variable, use the charlen of the
+	 actual.  */
+      if (actual_size_known && formal_size_known && charlen >= 0
+	  && a->expr->ts.type == BT_CHARACTER
+	  && f->sym->attr.flavor != FL_PROCEDURE
+	  && !f->sym->attr.dimension)
+	actual_size = charlen;
 
       if (actual_size_known && formal_size_known
 	  && actual_size != formal_size
@@ -3802,6 +3813,24 @@ gfc_compare_actual_formal (gfc_actual_arglist **ap, gfc_formal_arglist *formal,
 	  if (where)
 	    gfc_error ("Expected a procedure for argument %qs at %L",
 		       f->sym->name, &a->expr->where);
+	  ok = false;
+	  goto match;
+	}
+
+      /* F23:15.5.2.5, para 2: A procedure pointer actual argument cannot correspond
+	 to a data-object dummy argument (reverse of the two checks above).
+	 Only flag EXPR_VARIABLE to avoid false positives on function calls
+	 through procedure pointer components (e.g. o%f(args)).  */
+      if (!f->sym->attr.proc_pointer
+	  && f->sym->attr.flavor != FL_PROCEDURE
+	  && a->expr->expr_type == EXPR_VARIABLE
+	  && (a->expr->symtree->n.sym->attr.proc_pointer
+	      || gfc_is_proc_ptr_comp (a->expr)))
+	{
+	  if (where)
+	    gfc_error ("Procedure pointer actual argument at %L cannot "
+		       "be passed to data-object dummy argument %qs",
+		       &a->expr->where, f->sym->name);
 	  ok = false;
 	  goto match;
 	}
@@ -4815,7 +4844,7 @@ find_symtree0 (gfc_symtree *root, gfc_symbol *sym)
 {
   gfc_symtree * st;
 
-  if (root->n.sym == sym)
+  if (root == NULL || root->n.sym == sym)
     return root;
 
   st = NULL;
@@ -4848,6 +4877,14 @@ gfc_find_sym_in_symtree (gfc_symbol *sym)
       st = find_symtree0 (ns->sym_root, sym);
       if (st)
 	return st;
+
+      /* Search user-defined operators.  */
+      if (ns->uop_root && sym->attr.function)
+	{
+	  st = find_symtree0 (ns->uop_root, sym);
+	  if (st)
+	    return st;
+	}
     }
   gfc_internal_error ("Unable to find symbol %qs", sym->name);
   /* Not reached.  */

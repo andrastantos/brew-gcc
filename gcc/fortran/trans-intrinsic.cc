@@ -1238,6 +1238,7 @@ gfc_conv_intrinsic_caf_get (gfc_se *se, gfc_expr *expr, tree lhs,
   array_expr = expr->value.function.actual->expr;
   ns = array_expr->expr_type == EXPR_VARIABLE
 	   && !array_expr->symtree->n.sym->attr.associate_var
+	   && !array_expr->symtree->n.sym->module
 	 ? array_expr->symtree->n.sym->ns
 	 : gfc_current_ns;
   type = gfc_typenode_for_spec (&array_expr->ts);
@@ -9828,9 +9829,15 @@ gfc_conv_intrinsic_loc (gfc_se * se, gfc_expr * expr)
 	gfc_add_data_component (arg_expr);
       gfc_conv_expr_reference (se, arg_expr);
     }
-  else
+  else if (gfc_is_simply_contiguous (arg_expr, false, false))
     gfc_conv_array_parameter (se, arg_expr, true, NULL, NULL, NULL);
+  else
+    {
+      gfc_conv_expr_descriptor (se, arg_expr);
+      se->expr = gfc_conv_descriptor_data_get (se->expr);
+    }
   se->expr = convert (gfc_get_int_type (gfc_index_integer_kind), se->expr);
+  se->expr = gfc_evaluate_now (se->expr, &se->pre);
 
   /* Create a temporary variable for loc return value.  Without this,
      we get an error an ICE in gcc/expr.cc(expand_expr_addr_expr_1).  */

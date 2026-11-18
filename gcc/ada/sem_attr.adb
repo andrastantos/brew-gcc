@@ -37,6 +37,7 @@ with Elists;         use Elists;
 with Errout;         use Errout;
 with Eval_Fat;
 with Exp_Dist;       use Exp_Dist;
+with Exp_Put_Image;  use Exp_Put_Image;
 with Exp_Util;       use Exp_Util;
 with Expander;       use Expander;
 with Freeze;         use Freeze;
@@ -3372,6 +3373,7 @@ package body Sem_Attr is
         and then Aname /= Name_Code_Address
         and then Aname /= Name_Result
         and then Aname /= Name_Unchecked_Access
+        and then Aname /= Name_Unrestricted_Access
       then
          --  The prefix must be resolvable by itself, without reference to the
          --  attribute. One case that requires special handling is a prefix
@@ -8096,6 +8098,10 @@ package body Sem_Attr is
       function Mantissa return Uint;
       --  Returns the Mantissa value for the prefix type
 
+      procedure Fold_Compile_Time_Known_Enumeration_Image (Expr : Node_Id);
+      --  Folds 'Image of a compile-time known enumeration value into a string
+      --  literal whose contents depend on whether names are available.
+
       procedure Set_Bounds;
       --  Used for First, Last and Length attributes applied to an array or
       --  array subtype. Sets the variables Lo_Bound and Hi_Bound to the low
@@ -8192,6 +8198,37 @@ package body Sem_Attr is
              and then
            Compile_Time_Known_Value (Type_High_Bound (Typ));
       end Compile_Time_Known_Bounds;
+
+      -----------------------------------------------
+      -- Fold_Compile_Time_Known_Enumeration_Image --
+      -----------------------------------------------
+
+      procedure Fold_Compile_Time_Known_Enumeration_Image (Expr : Node_Id) is
+         Lit : constant Entity_Id := Expr_Value_E (Expr);
+         Typ : constant Entity_Id := First_Subtype (Etype (Expr));
+
+      begin
+         pragma Assert (Ekind (Lit) = E_Enumeration_Literal);
+
+         Start_String;
+
+         --  If Discard_Names is in effect for the type, either specifically
+         --  or globally, then we emit the numeric representation of the 'Pos
+         --  attribute of the enumeration literal with a leading space.
+
+         if Discard_Names (Typ) or else Global_Discard_Names then
+            UI_Image (Enumeration_Pos (Lit), Decimal);
+            Store_String_Char  (' ');
+            Store_String_Chars (UI_Image_Buffer (1 .. UI_Image_Length));
+         else
+            Get_Unqualified_Decoded_Name_String (Chars (Lit));
+            Set_Casing (All_Upper_Case);
+            Store_String_Chars (Name_Buffer (1 .. Name_Len));
+         end if;
+
+         Rewrite (N, Make_String_Literal (Loc, Strval => End_String));
+         Analyze_And_Resolve (N, Standard_String);
+      end Fold_Compile_Time_Known_Enumeration_Image;
 
       ----------------
       -- Fore_Value --
@@ -8478,43 +8515,20 @@ package body Sem_Attr is
 
       --  Attribute 'Img applied to a static enumeration value is static, and
       --  we will do the folding right here (things get confused if we let this
-      --  case go through the normal circuitry).
+      --  case go through the normal circuitry) provided that the default Image
+      --  implementation has not been overridden. Likewise for 'Image applied
+      --  to an object, except that it is never static, see a few lines below.
 
-      if Id = Attribute_Img
-        and then Is_Entity_Name (P)
-        and then Is_Enumeration_Type (Etype (Entity (P)))
-        and then Is_OK_Static_Expression (P)
+      if (Id = Attribute_Img
+           or else (Id = Attribute_Image and then Is_Object_Reference (P)))
+        and then Is_Enumeration_Type (Etype (P))
+        and then not Is_Character_Type (Etype (P))
+        and then Compile_Time_Known_Value (P)
+        and then not Image_Must_Call_Put_Image (N)
       then
-         declare
-            Lit : constant Entity_Id := Expr_Value_E (P);
-            Typ : constant Entity_Id := Etype (Entity (P));
-            Str : String_Id;
-
-         begin
-            Start_String;
-
-            --  If Discard_Names is in effect for the type, then we emit the
-            --  numeric representation of the prefix literal 'Pos attribute,
-            --  prefixed with a single space.
-
-            if Discard_Names (Typ) then
-               UI_Image (Enumeration_Pos (Lit), Decimal);
-               Store_String_Char  (' ');
-               Store_String_Chars (UI_Image_Buffer (1 .. UI_Image_Length));
-            else
-               Get_Unqualified_Decoded_Name_String (Chars (Lit));
-               Set_Casing (All_Upper_Case);
-               Store_String_Chars (Name_Buffer (1 .. Name_Len));
-            end if;
-
-            Str := End_String;
-
-            Rewrite (N, Make_String_Literal (Loc, Strval => Str));
-            Analyze_And_Resolve (N, Standard_String);
-            Set_Is_Static_Expression (N, True);
-         end;
-
-         return;
+         Fold_Compile_Time_Known_Enumeration_Image (P);
+         Set_Is_Static_Expression
+           (N, Id = Attribute_Img and then Is_OK_Static_Expression (P));
       end if;
 
       --  Special processing for cases where the prefix is an object or value,
@@ -9716,32 +9730,19 @@ package body Sem_Attr is
       -- Image --
       -----------
 
-      --  Image is a scalar attribute, but is never static, because it is
-      --  not a static function (having a non-scalar argument (RM 4.9(22)).
+      --  Image is a scalar attribute, but is never static, because it is not
+      --  a static function (as having a non-scalar result type (RM 4.9(22)).
       --  However, we can constant-fold the image of an enumeration literal
-      --  if names are available and default Image implementation has not
-      --  been overridden.
+      --  if the default Image implementation has not been overridden.
 
       when Attribute_Image =>
-         if Is_Entity_Name (E1)
-           and then Ekind (Entity (E1)) = E_Enumeration_Literal
-           and then not Discard_Names (First_Subtype (Etype (E1)))
-           and then not Global_Discard_Names
-           and then not Has_Aspect (Etype (E1), Aspect_Put_Image)
+         if Is_Enumeration_Type (Etype (P))
+           and then not Is_Character_Type (Etype (P))
+           and then Compile_Time_Known_Value (E1)
+           and then not Image_Must_Call_Put_Image (N)
          then
-            declare
-               Lit : constant Entity_Id := Entity (E1);
-               Str : String_Id;
-            begin
-               Start_String;
-               Get_Unqualified_Decoded_Name_String (Chars (Lit));
-               Set_Casing (All_Upper_Case);
-               Store_String_Chars (Name_Buffer (1 .. Name_Len));
-               Str := End_String;
-               Rewrite (N, Make_String_Literal (Loc, Strval => Str));
-               Analyze_And_Resolve (N, Standard_String);
-               Set_Is_Static_Expression (N, False);
-            end;
+            Fold_Compile_Time_Known_Enumeration_Image (E1);
+            Set_Is_Static_Expression (N, False);
          end if;
 
       -------------------
@@ -12879,11 +12880,6 @@ package body Sem_Attr is
                function Is_Reducer_Subprogram (E : Entity_Id) return Boolean;
                --  Return whether E is a reducer subprogram (RM 4.5.10(11-13))
 
-               function Make_Array_Type
-                 (Index, Value : Entity_Id) return Entity_Id;
-               --  This function returns a simple array type to resolve the
-               --  array aggregate.
-
                -----------------------
                -- Get_Value_Subtype --
                -----------------------
@@ -12915,6 +12911,10 @@ package body Sem_Attr is
                      It         : Interp;
 
                   begin
+                     if not Is_Overloaded (Reducer_N) then
+                        return;
+                     end if;
+
                      Get_First_Interp (Reducer_N, I, It);
                      while Present (It.Nam) loop
                         if Is_Reducer_Subprogram (It.Nam) then
@@ -13014,22 +13014,6 @@ package body Sem_Attr is
                --  Start of processing for Get_Value_Subtype
 
                begin
-                  --  In case the reducer is not overloaded, check directly
-                  --  its second formal for the value subtype.
-
-                  if not Is_Overloaded (Reducer_N) then
-                     if Is_Reducer_Subprogram (Entity (Reducer_N)) then
-                        return Etype (Next_Formal
-                                       (First_Formal (Entity (Reducer_N))));
-
-                     --  Return any type to signal the caller that no proper
-                     --  reducer subprogram was found.
-
-                     else
-                        return Any_Type;
-                     end if;
-                  end if;
-
                   --  RM 4.5.10(11/5): the reducer subprogram is required to be
                   --  subtype conformant with one of the following profiles:
 
@@ -13308,31 +13292,6 @@ package body Sem_Attr is
                   end if;
                end Is_Reducer_Subprogram;
 
-               ---------------------
-               -- Make_Array_Type --
-               ---------------------
-
-               function Make_Array_Type
-                 (Index, Value : Entity_Id) return Entity_Id
-               is
-                  Array_Type : constant Entity_Id := Make_Temporary (Loc, 'A');
-                  Range_N    : constant Node_Id :=
-                    Make_Range (Loc,
-                      Low_Bound  => Type_Low_Bound (Index),
-                      High_Bound => Type_High_Bound (Index));
-               begin
-                  Set_In_List (Range_N);
-                  Set_Etype (Range_N, Index);
-
-                  Set_Etype (Array_Type, Array_Type);
-                  Set_Scope (Array_Type, Find_Enclosing_Scope (N));
-                  Mutate_Ekind (Array_Type, E_Array_Type);
-                  Set_Component_Type (Array_Type, Value);
-                  Set_First_Index (Array_Type, Range_N);
-
-                  return Array_Type;
-               end Make_Array_Type;
-
                --  Local variables
 
                Reducer_E : Entity_Id;
@@ -13460,15 +13419,13 @@ package body Sem_Attr is
                end if;
 
                --  Complete the resolution of the reduction expression by
-               --  resolving the initial expression and array aggregate.
+               --  resolving the initial expression, and the prefix if it
+               --  is not an aggregate, since the aggregate is only meant
+               --  to be a placeholder for the iterated association.
 
                Resolve (Init_Value_Expr, Accum_Typ);
 
-               if Nkind (P) = N_Aggregate then
-                  Resolve_Aggregate (P,
-                    Make_Array_Type (Index => Standard_Positive,
-                                     Value => Value_Typ));
-               else
+               if Nkind (P) /= N_Aggregate then
                   Resolve (P);
                end if;
             end;
