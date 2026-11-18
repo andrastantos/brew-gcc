@@ -48,6 +48,7 @@
 #include "io.h"
 #include "common-defs.h"
 #include "gcobolio.h"
+#include "cobol-endian.h"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wwrite-strings"
@@ -58,84 +59,18 @@
 // initialization happens just once.
 int __gg__globals_are_initialized = 0;
 
-// We have a number of integer constants.  We need two macros, one for 1-digit
-// names and a second for 2-digit names in order to match our mangling
-// convention for variable names that start with a numeric:
 
-//  4 becomes _1_4
-//  _ indicates this is a mangled name
-//  1 means it is one character long
-//  _ terminates the 1
-//  4 is the one-character name
+#if COBOL_BIG_ENDIAN
+#define endian big_endian_e
+#else
+#define endian none_e
+#endif
 
-#define INTEGER_CONSTANT1(a) \
-unsigned char __gg__data_##a[1] = {(a)};  \
-struct cblc_field_t __ggsr___1_##a = {    \
-  .data           =  __gg__data_##a ,         \
-  .capacity       = 1 ,                 \
-  .allocated      = 1 ,                 \
-  .offset         = 0 ,                 \
-  .name           = #a ,                \
-  .picture        = "" ,                \
-  .initial        = #a ,                \
-  .parent         = NULL,               \
-  .occurs_lower   = 0 ,                 \
-  .occurs_upper   = 0 ,                 \
-  .attr           = global_e | constant_e , \
-  .type           = FldLiteralN ,       \
-  .level          = 0 ,                 \
-  .digits         = 0 ,                 \
-  .rdigits        = 0 ,                 \
-  .dummy          = 0 ,                 \
-  };
-
-#define INTEGER_CONSTANT2(a) \
-unsigned char __gg__data_##a[1] = {(a)};  \
-struct cblc_field_t __ggsr___2_##a = {    \
-  .data           = __gg__data_##a ,         \
-  .capacity       = 1 ,                 \
-  .allocate       = 1 ,                 \
-  .offset         = 0 ,                 \
-  .name           = #a ,                \
-  .picture        = "" ,                \
-  .initial        = #a ,                \
-  .parent         = NULL,               \
-  .occurs_lower   = 0 ,                 \
-  .occurs_upper   = 0 ,                 \
-  .attr           = global_e | constant_e , \
-  .type           = FldLiteralN ,       \
-  .level          = 0 ,                 \
-  .digits         = 0 ,                 \
-  .rdigits        = 0 ,                 \
-  .encoding       = iconv_CP1252_e                   \
-  .alphabet       = 0                   \
-  };
-
-unsigned char __gg__data_space[1] = {' '};
-struct cblc_field_t __ggsr__space = {
-  .data           = __gg__data_space ,
-  .capacity       = sizeof(__gg__data_space) ,
-  .allocated      = sizeof(__gg__data_space) ,
-  .offset         = 0 ,
-  .name           = "SPACE" ,
-  .picture        = "" ,
-  .initial        = (char *)space_value_e ,
-  .parent         = NULL,
-  .occurs_lower   = 0 ,
-  .occurs_upper   = 0 ,
-  .attr           = quoted_e | constant_e | space_value_e ,
-  .type           = FldAlphanumeric ,
-  .level          = 0 ,
-  .digits         = 0 ,
-  .rdigits        = 0 ,
-  .encoding       = iconv_CP1252_e ,
-  .alphabet       = 0 ,
-  };
-
+unsigned char __gg__data_spaces[1] = {' '};
 struct cblc_field_t __ggsr__spaces = {
-  .data           = __gg__data_space ,
-  .capacity       = sizeof(__gg__data_space) ,
-  .allocated      = sizeof(__gg__data_space) ,
+  .data           = __gg__data_spaces ,
+  .capacity       = 1 ,
+  .allocated      = 1 ,
   .offset         = 0 ,
   .name           = "SPACES" ,
   .picture        = "" ,
@@ -143,7 +78,7 @@ struct cblc_field_t __ggsr__spaces = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = quoted_e | constant_e | space_value_e ,
+  .attr           = quoted_e | constant_e | register_e | space_value_e,
   .type           = FldAlphanumeric ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -164,7 +99,7 @@ struct cblc_field_t __ggsr__low_values = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x281 ,
+  .attr           = quoted_e | constant_e | register_e | low_value_e ,
   .type           = FldAlphanumeric ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -185,7 +120,7 @@ struct cblc_field_t __ggsr__zeros = {
   .parent         = NULL ,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x83 ,
+  .attr           = quoted_e | constant_e | register_e | zero_value_e ,
   .type           = FldAlphanumeric ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -206,7 +141,7 @@ struct cblc_field_t __ggsr__high_values = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x286 ,
+  .attr           = quoted_e | constant_e | register_e | high_value_e ,
   .type           = FldAlphanumeric ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -227,7 +162,7 @@ struct cblc_field_t __ggsr__quotes = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x285 ,
+  .attr           = quoted_e | constant_e | register_e | quote_value_e ,
   .type           = FldAlphanumeric ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -248,7 +183,7 @@ struct cblc_field_t __ggsr__nulls = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = quoted_e | constant_e ,
+  .attr           = constant_e | register_e | null_value_e ,
   .type           = FldPointer ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -269,7 +204,7 @@ struct cblc_field_t __ggsr___file_status = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x0 ,
+  .attr           = register_e ,
   .type           = FldNumericDisplay ,
   .level          = 0 ,
   .digits         = 2 ,
@@ -291,7 +226,7 @@ struct cblc_field_t __ggsr__upsi_0 = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x0 ,
+  .attr           = register_e | endian,
   .type           = FldNumericBin5 ,
   .level          = 0 ,
   .digits         = 4 ,
@@ -312,7 +247,7 @@ struct cblc_field_t __ggsr___dev_stdin = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x0 ,
+  .attr           = constant_e | quoted_e | register_e ,
   .type           = FldLiteralA ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -333,7 +268,7 @@ struct cblc_field_t __ggsr___dev_stdout = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x0 ,
+  .attr           = constant_e | quoted_e | register_e ,
   .type           = FldLiteralA ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -354,7 +289,7 @@ struct cblc_field_t __ggsr___dev_stderr = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x0 ,
+  .attr           = constant_e | quoted_e | register_e ,
   .type           = FldLiteralA ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -375,7 +310,7 @@ struct cblc_field_t __ggsr___dev_null = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = 0x0 ,
+  .attr           = constant_e | quoted_e | register_e ,
   .type           = FldLiteralA ,
   .level          = 0 ,
   .digits         = 0 ,
@@ -384,7 +319,7 @@ struct cblc_field_t __ggsr___dev_null = {
   .alphabet       = 0 ,
   };
 
-unsigned char __gg__data_argi[] = {0,0};
+unsigned char __gg__data_argi[] = {0,0,0,0};
 struct cblc_field_t __ggsr__argi = {
   .data           = __gg__data_argi ,
   .capacity       = 4 ,
@@ -396,15 +331,60 @@ struct cblc_field_t __ggsr__argi = {
   .parent         = NULL,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = global_e ,
+  .attr           = global_e | endian,
   .type           = FldNumericBin5 ,
   .level          = 0 ,
-  .digits         = 5 ,
+  .digits         = 0 ,
   .rdigits        = 0 ,
   .encoding       = iconv_CP1252_e ,
   .alphabet       = 0 ,
   };
 
+unsigned char __gg__data__literally_zero[] = {0,0,0,0};
+struct cblc_field_t __ggsr___literally_zero = {
+  .data           = __gg__data__literally_zero ,
+  .capacity       = 4 ,
+  .allocated      = 4 ,
+  .offset         = 0 ,
+  .name           = "_literally_zero" ,
+  .picture        = "" ,
+  .initial        = "" ,
+  .parent         = NULL,
+  .occurs_lower   = 0 ,
+  .occurs_upper   = 0 ,
+  .attr           = register_e | endian,
+  .type           = FldNumericBin5 ,
+  .level          = 0 ,
+  .digits         = 0 ,
+  .rdigits        = 0 ,
+  .encoding       = iconv_CP1252_e ,
+  .alphabet       = 0 ,
+  };
+
+#if COBOL_BIG_ENDIAN
+unsigned char __gg__data__literally_one[] = {0,0,0,1};
+#else
+unsigned char __gg__data__literally_one[] = {1,0,0,0};
+#endif
+struct cblc_field_t __ggsr__literally_one = {
+  .data           = __gg__data__literally_one ,
+  .capacity       = 4 ,
+  .allocated      = 4 ,
+  .offset         = 0 ,
+  .name           = "_literally_one" ,
+  .picture        = "" ,
+  .initial        = "" ,
+  .parent         = NULL,
+  .occurs_lower   = 0 ,
+  .occurs_upper   = 0 ,
+  .attr           = register_e | endian,
+  .type           = FldNumericBin5 ,
+  .level          = 0 ,
+  .digits         = 0 ,
+  .rdigits        = 0 ,
+  .encoding       = iconv_CP1252_e ,
+  .alphabet       = 0 ,
+  };
 
 /* The following defines storage for the global DEBUG-ITEM:
 
@@ -422,13 +402,13 @@ struct cblc_field_t __ggsr__argi = {
         02 DEBUG-CONTENTS PIC X(76).
 */
 
-unsigned char __gg__debug_item_data[132] = 
+unsigned char __gg__data_debug_item[132] =
                                  "                                      "
                                  "+0000 +0000 +0000 "
                                  "                                      "
                                  "                                     ";
 struct cblc_field_t __ggsr__debug_item = {
-  .data           = __gg__debug_item_data ,
+  .data           = __gg__data_debug_item ,
   .capacity       = 132 ,
   .allocated      = 132 ,
   .offset         = 0 ,
@@ -441,7 +421,7 @@ struct cblc_field_t __ggsr__debug_item = {
   .parent         = NULL ,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = register_e ,
+  .attr           = external_e | register_e ,
   .type           = FldGroup ,
   .level          = 01 ,
   .digits         = 0 ,
@@ -450,8 +430,9 @@ struct cblc_field_t __ggsr__debug_item = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_line = __gg__data_debug_item;
 struct cblc_field_t __ggsr__debug_line = {
-  .data           = __gg__debug_item_data + 0 ,
+  .data           = __gg__data_debug_line ,
   .capacity       = 6 ,
   .allocated      = 6 ,
   .offset         = 0 ,
@@ -461,7 +442,7 @@ struct cblc_field_t __ggsr__debug_line = {
   .parent         = &__ggsr__debug_item ,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = register_e ,
+  .attr           = external_e | register_e ,
   .type           = FldAlphanumeric ,
   .level          = 05 ,
   .digits         = 0 ,
@@ -470,8 +451,10 @@ struct cblc_field_t __ggsr__debug_line = {
   .alphabet       = 0 ,
   };
 
+
+unsigned char *__gg__data_debug_filler_1 = &__gg__data_debug_item[6];
 struct cblc_field_t __ggsr__debug_filler_1 = {
-  .data           = __gg__debug_item_data + 6 ,
+  .data           = __gg__data_debug_item ,
   .capacity       = 1 ,
   .allocated      = 1 ,
   .offset         = 6 ,
@@ -481,7 +464,7 @@ struct cblc_field_t __ggsr__debug_filler_1 = {
   .parent         = &__ggsr__debug_item ,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = register_e | filler_e ,
+  .attr           = external_e | register_e | filler_e ,
   .type           = FldAlphanumeric ,
   .level          = 05 ,
   .digits         = 0 ,
@@ -490,8 +473,9 @@ struct cblc_field_t __ggsr__debug_filler_1 = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_name = &__gg__data_debug_item[7];
 struct cblc_field_t __ggsr__debug_name = {
-  .data           = __gg__debug_item_data + 7 ,
+  .data           = __gg__data_debug_name ,
   .capacity       = 30 ,
   .allocated      = 30 ,
   .offset         = 7 ,
@@ -501,7 +485,7 @@ struct cblc_field_t __ggsr__debug_name = {
   .parent         = &__ggsr__debug_item ,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = register_e ,
+  .attr           = external_e | register_e ,
   .type           = FldAlphanumeric ,
   .level          = 05 ,
   .digits         = 0 ,
@@ -510,8 +494,9 @@ struct cblc_field_t __ggsr__debug_name = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_filler_2 = &__gg__data_debug_item[37];
 struct cblc_field_t __ggsr__debug_filler_2 = {
-  .data           = __gg__debug_item_data + 37 ,
+  .data           = __gg__data_debug_filler_2 ,
   .capacity       = 1 ,
   .allocated      = 1 ,
   .offset         = 37 ,
@@ -521,7 +506,7 @@ struct cblc_field_t __ggsr__debug_filler_2 = {
   .parent         = &__ggsr__debug_item ,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = register_e | filler_e ,
+  .attr           = external_e | register_e | filler_e ,
   .type           = FldAlphanumeric ,
   .level          = 05 ,
   .digits         = 0 ,
@@ -530,8 +515,9 @@ struct cblc_field_t __ggsr__debug_filler_2 = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_sub_1 = &__gg__data_debug_item[38];
 struct cblc_field_t __ggsr__debug_sub_1 = {
-  .data           = __gg__debug_item_data + 38 ,
+  .data           = __gg__data_debug_sub_1 ,
   .capacity       = 5 ,
   .allocated      = 5 ,
   .offset         = 38 ,
@@ -541,7 +527,7 @@ struct cblc_field_t __ggsr__debug_sub_1 = {
   .parent         = &__ggsr__debug_item ,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = signable_e | register_e | leading_e | separate_e ,
+  .attr           = signable_e | external_e | register_e | leading_e | separate_e ,
   .type           = FldNumericDisplay ,
   .level          = 05 ,
   .digits         = 4 ,
@@ -550,8 +536,9 @@ struct cblc_field_t __ggsr__debug_sub_1 = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_filler_3 = &__gg__data_debug_item[43];
 struct cblc_field_t __ggsr__debug_filler_3 = {
-  .data           = __gg__debug_item_data + 43,
+  .data           = __gg__data_debug_filler_3 ,
   .capacity       =  1,
   .allocated      =  1,
   .offset         =  43,
@@ -570,8 +557,9 @@ struct cblc_field_t __ggsr__debug_filler_3 = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_sub_2 = &__gg__data_debug_item[44];
 struct cblc_field_t __ggsr__debug_sub_2 = {
-  .data           = __gg__debug_item_data + 44 ,
+  .data           = __gg__data_debug_sub_2 ,
   .capacity       = 5 ,
   .allocated      = 5 ,
   .offset         = 44 ,
@@ -590,8 +578,9 @@ struct cblc_field_t __ggsr__debug_sub_2 = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_filler_4 = &__gg__data_debug_item[49];
 struct cblc_field_t __ggsr__debug_filler_4 = {
-  .data           = __gg__debug_item_data +  49,
+  .data           = __gg__data_debug_filler_4 ,
   .capacity       =  1,
   .allocated      =  1,
   .offset         =  49,
@@ -610,8 +599,9 @@ struct cblc_field_t __ggsr__debug_filler_4 = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_sub_3 = &__gg__data_debug_item[50];
 struct cblc_field_t __ggsr__debug_sub_3 = {
-  .data           = __gg__debug_item_data + 50 ,
+  .data           = __gg__data_debug_sub_3 ,
   .capacity       = 5 ,
   .allocated      = 5 ,
   .offset         = 50 ,
@@ -630,8 +620,9 @@ struct cblc_field_t __ggsr__debug_sub_3 = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_filler_5 = &__gg__data_debug_item[55];
 struct cblc_field_t __ggsr__debug_filler_5 = {
-  .data           = __gg__debug_item_data + 55,
+  .data           = __gg__data_debug_filler_5 ,
   .capacity       =  1,
   .allocated      =  1,
   .offset         =  55,
@@ -650,8 +641,9 @@ struct cblc_field_t __ggsr__debug_filler_5 = {
   .alphabet       = 0 ,
   };
 
+unsigned char *__gg__data_debug_contents = &__gg__data_debug_item[56];
 struct cblc_field_t __ggsr__debug_contents = {
-  .data           = __gg__debug_item_data + 56 ,
+  .data           = __gg__data_debug_contents ,
   .capacity       = 76 ,
   .allocated      = 76 ,
   .offset         = 56 ,
@@ -661,7 +653,7 @@ struct cblc_field_t __ggsr__debug_contents = {
   .parent         = &__ggsr__debug_item ,
   .occurs_lower   = 0 ,
   .occurs_upper   = 0 ,
-  .attr           = signable_e | register_e | leading_e | separate_e ,
+  .attr           = register_e ,
   .type           = FldAlphanumeric ,
   .level          = 05 ,
   .digits         = 0 ,

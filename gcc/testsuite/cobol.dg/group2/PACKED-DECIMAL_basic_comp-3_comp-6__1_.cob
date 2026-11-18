@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-options "-dialect mf" }
        *> { dg-output-file "group2/PACKED-DECIMAL_basic_comp-3_comp-6__1_.out" }
 

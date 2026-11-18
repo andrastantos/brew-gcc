@@ -62,6 +62,7 @@
 
 #define __glibcxx_want_constexpr_bitset
 #define __glibcxx_want_bitset  // ...construct from string_view
+#define __glibcxx_want_hardened_bitset
 #include <bits/version.h>
 
 #ifdef __cpp_lib_bitset // ...construct from string_view
@@ -907,6 +908,20 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	  return *this;
 	}
 
+#if __glibcxx_ranges_zip // >= C++23
+	// _GLIBCXX_RESOLVE_LIB_DEFECTS
+	// 4187. bitset::reference should be const-assignable
+	constexpr const reference&
+	operator=(bool __x) const noexcept
+	{
+	  if (__x)
+	    *_M_wp |= _Base::_S_maskbit(_M_bpos);
+	  else
+	    *_M_wp &= ~_Base::_S_maskbit(_M_bpos);
+	  return *this;
+	}
+#endif // C++23
+
 	// For b[i] = b[__j];
 	_GLIBCXX23_CONSTEXPR
 	reference&
@@ -938,6 +953,35 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	  *_M_wp ^= _Base::_S_maskbit(_M_bpos);
 	  return *this;
 	}
+
+#if __cplusplus >= 201103L
+	_GLIBCXX23_CONSTEXPR
+	friend void
+	swap(reference __x, reference __y) noexcept
+	{
+	  bool __tmp = __x;
+	  __x = __y;
+	  __y = __tmp;
+	}
+
+	_GLIBCXX23_CONSTEXPR
+	friend void
+	swap(reference __x, bool& __y) noexcept
+	{
+	  bool __tmp = __x;
+	  __x = __y;
+	  __y = __tmp;
+	}
+
+	_GLIBCXX23_CONSTEXPR
+	friend void
+	swap(bool& __x, reference __y) noexcept
+	{
+	  bool __tmp = __x;
+	  __x = __y;
+	  __y = __tmp;
+	}
+#endif
       };
       friend class reference;
 
@@ -1661,29 +1705,32 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       typedef std::basic_istream<_CharT, _Traits>  __istream_type;
       typedef typename __istream_type::ios_base    __ios_base;
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wc++17-extensions" // if constexpr
+      static const bool __use_local = _Nb * sizeof(_CharT) <= 256;
+      static const size_t __array_len = _Nb != 0 ? _Nb : 1;
+
       struct _Buffer
       {
-	static _GLIBCXX_CONSTEXPR bool _S_use_alloca() { return _Nb <= 256; }
-
-	explicit _Buffer(_CharT* __p) : _M_ptr(__p) { }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wc++17-extensions" // if constexpr
+	_Buffer() : _M_ptr(_M_local)
+	{
+	  if _GLIBCXX_CONSTEXPR (!__use_local)
+	    _M_ptr = new _CharT[__array_len];
+	}
 
 	~_Buffer()
 	{
-	  if _GLIBCXX_CONSTEXPR (!_S_use_alloca())
+	  if _GLIBCXX_CONSTEXPR (!__use_local)
 	    delete[] _M_ptr;
 	}
-
-	_CharT* const _M_ptr;
-      };
-      _CharT* __ptr;
-      if _GLIBCXX_CONSTEXPR (_Buffer::_S_use_alloca())
-	__ptr = (_CharT*)__builtin_alloca(_Nb);
-      else
-	__ptr = new _CharT[_Nb];
-      const _Buffer __buf(__ptr);
 #pragma GCC diagnostic pop
+
+	_CharT* _M_ptr;
+	_CharT _M_local[__use_local ? __array_len : 1];
+      };
+      _Buffer __buf __attribute__((__uninitialized__));
+
+      _CharT* __ptr = __buf._M_ptr;
 
       // _GLIBCXX_RESOLVE_LIB_DEFECTS
       // 303. Bitset input operator underspecified

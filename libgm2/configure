@@ -647,8 +647,14 @@ BUILD_PIMLIB_FALSE
 BUILD_PIMLIB_TRUE
 GM2_FOR_TARGET
 CC_FOR_BUILD
+PICFLAG
 enable_static
 enable_shared
+HAVE_PYTHON_INTERPRETER_FALSE
+HAVE_PYTHON_INTERPRETER_TRUE
+ax_python_interpreter_found
+PYTHON
+PYTHON_VERSION
 ENABLE_DARWIN_AT_RPATH_FALSE
 ENABLE_DARWIN_AT_RPATH_TRUE
 OTOOL64
@@ -719,7 +725,7 @@ am__isrc
 INSTALL_DATA
 INSTALL_SCRIPT
 INSTALL_PROGRAM
-GLIBCXX_LIBS
+GLIBGM2_LIBS
 CXXCPP
 ac_ct_CXX
 CXXFLAGS
@@ -733,8 +739,8 @@ AS
 LN_S
 toplevel_srcdir
 toplevel_builddir
-glibcxx_srcdir
-glibcxx_builddir
+glibgm2_srcdir
+glibgm2_builddir
 target_os
 target_vendor
 target_cpu
@@ -805,7 +811,7 @@ with_target_subdir
 with_cross_host
 with_newlib
 enable_maintainer_mode
-enable_libstdcxx_time
+enable_libgm2_time
 enable_dependency_tracking
 enable_silent_rules
 with_build_libsubdir
@@ -832,7 +838,8 @@ CPP
 CXX
 CXXFLAGS
 CCC
-CXXCPP'
+CXXCPP
+PYTHON_VERSION'
 
 
 # Initialize some variables set by options.
@@ -1456,7 +1463,7 @@ Optional Features:
   --enable-maintainer-mode
                           enable make rules and dependencies not useful (and
                           sometimes confusing) to the casual installer
-  --enable-libstdcxx-time[=KIND]
+  --enable-libgm2-time[=KIND]
                           use KIND for check type [default=auto]
   --enable-dependency-tracking
                           do not reject slow dependency extractors
@@ -1465,9 +1472,6 @@ Optional Features:
   --enable-silent-rules   less verbose build output (undo: "make V=1")
   --disable-silent-rules  verbose build output (undo: "make V=0")
   --enable-version-specific-runtime-libs    Specify that runtime libraries should be installed in a compiler-specific directory
-  --enable-maintainer-mode
-                          enable make rules and dependencies not useful (and
-                          sometimes confusing) to the casual installer
   --enable-shared[=PKGS]  build shared libraries [default=yes]
   --enable-static[=PKGS]  build static libraries [default=yes]
   --enable-fast-install[=PKGS]
@@ -1507,6 +1511,10 @@ Some influential environment variables:
   CXXCPP      C++ preprocessor
   CCAS        assembler compiler command (defaults to CC)
   CCASFLAGS   assembler compiler flags (defaults to CFLAGS)
+  PYTHON_VERSION
+              The installed Python version to use, for example '2.3'. This
+              string will be appended to the Python interpreter canonical
+              name.
 
 Use these variables to override the choices made by `configure' or to help
 it to find libraries and programs with nonstandard names/locations.
@@ -2771,7 +2779,7 @@ if test $cross_compiling = no && test $multilib = yes \
    cross_compiling=maybe
 fi
 
-ac_config_commands="$ac_config_commands default-1"
+ac_config_commands="$ac_config_commands multilib"
 
 
 
@@ -4145,8 +4153,6 @@ $as_echo "$ac_cv_safe_to_define___extensions__" >&6; }
 
 
 
-# Do not delete or change the following two lines.  For why, see
-# http://gcc.gnu.org/ml/libstdc++/2003-07/msg00451.html
 # Make sure we can run config.sub.
 $SHELL "$ac_aux_dir/config.sub" sun4 >/dev/null 2>&1 ||
   as_fn_error $? "cannot run $SHELL $ac_aux_dir/config.sub" "$LINENO" 5
@@ -4257,13 +4263,11 @@ test -n "$target_alias" &&
   test "$program_prefix$program_suffix$program_transform_name" = \
     NONENONEs,x,x, &&
   program_prefix=${target_alias}-
-
 target_alias=${target_alias-$host_alias}
-
 
 if test "$build" != "$host"; then
   # We are being configured with some form of cross compiler.
-  GLIBCXX_IS_NATIVE=false
+  GLIBGM2_IS_NATIVE=false
   case "$host","$target" in
     # Darwin crosses can use the host system's libraries and headers,
     # because of the fat library support.  Of course, it must be the
@@ -4274,7 +4278,7 @@ if test "$build" != "$host"; then
 	hostos=`echo $host | sed 's/.*-darwin/darwin/'`
 	targetos=`echo $target | sed 's/.*-darwin/darwin/'`
 	if test $hostos = $targetos || test $targetos = darwin ; then
-	  GLIBCXX_IS_NATIVE=true
+	  GLIBGM2_IS_NATIVE=true
 	fi
 	;;
 
@@ -4283,7 +4287,7 @@ if test "$build" != "$host"; then
 	;;
   esac
 else
-  GLIBCXX_IS_NATIVE=true
+  GLIBGM2_IS_NATIVE=true
 fi
 
 # Runs configure.host, and assorted other critical bits.  Sets
@@ -4298,13 +4302,13 @@ fi
   # These need to be absolute paths, yet at the same time need to
   # canonicalize only relative paths, because then amd will not unmount
   # drives. Thus the use of PWDCMD: set it to 'pawd' or 'amq -w' if using amd.
-  glibcxx_builddir=`${PWDCMD-pwd}`
+  glibgm2_builddir=`${PWDCMD-pwd}`
   case $srcdir in
-    \\/$* | ?:\\/*) glibcxx_srcdir=${srcdir} ;;
-    *) glibcxx_srcdir=`cd "$srcdir" && ${PWDCMD-pwd} || echo "$srcdir"` ;;
+    \\/$* | ?:\\/*) glibgm2_srcdir=${srcdir} ;;
+    *) glibgm2_srcdir=`cd "$srcdir" && ${PWDCMD-pwd} || echo "$srcdir"` ;;
   esac
-  toplevel_builddir=${glibcxx_builddir}/..
-  toplevel_srcdir=${glibcxx_srcdir}/..
+  toplevel_builddir=${glibgm2_builddir}/..
+  toplevel_srcdir=${glibgm2_srcdir}/..
 
 
 
@@ -4695,7 +4699,7 @@ rm -f conftest*
   # Find platform-specific directories containing configuration info.
   # Also possibly modify flags used elsewhere, as needed by the platform.
 
-  . $glibcxx_srcdir/configure.host
+  . $glibgm2_srcdir/configure.host
   { $as_echo "$as_me:${as_lineno-$LINENO}: CPU config directory is $cpu_include_dir" >&5
 $as_echo "$as_me: CPU config directory is $cpu_include_dir" >&6;}
   { $as_echo "$as_me:${as_lineno-$LINENO}: OS config directory is $os_include_dir" >&5
@@ -5101,7 +5105,6 @@ ac_compiler_gnu=$ac_cv_cxx_compiler_gnu
   { $as_echo "$as_me:${as_lineno-$LINENO}: checking for gettimeofday" >&5
 $as_echo_n "checking for gettimeofday... " >&6; }
 
-
   ac_ext=cpp
 ac_cpp='$CXXCPP $CPPFLAGS'
 ac_compile='$CXX -c $CXXFLAGS $CPPFLAGS conftest.$ac_ext >&5'
@@ -5177,7 +5180,7 @@ $as_echo "$ac_has_gettimeofday" >&6; }
 
   if test x"$ac_has_gettimeofday" = x"yes"; then
 
-$as_echo "#define _GLIBCXX_USE_GETTIMEOFDAY 1" >>confdefs.h
+$as_echo "#define _GLIBGM2_USE_GETTIMEOFDAY 1" >>confdefs.h
 
   fi
 
@@ -5193,18 +5196,17 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
 # For clock_gettime, nanosleep and sched_yield support.
 
 
-   # Check whether --enable-libstdcxx-time was given.
-if test "${enable_libstdcxx_time+set}" = set; then :
-  enableval=$enable_libstdcxx_time;
+   # Check whether --enable-libgm2-time was given.
+if test "${enable_libgm2_time+set}" = set; then :
+  enableval=$enable_libgm2_time;
       case "$enableval" in
        yes|no|rt) ;;
-       *) as_fn_error $? "Unknown argument to enable/disable libstdcxx-time" "$LINENO" 5 ;;
+       *) as_fn_error $? "Unknown argument to enable/disable libgm2-time" "$LINENO" 5 ;;
 	  	        esac
 
 else
-  enable_libstdcxx_time=auto
+  enable_libgm2_time=auto
 fi
-
 
 
 
@@ -5223,7 +5225,7 @@ ac_compiler_gnu=$ac_cv_cxx_compiler_gnu
   ac_has_nanosleep=no
   ac_has_sched_yield=no
 
-  if test x"$enable_libstdcxx_time" = x"auto"; then
+  if test x"$enable_libgm2_time" = x"auto"; then
 
     case "${target_os}" in
       cygwin*)
@@ -5236,6 +5238,13 @@ ac_compiler_gnu=$ac_cv_cxx_compiler_gnu
       darwin*)
         ac_has_nanosleep=yes
         ac_has_sched_yield=yes
+        case "${target_os}" in
+          darwin1[6-9]* | darwin2*)
+            # clock_gettime() is available from Darwin12.
+            ac_has_clock_monotonic=yes
+            ac_has_clock_realtime=yes
+            ;;
+        esac
         ;;
       # VxWorks has nanosleep as soon as the kernel is configured with
       # INCLUDE_POSIX_TIMERS, which is normally/most-often the case.
@@ -5335,9 +5344,9 @@ fi
         ac_has_sched_yield=yes
     esac
 
-  elif test x"$enable_libstdcxx_time" != x"no"; then
+  elif test x"$enable_libgm2_time" != x"no"; then
 
-    if test x"$enable_libstdcxx_time" = x"rt"; then
+    if test x"$enable_libgm2_time" = x"rt"; then
       { $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing clock_gettime" >&5
 $as_echo_n "checking for library containing clock_gettime... " >&6; }
 if ${ac_cv_search_clock_gettime+:} false; then :
@@ -5470,11 +5479,11 @@ fi
     fi
 
     case "$ac_cv_search_clock_gettime" in
-      -l*) GLIBCXX_LIBS=$ac_cv_search_clock_gettime
+      -l*) GLIBGM2_LIBS=$ac_cv_search_clock_gettime
       ;;
     esac
     case "$ac_cv_search_nanosleep" in
-      -l*) GLIBCXX_LIBS="$GLIBCXX_LIBS $ac_cv_search_nanosleep"
+      -l*) GLIBGM2_LIBS="$GLIBGM2_LIBS $ac_cv_search_nanosleep"
       ;;
     esac
 
@@ -5540,8 +5549,8 @@ fi
 
     case "$ac_cv_search_sched_yield" in
       -lrt*)
-      if test x"$enable_libstdcxx_time" = x"rt"; then
-	GLIBCXX_LIBS="$GLIBCXX_LIBS $ac_cv_search_sched_yield"
+      if test x"$enable_libgm2_time" = x"rt"; then
+	GLIBGM2_LIBS="$GLIBGM2_LIBS $ac_cv_search_sched_yield"
         ac_has_sched_yield=yes
       fi
       ;;
@@ -5579,9 +5588,8 @@ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 int
 main ()
 {
-#if _POSIX_TIMERS > 0 && defined(_POSIX_MONOTONIC_CLOCK)
+
 	  timespec tp;
-	 #endif
 	  clock_gettime(CLOCK_MONOTONIC, &tp);
 
   ;
@@ -5612,9 +5620,8 @@ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 int
 main ()
 {
-#if _POSIX_TIMERS > 0
+
 	  timespec tp;
-	 #endif
 	  clock_gettime(CLOCK_REALTIME, &tp);
 
   ;
@@ -5645,9 +5652,8 @@ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 int
 main ()
 {
-#if _POSIX_TIMERS > 0
+
 	  timespec tp;
-	 #endif
 	  nanosleep(&tp, 0);
 
   ;
@@ -5681,9 +5687,8 @@ $as_echo_n "checking for clock_gettime syscall... " >&6; }
 int
 main ()
 {
-#if _POSIX_TIMERS > 0 && defined(_POSIX_MONOTONIC_CLOCK)
+
 	    timespec tp;
-	   #endif
 	   syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &tp);
 	   syscall(SYS_clock_gettime, CLOCK_REALTIME, &tp);
 
@@ -5701,7 +5706,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
 $as_echo "$ac_has_clock_gettime_syscall" >&6; }
 	if test x"$ac_has_clock_gettime_syscall" = x"yes"; then
 
-$as_echo "#define _GLIBCXX_USE_CLOCK_GETTIME_SYSCALL 1" >>confdefs.h
+$as_echo "#define _GLIBGM2_USE_CLOCK_GETTIME_SYSCALL 1" >>confdefs.h
 
 	  ac_has_clock_monotonic=yes
 	  ac_has_clock_realtime=yes
@@ -5746,29 +5751,29 @@ $as_echo "$ac_timespec_matches_syscall" >&6; }
 
   if test x"$ac_has_clock_monotonic" = x"yes"; then
 
-$as_echo "#define _GLIBCXX_USE_CLOCK_MONOTONIC 1" >>confdefs.h
+$as_echo "#define _GLIBGM2_USE_CLOCK_MONOTONIC 1" >>confdefs.h
 
   fi
 
   if test x"$ac_has_clock_realtime" = x"yes"; then
 
-$as_echo "#define _GLIBCXX_USE_CLOCK_REALTIME 1" >>confdefs.h
+$as_echo "#define _GLIBGM2_USE_CLOCK_REALTIME 1" >>confdefs.h
 
   fi
 
   if test x"$ac_has_sched_yield" = x"yes"; then
 
-$as_echo "#define _GLIBCXX_USE_SCHED_YIELD 1" >>confdefs.h
+$as_echo "#define _GLIBGM2_USE_SCHED_YIELD 1" >>confdefs.h
 
   fi
 
   if test x"$ac_has_nanosleep" = x"yes"; then
 
-$as_echo "#define _GLIBCXX_USE_NANOSLEEP 1" >>confdefs.h
+$as_echo "#define _GLIBGM2_USE_NANOSLEEP 1" >>confdefs.h
 
   elif test x"$ac_has_win32_sleep" = x"yes"; then
 
-$as_echo "#define _GLIBCXX_USE_WIN32_SLEEP 1" >>confdefs.h
+$as_echo "#define _GLIBGM2_USE_WIN32_SLEEP 1" >>confdefs.h
 
   else
       { $as_echo "$as_me:${as_lineno-$LINENO}: checking for sleep" >&5
@@ -5828,7 +5833,7 @@ $as_echo "$ac_has_usleep" >&6; }
 
   if test x"$ac_has_nanosleep$ac_has_win32_sleep$ac_has_sleep" = x"nonono"; then
 
-$as_echo "#define _GLIBCXX_NO_SLEEP 1" >>confdefs.h
+$as_echo "#define _GLIBGM2_NO_SLEEP 1" >>confdefs.h
 
   fi
 
@@ -6742,118 +6747,6 @@ fi
 
 
 # Checks for header files.
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for ANSI C header files" >&5
-$as_echo_n "checking for ANSI C header files... " >&6; }
-if ${ac_cv_header_stdc+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <stdlib.h>
-#include <stdarg.h>
-#include <string.h>
-#include <float.h>
-
-int
-main ()
-{
-
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_compile "$LINENO"; then :
-  ac_cv_header_stdc=yes
-else
-  ac_cv_header_stdc=no
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-
-if test $ac_cv_header_stdc = yes; then
-  # SunOS 4.x string.h does not declare mem*, contrary to ANSI.
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <string.h>
-
-_ACEOF
-if (eval "$ac_cpp conftest.$ac_ext") 2>&5 |
-  $EGREP "memchr" >/dev/null 2>&1; then :
-
-else
-  ac_cv_header_stdc=no
-fi
-rm -f conftest*
-
-fi
-
-if test $ac_cv_header_stdc = yes; then
-  # ISC 2.0.2 stdlib.h does not declare free, contrary to ANSI.
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <stdlib.h>
-
-_ACEOF
-if (eval "$ac_cpp conftest.$ac_ext") 2>&5 |
-  $EGREP "free" >/dev/null 2>&1; then :
-
-else
-  ac_cv_header_stdc=no
-fi
-rm -f conftest*
-
-fi
-
-if test $ac_cv_header_stdc = yes; then
-  # /bin/cc in Irix-4.0.5 gets non-ANSI ctype macros unless using -ansi.
-  if test "$cross_compiling" = yes; then :
-  :
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <ctype.h>
-#include <stdlib.h>
-#if ((' ' & 0x0FF) == 0x020)
-# define ISLOWER(c) ('a' <= (c) && (c) <= 'z')
-# define TOUPPER(c) (ISLOWER(c) ? 'A' + ((c) - 'a') : (c))
-#else
-# define ISLOWER(c) \
-		   (('a' <= (c) && (c) <= 'i') \
-		     || ('j' <= (c) && (c) <= 'r') \
-		     || ('s' <= (c) && (c) <= 'z'))
-# define TOUPPER(c) (ISLOWER(c) ? ((c) | 0x40) : (c))
-#endif
-
-#define XOR(e, f) (((e) && !(f)) || (!(e) && (f)))
-int
-main ()
-{
-  int i;
-  for (i = 0; i < 256; i++)
-    if (XOR (islower (i), ISLOWER (i))
-	|| toupper (i) != TOUPPER (i))
-      return 2;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_run "$LINENO"; then :
-
-else
-  ac_cv_header_stdc=no
-fi
-rm -f core *.core core.conftest.* gmon.out bb.out conftest$ac_exeext \
-  conftest.$ac_objext conftest.beam conftest.$ac_ext
-fi
-
-fi
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_header_stdc" >&5
-$as_echo "$ac_cv_header_stdc" >&6; }
-if test $ac_cv_header_stdc = yes; then
-
-$as_echo "#define STDC_HEADERS 1" >>confdefs.h
-
-fi
-
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for sys/wait.h that is POSIX.1 compatible" >&5
 $as_echo_n "checking for sys/wait.h that is POSIX.1 compatible... " >&6; }
 if ${ac_cv_header_sys_wait_h+:} false; then :
@@ -7260,21 +7153,6 @@ else
 fi
 fi
 
-
-
-# Command-line options.
-# Very limited version of AC_MAINTAINER_MODE.
-# Check whether --enable-maintainer-mode was given.
-if test "${enable_maintainer_mode+set}" = set; then :
-  enableval=$enable_maintainer_mode; case ${enable_maintainer_mode} in
-     yes) MAINT='' ;;
-     no) MAINT='#' ;;
-     *) as_fn_error $? "--enable-maintainer-mode must be yes or no" "$LINENO" 5 ;;
-   esac
-   maintainer_mode=${enableval}
-else
-  MAINT='#'
-fi
 
 
 toolexecdir=no
@@ -11682,10 +11560,9 @@ done
 
 
 # Set options
+enable_dlopen=yes
 
 
-
-        enable_dlopen=no
 
 
   enable_win32_dll=no
@@ -15243,7 +15120,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 15246 "configure"
+#line 15123 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -15349,7 +15226,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 15352 "configure"
+#line 15229 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -18678,11 +18555,6 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
 
-enable_dlopen=yes
-
-
-
-
  if test x$enable_darwin_at_rpath = xyes; then
   ENABLE_DARWIN_AT_RPATH_TRUE=
   ENABLE_DARWIN_AT_RPATH_FALSE='#'
@@ -18691,6 +18563,132 @@ else
   ENABLE_DARWIN_AT_RPATH_FALSE=
 fi
 
+
+	# Default to no.
+        ax_python_interpreter_found=no
+        { $as_echo "$as_me:${as_lineno-$LINENO}: checking do we have a Python interpreter" >&5
+$as_echo_n "checking do we have a Python interpreter... " >&6; }
+	#
+	# Allow the use of a (user set) custom python version
+	#
+
+	for version in $PYTHON_VERSION 3 2 ""; do
+            # Extract the first word of "python[$version]", so it can be a program name with args.
+set dummy python$version; ac_word=$2
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+$as_echo_n "checking for $ac_word... " >&6; }
+if ${ac_cv_path_PYTHON+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  case $PYTHON in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_PYTHON="$PYTHON" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  test -z "$as_dir" && as_dir=.
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir/$ac_word$ac_exec_ext"; then
+    ac_cv_path_PYTHON="$as_dir/$ac_word$ac_exec_ext"
+    $as_echo "$as_me:${as_lineno-$LINENO}: found $as_dir/$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac
+fi
+PYTHON=$ac_cv_path_PYTHON
+if test -n "$PYTHON"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $PYTHON" >&5
+$as_echo "$PYTHON" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+fi
+
+
+            if test -z "$PYTHON"; then
+                { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+            else
+                { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+                # Note: omitted the test for Python version < 2.1.0.
+                #
+                # If the macro parameter ``version'' is set, honour it.
+                # A Python shim class, VPy, is used to implement correct version comparisons via
+                # string expressions, since e.g. a naive textual ">= 2.7.3" won't work for
+                # Python 2.7.10 (the ".1" being evaluated as less than ".3").
+                if test -n ">= '3.0'"; then
+                    { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether internal python version string is >= '3.0'" >&5
+$as_echo_n "checking whether internal python version string is >= '3.0'... " >&6; }
+                    cat << EOF > ax_python_interpreter_vpy.py
+class VPy:
+    def vtup(self, s):
+        return tuple(map(int, s.strip().replace("rc", ".").split(".")))
+    def __init__(self):
+        import sys
+        self.vpy = tuple(sys.version_info)[:3]
+    def __eq__(self, s):
+        return self.vpy == self.vtup(s)
+    def __ne__(self, s):
+        return self.vpy != self.vtup(s)
+    def __lt__(self, s):
+        return self.vpy < self.vtup(s)
+    def __gt__(self, s):
+        return self.vpy > self.vtup(s)
+    def __le__(self, s):
+        return self.vpy <= self.vtup(s)
+    def __ge__(self, s):
+        return self.vpy >= self.vtup(s)
+EOF
+		ac_supports_python_ver=`$PYTHON -c """import ax_python_interpreter_vpy; \
+  ver = ax_python_interpreter_vpy.VPy(); \
+  print (ver >= '3.0') """`
+                    rm -rf ax_python_interpreter_vpy*.py* __pycache__/ax_python_interpreter_vpy*.py*
+                    if test "$ac_supports_python_ver" = "True"; then
+			# Found correct version, now break from the loop.
+                        { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+                        PYTHON_VERSION=$version
+                        ax_python_interpreter_found=yes
+			break
+                    else
+                        { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+			PYTHON_VERSION=""
+                    fi
+                fi
+	    fi
+	done
+
+        { $as_echo "$as_me:${as_lineno-$LINENO}: checking result of having a Python >= '3.0' interpreter" >&5
+$as_echo_n "checking result of having a Python >= '3.0' interpreter... " >&6; }
+	if test "$ax_python_interpreter_found" = "yes"; then
+           { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes, all done." >&5
+$as_echo "yes, all done." >&6; }
+        else
+	   { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+           PYTHON_VERSION=""
+	fi
+	#
+	# all done!
+	#
+
+ if test x$ax_python_interpreter_found = xyes; then
+  HAVE_PYTHON_INTERPRETER_TRUE=
+  HAVE_PYTHON_INTERPRETER_FALSE='#'
+else
+  HAVE_PYTHON_INTERPRETER_TRUE='#'
+  HAVE_PYTHON_INTERPRETER_FALSE=
+fi
 
 
 
@@ -19403,6 +19401,89 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
 
+
+
+
+
+
+
+case "${host}" in
+    # PIC is the default on some targets or must not be used.
+    *-*-darwin*)
+	# For darwin, common symbols are not allowed in MH_DYLIB files
+	case "${CFLAGS}" in
+	  # If we are using a compiler supporting mdynamic-no-pic
+	  # and the option has been tested as safe to add, then cancel
+	  # it here, since the code generated is incompatible with shared
+	  # libs.
+	  *-mdynamic-no-pic*) PICFLAG='-fno-common -mno-dynamic-no-pic' ;;
+	  *) PICFLAG=-fno-common ;;
+	esac
+	;;
+    alpha*-dec-osf5*)
+	# PIC is the default.
+	;;
+    hppa*64*-*-hpux*)
+	# PIC is the default for 64-bit PA HP-UX.
+	;;
+    i[34567]86-*-cygwin* | x86_64-*-cygwin*)
+	;;
+    i[34567]86-*-mingw* | x86_64-*-mingw*)
+	;;
+    i[34567]86-*-interix[3-9]*)
+	# Interix 3.x gcc -fpic/-fPIC options generate broken code.
+	# Instead, we relocate shared libraries at runtime.
+	;;
+    i[34567]86-*-nto-qnx*)
+	# QNX uses GNU C++, but need to define -shared option too, otherwise
+	# it will coredump.
+	PICFLAG='-fPIC -shared'
+	;;
+    i[34567]86-pc-msdosdjgpp*)
+	# DJGPP does not support shared libraries at all.
+	;;
+    ia64*-*-hpux*)
+	# On IA64 HP-UX, PIC is the default but the pic flag
+	# sets the default TLS model and affects inlining.
+	PICFLAG=-fPIC
+	;;
+    loongarch*-*-*)
+	PICFLAG=-fpic
+	;;
+    mips-sgi-irix6*)
+	# PIC is the default.
+	;;
+    rs6000-ibm-aix* | powerpc-ibm-aix*)
+	# All AIX code is PIC.
+	;;
+
+    # Some targets support both -fPIC and -fpic, but prefer the latter.
+    # FIXME: Why?
+    i[34567]86-*-* | x86_64-*-*)
+	PICFLAG=-fpic
+	;;
+    # FIXME: Override -fPIC default in libgcc only?
+    sh-*-linux* | sh[2346lbe]*-*-linux*)
+	PICFLAG=-fpic
+	;;
+    sh*-*-netbsd*)
+	PICFLAG=-fpic
+	;;
+    # Default to -fPIC unless specified otherwise.
+    *)
+	PICFLAG=-fPIC
+	;;
+esac
+
+# If the user explicitly uses -fpic/-fPIC, keep that.
+case "${CFLAGS}" in
+    *-fpic*)
+	PICFLAG=-fpic
+	;;
+    *-fPIC*)
+	PICFLAG=-fPIC
+	;;
+esac
 
 
 
@@ -23005,7 +23086,7 @@ GM2_FOR_TARGET=${GM2_FOR_TARGET:-gcc}
 
 # Now we check the target as long as it is a supported host.
 # For some embedded targets we choose minimal runtime system which is
-# just enough to satisfy the linker targetting raw metal.
+# just enough to satisfy the linker targeting raw metal.
 if test x${M2_HOST_OS} != xunknown; then
 { $as_echo "$as_me:${as_lineno-$LINENO}: m2 library building for target ${target}" >&5
 $as_echo "$as_me: m2 library building for target ${target}" >&6;}
@@ -23084,8 +23165,8 @@ $as_echo "no" >&6; }
    fi
 
 
-   { $as_echo "$as_me:${as_lineno-$LINENO}: checking m2 front end will build Logitech compatability libraries:" >&5
-$as_echo_n "checking m2 front end will build Logitech compatability libraries:... " >&6; }
+   { $as_echo "$as_me:${as_lineno-$LINENO}: checking m2 front end will build Logitech compatibility libraries:" >&5
+$as_echo_n "checking m2 front end will build Logitech compatibility libraries:... " >&6; }
    if test x${BUILD_LOGLIB} = xtrue; then
       { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
@@ -23313,6 +23394,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${ENABLE_DARWIN_AT_RPATH_TRUE}" && test -z "${ENABLE_DARWIN_AT_RPATH_FALSE}"; then
   as_fn_error $? "conditional \"ENABLE_DARWIN_AT_RPATH\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${HAVE_PYTHON_INTERPRETER_TRUE}" && test -z "${HAVE_PYTHON_INTERPRETER_FALSE}"; then
+  as_fn_error $? "conditional \"HAVE_PYTHON_INTERPRETER\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${BUILD_PIMLIB_TRUE}" && test -z "${BUILD_PIMLIB_FALSE}"; then
@@ -24302,7 +24387,7 @@ for ac_config_target in $ac_config_targets
 do
   case $ac_config_target in
     "config.h") CONFIG_HEADERS="$CONFIG_HEADERS config.h" ;;
-    "default-1") CONFIG_COMMANDS="$CONFIG_COMMANDS default-1" ;;
+    "multilib") CONFIG_COMMANDS="$CONFIG_COMMANDS multilib" ;;
     "depfiles") CONFIG_COMMANDS="$CONFIG_COMMANDS depfiles" ;;
     "libtool") CONFIG_COMMANDS="$CONFIG_COMMANDS libtool" ;;
     "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
@@ -24906,7 +24991,7 @@ $as_echo "$as_me: executing $ac_file commands" >&6;}
 
 
   case $ac_file$ac_mode in
-    "default-1":C)
+    "multilib":C)
 # Only add multilib support code if we just rebuilt the top-level
 # Makefile.
 case " $CONFIG_FILES " in

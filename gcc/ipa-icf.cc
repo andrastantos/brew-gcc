@@ -295,6 +295,7 @@ sem_function::get_hash (void)
       hstate.add_flag (DECL_CXX_CONSTRUCTOR_P (decl));
       hstate.add_flag (DECL_CXX_DESTRUCTOR_P (decl));
       hstate.add_flag (DECL_STATIC_CHAIN (decl));
+      hstate.add_flag (as_a<cgraph_node *> (node)->assume_function);
 
       set_hash (hstate.end ());
     }
@@ -538,6 +539,8 @@ sem_function::equals_wpa (sem_item *item,
       || cnode->must_remain_in_tu_body || cnode2->must_remain_in_tu_body)
     return return_false_with_msg ("must remain in TU");
 
+  if (cnode->assume_function != cnode2->assume_function)
+    return return_false_with_msg ("assume_function mismatch");
   if (cnode->thunk != cnode2->thunk)
     return return_false_with_msg ("thunk mismatch");
   if (cnode->former_thunk_p () != cnode2->former_thunk_p ())
@@ -659,10 +662,20 @@ sem_function::equals_wpa (sem_item *item,
     return return_false_with_msg ("different number of references");
 
   /* Checking function attributes.
-     This is quadratic in number of attributes  */
-  if (comp_type_attributes (TREE_TYPE (decl),
-			    TREE_TYPE (item->decl)) != 1)
+     This is quadratic in number of attributes.
+     comp_type_attributes only considers attributes that affect type
+     identity, but an attribute that leaves the type alone can still let
+     the body assume something, nonnull being one, so compare the lists
+     the same way the decl attributes are compared below.  */
+  if (!attribute_list_equal (TYPE_ATTRIBUTES (TREE_TYPE (decl)),
+			     TYPE_ATTRIBUTES (TREE_TYPE (item->decl))))
     return return_false_with_msg ("different type attributes");
+  /* A METHOD_TYPE promises a nonnull this pointer without carrying an
+     attribute that says so, so it is not interchangeable with a
+     FUNCTION_TYPE that makes no such promise.  */
+  if ((TREE_CODE (TREE_TYPE (decl)) == METHOD_TYPE)
+      != (TREE_CODE (TREE_TYPE (item->decl)) == METHOD_TYPE))
+    return return_false_with_msg ("METHOD_TYPE and FUNCTION_TYPE mismatch");
   if (!attribute_list_equal (DECL_ATTRIBUTES (decl),
 			     DECL_ATTRIBUTES (item->decl)))
     return return_false_with_msg ("different decl attributes");
@@ -879,7 +892,13 @@ sem_function::equals_private (sem_item *item)
  if (DECL_STATIC_CHAIN (decl) != DECL_STATIC_CHAIN (m_compared_func->decl))
     return return_false_with_msg ("static chain mismatch");
 
-  if (!dyn_cast <cgraph_node *> (node)->has_gimple_body_p ())
+  cgraph_node *cnode = as_a<cgraph_node *> (node);
+  cgraph_node *cnode2 = as_a<cgraph_node *> (m_compared_func->node);
+
+  if (cnode->assume_function != cnode2->assume_function)
+    return return_false_with_msg ("assume_function mismatch");
+
+  if (!cnode->has_gimple_body_p ())
     return true;
 
   /* Fill-up label dictionary.  */
@@ -985,7 +1004,7 @@ redirect_all_callers (cgraph_node *n, cgraph_node *to)
           nredirected++;
 	}
       else
-	e = e->next_callee;
+	e = e->next_caller;
     }
   for (unsigned i = 0; n->iterate_direct_aliases (i, ref);)
     {
@@ -1473,7 +1492,7 @@ sem_function::hash_stmt (gimple *stmt, inchash::hash &hstate)
 					  (&map, gimple_op (stmt, i));
 	    m_checker->hash_operand (gimple_op (stmt, i), hstate, 0,
 				     access_type);
-	    /* For memory accesses when hasing for LTO stremaing record
+	    /* For memory accesses when hashing for LTO streaming record
 	       base and ref alias ptr types so we can compare them at WPA
 	       time without having to read actual function body.  */
 	    if (access_type == func_checker::OP_MEMORY
@@ -2795,7 +2814,7 @@ sem_item_optimizer::subdivide_classes_by_equality (bool in_wpa)
 		}
 
 	      // We replace newly created new_vector for the class we've just
-	      // splitted.
+	      // split.
 	      c->members.release ();
 	      c->members.create (new_vector.length ());
 
@@ -2963,7 +2982,7 @@ sem_item_optimizer::traverse_congruence_split (congruence_class * const &cls,
   const congruence_class *splitter_cls = pair->cls;
 
   /* If counted bits are greater than zero and less than the number of members
-     a group will be splitted.  */
+     a group will be split.  */
   unsigned popcount = bitmap_count_bits (b);
 
   if (popcount > 0 && popcount < cls->members.length ())
@@ -3031,7 +3050,7 @@ sem_item_optimizer::traverse_congruence_split (congruence_class * const &cls,
 
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
-	  fprintf (dump_file, "  congruence class splitted:\n");
+	  fprintf (dump_file, "  congruence class split:\n");
 	  cls->dump (dump_file, 4);
 
 	  fprintf (dump_file, "  newly created groups:\n");
@@ -3234,7 +3253,7 @@ sem_item_optimizer::process_cong_reduction (void)
 	     "new classes.\n", new_classes);
 }
 
-/* Debug function prints all informations about congruence classes.  */
+/* Debug function prints all information about congruence classes.  */
 
 void
 sem_item_optimizer::dump_cong_classes (void)
@@ -3485,19 +3504,11 @@ sem_item_optimizer::merge_classes (unsigned int prev_class_count,
 	    tree name;
 	    FOR_EACH_SSA_NAME (i, name, DECL_STRUCT_FUNCTION (source->decl))
 	      {
-		/* We need to either merge or reset SSA_NAME_*_INFO.
+		/* We need to either merge or reset SSA_NAME_RANGE_INFO.
 		   For merging we don't preserve the mapping between
 		   original and alias SSA_NAMEs from successful equals
 		   calls.  */
-		if (POINTER_TYPE_P (TREE_TYPE (name)))
-		  {
-		    if (SSA_NAME_PTR_INFO (name))
-		      {
-			gcc_checking_assert (!flag_wpa);
-			SSA_NAME_PTR_INFO (name) = NULL;
-		      }
-		  }
-		else if (SSA_NAME_RANGE_INFO (name))
+		if (SSA_NAME_RANGE_INFO (name))
 		  {
 		    gcc_checking_assert (!flag_wpa);
 		    SSA_NAME_RANGE_INFO (name) = NULL;
@@ -3515,7 +3526,7 @@ sem_item_optimizer::merge_classes (unsigned int prev_class_count,
 /* Fixup points to set PT.  */
 
 void
-sem_item_optimizer::fixup_pt_set (struct pt_solution *pt)
+sem_item_optimizer::fixup_pt_set (const pt_solution *pt)
 {
   if (pt->vars == NULL)
     return;
@@ -3562,8 +3573,8 @@ sem_item_optimizer::fixup_points_to_sets (void)
 
       FOR_EACH_SSA_NAME (i, name, fn)
 	if (POINTER_TYPE_P (TREE_TYPE (name))
-	    && SSA_NAME_PTR_INFO (name))
-	  fixup_pt_set (&SSA_NAME_PTR_INFO (name)->pt);
+	    && ssa_name_pt_solution (name))
+	  fixup_pt_set (ssa_name_pt_solution (name));
       fixup_pt_set (&fn->gimple_df->escaped);
       fixup_pt_set (&fn->gimple_df->escaped_return);
 

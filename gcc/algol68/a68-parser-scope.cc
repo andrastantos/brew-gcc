@@ -20,7 +20,7 @@
    <http://www.gnu.org/licenses/>.  */
 
 /* A static scope checker inspects the source. Note that ALGOL 68 also needs
-   dynamic scope checking. This phase concludes the parser.  */
+   dynamic scope checking. */
 
 #include "config.h"
 #include "system.h"
@@ -1048,7 +1048,7 @@ a68_scope_checker (NODE_T *p)
   /* PROC and FORMAT identities can now be assigned a scope.  */
   bind_scope_to_tags (p);
 
-  /* Now check evertyhing else.  */
+  /* Now check everything else.  */
   gcc_assert (IS (p, PACKET));
   if (IS (SUB (p), PARTICULAR_PROGRAM))
     scope_particular_program (SUB (p));

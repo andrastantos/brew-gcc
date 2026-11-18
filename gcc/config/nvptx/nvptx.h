@@ -31,9 +31,8 @@
 #define OPTION_DEFAULT_SPECS \
   { "arch", "%{!misa=*:-misa=%(VALUE)}" }, \
 
-/* Assembler supports '-v' option; handle similar to
-   '../../gcc.cc:asm_options', 'HAVE_GNU_AS'.  */
-#define ASM_SPEC "%{v}"
+/* Assembler only supports '-v' option.  */
+#define ASM_V_SPEC "%{v}"
 
 #define STARTFILE_SPEC "%{mmainkernel:crt0.o%s}"
 
@@ -324,9 +323,9 @@ struct GTY(()) machine_function
 #define DWARF2_LINENO_DEBUGGING_INFO 1
 
 #define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
-  ((VALUE) = GET_MODE_BITSIZE ((MODE)), 2)
+  ((VALUE) = GET_MODE_UNIT_BITSIZE ((MODE)), 2)
 #define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
-  ((VALUE) = GET_MODE_BITSIZE ((MODE)), 2)
+  ((VALUE) = GET_MODE_UNIT_BITSIZE ((MODE)), 2)
 
 #define SUPPORTS_WEAK 1
 

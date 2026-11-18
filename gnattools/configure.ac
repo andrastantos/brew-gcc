@@ -25,7 +25,7 @@ AC_CONFIG_SRCDIR([Makefile.in])
 # Command-line options.
 # Very limited version of AC_MAINTAINER_MODE.
 AC_ARG_ENABLE([maintainer-mode],
-  [AC_HELP_STRING([--enable-maintainer-mode],
+  [AS_HELP_STRING([--enable-maintainer-mode],
                  [enable make rules and dependencies not useful (and
                   sometimes confusing) to the casual installer])],
   [case ${enable_maintainer_mode} in
@@ -76,7 +76,7 @@ case "${target}" in
   *-*-vxworks*)
     TOOLS_TARGET_PAIRS="indepsw.adb<indepsw-gnu.adb"
     ;;
-  *-*-cygwin32* | *-*-mingw32* | *-*-pe)
+  *-*-cygwin* | *-*-mingw32* | *-*-pe)
     TOOLS_TARGET_PAIRS="indepsw.adb<indepsw-gnu.adb"
     EXTRA_GNATTOOLS='../../gnatdll$(exeext)'
     ;;

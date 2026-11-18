@@ -26,7 +26,9 @@
 with Local_Restrict;
 with Types; use Types;
 with Sem_Disp; use Sem_Disp;
+with Sinfo.Nodes; use Sinfo.Nodes;
 with Uintp; use Uintp;
+with Namet; use Namet;
 
 package Sem_Ch13 is
    function All_Membership_Choices_Static (Expr : Node_Id) return Boolean;
@@ -41,15 +43,22 @@ package Sem_Ch13 is
    procedure Analyze_Record_Representation_Clause       (N : Node_Id);
    procedure Analyze_Code_Statement                     (N : Node_Id);
 
-   procedure Analyze_Aspect_Specifications (N : Node_Id; E : Entity_Id);
-   --  This procedure is called to analyze aspect specifications for node N. E
-   --  is the corresponding entity declared by the declaration node N.
+   procedure Analyze_Aspect_Specifications (N : Node_Id; E : N_Entity_Id);
+   --  Analyze aspect specifications of declaration N. E is the entity
+   --  declared by N.
 
    procedure Analyze_Aspects_On_Subprogram_Body_Or_Stub (N : Node_Id);
    --  Analyze the aspect specifications of [generic] subprogram body or stub
    --  N. Callers should check that Has_Aspects (N) is True before calling the
    --  routine. This routine diagnoses misplaced aspects that should appear on
    --  the initial declaration of N and offers suggestions for replacements.
+
+   procedure Analyze_One_Aspect
+     (N        : Node_Id;
+      E        : N_Entity_Id;
+      Aspect   : Node_Id);
+   --  N and E are what was passed to Analyze_Aspect_Specifications.
+   --  Aspect is one element of Aspect_Specifications (N).
 
    procedure Adjust_Record_For_Reverse_Bit_Order (R : Entity_Id);
    --  Called from Freeze where R is a record entity for which reverse bit
@@ -110,19 +119,6 @@ package Sem_Ch13 is
    --  at the point an object with an address clause is frozen, as well as for
    --  address clauses for tasks and entries.
 
-   procedure Check_Function_For_Indexing_Aspect
-     (ASN   : Node_Id;
-      Typ   : Entity_Id;
-      Subp  : Entity_Id;
-      Valid : out Boolean);
-   --  Check Subp to see whether it's a valid function for Typ's indexing
-   --  aspect ASN (as specified by the rules given in RM 4.1.6(1-3)), flagging
-   --  an error if Subp is not an eligible indexing function (unless Subp is
-   --  declared outside the scope of E, in which case it's simply ignored
-   --  rather than considered an error; see AI22-0084). If valid for indexing,
-   --  then Subp is added to ASN's Aspect_Subprograms list, and Valid is set
-   --  to True (otherwise False).
-
    procedure Check_Size
      (N      : Node_Id;
       T      : Entity_Id;
@@ -170,11 +166,12 @@ package Sem_Ch13 is
    --  in the case of the aspect of a type, Negated will always be False.
 
    function Rep_Item_Too_Early (T : Entity_Id; N : Node_Id) return Boolean;
-   --  Called at start of processing a representation clause/pragma. Used to
-   --  check that the representation item is not being applied to an incomplete
-   --  type or to a generic formal type or a type derived from a generic formal
-   --  type. Returns False if no such error occurs. If this error does occur,
-   --  appropriate error messages are posted on node N, and True is returned.
+   --  Called at start of processing a representation clause, pragma, or
+   --  aspect. Used to check that the representation item is not being applied
+   --  to an incomplete type or to a generic formal type or a type derived from
+   --  a generic formal type. Returns False if no such error occurs. If this
+   --  error does occur, appropriate error messages are posted on node N, and
+   --  True is returned.
 
    generic
       with procedure Replace_Type_Reference (N : Node_Id);
@@ -229,7 +226,7 @@ package Sem_Ch13 is
    --  Note: Calls to Rep_Item_Too_Late are ignored for the case of attribute
    --  definition clauses which have From_Aspect_Specification set. This is
    --  because such clauses are linked on to the Rep_Item chain in procedure
-   --  Sem_Ch13.Analyze_Aspect_Specifications. See that procedure for details.
+   --  Analyze_Aspect_Specifications. See that procedure for details.
 
    procedure Validate_Unchecked_Conversion
      (N        : Node_Id;
@@ -396,5 +393,37 @@ package Sem_Ch13 is
 
    procedure Uninstall_Discriminants (E : Entity_Id);
    --  Remove visibility to the discriminants of type entity E
+
+   function Is_Predicate_Static
+     (Expr : Node_Id; Nam : Name_Id; Warn : Boolean := True) return Boolean;
+   --  Given predicate expression Expr, tests if Expr is predicate-static in
+   --  the sense of the rules in (RM 3.2.4 (15-24)). Occurrences of the type
+   --  name in the predicate expression have been replaced by references to
+   --  an identifier whose Chars field is Nam. This name is unique, so any
+   --  identifier with Chars matching Nam must be a reference to the type.
+   --  Returns True if the expression is predicate-static and False otherwise,
+   --  but is not in the business of setting flags or issuing error messages.
+   --
+   --  Only scalar types can have static predicates, so False is always
+   --  returned for non-scalar types.
+   --
+   --  Note: the RM seems to suggest that string types can also have static
+   --  predicates. But that really makes little sense as very few useful
+   --  predicates can be constructed for strings. Remember that:
+   --
+   --     "ABC" < "DEF"
+   --
+   --  is not a static expression. So even though the clearly faulty RM wording
+   --  allows the following:
+   --
+   --     subtype S is String with Static_Predicate => S < "DEF"
+   --
+   --  We can't allow this, otherwise we have predicate-static applying to a
+   --  larger class than static expressions, which was never intended.
+   --
+   --  The Warn parameter is True iff this is not a recursive call. This
+   --  parameter is used to avoid generating warnings for subexpressions and
+   --  for cases where the predicate expression (as originally written by
+   --  the user, before any transformations) is a Boolean literal.
 
 end Sem_Ch13;

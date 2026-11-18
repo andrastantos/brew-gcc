@@ -138,6 +138,10 @@ Probability that COMDAT function is shared with a different compilation unit.
 Common Joined UInteger Var(param_cxx_max_namespaces_for_diagnostic_help) Init(1000) Param
 Maximum number of namespaces to search for alternatives when name lookup fails.
 
+-param=dom-jump-threading=
+Common Joined UInteger Var(param_dom_jump_threading) Init(1) IntegerRange(0, 1) Param Optimization
+Enable jump threading in the dominator optimizer pass.
+
 -param=dse-max-alias-queries-per-store=
 Common Joined UInteger Var(param_dse_max_alias_queries_per_store) Init(256) Param Optimization
 Maximum number of queries into the alias oracle per store.
@@ -250,12 +254,16 @@ Common Joined UInteger Var(param_integer_share_limit) Init(251) IntegerRange(2, 
 The upper bound for sharing integer constants.
 
 -param=ipa-cp-eval-threshold=
-Common Joined UInteger Var(param_ipa_cp_eval_threshold) Init(500) Param Optimization
+Common Joined UInteger Var(param_ipa_cp_eval_threshold) Init(1100) Param Optimization
 Threshold ipa-cp opportunity evaluation that is still considered beneficial to clone.
 
 -param=ipa-cp-loop-hint-bonus=
 Common Joined UInteger Var(param_ipa_cp_loop_hint_bonus) Init(64) Param Optimization
 Compile-time bonus IPA-CP assigns to candidates which make loop bounds or strides known.
+
+-param=ipa-cp-profile-runtime-scaling=
+Common Joined UInteger Var(param_ipa_cp_profile_runtime_scaling) Init(19) Param Optimization
+With profile feedback, by how many bits to shift the run-time before it is used as the basis for IPA-CP evaluations.
 
 -param=ipa-cp-max-recursive-depth=
 Common Joined UInteger Var(param_ipa_cp_max_recursive_depth) Init(8) Param Optimization
@@ -294,7 +302,7 @@ Common Joined UInteger Var(param_ipa_cp_value_list_size) Init(8) Param Optimizat
 Maximum size of a list of values associated with each parameter for interprocedural constant propagation.
 
 -param=ipa-jump-function-lookups=
-Common Joined UInteger Var(param_ipa_jump_function_lookups) Init(8) Param Optimization
+Common Joined UInteger Var(param_ipa_jump_function_lookups) Init(64) Param Optimization
 Maximum number of statements visited during jump function offset discovery.
 
 -param=ipa-max-aa-steps=
@@ -612,7 +620,7 @@ The maximum amount of memory to be allocated by GCSE, in kilobytes.
 
 -param=max-goto-duplication-insns=
 Common Joined UInteger Var(param_max_goto_duplication_insns) Init(8) Param Optimization
-The maximum number of insns to duplicate when unfactoring computed gotos.
+The maximum number of insns to duplicate when unfactoring computed gotos or switch dispatches.
 
 -param=max-grow-copy-bb-insns=
 Common Joined UInteger Var(param_max_grow_copy_bb_insns) Init(8) Param Optimization
@@ -673,6 +681,10 @@ Bound on the cost of an expression to compute the number of iterations.
 -param=max-iterations-to-track=
 Common Joined UInteger Var(param_max_iterations_to_track) Init(1000) Param Optimization
 Bound on the number of iterations the brute force # of iterations analysis algorithm evaluates.
+
+-param=max-niter-dominators-walk=
+Common Joined UInteger Var(param_max_niter_dominators_walk) Init(8) IntegerRange(1, 1024) Param Optimization
+Maximum number of dominators BBs to walk when simplifying loop bounds and conditions.
 
 -param=max-jump-thread-duplication-stmts=
 Common Joined UInteger Var(param_max_jump_thread_duplication_stmts) Init(15) Param Optimization
@@ -972,7 +984,7 @@ Use internal function id in profile lookup.
 
 -param=ranger-debug=
 Common Joined Var(param_ranger_debug) Enum(ranger_debug) Init(RANGER_DEBUG_NONE) Param Optimization
---param=ranger-debug=[none|trace|gori|cache|tracegori|all] Specifies the output mode for debugging ranger.
+--param=ranger-debug=[none|trace|gori|cache|relation|all] Specifies the output mode for debugging ranger.
 
 Enum
 Name(ranger_debug) Type(enum ranger_debug) UnknownError(unknown ranger debug mode %qs)
@@ -987,10 +999,10 @@ EnumValue
 Enum(ranger_debug) String(cache) Value(RANGER_DEBUG_TRACE_CACHE)
 
 EnumValue
-Enum(ranger_debug) String(gori) Value(RANGER_DEBUG_GORI)
+Enum(ranger_debug) String(gori) Value(RANGER_DEBUG_TRACE_GORI)
 
 EnumValue
-Enum(ranger_debug) String(tracegori) Value(RANGER_DEBUG_TRACE_GORI)
+Enum(ranger_debug) String(relation) Value(RANGER_DEBUG_TRACE_RELATION)
 
 EnumValue
 Enum(ranger_debug) String(all) Value(RANGER_DEBUG_ALL)
@@ -1318,5 +1330,11 @@ Maximum number of outgoing edges in a switch before VRP does not process it.
 -param=vrp-vector-threshold=
 Common Joined UInteger Var(param_vrp_vector_threshold) Init(250) Optimization Param
 Maximum number of basic blocks for VRP to use a basic cache vector.
+
+-param=widening-mul-defer-fma=
+Common Joined UInteger Var(param_widening_mul_defer_fma) Init(1) IntegerRange(0, 1) Param Optimization
+When nonzero, the widening-multiply pass defers forming an FMA whose result
+feeds a loop-header PHI, leaving a separate multiply and add.  Set to zero to
+contract such loop-carried reductions into an FMA instead.
 
 ; This comment is to ensure we retain the blank line above.

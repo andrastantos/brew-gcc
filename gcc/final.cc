@@ -84,6 +84,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "common/common-target.h"
 #include "diagnostic.h"
 #include "diagnostics/file-cache.h"
+#include "selftest.h"
 
 #include "dwarf2out.h"
 
@@ -133,16 +134,10 @@ static int high_function_linenum;
 /* Filename of last NOTE.  */
 static const char *last_filename;
 
-/* Override filename, line and column number.  */
-static const char *override_filename;
-static int override_linenum;
-static int override_columnnum;
-static int override_discriminator;
-
 /* Whether to force emission of a line note before the next insn.  */
 static bool force_source_line = false;
 
-extern const int length_unit_log; /* This is defined in insn-attrtab.cc.  */
+extern const int length_unit_log; /* Defined in generated attribute code.  */
 
 /* Nonzero while outputting an `asm' with operands.
    This means that inconsistencies are the user's fault, so don't die.
@@ -201,7 +196,7 @@ static void output_asm_operand_names (rtx *, int *, int);
 #ifdef LEAF_REGISTERS
 static void leaf_renumber_regs (rtx_insn *);
 #endif
-static int align_fuzz (rtx, rtx, int, unsigned);
+static int align_fuzz (rtx_insn *, rtx_insn *, int, unsigned);
 static void collect_fn_hard_reg_usage (void);
 
 /* Initialize data in final at the beginning of a compilation.  */
@@ -273,7 +268,7 @@ int
 dbr_sequence_length (void)
 {
   if (final_sequence != 0)
-    return XVECLEN (final_sequence, 0) - 1;
+    return final_sequence->len () - 1;
   else
     return 0;
 }
@@ -309,7 +304,7 @@ int insn_current_align;
    for each insn we'll call the alignment chain of this insn in the following
    comments.  */
 
-static rtx *uid_align;
+static rtx_insn **uid_align;
 static int *uid_shuid;
 static vec<align_flags> label_align;
 
@@ -497,7 +492,7 @@ static int min_labelno, max_labelno;
 /* For the benefit of port specific code do this also as a function.  */
 
 align_flags
-label_to_alignment (rtx label)
+label_to_alignment (rtx_insn *label)
 {
   if (CODE_LABEL_NUMBER (label) <= max_labelno)
     return LABEL_TO_ALIGNMENT (label);
@@ -533,10 +528,11 @@ label_to_alignment (rtx label)
    The return value is undefined for any other value of GROWTH.  */
 
 static int
-align_fuzz (rtx start, rtx end, int known_align_log, unsigned int growth)
+align_fuzz (rtx_insn *start, rtx_insn *end, int known_align_log,
+	    unsigned int growth)
 {
   int uid = INSN_UID (start);
-  rtx align_label;
+  rtx_insn *align_label;
   int known_align = 1 << known_align_log;
   int end_shuid = INSN_SHUID (end);
   int fuzz = 0;
@@ -574,7 +570,6 @@ align_fuzz (rtx start, rtx end, int known_align_log, unsigned int growth)
 int
 insn_current_reference_address (rtx_insn *branch)
 {
-  rtx dest;
   int seq_uid;
 
   if (! INSN_ADDRESSES_SET_P ())
@@ -589,7 +584,7 @@ insn_current_reference_address (rtx_insn *branch)
        We assume here that FUNCTION_BOUNDARY / BITS_PER_UNIT is larger than
        any alignment we'd encounter, so we skip the call to align_fuzz.  */
     return insn_current_address;
-  dest = JUMP_LABEL (branch);
+  rtx_insn *dest = as_a<rtx_insn *> (JUMP_LABEL (branch));
 
   /* BRANCH has no proper alignment chain set, so use SEQ.
      BRANCH also has no INSN_SHUID.  */
@@ -832,7 +827,7 @@ shorten_branches (rtx_insn *first)
   char *varying_length;
   rtx body;
   int uid;
-  rtx align_tab[MAX_CODE_ALIGN + 1];
+  rtx_insn *align_tab[MAX_CODE_ALIGN + 1];
 
   /* Compute maximum UID and allocate label_align / uid_shuid.  */
   max_uid = get_max_uid ();
@@ -915,10 +910,10 @@ shorten_branches (rtx_insn *first)
      that does an alignment of at least n+1, i.e. the successor
      in the alignment chain for an insn that does / has a known
      alignment of n.  */
-  uid_align = XCNEWVEC (rtx, max_uid);
+  uid_align = XCNEWVEC (rtx_insn *, max_uid);
 
   for (i = MAX_CODE_ALIGN + 1; --i >= 0;)
-    align_tab[i] = NULL_RTX;
+    align_tab[i] = nullptr;
   seq = get_last_insn ();
   for (; seq; seq = PREV_INSN (seq))
     {
@@ -954,7 +949,8 @@ shorten_branches (rtx_insn *first)
 
       for (insn = first; insn != 0; insn = NEXT_INSN (insn))
 	{
-	  rtx min_lab = NULL_RTX, max_lab = NULL_RTX, pat;
+	  rtx_insn *min_lab = nullptr, *max_lab = nullptr;
+	  rtx pat;
 	  int len, i, min, max, insn_shuid;
 	  int min_align;
 	  addr_diff_vec_flags flags;
@@ -968,7 +964,7 @@ shorten_branches (rtx_insn *first)
 	  min_align = MAX_CODE_ALIGN;
 	  for (min = max_shuid, max = min_shuid, i = len - 1; i >= 0; i--)
 	    {
-	      rtx lab = XEXP (XVECEXP (pat, 1, i), 0);
+	      rtx_insn *lab = label_ref_label (XVECEXP (pat, 1, i));
 	      int shuid = INSN_SHUID (lab);
 	      if (shuid < min)
 		{
@@ -988,7 +984,7 @@ shorten_branches (rtx_insn *first)
 	  XEXP (pat, 2) = gen_rtx_LABEL_REF (Pmode, min_lab);
 	  XEXP (pat, 3) = gen_rtx_LABEL_REF (Pmode, max_lab);
 	  insn_shuid = INSN_SHUID (insn);
-	  rel = INSN_SHUID (XEXP (XEXP (pat, 0), 0));
+	  rel = INSN_SHUID (label_ref_label (XEXP (pat, 0)));
 	  memset (&flags, 0, sizeof (flags));
 	  flags.min_align = min_align;
 	  flags.base_after_vec = rel > insn_shuid;
@@ -1179,8 +1175,8 @@ shorten_branches (rtx_insn *first)
 	      int old_length = insn_lengths[uid];
 	      rtx_insn *rel_lab =
 		safe_as_a <rtx_insn *> (XEXP (XEXP (body, 0), 0));
-	      rtx min_lab = XEXP (XEXP (body, 2), 0);
-	      rtx max_lab = XEXP (XEXP (body, 3), 0);
+	      rtx_insn *min_lab = label_ref_label (XEXP (body, 2));
+	      rtx_insn *max_lab = label_ref_label (XEXP (body, 3));
 	      int rel_addr = INSN_ADDRESSES (INSN_UID (rel_lab));
 	      int min_addr = INSN_ADDRESSES (INSN_UID (min_lab));
 	      int max_addr = INSN_ADDRESSES (INSN_UID (max_lab));
@@ -1289,15 +1285,13 @@ shorten_branches (rtx_insn *first)
 
 	  if (! (varying_length[uid]))
 	    {
+	      rtx_sequence *seq;
 	      if (NONJUMP_INSN_P (insn)
-		  && GET_CODE (PATTERN (insn)) == SEQUENCE)
+		  && (seq = dyn_cast<rtx_sequence *> (PATTERN (insn))))
 		{
-		  int i;
-
-		  body = PATTERN (insn);
-		  for (i = 0; i < XVECLEN (body, 0); i++)
+		  for (int i = 0; i < seq->len (); i++)
 		    {
-		      rtx inner_insn = XVECEXP (body, 0, i);
+		      rtx_insn *inner_insn = seq->insn (i);
 		      int inner_uid = INSN_UID (inner_insn);
 
 		      INSN_ADDRESSES (inner_uid) = insn_current_address;
@@ -1311,9 +1305,10 @@ shorten_branches (rtx_insn *first)
 	      continue;
 	    }
 
-	  if (NONJUMP_INSN_P (insn) && GET_CODE (PATTERN (insn)) == SEQUENCE)
+	  rtx_sequence *seqn;
+	  if (NONJUMP_INSN_P (insn)
+	      && (seqn = dyn_cast <rtx_sequence *> (PATTERN (insn))))
 	    {
-	      rtx_sequence *seqn = as_a <rtx_sequence *> (PATTERN (insn));
 	      int i;
 
 	      body = PATTERN (insn);
@@ -2433,6 +2428,15 @@ final_scan_insn_1 (rtx_insn *insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 	 the label in the read-only section.  Also possibly write the
 	 label and jump table together.  */
       table = jump_table_for_label (as_a <rtx_code_label *> (insn));
+
+      /* Still in the function's own section here, which is where the base
+	 label of a PC-relative table has to go.  */
+      if (table
+	  && JUMP_TABLE_SHARED_P (PATTERN (table))
+	  && targetm.asm_out.jump_table_base)
+	targetm.asm_out.jump_table_base (file, table,
+					     CODE_LABEL_NUMBER (insn));
+
       if (table)
 	{
 #if defined(ASM_OUTPUT_ADDR_VEC) || defined(ASM_OUTPUT_ADDR_DIFF_VEC)
@@ -2540,7 +2544,8 @@ final_scan_insn_1 (rtx_insn *insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 		  {
 #ifdef ASM_OUTPUT_ADDR_VEC_ELT
 		    ASM_OUTPUT_ADDR_VEC_ELT
-		      (file, CODE_LABEL_NUMBER (XEXP (XVECEXP (body, 0, idx), 0)));
+		      (file, CODE_LABEL_NUMBER
+		       (label_ref_label (XVECEXP (body, 0, idx))));
 #else
 		    gcc_unreachable ();
 #endif
@@ -2551,8 +2556,9 @@ final_scan_insn_1 (rtx_insn *insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 		    ASM_OUTPUT_ADDR_DIFF_ELT
 		      (file,
 		       body,
-		       CODE_LABEL_NUMBER (XEXP (XVECEXP (body, 1, idx), 0)),
-		       CODE_LABEL_NUMBER (XEXP (XEXP (body, 0), 0)));
+		       CODE_LABEL_NUMBER
+		       (label_ref_label (XVECEXP (body, 1, idx))),
+		       CODE_LABEL_NUMBER (label_ref_label (XEXP (body, 0))));
 #else
 		    gcc_unreachable ();
 #endif
@@ -3001,13 +3007,6 @@ notice_source_line (rtx_insn *insn, bool *is_stmt)
       discriminator = compute_discriminator (loc);
       force_source_line = true;
     }
-  else if (override_filename)
-    {
-      filename = override_filename;
-      linenum = override_linenum;
-      columnnum = override_columnnum;
-      discriminator = override_discriminator;
-    }
   else if (INSN_HAS_LOCATION (insn))
     {
       expanded_location xloc = insn_location (insn);
@@ -3408,6 +3407,70 @@ do_assembler_dialects (const char *p, int *dialect)
 }
 #endif
 
+static rtx *current_modifier_operands;
+static const vec<unsigned long> *current_modifier_opnums;
+
+/* Return the Nth operand of the current multi-operand modifier.  */
+
+rtx
+output_operand_modifier_operand (int code, unsigned int n)
+{
+  if (code < PRINT_OPERAND_MODIFIER_BASE
+      || !current_modifier_opnums
+      || n >= current_modifier_opnums->length ())
+    return nullptr;
+  rtx x = current_modifier_operands[(*current_modifier_opnums)[n]];
+  if (x && GET_CODE (x) == SUBREG)
+    x = alter_subreg (&x, true);
+  if (x)
+    mark_symbol_refs_as_used (x);
+  return x;
+}
+
+/* Output OPERAND, which was parsed from a %[...] reference.  */
+
+static void
+output_bracketed_operand (bracketed_operand &operand, rtx *operands,
+			  int *oporder, char *opoutput, int &ops)
+{
+  if (this_is_asm_operands)
+    for (unsigned long opnum : operand.opnums)
+      if (opnum >= insn_noperands)
+	{
+	  output_operand_lossage ("operand number out of range");
+	  return;
+	}
+  unsigned long opnum = operand.opnums[0];
+  if (!operand.modifier.empty ())
+    {
+      int code = targetm.asm_out.print_operand_modifier
+	(operand.modifier, this_is_asm_operands != NULL);
+      if (code < PRINT_OPERAND_MODIFIER_BASE)
+	{
+	  output_operand_lossage ("invalid operand modifier '%.*s'",
+				  (int) operand.modifier.size (),
+				  operand.modifier.begin ());
+	  return;
+	}
+      rtx *saved_operands = current_modifier_operands;
+      const vec<unsigned long> *saved_opnums = current_modifier_opnums;
+      current_modifier_operands = operands;
+      current_modifier_opnums = &operand.opnums;
+      output_operand (operands[opnum], code);
+      current_modifier_operands = saved_operands;
+      current_modifier_opnums = saved_opnums;
+    }
+  else
+    output_operand (operands[opnum], 0);
+
+  for (unsigned long number : operand.opnums)
+    {
+      if (!opoutput[number])
+	oporder[ops++] = number;
+      opoutput[number] = 1;
+    }
+}
+
 /* Output text from TEMPLATE to the assembler output file,
    obeying %-directions to substitute operands taken from
    the vector OPERANDS.
@@ -3500,6 +3563,18 @@ output_asm_insn (const char *templ, rtx *operands)
 	  {
 	    p++;
 	    fprintf (asm_out_file, "%d", insn_counter);
+	  }
+	else if (*p == '[')
+	  {
+	    bracketed_operand operand;
+	    if (!parse_bracketed_operand (&p, operand))
+	      {
+		output_operand_lossage ("invalid %%[...] operand modifier");
+		break;
+	      }
+	    output_bracketed_operand (operand, operands, oporder, opoutput,
+				      ops);
+	    c = *p;
 	  }
 	/* % followed by a letter and some digits
 	   outputs an operand in a special way depending on the letter.
@@ -3616,9 +3691,10 @@ output_asm_label (rtx x)
 
   if (GET_CODE (x) == LABEL_REF)
     x = label_ref_label (x);
+  rtx_note *note = dyn_cast<rtx_note *> (x);
   if (LABEL_P (x)
-      || (NOTE_P (x)
-	  && NOTE_KIND (x) == NOTE_INSN_DELETED_LABEL))
+      || (note
+	  && NOTE_KIND (note) == NOTE_INSN_DELETED_LABEL))
     ASM_GENERATE_INTERNAL_LABEL (buf, "L", CODE_LABEL_NUMBER (x));
   else
     output_operand_lossage ("'%%l' operand isn't a label");
@@ -3794,7 +3870,9 @@ output_addr_const (FILE *file, rtx x)
       fprintf (file, "-");
       if ((CONST_INT_P (XEXP (x, 1)) && INTVAL (XEXP (x, 1)) >= 0)
 	  || GET_CODE (XEXP (x, 1)) == PC
-	  || GET_CODE (XEXP (x, 1)) == SYMBOL_REF)
+	  || GET_CODE (XEXP (x, 1)) == SYMBOL_REF
+	  || GET_CODE (XEXP (x, 1)) == LABEL_REF
+	  || GET_CODE (XEXP (x, 1)) == CODE_LABEL)
 	output_addr_const (file, XEXP (x, 1));
       else
 	{
@@ -3997,7 +4075,6 @@ asm_fprintf (FILE *file, const char *p, ...)
 
 	  case 'l':
 	    *q++ = c;
-#ifdef HAVE_LONG_LONG
 	    if (*p == 'l')
 	      {
 		*q++ = *p++;
@@ -4006,7 +4083,6 @@ asm_fprintf (FILE *file, const char *p, ...)
 		fprintf (file, buf, va_arg (argptr, long long));
 	      }
 	    else
-#endif
 	      {
 		*q++ = *p++;
 		*q = 0;
@@ -4091,14 +4167,14 @@ leaf_function_p (void)
 
   for (insn = get_insns (); insn; insn = NEXT_INSN (insn))
     {
-      if (CALL_P (insn)
-	  && ! SIBLING_CALL_P (insn)
-	  && ! FAKE_CALL_P (insn))
+      rtx_call_insn *call = dyn_cast<rtx_call_insn *> (insn);
+      if (call && ! SIBLING_CALL_P (call) && ! FAKE_CALL_P (call))
 	return false;
+      rtx_sequence *seq;
       if (NONJUMP_INSN_P (insn)
-	  && GET_CODE (PATTERN (insn)) == SEQUENCE
-	  && CALL_P (XVECEXP (PATTERN (insn), 0, 0))
-	  && ! SIBLING_CALL_P (XVECEXP (PATTERN (insn), 0, 0)))
+	  && (seq = dyn_cast <rtx_sequence *> (PATTERN (insn)))
+	  && (call = dyn_cast<rtx_call_insn *> (seq->insn (0)))
+	  && ! SIBLING_CALL_P (call))
 	return false;
     }
 
@@ -4457,12 +4533,10 @@ rest_of_clean_state (void)
       SET_PREV_INSN (insn) = NULL;
 
       rtx_insn *call_insn = insn;
+      rtx_sequence *seq;
       if (NONJUMP_INSN_P (call_insn)
-	  && GET_CODE (PATTERN (call_insn)) == SEQUENCE)
-	{
-	  rtx_sequence *seq = as_a <rtx_sequence *> (PATTERN (call_insn));
-	  call_insn = seq->insn (0);
-	}
+	  && (seq = dyn_cast <rtx_sequence *> (PATTERN (call_insn))))
+	call_insn = seq->insn (0);
       if (CALL_P (call_insn))
 	{
 	  rtx note
@@ -4498,6 +4572,7 @@ rest_of_clean_state (void)
 
   flag_rerun_cse_after_global_opts = 0;
   reload_completed = 0;
+  post_ra_split_completed = false;
   epilogue_completed = 0;
 #ifdef STACK_REGS
   regstack_completed = 0;
@@ -4626,10 +4701,10 @@ collect_fn_hard_reg_usage (void)
       if (!NONDEBUG_INSN_P (insn))
 	continue;
 
-      if (CALL_P (insn)
-	  && !self_recursive_call_p (insn))
+      auto call = dyn_cast<rtx_call_insn *> (insn);
+      if (call && !self_recursive_call_p (call))
 	function_used_regs
-	  |= insn_callee_abi (insn).full_and_partial_reg_clobbers ();
+	  |= insn_callee_abi (call).full_and_partial_reg_clobbers ();
 
       find_all_hard_reg_sets (insn, &insn_used_regs, false);
       function_used_regs |= insn_used_regs;
@@ -4648,3 +4723,104 @@ collect_fn_hard_reg_usage (void)
 
   node->function_used_regs = function_used_regs;
 }
+
+#if CHECKING_P
+
+namespace selftest {
+
+static void
+test_parse_bracketed_operand ()
+{
+  const struct
+  {
+    const char *text;
+    const char *modifier;
+    unsigned long opnums[2];
+    unsigned int count;
+  } valid[] = {
+    { "[10]", "", { 10 }, 1 },
+    { "[fmt:11]", "fmt", { 11 }, 1 },
+    { "[gpr,zero:13]", "gpr,zero", { 13 }, 1 },
+    { "[fmt:13,14]", "fmt", { 13, 14 }, 2 },
+    { "[999999999999999999999999999999999999]", "", { ULONG_MAX }, 1 }
+  };
+  bracketed_operand operand;
+  for (const auto &test : valid)
+    {
+      const char *p = test.text;
+      ASSERT_TRUE (parse_bracketed_operand (&p, operand));
+      ASSERT_TRUE (operand.modifier == test.modifier);
+      ASSERT_EQ (test.count, operand.opnums.length ());
+      for (unsigned int i = 0; i < test.count; ++i)
+	ASSERT_EQ (test.opnums[i], operand.opnums[i]);
+      ASSERT_EQ ('\0', *p);
+    }
+  const char *invalid[] = {
+    "[fmt]12", "[fmt:1,]", "[fmt]", "[fmt:]", "[]0", "[0,1]",
+    "[fmt:12x]", "[fmt:1", "[:1]", "[,fmt:1]", "[fmt,:1]", "[fmt,,part:1]"
+  };
+  for (const char *text : invalid)
+    {
+      const char *p = text;
+      ASSERT_FALSE (parse_bracketed_operand (&p, operand));
+    }
+}
+
+/* The same syntax must be understood by the operand reference scanner.  */
+
+static void
+test_referenced_operands ()
+{
+  const struct
+  {
+    const char *text;
+    unsigned int mask;
+  } tests[] = {
+    { "%[0] %[fmt:1,2]", 7 },
+    { "%%[0] %%[fmt:1,2]", 0 },
+    { "%[1]0 %2", 6 },
+    { "%0 %a1 %cc2", 7 },
+    { "%[fmt:2,2] %[99]", 4 },
+    { "%[fmt:1,]", 0 },
+    { "%", 0 }
+  };
+  for (const auto &test : tests)
+    {
+      bool used[3];
+      get_referenced_operands (test.text, used, 3);
+      for (unsigned int i = 0; i < 3; ++i)
+	ASSERT_EQ ((test.mask & (1U << i)) != 0, used[i]);
+    }
+}
+
+static void
+test_output_operand_modifier_operand ()
+{
+  rtx operands[] = { GEN_INT (10), gen_rtx_REG (QImode, 0) };
+  auto_vec<unsigned long, 2> opnums;
+  opnums.safe_push (1);
+  opnums.safe_push (0);
+  current_modifier_operands = operands;
+  current_modifier_opnums = &opnums;
+  rtx x = output_operand_modifier_operand (PRINT_OPERAND_MODIFIER_BASE, 0);
+  ASSERT_TRUE (REG_P (x));
+  ASSERT_EQ (QImode, GET_MODE (x));
+  ASSERT_EQ (operands[0], output_operand_modifier_operand
+	     (PRINT_OPERAND_MODIFIER_BASE, 1));
+  ASSERT_EQ (nullptr, output_operand_modifier_operand
+	     (PRINT_OPERAND_MODIFIER_BASE, 2));
+  current_modifier_operands = nullptr;
+  current_modifier_opnums = nullptr;
+}
+
+void
+final_cc_tests ()
+{
+  test_parse_bracketed_operand ();
+  test_referenced_operands ();
+  test_output_operand_modifier_operand ();
+}
+
+} // namespace selftest
+
+#endif /* CHECKING_P */

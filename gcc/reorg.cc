@@ -138,7 +138,7 @@ skip_consecutive_labels (rtx label_or_return)
 
      So we explicitly disallow looking through BARRIERS here.  */
   for (insn = label;
-       insn != 0 && !INSN_P (insn) && !BARRIER_P (insn);
+       insn != 0 && !NONDEBUG_INSN_P (insn) && !BARRIER_P (insn);
        insn = NEXT_INSN (insn))
     if (LABEL_P (insn))
       label = insn;
@@ -186,11 +186,12 @@ static rtx_insn *delete_from_delay_slot (rtx_insn *);
 static void delete_scheduled_jump (rtx_insn *);
 static void note_delay_statistics (int, int);
 static int get_jump_flags (const rtx_insn *, rtx);
-static int mostly_true_jump (rtx);
-static rtx get_branch_condition (const rtx_insn *, rtx);
-static bool condition_dominates_p (rtx, const rtx_insn *);
-static bool redirect_with_delay_slots_safe_p (rtx_insn *, rtx, rtx);
-static bool redirect_with_delay_list_safe_p (rtx_insn *, rtx,
+static int mostly_true_jump (rtx_insn *);
+static rtx get_branch_condition (const rtx_jump_insn *, rtx);
+static bool condition_dominates_p (rtx, const rtx_jump_insn *);
+static bool redirect_with_delay_slots_safe_p (rtx_jump_insn *,
+					      rtx, rtx_insn *);
+static bool redirect_with_delay_list_safe_p (rtx_jump_insn *, rtx,
 					     const vec<rtx_insn *> &);
 static bool check_annul_list_true_false (bool, const vec<rtx_insn *> &);
 static void steal_delay_list_from_target (rtx_insn *, rtx, rtx_sequence *,
@@ -207,13 +208,14 @@ static void steal_delay_list_from_fallthrough (rtx_insn *, rtx, rtx_sequence *,
 					       struct resources *,
 					       int, int *, bool *);
 static void try_merge_delay_insns (rtx_insn *, rtx_insn *);
-static rtx_insn *redundant_insn (rtx, rtx_insn *, const vec<rtx_insn *> &);
+static rtx_insn *redundant_insn (rtx_insn *, rtx_insn *,
+				 const vec<rtx_insn *> &);
 static bool own_thread_p (rtx, rtx, bool);
 static void update_block (rtx_insn *, rtx_insn *);
 static bool reorg_redirect_jump (rtx_jump_insn *, rtx);
 static void update_reg_dead_notes (rtx_insn *, rtx_insn *);
-static void fix_reg_dead_note (rtx_insn *, rtx);
-static void update_reg_unused_notes (rtx_insn *, rtx);
+static void fix_reg_dead_note (rtx_insn *, rtx_insn *);
+static void update_reg_unused_notes (rtx_insn *, rtx_insn *);
 static void fill_simple_delay_slots (bool);
 static void fill_slots_from_thread (rtx_jump_insn *, rtx, rtx, rtx,
 				    bool, bool, bool, int,
@@ -276,7 +278,7 @@ stop_search_p (rtx_insn *insn, bool labels_p)
     case INSN:
       /* OK unless it contains a delay slot or is an `asm' insn of some type.
 	 We don't know anything about these.  */
-      return (GET_CODE (PATTERN (insn)) == SEQUENCE
+      return (is_a <rtx_sequence *> (PATTERN (insn))
 	      || GET_CODE (PATTERN (insn)) == ASM_INPUT
 	      || asm_noperands (PATTERN (insn)) >= 0);
 
@@ -598,7 +600,7 @@ delete_from_delay_slot (rtx_insn *insn)
   else if (JUMP_P (trial))
     INSN_ANNULLED_BRANCH_P (trial) = 0;
 
-  INSN_FROM_TARGET_P (insn) = 0;
+  set_insn_from_target (insn, false);
 
   /* Show we need to fill this insn again.  */
   obstack_ptr_grow (&unfilled_slots_obstack, trial);
@@ -670,7 +672,7 @@ note_delay_statistics (int slots_filled, int index)
 static void
 optimize_skip (rtx_jump_insn *insn, vec<rtx_insn *> *delay_list)
 {
-  rtx_insn *trial = next_nonnote_insn (insn);
+  rtx_insn *trial = next_nonnote_nondebug_insn (insn);
   rtx_insn *next_trial = next_active_insn (trial);
   int flags;
 
@@ -678,7 +680,7 @@ optimize_skip (rtx_jump_insn *insn, vec<rtx_insn *> *delay_list)
 
   if (trial == 0
       || !NONJUMP_INSN_P (trial)
-      || GET_CODE (PATTERN (trial)) == SEQUENCE
+      || is_a <rtx_sequence *> (PATTERN (trial))
       || recog_memoized (trial) < 0
       || (! eligible_for_annul_false (insn, 0, trial, flags)
 	  && ! eligible_for_annul_true (insn, 0, trial, flags))
@@ -700,7 +702,7 @@ optimize_skip (rtx_jump_insn *insn, vec<rtx_insn *> *delay_list)
       if (eligible_for_annul_false (insn, 0, trial, flags))
 	{
 	  if (invert_jump (insn, JUMP_LABEL (insn), 1))
-	    INSN_FROM_TARGET_P (trial) = 1;
+	    set_insn_from_target (trial, true);
 	  else if (! eligible_for_annul_true (insn, 0, trial, flags))
 	    return;
 	}
@@ -775,7 +777,7 @@ get_jump_flags (const rtx_insn *insn, rtx label)
    return 0 and if the branch is highly unlikely to be taken, return -1.  */
 
 static int
-mostly_true_jump (rtx jump_insn)
+mostly_true_jump (rtx_insn *jump_insn)
 {
   /* If branch probabilities are available, then use that number since it
      always gives a correct answer.  */
@@ -806,7 +808,7 @@ mostly_true_jump (rtx jump_insn)
    type of jump, or it doesn't go to TARGET, return 0.  */
 
 static rtx
-get_branch_condition (const rtx_insn *insn, rtx target)
+get_branch_condition (const rtx_jump_insn *insn, rtx target)
 {
   rtx pat = PATTERN (insn);
   rtx src;
@@ -852,7 +854,7 @@ get_branch_condition (const rtx_insn *insn, rtx target)
    INSN, i.e., if INSN will always branch if CONDITION is true.  */
 
 static bool
-condition_dominates_p (rtx condition, const rtx_insn *insn)
+condition_dominates_p (rtx condition, const rtx_jump_insn *insn)
 {
   rtx other_condition = get_branch_condition (insn, JUMP_LABEL (insn));
   enum rtx_code code = GET_CODE (condition);
@@ -878,7 +880,8 @@ condition_dominates_p (rtx condition, const rtx_insn *insn)
    any insns already in the delay slot of JUMP.  */
 
 static bool
-redirect_with_delay_slots_safe_p (rtx_insn *jump, rtx newlabel, rtx seq)
+redirect_with_delay_slots_safe_p (rtx_jump_insn *jump, rtx newlabel,
+				  rtx_insn *seq)
 {
   int flags, i;
   rtx_sequence *pat = as_a <rtx_sequence *> (PATTERN (seq));
@@ -897,7 +900,7 @@ redirect_with_delay_slots_safe_p (rtx_insn *jump, rtx newlabel, rtx seq)
 #endif
 #if ANNUL_IFTRUE_SLOTS
 	   (INSN_ANNULLED_BRANCH_P (jump)
-	    && ! INSN_FROM_TARGET_P (XVECEXP (pat, 0, i)))
+	    && ! INSN_FROM_TARGET_P (pat->insn (i)))
 	   ? eligible_for_annul_true (jump, i - 1, pat->insn (i), flags) :
 #endif
 	   eligible_for_delay (jump, i - 1, pat->insn (i), flags)))
@@ -910,7 +913,7 @@ redirect_with_delay_slots_safe_p (rtx_insn *jump, rtx newlabel, rtx seq)
    any insns we wish to place in the delay slot of JUMP.  */
 
 static bool
-redirect_with_delay_list_safe_p (rtx_insn *jump, rtx newlabel,
+redirect_with_delay_list_safe_p (rtx_jump_insn *jump, rtx newlabel,
 				 const vec<rtx_insn *> &delay_list)
 {
   /* Make sure all the insns in DELAY_LIST would still be
@@ -1021,7 +1024,8 @@ steal_delay_list_from_target (rtx_insn *insn, rtx condition, rtx_sequence *seq,
     }
 
   if (XVECLEN (seq, 0) - 1 > slots_remaining
-      || ! condition_dominates_p (condition, seq->insn (0))
+      || ! condition_dominates_p (condition,
+				  as_a<rtx_jump_insn *> (seq->insn (0)))
       || ! single_set (seq->insn (0)))
     return;
 
@@ -1077,7 +1081,7 @@ steal_delay_list_from_target (rtx_insn *insn, rtx condition, rtx_sequence *seq,
 	      used_annul = true;
 	    }
 	  rtx_insn *temp = copy_delay_slot_insn (trial);
-	  INSN_FROM_TARGET_P (temp) = 1;
+	  set_insn_from_target (temp, true);
 	  add_to_delay_list (temp, &new_delay_list);
 	  total_slots_filled++;
 
@@ -1196,11 +1200,12 @@ static void
 try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 {
   rtx_insn *trial, *next_trial;
-  rtx_insn *delay_insn = as_a <rtx_insn *> (XVECEXP (PATTERN (insn), 0, 0));
+  rtx_sequence *insn_pat = as_a <rtx_sequence *> (PATTERN (insn));
+  rtx_insn *delay_insn = insn_pat->insn (0);
   bool annul_p = JUMP_P (delay_insn) && INSN_ANNULLED_BRANCH_P (delay_insn);
   int slot_number = 1;
-  int num_slots = XVECLEN (PATTERN (insn), 0);
-  rtx next_to_match = XVECEXP (PATTERN (insn), 0, slot_number);
+  int num_slots = insn_pat->len ();
+  rtx_insn *next_to_match = insn_pat->insn (slot_number);
   struct resources set, needed, modified;
   auto_vec<std::pair<rtx_insn *, bool>, 10> merged_insns;
   int flags;
@@ -1218,14 +1223,13 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
      a kludge, but I don't see a better way.)  */
   if (! annul_p)
     for (int i = 1; i < num_slots; i++)
-      if (XVECEXP (PATTERN (insn), 0, i))
-	mark_referenced_resources (XVECEXP (PATTERN (insn), 0, i), &needed,
-				   true);
+      if (insn_pat->insn (i))
+	mark_referenced_resources (insn_pat->insn (i), &needed, true);
 
   for (trial = thread; !stop_search_p (trial, true); trial = next_trial)
     {
       rtx pat = PATTERN (trial);
-      rtx oldtrial = trial;
+      rtx_insn *oldtrial = trial;
 
       next_trial = next_nonnote_insn (trial);
 
@@ -1256,7 +1260,7 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 		thread = next_active_insn (thread);
 
 	      delete_related_insns (trial);
-	      INSN_FROM_TARGET_P (next_to_match) = 0;
+	      set_insn_from_target (next_to_match, false);
 	    }
 	  else
 	    merged_insns.safe_push (std::pair<rtx_insn *, bool> (trial, false));
@@ -1264,7 +1268,7 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 	  if (++slot_number == num_slots)
 	    break;
 
-	  next_to_match = XVECEXP (PATTERN (insn), 0, slot_number);
+	  next_to_match = insn_pat->insn (slot_number);
 	}
 
       mark_set_resources (trial, &set, 0, MARK_SRC_DEST_CALL);
@@ -1273,14 +1277,14 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 
   /* See if we stopped on a filled insn.  If we did, try to see if its
      delay slots match.  */
+  rtx_sequence *pat;
   if (slot_number != num_slots
       && trial && NONJUMP_INSN_P (trial)
-      && GET_CODE (PATTERN (trial)) == SEQUENCE
-      && !(JUMP_P (XVECEXP (PATTERN (trial), 0, 0))
-           && INSN_ANNULLED_BRANCH_P (XVECEXP (PATTERN (trial), 0, 0))))
+      && (pat = dyn_cast <rtx_sequence *> (PATTERN (trial)))
+      && !(JUMP_P (pat->insn (0))
+	   && INSN_ANNULLED_BRANCH_P (pat->insn (0))))
     {
-      rtx_sequence *pat = as_a <rtx_sequence *> (PATTERN (trial));
-      rtx filled_insn = XVECEXP (pat, 0, 0);
+      rtx_insn *filled_insn = pat->insn (0);
 
       /* Account for resources set/needed by the filled insn.  */
       mark_set_resources (filled_insn, &set, 0, MARK_SRC_DEST_CALL);
@@ -1294,12 +1298,12 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 	  /* Account for resources set by the insn following NEXT_TO_MATCH
 	     inside INSN's delay list. */
 	  for (int j = 1; slot_number + j < num_slots; j++)
-	    mark_set_resources (XVECEXP (PATTERN (insn), 0, slot_number + j),
+	    mark_set_resources (insn_pat->insn (slot_number + j),
 				&modified, 0, MARK_SRC_DEST_CALL);
 	  /* Account for resources set by the insn before DTRIAL and inside
 	     TRIAL's delay list. */
 	  for (int j = 1; j < i; j++)
-	    mark_set_resources (XVECEXP (pat, 0, j),
+	    mark_set_resources (pat->insn (j),
 				&modified, 0, MARK_SRC_DEST_CALL);
 	  if (! insn_references_resource_p (dtrial, &set, true)
 	      && ! insn_sets_resource_p (dtrial, &set, true)
@@ -1320,7 +1324,7 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 		  new_rtx = delete_from_delay_slot (dtrial);
 	          if (thread->deleted ())
 		    thread = new_rtx;
-		  INSN_FROM_TARGET_P (next_to_match) = 0;
+		  set_insn_from_target (next_to_match, false);
 		}
 	      else
 		merged_insns.safe_push (std::pair<rtx_insn *, bool> (dtrial,
@@ -1329,7 +1333,7 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 	      if (++slot_number == num_slots)
 		break;
 
-	      next_to_match = XVECEXP (PATTERN (insn), 0, slot_number);
+	      next_to_match = insn_pat->insn (slot_number);
 	    }
 	  else
 	    {
@@ -1365,8 +1369,8 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 
       INSN_ANNULLED_BRANCH_P (delay_insn) = 0;
 
-      for (int i = 0; i < XVECLEN (PATTERN (insn), 0); i++)
-	INSN_FROM_TARGET_P (XVECEXP (PATTERN (insn), 0, i)) = 0;
+      for (int i = 0; i < insn_pat->len (); i++)
+	set_insn_from_target (insn_pat->insn (i), false);
     }
 }
 
@@ -1390,9 +1394,10 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
    gain in rare cases.  */
 
 static rtx_insn *
-redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
+redundant_insn (rtx_insn *insn, rtx_insn *target,
+		const vec<rtx_insn *> &delay_list)
 {
-  rtx target_main = target;
+  rtx_insn *target_main = target;
   rtx ipat = PATTERN (insn);
   rtx_insn *trial;
   rtx pat;
@@ -1417,15 +1422,12 @@ redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
       if (LABEL_P (trial) || BARRIER_P (trial))
 	return 0;
 
-      if (!INSN_P (trial))
+      if (!NONDEBUG_INSN_P (trial))
 	continue;
       --insns_to_search;
 
       pat = PATTERN (trial);
       if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER)
-	continue;
-
-      if (GET_CODE (trial) == DEBUG_INSN)
 	continue;
 
       if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (pat))
@@ -1449,8 +1451,8 @@ redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
 	     resource requirements as we go.  */
 	  for (i = seq->len () - 1; i > 0; i--)
 	    if (GET_CODE (seq->element (i)) == GET_CODE (insn)
-		&& rtx_equal_p (PATTERN (seq->element (i)), ipat)
-		&& ! find_reg_note (seq->element (i), REG_UNUSED, NULL_RTX))
+		&& rtx_equal_p (PATTERN (seq->insn (i)), ipat)
+		&& ! find_reg_note (seq->insn (i), REG_UNUSED, NULL_RTX))
 	      break;
 
 	  /* If found a match, exit this loop early.  */
@@ -1476,8 +1478,11 @@ redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
   mark_referenced_resources (insn, &needed, true);
 
   /* If TARGET is a SEQUENCE, get the main insn.  */
-  if (NONJUMP_INSN_P (target) && GET_CODE (PATTERN (target)) == SEQUENCE)
-    target_main = XVECEXP (PATTERN (target), 0, 0);
+  rtx_sequence *target_seq = nullptr;
+  if (NONJUMP_INSN_P (target))
+    target_seq = dyn_cast <rtx_sequence *> (PATTERN (target));
+  if (target_seq)
+    target_main = target_seq->insn (0);
 
   if (resource_conflicts_p (&needed, &set)
       /* The insn requiring the delay may not set anything needed or set by
@@ -1500,10 +1505,9 @@ redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
     if (insn_sets_resource_p (temp, &needed, true))
       return 0;
 
-  if (NONJUMP_INSN_P (target) && GET_CODE (PATTERN (target)) == SEQUENCE)
-    for (i = 1; i < XVECLEN (PATTERN (target), 0); i++)
-      if (insn_sets_resource_p (XVECEXP (PATTERN (target), 0, i), &needed,
-				true))
+  if (target_seq)
+    for (i = 1; i < target_seq->len (); i++)
+      if (insn_sets_resource_p (target_seq->insn (i), &needed, true))
 	return 0;
 
   /* Scan backwards until we reach a label or an insn that uses something
@@ -1514,15 +1518,12 @@ redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
        trial && !LABEL_P (trial) && insns_to_search > 0;
        trial = PREV_INSN (trial))
     {
-      if (!INSN_P (trial))
+      if (!NONDEBUG_INSN_P (trial))
 	continue;
       --insns_to_search;
 
       pat = PATTERN (trial);
       if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER)
-	continue;
-
-      if (GET_CODE (trial) == DEBUG_INSN)
 	continue;
 
       if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (pat))
@@ -1559,7 +1560,7 @@ redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
 		  && ! (annul_p && INSN_FROM_TARGET_P (candidate)))
 		{
 		  /* Show that this insn will be used in the sequel.  */
-		  INSN_FROM_TARGET_P (candidate) = 0;
+		  set_insn_from_target (candidate, false);
 		  return candidate;
 		}
 
@@ -1710,7 +1711,7 @@ update_reg_dead_notes (rtx_insn *insn, rtx_insn *delayed_insn)
    confused into thinking the register is dead.  */
 
 static void
-fix_reg_dead_note (rtx_insn *start_insn, rtx stop_insn)
+fix_reg_dead_note (rtx_insn *start_insn, rtx_insn *stop_insn)
 {
   rtx link, next;
   rtx_insn *p;
@@ -1740,7 +1741,7 @@ fix_reg_dead_note (rtx_insn *start_insn, rtx stop_insn)
    make sure that INSN calculates as many results as OTHER_INSN does.  */
 
 static void
-update_reg_unused_notes (rtx_insn *insn, rtx other_insn)
+update_reg_unused_notes (rtx_insn *insn, rtx_insn *other_insn)
 {
   rtx link, next;
 
@@ -1771,7 +1772,7 @@ get_label_before (rtx_insn *insn, rtx sibling)
 
   /* Find an existing label at this point
      or make a new one if there is none.  */
-  label = prev_nonnote_insn (insn);
+  label = prev_nonnote_nondebug_insn (insn);
 
   if (label == 0 || !LABEL_P (label))
     {
@@ -1824,7 +1825,7 @@ fill_simple_delay_slots (bool non_jumps_p)
       if (insn == 0
 	  || insn->deleted ()
 	  || (NONJUMP_INSN_P (insn)
-	      && GET_CODE (PATTERN (insn)) == SEQUENCE)
+	      && is_a <rtx_sequence *> (PATTERN (insn)))
 	  || (JUMP_P (insn) && non_jumps_p)
 	  || (!JUMP_P (insn) && ! non_jumps_p))
 	continue;
@@ -2086,8 +2087,9 @@ fill_simple_delay_slots (bool non_jumps_p)
 
 	      /* If this already has filled delay slots, get the insn needing
 		 the delay slots.  */
-	      if (GET_CODE (pat) == SEQUENCE)
-		trial_delay = XVECEXP (pat, 0, 0);
+	      rtx_sequence *delay_seq = dyn_cast <rtx_sequence *> (pat);
+	      if (delay_seq)
+		trial_delay = delay_seq->insn (0);
 	      else
 		trial_delay = trial;
 
@@ -2096,7 +2098,7 @@ fill_simple_delay_slots (bool non_jumps_p)
 		break;
 
 	      /* See if we have a resource problem before we try to split.  */
-	      if (GET_CODE (pat) != SEQUENCE
+	      if (!delay_seq
 		  && ! insn_references_resource_p (trial, &set, true)
 		  && ! insn_sets_resource_p (trial, &set, true)
 		  && ! insn_sets_resource_p (trial, &needed, true)
@@ -2138,7 +2140,7 @@ fill_simple_delay_slots (bool non_jumps_p)
 	      && simplejump_p (trial)
 	      && (next_trial = next_active_insn (JUMP_LABEL_AS_INSN (trial))) != 0
 	      && ! (NONJUMP_INSN_P (next_trial)
-		    && GET_CODE (PATTERN (next_trial)) == SEQUENCE)
+		    && is_a <rtx_sequence *> (PATTERN (next_trial)))
 	      && !JUMP_P (next_trial)
 	      && ! insn_references_resource_p (next_trial, &set, true)
 	      && ! insn_sets_resource_p (next_trial, &set, true)
@@ -2280,7 +2282,7 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
 			bool thread_if_true, bool own_thread, int slots_to_fill,
 			int *pslots_filled, vec<rtx_insn *> *delay_list)
 {
-  rtx new_thread;
+  rtx_insn *new_thread;
   struct resources opposite_needed, set, needed;
   rtx_insn *trial;
   bool lose = false;
@@ -2346,7 +2348,8 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
        ! stop_search_p (trial, ! thread_if_true) && (! lose || own_thread);
        trial = next_nonnote_insn (trial))
     {
-      rtx pat, old_trial;
+      rtx pat;
+      rtx_insn *old_trial;
 
       /* If we have passed a label, we no longer own this thread.  */
       if (LABEL_P (trial))
@@ -2510,7 +2513,7 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
 
 		  temp = own_thread ? trial : copy_delay_slot_insn (trial);
 		  if (thread_if_true)
-		    INSN_FROM_TARGET_P (temp) = 1;
+		    set_insn_from_target (temp, true);
 
 		  add_to_delay_list (temp, delay_list);
 
@@ -2533,8 +2536,7 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
 			     to call update_block and delete_insn.  */
 			  fix_reg_dead_note (prior_insn, insn);
 			  update_reg_unused_notes (prior_insn, new_thread);
-			  new_thread
-			    = next_active_insn (as_a<rtx_insn *> (new_thread));
+			  new_thread = next_active_insn (new_thread);
 			}
 		      break;
 		    }
@@ -2586,7 +2588,7 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
 	  && REG_P (SET_DEST (pat))
 	  && !reg_overlap_mentioned_p (SET_DEST (pat), SET_SRC (pat)))
 	{
-	  rtx_insn *next = next_nonnote_insn (trial);
+	  rtx_insn *next = next_nonnote_nondebug_insn (trial);
 
 	  if (next && NONJUMP_INSN_P (next)
 	      && GET_CODE (PATTERN (next)) != USE
@@ -2598,26 +2600,28 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
 	}
     }
 
+  /* Past here the thread can be a RETURN or a label.  */
+  rtx thread_tail = new_thread;
   /* If we stopped on a branch insn that has delay slots, see if we can
      steal some of the insns in those slots.  */
+  rtx_sequence *sequence;
   if (trial && NONJUMP_INSN_P (trial)
-      && GET_CODE (PATTERN (trial)) == SEQUENCE
-      && JUMP_P (XVECEXP (PATTERN (trial), 0, 0)))
+      && (sequence = dyn_cast <rtx_sequence *> (PATTERN (trial)))
+      && JUMP_P (sequence->insn (0)))
     {
-      rtx_sequence *sequence = as_a <rtx_sequence *> (PATTERN (trial));
       /* If this is the `true' thread, we will want to follow the jump,
 	 so we can only do this if we have taken everything up to here.  */
-      if (thread_if_true && trial == new_thread)
+      if (thread_if_true && trial == thread_tail)
 	{
 	  steal_delay_list_from_target (insn, condition, sequence,
 					delay_list, &set, &needed,
 					&opposite_needed, slots_to_fill,
 					pslots_filled, &must_annul,
-					&new_thread);
+					&thread_tail);
 	  /* If we owned the thread and are told that it branched
 	     elsewhere, make sure we own the thread at the new location.  */
-	  if (own_thread && trial != new_thread)
-	    own_thread = own_thread_p (new_thread, new_thread, false);
+	  if (own_thread && trial != thread_tail)
+	    own_thread = own_thread_p (thread_tail, thread_tail, false);
 	}
       else if (! thread_if_true)
 	steal_delay_list_from_fallthrough (insn, condition, sequence,
@@ -2633,19 +2637,19 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
      arithmetic insn after the jump insn and put the arithmetic insn in the
      delay slot.  If we can't do this, return.  */
   if (delay_list->is_empty () && likely
-      && new_thread
-      && !ANY_RETURN_P (new_thread)
-      && NONJUMP_INSN_P (new_thread)
-      && !RTX_FRAME_RELATED_P (new_thread)
-      && GET_CODE (PATTERN (new_thread)) != ASM_INPUT
-      && asm_noperands (PATTERN (new_thread)) < 0)
+      && thread_tail
+      && !ANY_RETURN_P (thread_tail)
+      && NONJUMP_INSN_P (thread_tail)
+      && !RTX_FRAME_RELATED_P (thread_tail)
+      && GET_CODE (PATTERN (thread_tail)) != ASM_INPUT
+      && asm_noperands (PATTERN (thread_tail)) < 0)
     {
       rtx dest;
       rtx src;
 
-      /* We know "new_thread" is an insn due to NONJUMP_INSN_P (new_thread)
+      /* We know "thread_tail" is an insn due to NONJUMP_INSN_P (thread_tail)
 	 above.  */
-      trial = as_a <rtx_insn *> (new_thread);
+      trial = as_a <rtx_insn *> (thread_tail);
       rtx pat = PATTERN (trial);
 
       if (!NONJUMP_INSN_P (trial)
@@ -2692,17 +2696,17 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
 	      if (trial == thread)
 		{
 		  thread = next_active_insn (thread);
-		  if (new_thread == trial)
-		    new_thread = thread;
+		  if (thread_tail == trial)
+		    thread_tail = thread;
 		}
 	      delete_related_insns (trial);
 	    }
 	  else
-	    new_thread = next_active_insn (trial);
+	    thread_tail = next_active_insn (trial);
 
 	  ninsn = own_thread ? trial : copy_delay_slot_insn (trial);
 	  if (thread_if_true)
-	    INSN_FROM_TARGET_P (ninsn) = 1;
+	    set_insn_from_target (ninsn, true);
 
 	  add_to_delay_list (ninsn, delay_list);
 	  (*pslots_filled)++;
@@ -2715,35 +2719,35 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
   /* If we are to branch into the middle of this thread, find an appropriate
      label or make a new one if none, and redirect INSN to it.  If we hit the
      end of the function, use the end-of-function label.  */
-  if (new_thread != thread)
+  if (thread_tail != thread)
     {
       rtx label;
       bool crossing = false;
 
       gcc_assert (thread_if_true);
 
-      if (new_thread
-	  && simplejump_or_return_p (new_thread)
+      if (thread_tail
+	  && simplejump_or_return_p (thread_tail)
 	  && redirect_with_delay_list_safe_p (insn,
-					      JUMP_LABEL (new_thread),
+					      JUMP_LABEL (thread_tail),
 					      *delay_list))
-	new_thread = follow_jumps (JUMP_LABEL (new_thread), insn, &crossing);
+	thread_tail = follow_jumps (JUMP_LABEL (thread_tail), insn, &crossing);
 
-      if (!new_thread)
+      if (!thread_tail)
 	label = find_end_label (simple_return_rtx);
-      else if (ANY_RETURN_P (new_thread))
-	label = find_end_label (new_thread);
-      else if (LABEL_P (new_thread))
-	label = new_thread;
+      else if (ANY_RETURN_P (thread_tail))
+	label = find_end_label (thread_tail);
+      else if (LABEL_P (thread_tail))
+	label = thread_tail;
       else
-	label = get_label_before (as_a <rtx_insn *> (new_thread),
+	label = get_label_before (as_a <rtx_insn *> (thread_tail),
 				  JUMP_LABEL (insn));
 
       if (label)
 	{
 	  reorg_redirect_jump (insn, label);
 	  if (crossing)
-	    CROSSING_JUMP_P (insn) = 1;
+	    set_crossing_jump (insn, true);
 	}
     }
 }
@@ -2890,17 +2894,18 @@ delete_prior_computation (rtx note, rtx_insn *insn)
   rtx_insn *our_prev;
   rtx reg = XEXP (note, 0);
 
-  for (our_prev = prev_nonnote_insn (insn);
+  for (our_prev = prev_nonnote_nondebug_insn (insn);
        our_prev && (NONJUMP_INSN_P (our_prev)
 		    || CALL_P (our_prev));
-       our_prev = prev_nonnote_insn (our_prev))
+       our_prev = prev_nonnote_nondebug_insn (our_prev))
     {
       rtx pat = PATTERN (our_prev);
 
       /* If we reach a CALL which is not calling a const function
 	 or the callee pops the arguments, then give up.  */
-      if (CALL_P (our_prev)
-	  && (! RTL_CONST_CALL_P (our_prev)
+      auto call = dyn_cast<rtx_call_insn *> (our_prev);
+      if (call
+	  && (! RTL_CONST_CALL_P (call)
 	      || GET_CODE (pat) != SET || GET_CODE (SET_SRC (pat)) != CALL))
 	break;
 
@@ -3029,7 +3034,7 @@ delete_jump (rtx_insn *insn)
 }
 
 static rtx_insn *
-label_before_next_insn (rtx_insn *x, rtx scan_limit)
+label_before_next_insn (rtx_insn *x, rtx_insn *scan_limit)
 {
   rtx_insn *insn = next_active_insn (x);
   while (insn)
@@ -3097,7 +3102,7 @@ relax_delay_slots (rtx_insn *first)
 	      && ! (next && switch_text_sections_between_p (jump_insn, next)))
 	    {
 	      rtx_insn *direct_label = as_a<rtx_insn *> (JUMP_LABEL (insn));
-	      rtx_insn *prev = prev_nonnote_insn (direct_label);
+	      rtx_insn *prev = prev_nonnote_nondebug_insn (direct_label);
 
 	      /* If the insn jumps over a BARRIER and is the only way to reach
 		 its target, then we need to delete the BARRIER before the jump
@@ -3121,7 +3126,7 @@ relax_delay_slots (rtx_insn *first)
 	    {
 	      reorg_redirect_jump (jump_insn, target_label);
 	      if (crossing)
-		CROSSING_JUMP_P (jump_insn) = 1;
+		set_crossing_jump (jump_insn, true);
 	    }
 
 	  /* See if this jump conditionally branches around an unconditional
@@ -3193,10 +3198,9 @@ relax_delay_slots (rtx_insn *first)
 	}
 
       /* Now look only at cases where we have a filled delay slot.  */
-      if (!NONJUMP_INSN_P (insn) || GET_CODE (PATTERN (insn)) != SEQUENCE)
+      if (!NONJUMP_INSN_P (insn)
+	  || !(pat = dyn_cast <rtx_sequence *> (PATTERN (insn))))
 	continue;
-
-      pat = as_a <rtx_sequence *> (PATTERN (insn));
       delay_insn = pat->insn (0);
 
       /* See if the first insn in the delay slot is redundant with some
@@ -3240,8 +3244,8 @@ relax_delay_slots (rtx_insn *first)
 
 	     Clear the from target bit, since these insns are no longer
 	     in delay slots.  */
-	  for (i = 0; i < XVECLEN (pat, 0); i++)
-	    INSN_FROM_TARGET_P (XVECEXP (pat, 0, i)) = 0;
+	  for (i = 0; i < pat->len (); i++)
+	    set_insn_from_target (pat->insn (i), false);
 
 	  rtx_insn *prev = PREV_INSN (insn);
 	  delete_related_insns (insn);
@@ -3279,7 +3283,7 @@ relax_delay_slots (rtx_insn *first)
 	  reorg_redirect_jump (delay_jump_insn, trial);
 	  target_label = trial;
 	  if (crossing)
-	    CROSSING_JUMP_P (delay_jump_insn) = 1;
+	    set_crossing_jump (delay_jump_insn, true);
 	}
 
       /* If the first insn at TARGET_LABEL is redundant with a previous
@@ -3287,23 +3291,24 @@ relax_delay_slots (rtx_insn *first)
 	 We use next_real_nondebug_insn instead of next_active_insn so we
 	 don't skip USE-markers, or we'll end up with incorrect
 	 liveness info.  */
-      trial = next_real_nondebug_insn (target_label);
-      if (trial && GET_CODE (PATTERN (trial)) != SEQUENCE
-	  && redundant_insn (trial, insn, vNULL)
-	  && ! can_throw_internal (trial))
+      rtx_insn *next_insn
+	= next_real_nondebug_insn (as_a<rtx_insn *> (target_label));
+      if (next_insn && GET_CODE (PATTERN (next_insn)) != SEQUENCE
+	  && redundant_insn (next_insn, insn, vNULL)
+	  && ! can_throw_internal (next_insn))
 	{
 	  /* Figure out where to emit the special USE insn so we don't
 	     later incorrectly compute register live/death info.  */
-	  rtx_insn *tmp = next_active_insn (as_a<rtx_insn *> (trial));
+	  rtx_insn *tmp = next_active_insn (next_insn);
 	  if (tmp == 0)
 	    tmp = find_end_label (simple_return_rtx);
 
 	  if (tmp)
 	    {
 	      /* Insert the special USE insn and update dataflow info.
-		 We know "trial" is an insn here as it is the output of
+		 We know "next_insn" is an insn here as it is the output of
 		 next_real_nondebug_insn () above.  */
-	      update_block (as_a <rtx_insn *> (trial), tmp);
+	      update_block (next_insn, tmp);
 
 	      /* Now emit a label before the special USE insn, and
 		 redirect our jump to the new label.  */
@@ -3317,7 +3322,7 @@ relax_delay_slots (rtx_insn *first)
       /* Similarly, if it is an unconditional jump with one insn in its
 	 delay list and that insn is redundant, thread the jump.  */
       rtx_sequence *trial_seq =
-	trial ? dyn_cast <rtx_sequence *> (PATTERN (trial)) : NULL;
+	next_insn ? dyn_cast <rtx_sequence *> (PATTERN (next_insn)) : NULL;
       if (trial_seq
 	  && trial_seq->len () == 2
 	  && JUMP_P (trial_seq->insn (0))
@@ -3344,7 +3349,8 @@ relax_delay_slots (rtx_insn *first)
 	  && !INSN_ANNULLED_BRANCH_P (delay_jump_insn)
 	  && !condjump_in_parallel_p (delay_jump_insn)
 	  && prev_active_insn (as_a<rtx_insn *> (target_label)) == insn
-	  && !BARRIER_P (prev_nonnote_insn (as_a<rtx_insn *> (target_label))))
+	  && !BARRIER_P (prev_nonnote_nondebug_insn
+			   (as_a<rtx_insn *> (target_label))))
 	{
 	  rtx_insn *after;
 	  int i;
@@ -3364,8 +3370,8 @@ relax_delay_slots (rtx_insn *first)
 
 	     Clear the from target bit, since these insns are no longer
 	     in delay slots.  */
-	  for (i = 0; i < XVECLEN (pat, 0); i++)
-	    INSN_FROM_TARGET_P (XVECEXP (pat, 0, i)) = 0;
+	  for (i = 0; i < pat->len (); i++)
+	    set_insn_from_target (pat->insn (i), false);
 
 	  rtx_insn *prev = PREV_INSN (insn);
 	  delete_related_insns (insn);
@@ -3384,7 +3390,7 @@ relax_delay_slots (rtx_insn *first)
       if (next && NONJUMP_INSN_P (next)
 	  && label_before_next_insn (next, insn) == target_label
 	  && simplejump_p (insn)
-	  && XVECLEN (pat, 0) == 2
+	  && pat->len () == 2
 	  && rtx_equal_p (PATTERN (next), PATTERN (pat->insn (1))))
 	{
 	  delete_related_insns (insn);
@@ -3427,10 +3433,10 @@ relax_delay_slots (rtx_insn *first)
 		  /* Must update the INSN_FROM_TARGET_P bits now that
 		     the branch is reversed, so that mark_target_live_regs
 		     will handle the delay slot insn correctly.  */
-		  for (int i = 1; i < XVECLEN (PATTERN (insn), 0); i++)
+		  for (int i = 1; i < pat->len (); i++)
 		    {
-		      rtx slot = XVECEXP (PATTERN (insn), 0, i);
-		      INSN_FROM_TARGET_P (slot) = ! INSN_FROM_TARGET_P (slot);
+		      rtx_insn *slot = pat->insn (i);
+		      set_insn_from_target (slot, ! INSN_FROM_TARGET_P (slot));
 		    }
 
 		  /* We have just removed a BARRIER, which means that the block
@@ -3475,8 +3481,8 @@ make_return_insns (rtx_insn *first)
 {
   rtx_insn *insn;
   rtx_jump_insn *jump_insn;
-  rtx real_return_label = function_return_label;
-  rtx real_simple_return_label = function_simple_return_label;
+  rtx_insn *real_return_label = function_return_label;
+  rtx_insn *real_simple_return_label = function_simple_return_label;
   int slots, i;
 
   /* See if there is a RETURN insn in the function other than the one we
@@ -3485,7 +3491,7 @@ make_return_insns (rtx_insn *first)
   for (insn = first; insn; insn = NEXT_INSN (insn))
     if (JUMP_P (insn) && ANY_RETURN_P (PATTERN (insn)))
       {
-	rtx t = get_label_before (insn, NULL_RTX);
+	rtx_insn *t = get_label_before (insn, NULL_RTX);
 	if (PATTERN (insn) == ret_rtx)
 	  real_return_label = t;
 	else
@@ -3506,17 +3512,17 @@ make_return_insns (rtx_insn *first)
   for (insn = first; insn; insn = NEXT_INSN (insn))
     {
       int flags;
-      rtx kind, real_label;
+      rtx kind;
+      rtx_insn *real_label;
 
       /* Only look at filled JUMP_INSNs that go to the end of function
 	 label.  */
       if (!NONJUMP_INSN_P (insn))
 	continue;
 
-      if (GET_CODE (PATTERN (insn)) != SEQUENCE)
+      rtx_sequence *pat = dyn_cast <rtx_sequence *> (PATTERN (insn));
+      if (!pat)
 	continue;
-
-      rtx_sequence *pat = as_a <rtx_sequence *> (PATTERN (insn));
 
       if (!jump_to_label_p (pat->insn (0)))
 	continue;
@@ -3553,7 +3559,7 @@ make_return_insns (rtx_insn *first)
 
       flags = get_jump_flags (jump_insn, JUMP_LABEL (jump_insn));
       slots = num_delay_slots (jump_insn);
-      if (slots >= XVECLEN (pat, 0) - 1)
+      if (slots >= pat->len () - 1)
 	{
 	  for (i = 1; i < XVECLEN (pat, 0); i++)
 	    if (! (
@@ -3661,7 +3667,7 @@ dbr_schedule (rtx_insn *first)
 
       if (JUMP_P (insn))
         INSN_ANNULLED_BRANCH_P (insn) = 0;
-      INSN_FROM_TARGET_P (insn) = 0;
+      set_insn_from_target (insn, false);
 
       if (num_delay_slots (insn) > 0)
 	obstack_ptr_grow (&unfilled_slots_obstack, insn);
@@ -3770,13 +3776,12 @@ dbr_schedule (rtx_insn *first)
 	      && GET_CODE (PATTERN (insn)) != USE
 	      && GET_CODE (PATTERN (insn)) != CLOBBER)
 	    {
-	      if (GET_CODE (PATTERN (insn)) == SEQUENCE)
+	      if (auto *seq = dyn_cast <rtx_sequence *> (PATTERN (insn)))
 		{
-                  rtx control;
-		  j = XVECLEN (PATTERN (insn), 0) - 1;
+		  rtx_insn *control = seq->insn (0);
+		  j = seq->len () - 1;
 		  if (j > MAX_DELAY_HISTOGRAM)
 		    j = MAX_DELAY_HISTOGRAM;
-                  control = XVECEXP (PATTERN (insn), 0, 0);
 		  if (JUMP_P (control) && INSN_ANNULLED_BRANCH_P (control))
 		    total_annul_slots[j]++;
 		  else

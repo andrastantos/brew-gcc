@@ -264,6 +264,23 @@ struct ira_object
   unsigned int conflict_vec_p : 1;
 };
 
+
+/* Filter that restricts an allocno's hard regnos by referencing
+   another allocno.  */
+struct ira_dependent_filter
+{
+  /* Filter ID and MODE of this (dependent) op.  */
+  int id;
+  machine_mode mode : MACHINE_MODE_BITSIZE;
+
+  /* Allocno, hard regno and mode of the referenced op.  */
+  ira_allocno_t ref_allocno;
+  unsigned int ref_hard_regno;
+  machine_mode ref_mode : MACHINE_MODE_BITSIZE;
+
+  struct ira_dependent_filter *next;
+};
+
 /* A structure representing an allocno (allocation entity).  Allocno
    represents a pseudo-register in an allocation region.  If
    pseudo-register does not live in a region but it lives in the
@@ -281,13 +298,13 @@ struct ira_allocno
   int regno;
   /* Mode of the allocno which is the mode of the corresponding
      pseudo-register.  */
-  ENUM_BITFIELD (machine_mode) mode : MACHINE_MODE_BITSIZE;
+  machine_mode mode : MACHINE_MODE_BITSIZE;
   /* Widest mode of the allocno which in at least one case could be
      for paradoxical subregs where wmode > mode.  */
-  ENUM_BITFIELD (machine_mode) wmode : MACHINE_MODE_BITSIZE;
+  machine_mode wmode : MACHINE_MODE_BITSIZE;
   /* Register class which should be used for allocation for given
      allocno.  NO_REGS means that we should use memory.  */
-  ENUM_BITFIELD (reg_class) aclass : 16;
+  enum reg_class aclass : 16;
   /* Hard register assigned to given allocno.  Negative value means
      that memory was allocated to the allocno.  During the reload,
      spilled allocno has value equal to the corresponding stack slot
@@ -335,6 +352,8 @@ struct ira_allocno
      alternatives that accept class ACLASS.  */
   unsigned int register_filters : NUM_REGISTER_FILTERS;
 #endif
+  /* List of dependent filters.  */
+  struct ira_dependent_filter *dependent_filters;
   /* Accumulated usage references of the allocno.  Here and below,
      word 'accumulated' means info for given region and all nested
      subregions.  In this case, 'accumulated' means sum of references
@@ -446,6 +465,7 @@ struct ira_allocno
 #define ALLOCNO_REGISTER_FILTERS(A) 0
 #define ALLOCNO_SET_REGISTER_FILTERS(A, X) ((void) (A), gcc_assert ((X) == 0))
 #endif
+#define ALLOCNO_DEPENDENT_FILTERS(A) ((A)->dependent_filters)
 #define ALLOCNO_HARD_REGNO(A) ((A)->hard_regno)
 #define ALLOCNO_CALL_FREQ(A) ((A)->call_freq)
 #define ALLOCNO_CALLS_CROSSED_NUM(A) ((A)->calls_crossed_num)
@@ -937,7 +957,7 @@ public:
   /* Flag of that the above array has been initialized.  */
   bool x_ira_prohibited_mode_move_regs_initialized_p;
 
-  /* Number of real occurences of hard regs before IRA.  */
+  /* Number of real occurrences of hard regs before IRA.  */
   size_t x_ira_hard_regno_nrefs[FIRST_PSEUDO_REGISTER];
 };
 
@@ -1081,6 +1101,9 @@ extern void ira_compress_allocno_live_ranges (void);
 extern void ira_finish_allocno_live_ranges (void);
 extern void ira_implicitly_set_insn_hard_regs (HARD_REG_SET *,
 					       alternative_mask);
+extern void ira_add_dependent_filter (ira_allocno_t, int,
+				      machine_mode, ira_allocno_t,
+				      unsigned int, machine_mode);
 
 /* ira-conflicts.cc */
 extern void ira_debug_conflicts (bool);
@@ -1437,18 +1460,6 @@ ira_hard_reg_set_intersection_p (int hard_regno, machine_mode mode,
   return false;
 }
 
-/* Return number of hard registers in hard register SET.  */
-inline int
-hard_reg_set_size (HARD_REG_SET set)
-{
-  int i, size;
-
-  for (size = i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-    if (TEST_HARD_REG_BIT (set, i))
-      size++;
-  return size;
-}
-
 /* The function returns TRUE if hard registers starting with
    HARD_REGNO and containing value of MODE are fully in set
    HARD_REGSET.  */
@@ -1726,5 +1737,14 @@ ira_caller_save_loop_spill_p (ira_allocno_t a, ira_allocno_t subloop_a,
   int call_cost = ira_caller_save_cost (subloop_a);
   return call_cost && call_cost >= spill_cost;
 }
+
+/* True if X is a constant that can be forced into the constant pool.
+   MODE is the mode of the operand, or VOIDmode if not known.  */
+#define CONST_POOL_OK_P(MODE, X)		\
+  ((MODE) != VOIDmode				\
+   && CONSTANT_P (X)				\
+   && GET_CODE (X) != HIGH			\
+   && GET_MODE_SIZE (MODE).is_constant ()	\
+   && !targetm.cannot_force_const_mem (MODE, X))
 
 #endif /* GCC_IRA_INT_H */

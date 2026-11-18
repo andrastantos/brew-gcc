@@ -3,7 +3,7 @@
 /* { dg-require-effective-target shared } */
 /* { dg-lto-options { { -O -flto -fpic } } } */
 /* { dg-extra-ld-options { -shared } } */
-/* { dg-extra-ld-options "-Wl,-undefined,dynamic_lookup" { target *-*-darwin* } } */
+/* { dg-extra-ld-options "-shared -Wl,-undefined,dynamic_lookup" { target *-*-darwin* } } */
 
 extern void bar(char *, int);
 

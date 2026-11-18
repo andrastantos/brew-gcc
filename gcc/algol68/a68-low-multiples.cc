@@ -64,7 +64,7 @@
    There is a triplet per dimension in the multiple.  The number of dimensions
    in a row mode is static and is determined at compile-time.
 
-   The infomation stored for each triplet is:
+   The information stored for each triplet is:
 
      lb%     is the lower bound of the dimension.
      ub%     is the upper bound of the dimension.
@@ -525,7 +525,7 @@ a68_multiple_slice (NODE_T *p,
       if (OPTION_BOUNDS_CHECKING (&A68_JOB))
 	{
 	  tree upper_bound = a68_multiple_upper_bound (multiple, size_int (idx));
-	  unsigned int lineno = NUMBER (LINE (INFO (p)));
+	  unsigned int lineno = LINE_NUMBER (p);
 	  const char *filename_str = FILENAME (LINE (INFO (p)));
 	  tree filename = build_string_literal (strlen (filename_str) + 1,
 						    filename_str);
@@ -544,7 +544,7 @@ a68_multiple_slice (NODE_T *p,
 					       fold_build2 (LE_EXPR, ssizetype,
 							    lower_bound, upper_bound),
 					       fold_build2 (TRUTH_AND_EXPR,
-							    boolean_type_node,
+							    a68_bool_type,
 							    fold_build2 (GE_EXPR, ssizetype,
 									 fold_convert (ssizetype,
 										       index_expr),
@@ -858,7 +858,7 @@ a68_multiple_single_bound_check (NODE_T *p, tree dim,
 			    : A68_LIBCALL_ARRAYLOWERBOUND);
 
   /* Build the call to ARRAY*BOUNDS. */
-  unsigned int lineno = NUMBER (LINE (INFO (p)));
+  unsigned int lineno = LINE_NUMBER (p);
   const char *filename_str = FILENAME (LINE (INFO (p)));
   tree filename = build_string_literal (strlen (filename_str) + 1,
 					filename_str);
@@ -882,7 +882,7 @@ a68_multiple_single_bound_check (NODE_T *p, tree dim,
 
 /* Return a tree that checks whether the given DIM is a valid dimension/rank of
    a boundable object with dimension BOUNDABLE_DIM.  If the provided DIM is not
-   a valid dimention then a call to the run-time function ARRAYDIM is
+   a valid dimension then a call to the run-time function ARRAYDIM is
    performed.
 
    BOUNDABLE_DIM and DIM must be of type sizetype.  They are both one-based.
@@ -897,7 +897,7 @@ a68_boundable_dim_check (NODE_T *p, tree boundable_dim, tree dim)
   dim = save_expr (dim);
 
   /* Build the call to ARRAYDIM. */
-  unsigned int lineno = NUMBER (LINE (INFO (p)));
+  unsigned int lineno = LINE_NUMBER (p);
   const char *filename_str = FILENAME (LINE (INFO (p)));
   tree filename = build_string_literal (strlen (filename_str) + 1,
 					filename_str);
@@ -908,9 +908,9 @@ a68_boundable_dim_check (NODE_T *p, tree boundable_dim, tree dim)
 				 boundable_dim, dim);
   call = fold_build2 (COMPOUND_EXPR, a68_bool_type, call, boolean_false_node);
 
-  tree dim_check = fold_build2 (TRUTH_AND_EXPR, boolean_type_node,
-				fold_build2 (GT_EXPR, boolean_type_node, dim, size_zero_node),
-				fold_build2 (LE_EXPR, boolean_type_node, dim, boundable_dim));
+  tree dim_check = fold_build2 (TRUTH_AND_EXPR, a68_bool_type,
+				fold_build2 (GT_EXPR, a68_bool_type, dim, size_zero_node),
+				fold_build2 (LE_EXPR, a68_bool_type, dim, boundable_dim));
   return fold_build2_loc (a68_get_node_location (p),
 			  TRUTH_ORIF_EXPR,
 			  ssizetype,
@@ -965,7 +965,7 @@ a68_multiple_bounds_check (NODE_T *p, tree dim,
   tree lower_bound = a68_multiple_lower_bound (multiple, dim);
 
   /* Build the call to ARRAYBOUNDS. */
-  unsigned int lineno = NUMBER (LINE (INFO (p)));
+  unsigned int lineno = LINE_NUMBER (p);
   const char *filename_str = FILENAME (LINE (INFO (p)));
   tree filename = build_string_literal (strlen (filename_str) + 1,
 					filename_str);
@@ -984,7 +984,7 @@ a68_multiple_bounds_check (NODE_T *p, tree dim,
 				   fold_build2 (LE_EXPR, ssizetype,
 						lower_bound, upper_bound),
 				   fold_build2 (TRUTH_AND_EXPR,
-						boolean_type_node,
+						a68_bool_type,
 						fold_build2 (GE_EXPR, ssizetype,
 							     fold_convert (ssizetype,
 									   index),
@@ -1037,13 +1037,13 @@ a68_multiple_bounds_check_equal (NODE_T *p, tree m1, tree m2)
       tree ub2 = save_expr (a68_multiple_upper_bound (m2, dim_tree));
 
       tree bounds_equal = fold_build2 (TRUTH_AND_EXPR,
-				       boolean_type_node,
-				       fold_build2 (EQ_EXPR, boolean_type_node,
+				       a68_bool_type,
+				       fold_build2 (EQ_EXPR, a68_bool_type,
 						    lb1, lb2),
-				       fold_build2 (EQ_EXPR, boolean_type_node,
+				       fold_build2 (EQ_EXPR, a68_bool_type,
 						    ub1, ub2));
 
-      unsigned int lineno = NUMBER (LINE (INFO (p)));
+      unsigned int lineno = LINE_NUMBER (p);
       const char *filename_str = FILENAME (LINE (INFO (p)));
       tree filename = build_string_literal (strlen (filename_str) + 1,
 					    filename_str);
@@ -1053,10 +1053,10 @@ a68_multiple_bounds_check_equal (NODE_T *p, tree m1, tree m2)
 				     build_int_cst (unsigned_type_node, lineno),
 				     dim_plus_one,
 				     lb1, ub1, lb2, ub2);
-      call = fold_build2 (COMPOUND_EXPR, boolean_type_node, call, boolean_false_node);
+      call = fold_build2 (COMPOUND_EXPR, a68_bool_type, call, boolean_false_node);
 
       tree check = fold_build2_loc (a68_get_node_location (p),
-				    TRUTH_ORIF_EXPR, boolean_type_node,
+				    TRUTH_ORIF_EXPR, a68_bool_type,
 				    bounds_equal,
 				    call);
       a68_add_stmt (check);

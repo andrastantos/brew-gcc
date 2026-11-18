@@ -21,6 +21,7 @@
 load_lib prune.exp
 load_lib gcc-defs.exp
 load_lib timeout.exp
+load_lib timeout-dg.exp
 load_lib target-libpath.exp
 
 #

@@ -26,6 +26,30 @@ endif
 if HWASAN_SUPPORTED
 SUBDIRS += hwasan
 endif
+
+# Override all-recursive and explicitly define the dependency graph
+# to increase parallelism during the build.
+
+all-sanitizer_common all-interception all-libbacktrace:
+	+cd $(@:all-%=%) && $(MAKE) $(AM_MAKEFLAGS) all
+
+SANITIZER_BASE_DEPS = all-sanitizer_common
+if !USING_MAC_INTERPOSE
+SANITIZER_BASE_DEPS += all-interception
+endif
+if LIBBACKTRACE_SUPPORTED
+SANITIZER_BASE_DEPS += all-libbacktrace
+endif
+
+all-lsan all-ubsan all-tsan: $(SANITIZER_BASE_DEPS)
+	+cd $(@:all-%=%) && $(MAKE) $(AM_MAKEFLAGS) all
+
+all-asan all-hwasan: $(SANITIZER_BASE_DEPS) all-lsan
+	+cd $(@:all-%=%) && $(MAKE) $(AM_MAKEFLAGS) all
+
+all-recursive: $(SUBDIRS:%=all-%)
+
+.PHONY: $(SUBDIRS:%=all-%)
 endif
 
 ## Force DIST_SUBDIRS so that make distclean works

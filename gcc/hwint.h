@@ -15,6 +15,7 @@
 #define HOST_BITS_PER_INT   (CHAR_BIT * SIZEOF_INT)
 #define HOST_BITS_PER_LONG  (CHAR_BIT * SIZEOF_LONG)
 #define HOST_BITS_PER_PTR   (CHAR_BIT * SIZEOF_VOID_P)
+#define HOST_BITS_PER_LONGLONG (CHAR_BIT * SIZEOF_LONG_LONG)
 
 /* The string that should be inserted into a printf style format to
    indicate a "long" operand.  */
@@ -26,24 +27,6 @@
    indicate a "long long" operand.  */
 #ifndef HOST_LONG_LONG_FORMAT
 #define HOST_LONG_LONG_FORMAT "ll"
-#endif
-
-/* If HAVE_LONG_LONG and SIZEOF_LONG_LONG aren't defined, but
-   GCC_VERSION >= 3000, assume this is the second or later stage of a
-   bootstrap, we do have long long, and it's 64 bits.  (This is
-   required by C99; we do have some ports that violate that assumption
-   but they're all cross-compile-only.)  Just in case, force a
-   constraint violation if that assumption is incorrect.  */
-#if !defined HAVE_LONG_LONG
-# if GCC_VERSION >= 3000
-#  define HAVE_LONG_LONG 1
-#  define SIZEOF_LONG_LONG 8
-extern char sizeof_long_long_must_be_8[sizeof (long long) == 8 ? 1 : -1];
-# endif
-#endif
-
-#ifdef HAVE_LONG_LONG
-# define HOST_BITS_PER_LONGLONG (CHAR_BIT * SIZEOF_LONG_LONG)
 #endif
 
 /* Set HOST_WIDE_INT, this should be always 64 bits.
@@ -144,12 +127,8 @@ typedef HOST_WIDE_INT __gcc_host_wide_int__;
    for details.  */
 
 #ifdef USE_LONG_LONG_FOR_WIDEST_FAST_INT
-#  ifdef HAVE_LONG_LONG
-#    define HOST_WIDEST_FAST_INT long long
-#    define HOST_BITS_PER_WIDEST_FAST_INT HOST_BITS_PER_LONGLONG
-#  else
-#    error "Your host said it wanted to use long long but that does not exist"
-#  endif
+#  define HOST_WIDEST_FAST_INT long long
+#  define HOST_BITS_PER_WIDEST_FAST_INT HOST_BITS_PER_LONGLONG
 #else
 #  define HOST_WIDEST_FAST_INT long
 #  define HOST_BITS_PER_WIDEST_FAST_INT HOST_BITS_PER_LONG
@@ -286,6 +265,19 @@ extern HOST_WIDE_INT mul_hwi (HOST_WIDE_INT, HOST_WIDE_INT);
 extern HOST_WIDE_INT least_common_multiple (HOST_WIDE_INT, HOST_WIDE_INT);
 extern unsigned HOST_WIDE_INT reflect_hwi (unsigned HOST_WIDE_INT, unsigned);
 
+/* Calculate CRC for a given initial CRC, DATA, POLYNOMIAL,
+   CRC_SIZE in bits and DATA_SIZE in bits.  */
+extern unsigned HOST_WIDE_INT
+calculate_crc (unsigned HOST_WIDE_INT, unsigned HOST_WIDE_INT,
+	       unsigned HOST_WIDE_INT, unsigned short, unsigned short);
+
+/* Calculate reversed CRC for a given initial CRC, DATA, POLYNOMIAL,
+   CRC_SIZE in bits and DATA_SIZE in bits.  */
+extern unsigned HOST_WIDE_INT
+calculate_reversed_crc (unsigned HOST_WIDE_INT, unsigned HOST_WIDE_INT,
+			unsigned HOST_WIDE_INT, unsigned short,
+			unsigned short);
+
 /* Like ctz_hwi, except 0 when x == 0.  */
 
 inline int
@@ -302,27 +294,24 @@ sext_hwi (HOST_WIDE_INT src, unsigned int prec)
   if (prec == HOST_BITS_PER_WIDE_INT)
     return src;
   else
-#if defined (__GNUC__)
     {
+      gcc_checking_assert (prec < HOST_BITS_PER_WIDE_INT);
+#if defined (__GNUC__)
       /* Take the faster path if the implementation-defined bits it's relying
 	 on are implemented the way we expect them to be.  Namely, conversion
 	 from unsigned to signed preserves bit pattern, and right shift of
 	 a signed value propagates the sign bit.
 	 We have to convert from signed to unsigned and back, because when left
 	 shifting signed values, any overflow is undefined behavior.  */
-      gcc_checking_assert (prec < HOST_BITS_PER_WIDE_INT);
       int shift = HOST_BITS_PER_WIDE_INT - prec;
       return ((HOST_WIDE_INT) ((unsigned HOST_WIDE_INT) src << shift)) >> shift;
-    }
 #else
-    {
       /* Fall back to the slower, well defined path otherwise.  */
-      gcc_checking_assert (prec < HOST_BITS_PER_WIDE_INT);
       HOST_WIDE_INT sign_mask = HOST_WIDE_INT_1 << (prec - 1);
       HOST_WIDE_INT value_mask = (HOST_WIDE_INT_1U << prec) - HOST_WIDE_INT_1U;
       return (((src & value_mask) ^ sign_mask) - sign_mask);
-    }
 #endif
+    }
 }
 
 /* Zero extend SRC starting from PREC.  */
@@ -368,12 +357,11 @@ add_hwi (HOST_WIDE_INT a, HOST_WIDE_INT b, bool *overflow)
     *overflow = true;
   else
     *overflow = false;
-  return result;
 #else
   HOST_WIDE_INT result;
   *overflow = __builtin_add_overflow (a, b, &result);
-  return result;
 #endif
+  return result;
 }
 
 /* Compute the product of signed A and B and indicate in *OVERFLOW whether
@@ -389,12 +377,11 @@ mul_hwi (HOST_WIDE_INT a, HOST_WIDE_INT b, bool *overflow)
     *overflow = true;
   else
     *overflow = false;
-  return result;
 #else
   HOST_WIDE_INT result;
   *overflow = __builtin_mul_overflow (a, b, &result);
-  return result;
 #endif
+  return result;
 }
 
 /* Compute the saturated sum of signed A and B, i.e. upon overflow clamp

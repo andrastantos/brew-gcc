@@ -65,6 +65,11 @@ a68_get_real_skip_tree (MOID_T *m)
       int_type = a68_long_long_int_type;
       real_type = a68_long_long_real_type;
     }
+  else if (m == M_WORD_REAL)
+    {
+      int_type = a68_word_int_type;
+      real_type = a68_word_real_type;
+    }
   else
     gcc_unreachable ();
 
@@ -97,7 +102,7 @@ a68_real_maxval (tree type)
   return build_real (type, max);
 }
 
-/* Given a real type, build the minimum value expressable with that type.  */
+/* Given a real type, build the minimum value expressible with that type.  */
 
 tree
 a68_real_minval (tree type)
@@ -108,7 +113,7 @@ a68_real_minval (tree type)
 }
 
 /* Given a real type, build the smallest value which can be meaningfully added
-   to or substracted from 1.  */
+   to or subtracted from 1.  */
 
 tree
 a68_real_smallval (tree type)
@@ -140,11 +145,11 @@ a68_real_sign (tree val)
   val = save_expr (val);
   return fold_build3 (COND_EXPR,
 		      a68_int_type,
-		      build2 (EQ_EXPR, integer_type_node, val, zero),
+		      build2 (EQ_EXPR, a68_int_type, val, zero),
 		      build_int_cst (a68_int_type, 0),
 		      fold_build3 (COND_EXPR,
 				   a68_int_type,
-				   fold_build2 (GT_EXPR, integer_type_node, val, zero),
+				   fold_build2 (GT_EXPR, a68_int_type, val, zero),
 				   build_int_cst (a68_int_type, 1),
 				   build_int_cst (a68_int_type, -1)));
 }
@@ -375,9 +380,10 @@ tree
 a68_real_entier (tree val, MOID_T *to_mode, MOID_T *from_mode)
 {
   tree fn = NULL_TREE;
+  tree from_type = CTYPE (from_mode);
   tree to_type = CTYPE (to_mode);
 
-  if (from_mode == M_REAL)
+  if (from_type == float_type_node)
     {
       if (to_type == integer_type_node)
 	fn = builtin_decl_explicit (BUILT_IN_IFLOORF);
@@ -388,7 +394,7 @@ a68_real_entier (tree val, MOID_T *to_mode, MOID_T *from_mode)
       else
 	gcc_unreachable ();
     }
-  else if (from_mode == M_LONG_REAL)
+  else if (from_type == double_type_node)
     {
       if (to_type == integer_type_node)
 	fn = builtin_decl_explicit (BUILT_IN_IFLOOR);
@@ -399,7 +405,7 @@ a68_real_entier (tree val, MOID_T *to_mode, MOID_T *from_mode)
       else
 	gcc_unreachable ();
     }
-  else if (from_mode == M_LONG_LONG_REAL)
+  else if (from_type == long_double_type_node)
     {
       if (to_type == integer_type_node)
 	fn = builtin_decl_explicit (BUILT_IN_IFLOORL);
@@ -424,8 +430,9 @@ a68_real_round (tree val, MOID_T *to_mode, MOID_T *from_mode)
 {
   tree fn = NULL_TREE;
   tree to_type = CTYPE (to_mode);
+  tree from_type = CTYPE (from_mode);
 
-  if (from_mode == M_REAL)
+  if (from_type == float_type_node)
     {
       if (to_type == integer_type_node)
 	fn = builtin_decl_explicit (BUILT_IN_IROUNDF);
@@ -436,7 +443,7 @@ a68_real_round (tree val, MOID_T *to_mode, MOID_T *from_mode)
       else
 	gcc_unreachable ();
     }
-  else if (from_mode == M_LONG_REAL)
+  else if (from_type == double_type_node)
     {
       if (to_type == integer_type_node)
 	fn = builtin_decl_explicit (BUILT_IN_IROUND);
@@ -447,7 +454,7 @@ a68_real_round (tree val, MOID_T *to_mode, MOID_T *from_mode)
       else
 	gcc_unreachable ();
     }
-  else if (from_mode == M_LONG_LONG_REAL)
+  else if (from_type == long_double_type_node)
     {
       if (to_type == integer_type_node)
 	fn = builtin_decl_explicit (BUILT_IN_IROUNDL);
@@ -507,7 +514,7 @@ a68_real_div (MOID_T *m, tree a, tree b, location_t loc)
 tree
 a68_real_eq (tree a, tree b, location_t loc)
 {
-  return fold_build2_loc (loc, EQ_EXPR, boolean_type_node, a, b);
+  return fold_build2_loc (loc, EQ_EXPR, a68_bool_type, a, b);
 }
 
 /* Given two real values of mode M, build an expression that calculates whether
@@ -516,7 +523,7 @@ a68_real_eq (tree a, tree b, location_t loc)
 tree
 a68_real_ne (tree a, tree b, location_t loc)
 {
-  return fold_build2_loc (loc, NE_EXPR, boolean_type_node, a, b);
+  return fold_build2_loc (loc, NE_EXPR, a68_bool_type, a, b);
 }
 
 /* Given two real values of mode M, build an expression that calculates whether
@@ -525,7 +532,7 @@ a68_real_ne (tree a, tree b, location_t loc)
 tree
 a68_real_lt (tree a, tree b, location_t loc)
 {
-  return fold_build2_loc (loc, LT_EXPR, boolean_type_node, a, b);
+  return fold_build2_loc (loc, LT_EXPR, a68_bool_type, a, b);
 }
 
 /* Given two real values of mode M, build an expression that calculates
@@ -534,7 +541,7 @@ a68_real_lt (tree a, tree b, location_t loc)
 tree
 a68_real_le (tree a, tree b, location_t loc)
 {
-  return fold_build2_loc (loc, LE_EXPR, boolean_type_node, a, b);
+  return fold_build2_loc (loc, LE_EXPR, a68_bool_type, a, b);
 }
 
 /* Given two real values of mode M, build an expression that calculates whether
@@ -543,7 +550,7 @@ a68_real_le (tree a, tree b, location_t loc)
 tree
 a68_real_gt (tree a, tree b, location_t loc)
 {
-  return fold_build2_loc (loc, GT_EXPR, boolean_type_node, a, b);
+  return fold_build2_loc (loc, GT_EXPR, a68_bool_type, a, b);
 }
 
 /* Given two real values of mode M, build an expression that calculates whether
@@ -552,7 +559,7 @@ a68_real_gt (tree a, tree b, location_t loc)
 tree
 a68_real_ge (tree a, tree b, location_t loc)
 {
-  return fold_build2_loc (loc, GE_EXPR, boolean_type_node, a, b);
+  return fold_build2_loc (loc, GE_EXPR, a68_bool_type, a, b);
 }
 
 /* Exponentiation involving real values.
@@ -568,23 +575,55 @@ tree
 a68_real_pow (MOID_T *m, MOID_T *a_mode, MOID_T *b_mode,
 	      tree a, tree b, location_t loc)
 {
+  tree m_type = CTYPE (m);
+  tree a_type = CTYPE (a_mode);
+  tree b_type = CTYPE (b_mode);
+
   enum built_in_function built_in;
-  if (m == M_REAL)
+  if (m_type == float_type_node)
     {
-      gcc_assert (a_mode == M_REAL);
-      built_in = b_mode == M_REAL ? BUILT_IN_POWF : BUILT_IN_POWIF;
+      gcc_assert (a_type == float_type_node);
+      if (IS_REAL (b_mode))
+	{
+	  gcc_assert (b_type == float_type_node);
+	  built_in = BUILT_IN_POWF;
+	}
+      else
+	{
+	  gcc_assert (b_type == integer_type_node);
+	  built_in = BUILT_IN_POWIF;
+	}
     }
-  else if (m == M_LONG_REAL)
+  else if (m_type == double_type_node)
     {
-      gcc_assert (a_mode == M_LONG_REAL);
-      built_in = b_mode == M_LONG_REAL ? BUILT_IN_POW : BUILT_IN_POWI;
+      gcc_assert (a_type == double_type_node);
+      if (IS_REAL (b_mode))
+	{
+	  gcc_assert (b_type == double_type_node);
+	  built_in = BUILT_IN_POW;
+	}
+      else
+	{
+	  gcc_assert (b_type == integer_type_node);
+	  built_in = BUILT_IN_POWI;
+	}
     }
-  else if (m == M_LONG_LONG_REAL)
+  else if (m_type == long_double_type_node)
     {
-      gcc_assert (a_mode == M_LONG_LONG_REAL);
-      built_in = b_mode == M_LONG_LONG_REAL ? BUILT_IN_POWL : BUILT_IN_POWIL;
+      gcc_assert (a_type == long_double_type_node);
+      if (IS_REAL (b_mode))
+	{
+	  gcc_assert (b_type == long_double_type_node);
+	  built_in = BUILT_IN_POWL;
+	}      
+      else
+	{
+	  gcc_assert (b_type == integer_type_node);
+	  built_in = BUILT_IN_POWIL;
+	}
     }
   else
+    /* XXX handle float16_type_node and bfloat16_type_node */
     gcc_unreachable ();
 
   tree call = builtin_decl_explicit (built_in);

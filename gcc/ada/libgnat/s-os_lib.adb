@@ -35,6 +35,7 @@ with System.Case_Util;
 with System.CRTL;
 with System.Soft_Links;
 with Interfaces.C;
+with Interfaces.C.Strings;
 
 package body System.OS_Lib is
 
@@ -1034,22 +1035,11 @@ package body System.OS_Lib is
    ---------------------------
 
    function Get_Debuggable_Suffix return String_Access is
-      procedure Get_Suffix_Ptr (Length, Ptr : Address);
-      pragma Import (C, Get_Suffix_Ptr, "__gnat_get_debuggable_suffix_ptr");
-
-      Result        : String_Access;
-      Suffix_Length : Integer;
-      Suffix_Ptr    : Address;
+      Suffix : constant Interfaces.C.Strings.chars_ptr;
+      pragma Import (C, Suffix, "__gnat_debuggable_suffix");
 
    begin
-      Get_Suffix_Ptr (Suffix_Length'Address, Suffix_Ptr'Address);
-      Result := new String (1 .. Suffix_Length);
-
-      if Suffix_Length > 0 then
-         Strncpy (Result.all'Address, Suffix_Ptr, size_t (Suffix_Length));
-      end if;
-
-      return Result;
+      return new String'(Interfaces.C.Strings.Value (Suffix));
    end Get_Debuggable_Suffix;
 
    ---------------------------
@@ -1057,22 +1047,11 @@ package body System.OS_Lib is
    ---------------------------
 
    function Get_Executable_Suffix return String_Access is
-      procedure Get_Suffix_Ptr (Length, Ptr : Address);
-      pragma Import (C, Get_Suffix_Ptr, "__gnat_get_executable_suffix_ptr");
-
-      Result        : String_Access;
-      Suffix_Length : Integer;
-      Suffix_Ptr    : Address;
+      Suffix : constant Interfaces.C.Strings.chars_ptr;
+      pragma Import (C, Suffix, "__gnat_executable_suffix");
 
    begin
-      Get_Suffix_Ptr (Suffix_Length'Address, Suffix_Ptr'Address);
-      Result := new String (1 .. Suffix_Length);
-
-      if Suffix_Length > 0 then
-         Strncpy (Result.all'Address, Suffix_Ptr, size_t (Suffix_Length));
-      end if;
-
-      return Result;
+      return new String'(Interfaces.C.Strings.Value (Suffix));
    end Get_Executable_Suffix;
 
    -----------------------
@@ -1080,22 +1059,11 @@ package body System.OS_Lib is
    -----------------------
 
    function Get_Object_Suffix return String_Access is
-      procedure Get_Suffix_Ptr (Length, Ptr : Address);
-      pragma Import (C, Get_Suffix_Ptr, "__gnat_get_object_suffix_ptr");
-
-      Result        : String_Access;
-      Suffix_Length : Integer;
-      Suffix_Ptr    : Address;
+      Suffix : constant Interfaces.C.Strings.chars_ptr;
+      pragma Import (C, Suffix, "__gnat_object_suffix");
 
    begin
-      Get_Suffix_Ptr (Suffix_Length'Address, Suffix_Ptr'Address);
-      Result := new String (1 .. Suffix_Length);
-
-      if Suffix_Length > 0 then
-         Strncpy (Result.all'Address, Suffix_Ptr, size_t (Suffix_Length));
-      end if;
-
-      return Result;
+      return new String'(Interfaces.C.Strings.Value (Suffix));
    end Get_Object_Suffix;
 
    ----------------------------------
@@ -1103,23 +1071,11 @@ package body System.OS_Lib is
    ----------------------------------
 
    function Get_Target_Debuggable_Suffix return String_Access is
-      Target_Exec_Ext_Ptr : Address;
-      pragma Import
-        (C, Target_Exec_Ext_Ptr, "__gnat_target_debuggable_extension");
-
-      Result        : String_Access;
-      Suffix_Length : Integer;
+      Suffix : constant Interfaces.C.Strings.chars_ptr;
+      pragma Import (C, Suffix, "__gnat_target_debuggable_extension");
 
    begin
-      Suffix_Length := Integer (CRTL.strlen (Target_Exec_Ext_Ptr));
-      Result := new String (1 .. Suffix_Length);
-
-      if Suffix_Length > 0 then
-         Strncpy
-           (Result.all'Address, Target_Exec_Ext_Ptr, size_t (Suffix_Length));
-      end if;
-
-      return Result;
+      return new String'(Interfaces.C.Strings.Value (Suffix));
    end Get_Target_Debuggable_Suffix;
 
    ----------------------------------
@@ -1127,23 +1083,11 @@ package body System.OS_Lib is
    ----------------------------------
 
    function Get_Target_Executable_Suffix return String_Access is
-      Target_Exec_Ext_Ptr : Address;
-      pragma Import
-        (C, Target_Exec_Ext_Ptr, "__gnat_target_executable_extension");
-
-      Result        : String_Access;
-      Suffix_Length : Integer;
+      Suffix : constant Interfaces.C.Strings.chars_ptr;
+      pragma Import (C, Suffix, "__gnat_target_executable_extension");
 
    begin
-      Suffix_Length := Integer (CRTL.strlen (Target_Exec_Ext_Ptr));
-      Result := new String (1 .. Suffix_Length);
-
-      if Suffix_Length > 0 then
-         Strncpy
-           (Result.all'Address, Target_Exec_Ext_Ptr, size_t (Suffix_Length));
-      end if;
-
-      return Result;
+      return new String'(Interfaces.C.Strings.Value (Suffix));
    end Get_Target_Executable_Suffix;
 
    ------------------------------
@@ -1151,23 +1095,11 @@ package body System.OS_Lib is
    ------------------------------
 
    function Get_Target_Object_Suffix return String_Access is
-      Target_Object_Ext_Ptr : Address;
-      pragma Import
-        (C, Target_Object_Ext_Ptr, "__gnat_target_object_extension");
-
-      Result        : String_Access;
-      Suffix_Length : Integer;
+      Suffix : constant Interfaces.C.Strings.chars_ptr;
+      pragma Import (C, Suffix, "__gnat_target_object_extension");
 
    begin
-      Suffix_Length := Integer (CRTL.strlen (Target_Object_Ext_Ptr));
-      Result := new String (1 .. Suffix_Length);
-
-      if Suffix_Length > 0 then
-         Strncpy
-           (Result.all'Address, Target_Object_Ext_Ptr, size_t (Suffix_Length));
-      end if;
-
-      return Result;
+      return new String'(Interfaces.C.Strings.Value (Suffix));
    end Get_Target_Object_Suffix;
 
    ------------
@@ -1304,16 +1236,15 @@ package body System.OS_Lib is
       Second : out Second_Type)
    is
       procedure To_GM_Time
-        (P_OS_Time : Address;
-         P_Year    : Address;
-         P_Month   : Address;
-         P_Day     : Address;
-         P_Hours   : Address;
-         P_Mins    : Address;
-         P_Secs    : Address);
+        (Date    : OS_Time;
+         P_Year  : out Integer;
+         P_Month : out Integer;
+         P_Day   : out Integer;
+         P_Hours : out Integer;
+         P_Mins  : out Integer;
+         P_Secs  : out Integer);
       pragma Import (C, To_GM_Time, "__gnat_to_gm_time");
 
-      T  : OS_Time := Date;
       Y  : Integer;
       Mo : Integer;
       D  : Integer;
@@ -1342,13 +1273,13 @@ package body System.OS_Lib is
       Locked_Processing : begin
          SSL.Lock_Task.all;
          To_GM_Time
-           (P_OS_Time => T'Address,
-            P_Year    => Y'Address,
-            P_Month   => Mo'Address,
-            P_Day     => D'Address,
-            P_Hours   => H'Address,
-            P_Mins    => Mn'Address,
-            P_Secs    => S'Address);
+           (Date    => Date,
+            P_Year  => Y,
+            P_Month => Mo,
+            P_Day   => D,
+            P_Hours => H,
+            P_Mins  => Mn,
+            P_Secs  => S);
          SSL.Unlock_Task.all;
 
       exception

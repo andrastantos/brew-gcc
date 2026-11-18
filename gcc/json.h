@@ -222,8 +222,9 @@ class object : public value
   value *get (const char *key) const;
   const map_t &get_map () const { return m_map; }
 
-  void set_string (const char *key, const char *utf8_value);
-  void set_integer (const char *key, long v);
+  const json::string *set_string (const char *key, const char *utf8_value);
+  const json::string *set_string (const char *key, std::string utf8_value);
+  const json::integer_number *set_integer (const char *key, long v);
   void set_float (const char *key, double v);
 
   /* Set to literal true/false.  */
@@ -270,7 +271,7 @@ class array : public value
   array *dyn_cast_array () final override { return this; }
 
   void append (value *v);
-  void append_string (const char *utf8_value);
+  const json::string *append_string (const char *utf8_value);
 
   /* Append V to this array, requiring V
      to be a specific json::value subclass.
@@ -528,12 +529,17 @@ namespace selftest {
 
 class location;
 
-extern void assert_print_eq (const location &loc,
-			     const json::value &jv,
-			     bool formatted,
-			     const char *expected_json);
+extern void assert_json_print_eq (const location &loc,
+				  const json::value &jv,
+				  bool formatted,
+				  const char *expected_json);
 
 } // namespace selftest
+
+#define ASSERT_JSON_PRINT_EQ(JV, FORMATTED, EXPECTED_JSON)		\
+  SELFTEST_BEGIN_STMT							\
+  assert_json_print_eq ((SELFTEST_LOCATION), (JV), (FORMATTED), (EXPECTED_JSON)); \
+  SELFTEST_END_STMT
 
 #endif /* #if CHECKING_P */
 

@@ -134,6 +134,7 @@ find_prime_paths (struct function *fn)
   if (any_empty)
     VEC_ORDERED_REMOVE_IF (paths, ix1, ix2, ptr, ptr->is_empty ());
 
+  free_graph (cfg);
   return paths;
 }
 
@@ -635,7 +636,7 @@ instrument_prime_paths (struct function *fn)
 	      else if (all_bits_set_p (*bitmask, bucketsize) && phi)
 		{
 		  /* This reduces to a no-op (x & ~0).  Reusing the SSA and not
-		     emitting an unecessary AND is a big improvement for large
+		     emitting an unnecessary AND is a big improvement for large
 		     programs.  */
 		  tree *prev = SSAex.get ({e->src, bucket});
 		  if (prev)

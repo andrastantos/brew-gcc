@@ -65,7 +65,7 @@ free_format_hash_table (gfc_unit *u)
     {
       if (u->format_hash_table[i].hashed_fmt != NULL)
 	{
-	  free_format_data (u->format_hash_table[i].hashed_fmt);
+	  free_format_data (&u->format_hash_table[i].hashed_fmt);
 	  free (u->format_hash_table[i].key);
 	}
       u->format_hash_table[i].key = NULL;
@@ -143,7 +143,7 @@ save_parsed_format (st_parameter_dt *dtp)
   /* Index into the hash table.  We are simply replacing whatever is there
      relying on probability.  */
   if (u->format_hash_table[hash].hashed_fmt != NULL)
-    free_format_data (u->format_hash_table[hash].hashed_fmt);
+    free_format_data (&u->format_hash_table[hash].hashed_fmt);
   u->format_hash_table[hash].hashed_fmt = NULL;
 
   free (u->format_hash_table[hash].key);
@@ -258,16 +258,16 @@ free_format (st_parameter_dt *dtp)
 /* free_format_data()-- Free all allocated format data.  */
 
 void
-free_format_data (format_data *fmt)
+free_format_data (format_data **fmt)
 {
   fnode_array *fa, *fa_next;
   fnode *fnp;
 
-  if (fmt == NULL)
+  if (fmt == NULL || *fmt == NULL)
     return;
 
   /* Free vlist descriptors in the fnode_array if one was allocated.  */
-  for (fnp = fmt->array.array; fnp < &fmt->array.array[FARRAY_SIZE] &&
+  for (fnp = (*fmt)->array.array; fnp < &(*fmt)->array.array[FARRAY_SIZE] &&
        fnp->format != FMT_NONE; fnp++)
     if (fnp->format == FMT_DT)
 	{
@@ -275,14 +275,14 @@ free_format_data (format_data *fmt)
 	  free (fnp->u.udf.vlist);
 	}
 
-  for (fa = fmt->array.next; fa; fa = fa_next)
+  for (fa = (*fmt)->array.next; fa; fa = fa_next)
     {
       fa_next = fa->next;
       free (fa);
     }
 
-  free (fmt);
-  fmt = NULL;
+  free (*fmt);
+  *fmt = NULL;
 }
 
 
@@ -522,6 +522,9 @@ format_lex (format_data *fmt)
 	case 'S':
 	  token = FMT_ES;
 	  break;
+	case 'X':
+	  token = FMT_EX;
+	  break;
 	default:
 	  token = FMT_E;
 	  unget_char (fmt);
@@ -706,7 +709,7 @@ parse_format_list (st_parameter_dt *dtp, bool *seen_dd)
       tail->repeat = 1;
 
       t = format_lex (fmt);
-      if (t == FMT_F || t == FMT_EN || t == FMT_ES || t == FMT_D
+      if (t == FMT_F || t == FMT_EN || t == FMT_ES || t == FMT_EX || t == FMT_D
 	  || t == FMT_G || t == FMT_E)
 	{
 	  repeat = 1;
@@ -818,6 +821,7 @@ parse_format_list (st_parameter_dt *dtp, bool *seen_dd)
     case FMT_E:
     case FMT_EN:
     case FMT_ES:
+    case FMT_EX:
     case FMT_D:
     case FMT_DT:
     case FMT_L:
@@ -921,6 +925,7 @@ parse_format_list (st_parameter_dt *dtp, bool *seen_dd)
     case FMT_G:
     case FMT_EN:
     case FMT_ES:
+    case FMT_EX:
       *seen_dd = true;
       get_fnode (fmt, &head, &tail, t);
       tail->repeat = repeat;
@@ -947,7 +952,7 @@ parse_format_list (st_parameter_dt *dtp, bool *seen_dd)
 	  tail->u.real.w = 0;
 	  tail->u.real.e = -1;
 
-	  /* Look for the dot seperator.  */
+	  /* Look for the dot separator.  */
 	  u = format_lex (fmt);
 	  if (u != FMT_PERIOD)
 	    {
@@ -1538,8 +1543,8 @@ next_format (st_parameter_dt *dtp)
 
   if (!fmt->reversion_ok &&
       (t == FMT_I || t == FMT_B || t == FMT_O || t == FMT_Z || t == FMT_F ||
-       t == FMT_E || t == FMT_EN || t == FMT_ES || t == FMT_G || t == FMT_L ||
-       t == FMT_A || t == FMT_D || t == FMT_DT))
+       t == FMT_E || t == FMT_EN || t == FMT_ES || t== FMT_EX || t == FMT_G ||
+       t == FMT_L || t == FMT_A || t == FMT_D || t == FMT_DT))
     fmt->reversion_ok = 1;
   return f;
 }

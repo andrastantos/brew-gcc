@@ -183,6 +183,12 @@ class array2
     m_elements[idx] = element;
   }
 
+  void set (const coord_t &coord, element_t &&element)
+  {
+    ::size_t idx = get_idx (coord);
+    m_elements[idx] = std::move (element);
+  }
+
   void fill (element_t element)
   {
     for (int y = 0; y < m_size.h; y++)
@@ -426,6 +432,11 @@ class styled_string
   explicit styled_string () = default;
   explicit styled_string (style_manager &sm, const char *str);
   explicit styled_string (cppchar_t cppchar, bool emoji = false);
+
+  explicit styled_string (std::vector<styled_unichar> chars)
+  : m_chars (std::move (chars))
+  {
+  }
 
   styled_string (styled_string &&) = default;
   styled_string &operator= (styled_string &&) = default;

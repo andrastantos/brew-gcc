@@ -18,6 +18,7 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define INCLUDE_STRING
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -51,7 +52,7 @@ const json::string_property node::index (STATE_NODE_PREFIX "index");
 
 const json::string_property node::bits (STATE_NODE_PREFIX "bits");
 
-const json::string_property node::num_bits (STATE_NODE_PREFIX "num_bits");
+const json::json_property node::num_bits (STATE_NODE_PREFIX "num_bits");
 
 const json::string_property node::deallocator (STATE_NODE_PREFIX "deallocator");
 

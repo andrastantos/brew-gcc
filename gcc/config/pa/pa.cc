@@ -200,6 +200,9 @@ static bool pa_cannot_force_const_mem (machine_mode, rtx);
 static bool pa_legitimate_constant_p (machine_mode, rtx);
 static bool pa_legitimate_address_p (machine_mode, rtx, bool,
 				     code_helper = ERROR_MARK);
+static reg_class_t pa_spill_class (reg_class_t, machine_mode);
+static bool pa_legitimize_address_displacement (rtx *, rtx *, poly_int64,
+						machine_mode);
 static bool pa_callee_copies (cumulative_args_t, const function_arg_info &);
 static unsigned int pa_hard_regno_nregs (unsigned int, machine_mode);
 static bool pa_hard_regno_mode_ok (unsigned int, machine_mode);
@@ -210,6 +213,8 @@ static section* pa_elf_select_rtx_section(machine_mode, rtx, unsigned HOST_WIDE_
 static void pa_atomic_assign_expand_fenv (tree *, tree *, tree *);
 static bool pa_use_lra_p (void);
 static bool pa_frame_pointer_required (void);
+static bool pa_can_share_jump_table_p (rtx_insn *);
+static reg_class_t pa_preferred_reload_class (rtx, reg_class_t);
 
 /* The following extra sections are only used for SOM.  */
 static GTY(()) section *som_readonly_data_section;
@@ -240,7 +245,7 @@ static unsigned int last_address;
    output time.  They are output after the current function.  */
 struct GTY(()) deferred_plabel
 {
-  rtx internal_label;
+  rtx_code_label *internal_label;
   rtx symbol;
 };
 static GTY((length ("n_deferred_plabels"))) struct deferred_plabel *
@@ -334,6 +339,9 @@ static size_t n_deferred_plabels = 0;
 #undef TARGET_MACHINE_DEPENDENT_REORG
 #define TARGET_MACHINE_DEPENDENT_REORG pa_reorg
 
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P pa_can_share_jump_table_p
+
 #undef TARGET_INIT_LIBFUNCS
 #define TARGET_INIT_LIBFUNCS pa_init_libfuncs
 
@@ -411,6 +419,11 @@ static size_t n_deferred_plabels = 0;
 #define TARGET_LEGITIMATE_CONSTANT_P pa_legitimate_constant_p
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P pa_legitimate_address_p
+#undef TARGET_SPILL_CLASS
+#define TARGET_SPILL_CLASS pa_spill_class
+#undef TARGET_LEGITIMIZE_ADDRESS_DISPLACEMENT
+#define TARGET_LEGITIMIZE_ADDRESS_DISPLACEMENT \
+  pa_legitimize_address_displacement
 
 #undef TARGET_LRA_P
 #define TARGET_LRA_P pa_use_lra_p
@@ -436,6 +449,9 @@ static size_t n_deferred_plabels = 0;
 
 #undef TARGET_ATOMIC_ASSIGN_EXPAND_FENV
 #define TARGET_ATOMIC_ASSIGN_EXPAND_FENV pa_atomic_assign_expand_fenv
+
+#undef TARGET_PREFERRED_RELOAD_CLASS
+#define TARGET_PREFERRED_RELOAD_CLASS pa_preferred_reload_class
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 
@@ -983,8 +999,8 @@ legitimize_pic_address (rtx orig, machine_mode mode, rtx reg)
 	  orig = XEXP (orig, 0);
 	  add_reg_note (insn, REG_LABEL_OPERAND, orig);
 	  /* Make sure we have label and not a note.  */
-	  if (LABEL_P (orig))
-	    LABEL_NUSES (orig)++;
+	  if (auto lab = dyn_cast<rtx_code_label *> (orig))
+	    LABEL_NUSES (lab)++;
 	}
       crtl->uses_pic_offset_table = 1;
       return reg;
@@ -1618,13 +1634,31 @@ hppa_register_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
 {
   if (from == SHIFT_REGS)
     return 0x100;
-  else if (to == SHIFT_REGS && FP_REG_CLASS_P (from))
+  if (to == SHIFT_REGS && FP_REG_CLASS_P (from))
     return 18;
-  else if ((FP_REG_CLASS_P (from) && ! FP_REG_CLASS_P (to))
-           || (FP_REG_CLASS_P (to) && ! FP_REG_CLASS_P (from)))
-    return 16;
-  else
+
+  /* Keep R1_REGS to GENERAL_REGS move costs basic and unpenalized.  */
+  if ((from == R1_REGS && to == GENERAL_REGS)
+      || (from == GENERAL_REGS && to == R1_REGS))
     return 2;
+
+  /* Cross-class moves between general/R1 registers and floating-point
+     registers bounce through the -16(%sp) frame marker slot (store + load).
+     A cost of 8 reflects this two-instruction penalty while remaining low
+     enough for LRA to spill integer pseudos into FP registers under tight
+     register pressure — avoiding address-reload overhead on large frames
+     and preventing spill failures when all callee-saved general registers
+     are exhausted.  */
+  if (((from == GENERAL_REGS || from == R1_REGS) && FP_REG_CLASS_P (to))
+      || (FP_REG_CLASS_P (from) && (to == GENERAL_REGS || to == R1_REGS)))
+    return 8;
+
+  /* General fallback for other cross-register-file changes.  */
+  if ((FP_REG_CLASS_P (from) && ! FP_REG_CLASS_P (to))
+      || (FP_REG_CLASS_P (to) && ! FP_REG_CLASS_P (from)))
+    return 16;
+
+  return 2;
 }
 
 /* For the HPPA, REG and REG+CONST is cost 0
@@ -1659,23 +1693,43 @@ hppa_address_cost (rtx X, machine_mode mode ATTRIBUTE_UNUSED,
 static bool
 hppa_rtx_costs_shadd_p (rtx x)
 {
-  if (GET_CODE (x) != PLUS
-      || !REG_P (XEXP (x, 1)))
+  if (GET_CODE (x) != PLUS)
     return false;
+
+  /* Check if operand 1 is a REG or a SUBREG of a REG.  */
+  rtx op1 = XEXP (x, 1);
+  if (SUBREG_P (op1))
+    op1 = SUBREG_REG (op1);
+  if (!REG_P (op1))
+    return false;
+
   rtx op0 = XEXP (x, 0);
   if (GET_CODE (op0) == ASHIFT
-      && CONST_INT_P (XEXP (op0, 1))
-      && REG_P (XEXP (op0, 0)))
+      && CONST_INT_P (XEXP (op0, 1)))
     {
-      unsigned HOST_WIDE_INT x = UINTVAL (XEXP (op0, 1));
-      return x == 1 || x == 2 || x == 3;
+      rtx inner0 = XEXP (op0, 0);
+
+      if (SUBREG_P (inner0))
+	inner0 = SUBREG_REG (inner0);
+
+      if (REG_P (inner0))
+	{
+	  unsigned HOST_WIDE_INT shift_val = UINTVAL (XEXP (op0, 1));
+	  return shift_val == 1 || shift_val == 2 || shift_val == 3;
+	}
     }
   if (GET_CODE (op0) == MULT
-      && CONST_INT_P (XEXP (op0, 1))
-      && REG_P (XEXP (op0, 0)))
+      && CONST_INT_P (XEXP (op0, 1)))
     {
-      unsigned HOST_WIDE_INT x = UINTVAL (XEXP (op0, 1));
-      return x == 2 || x == 4 || x == 8;
+      rtx inner0 = XEXP (op0, 0);
+      if (SUBREG_P (inner0))
+	inner0 = SUBREG_REG (inner0);
+
+      if (REG_P (inner0))
+	{
+	  unsigned HOST_WIDE_INT mult_val = UINTVAL (XEXP (op0, 1));
+	  return mult_val == 2 || mult_val == 4 || mult_val == 8;
+	}
     }
   return false;
 }
@@ -2199,6 +2253,49 @@ pa_emit_move_sequence (rtx *operands, machine_mode mode, rtx scratch_reg)
 	 point.  */
       emit_move_insn (operand0, scratch_reg);
       return 1;
+    }
+
+  if ((mode == SFmode || mode == DFmode)
+      && MEM_P (operand1)
+      && (scratch_reg || can_create_pseudo_p ())
+      && (GET_CODE (XEXP (operand1, 0)) == SYMBOL_REF
+	  || GET_CODE (XEXP (operand1, 0)) == LABEL_REF
+	  || GET_CODE (XEXP (operand1, 0)) == CONST))
+    {
+      rtx addr = XEXP (operand1, 0);
+      rtx scratch;
+
+      if (scratch_reg)
+	{
+	  scratch = scratch_reg;
+	  if (GET_MODE (scratch) != Pmode)
+	    scratch = gen_rtx_REG (Pmode, REGNO (scratch));
+	}
+      else
+	scratch = gen_reg_rtx (Pmode);
+
+      if (flag_pic)
+	{
+	  /* Handle PIC compilations.  */
+	  rtx pic_reg = legitimize_pic_address (addr, Pmode, scratch);
+	  operand1 = replace_equiv_address (operand1, pic_reg);
+	}
+      else if (INT14_OK_STRICT)
+	{
+	  /* Non-PIC 32-bit PA 2.0 targets can use the 14-bit
+	     displacement optimization.  */
+	  emit_insn (gen_rtx_SET (scratch, gen_rtx_HIGH (Pmode, addr)));
+	  operand1 = replace_equiv_address (operand1,
+					    gen_rtx_LO_SUM (Pmode,
+							    scratch,
+							    addr));
+	}
+      else
+	{
+	  /* 32-bit PA 1.x fallback.  */
+	  emit_move_insn (scratch, addr);
+	  operand1 = replace_equiv_address (operand1, scratch);
+	}
     }
 
   /* Handle the most common case: storing into a register.  */
@@ -3627,7 +3724,7 @@ pa_assemble_integer (rtx x, unsigned int size, int aligned_p)
   /* When we have a SYMBOL_REF with a SYMBOL_REF_DECL, we need to call
      call assemble_external and set the SYMBOL_REF_DECL to NULL before
      calling output_addr_const.  Otherwise, it may call assemble_external
-     in the midst of outputing the assembler code for the SYMBOL_REF.
+     in the midst of outputting the assembler code for the SYMBOL_REF.
      We restore the SYMBOL_REF_DECL after the output is done.  */
   if (GET_CODE (x) == SYMBOL_REF)
     {
@@ -4595,8 +4692,10 @@ pa_output_function_epilogue (FILE *file)
     insn = prev_real_insn (insn);
 
   /* If it is a sequence, then look inside.  */
-  if (insn && NONJUMP_INSN_P (insn) && GET_CODE (PATTERN (insn)) == SEQUENCE)
-    insn = as_a <rtx_sequence *> (PATTERN (insn))-> insn (0);
+  rtx_sequence *seq;
+  if (insn && NONJUMP_INSN_P (insn)
+      && (seq = dyn_cast <rtx_sequence *> (PATTERN (insn))))
+    insn = seq->insn (0);
 
   /* If insn is a CALL_INSN, then it must be a call to a volatile
      function (otherwise there would be epilogue insns).  */
@@ -4994,7 +5093,7 @@ hppa_profile_hook (int label_no)
 rtx
 pa_return_addr_rtx (int count, rtx frameaddr)
 {
-  rtx label;
+  rtx_code_label *label;
   rtx rp;
   rtx saved_rp;
   rtx ins;
@@ -5330,8 +5429,8 @@ pa_adjust_insn_length (rtx_insn *insn, int length)
   /* If length is negative or undefined, provide initial length.  */
   if ((unsigned int) length >= INT_MAX)
     {
-      if (GET_CODE (pat) == SEQUENCE)
-	insn = as_a <rtx_insn *> (XVECEXP (pat, 0, 0));
+      if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (pat))
+	insn = seq->insn (0);
 
       switch (get_attr_type (insn))
 	{
@@ -5432,7 +5531,7 @@ pa_print_operand (FILE *file, rtx x, int code)
       /* delay slot or nullification is requested.  */
       if (dbr_sequence_length () == 0 ||
 	  (final_sequence &&
-	   INSN_ANNULLED_BRANCH_P (XVECEXP (final_sequence, 0, 0))))
+	   INSN_ANNULLED_BRANCH_P (final_sequence->insn (0))))
         fputs (",n", file);
       return;
     case 'R':
@@ -6348,7 +6447,58 @@ pa_secondary_reload (bool in_p, rtx x, reg_class_t rclass_i,
   int regno;
   enum reg_class rclass = (enum reg_class) rclass_i;
 
+  /* Strip the SUBREG to find the true underlying register entity.  */
+  if (GET_CODE (x) == SUBREG)
+    x = SUBREG_REG (x);
+
   /* Handle the easy stuff first.  */
+  if ((rclass == GENERAL_REGS || FP_REG_CLASS_P (rclass))
+      && reg_plus_base_memory_operand (x, mode))
+    {
+      /* If we are using soft-float, floating point modes live in the
+	 general registers, meaning they follow the standard 14-bit
+	 integer displacement rules.  */
+      bool hard_float_fp = (!TARGET_SOFT_FLOAT && FP_REG_CLASS_P (rclass));
+
+      if (hard_float_fp)
+	{
+	  rtx offset = XEXP (XEXP (x, 0), 1);
+
+	  /* PA 1.x hard-float instructions only have a 5-bit displacement.
+	     PA 2.0 expands this to a wider 14-bit displacement range.  */
+	  bool legal_fp_disp = TARGET_PA_20 ? INT_14_BITS (offset)
+					    : INT_5_BITS (offset);
+
+	  if (!legal_fp_disp)
+	    {
+	      /* An out-of-range displacement for a hard-float register
+		 requires a general purpose register to fix the address.  */
+	      sri->icode = (in_p
+		? direct_optab_handler (reload_in_optab, mode)
+		: direct_optab_handler (reload_out_optab, mode));
+	      return GENERAL_REGS;
+	    }
+	}
+      else
+	{
+	  /* For GENERAL_REGS (and soft-float FP targets), check if the
+	     offset fits the standard 14-bit integer load/store range.  */
+	  rtx offset = XEXP (XEXP (x, 0), 1);
+
+	  if (!INT_14_BITS (offset) && (mode == SImode || mode == DImode))
+	    {
+	      sri->icode = (in_p
+		? direct_optab_handler (reload_in_optab, mode)
+		: direct_optab_handler (reload_out_optab, mode));
+
+	      /* Let expander use its internal clobber */
+	      return NO_REGS;
+	    }
+	}
+
+      return NO_REGS;
+    }
+
   if (rclass == R1_REGS)
     return NO_REGS;
 
@@ -6396,33 +6546,40 @@ pa_secondary_reload (bool in_p, rtx x, reg_class_t rclass_i,
 	default:
 	  gcc_unreachable ();
 	}
-      return NO_REGS;
+      return R1_REGS;
     }
 
-  /* Secondary reloads of symbolic expressions require %r1 as a scratch
-     register when we're generating PIC code or when the operand isn't
-     readonly.  */
-  if (pa_symbolic_expression_p (x))
-    {
-      if (GET_CODE (x) == HIGH)
-	x = XEXP (x, 0);
+  /* If we are given a MEM wrapper, look through it to extract the true
+     underlying address entity.  */
+  rtx addr = MEM_P (x) ? XEXP (x, 0) : x;
 
-      if (flag_pic || !read_only_operand (x, VOIDmode))
+  /* Secondary reloads of symbolic address expressions require %r1 as a
+     scratch register when we're generating PIC code or when the operand
+     isn't readonly.  */
+  if (pa_symbolic_expression_p (addr))
+    {
+      if (GET_CODE (addr) == HIGH)
+	addr = XEXP (addr, 0);
+
+      if (flag_pic || !read_only_operand (addr, VOIDmode))
 	{
 	  switch (mode)
 	    {
 	    case E_SImode:
 	      sri->icode = CODE_FOR_reload_insi_r1;
-	      break;
+	      return R1_REGS;
 
 	    case E_DImode:
 	      sri->icode = CODE_FOR_reload_indi_r1;
+	      return R1_REGS;
+
+	    case E_SFmode:
+	    case E_DFmode:
 	      break;
 
 	    default:
 	      gcc_unreachable ();
 	    }
-	  return NO_REGS;
 	}
     }
 
@@ -6453,7 +6610,7 @@ pa_secondary_reload (bool in_p, rtx x, reg_class_t rclass_i,
       sri->icode = (in_p
 		    ? direct_optab_handler (reload_in_optab, mode)
 		    : direct_optab_handler (reload_out_optab, mode));
-      return NO_REGS;
+      return GENERAL_REGS;
     }
 
   /* A SAR<->FP register copy requires an intermediate general register
@@ -6473,7 +6630,7 @@ pa_secondary_reload (bool in_p, rtx x, reg_class_t rclass_i,
 	  sri->icode = (in_p
 			? direct_optab_handler (reload_in_optab, mode)
 			: direct_optab_handler (reload_out_optab, mode));
-	  return NO_REGS;
+	  return GENERAL_REGS;
 	}
 
       /* Handle FP copy.  */
@@ -9698,15 +9855,15 @@ pa_combine_instructions (void)
 	      /* Emit the new_jump instruction and delete the old anchor.  */
 	      rtvec vtemp = gen_rtvec (2, copy_rtx (PATTERN (anchor)),
 				       copy_rtx (PATTERN (floater)));
-	      rtx temp = gen_rtx_PARALLEL (VOIDmode, vtemp);
-	      temp = emit_jump_insn_before (temp, anchor);
+	      rtx body = gen_rtx_PARALLEL (VOIDmode, vtemp);
+	      rtx_jump_insn *insn = emit_jump_insn_before (body, anchor);
 
-	      JUMP_LABEL (temp) = JUMP_LABEL (anchor);
+	      JUMP_LABEL (insn) = JUMP_LABEL (anchor);
 	      SET_INSN_DELETED (anchor);
 
 	      /* Emit a special USE insn for FLOATER, then delete
 		 the floating insn.  */
-	      temp = copy_rtx (PATTERN (floater));
+	      rtx temp = copy_rtx (PATTERN (floater));
 	      emit_insn_before (gen_rtx_USE (VOIDmode, temp), floater);
 	      delete_insn (floater);
 	      continue;
@@ -10492,9 +10649,6 @@ pa_can_change_mode_class (machine_mode from, machine_mode to,
   if (from == to)
     return true;
 
-  if (GET_MODE_SIZE (from) == GET_MODE_SIZE (to))
-    return true;
-
   /* Reject changes to/from modes with zero size.  */
   if (!GET_MODE_SIZE (from) || !GET_MODE_SIZE (to))
     return false;
@@ -10504,13 +10658,28 @@ pa_can_change_mode_class (machine_mode from, machine_mode to,
       || COMPLEX_MODE_P (to) || VECTOR_MODE_P (to))
     return false;
 
+  /* Prevent cross-class type punning impacting the general registers
+     before reload completes.  If the allocator is forced to use
+     GENERAL_REGS, disallow the mode change so it forces a proper
+     instruction breakdown.  */
+  if (!TARGET_SOFT_FLOAT
+      && (rclass == GENERAL_REGS || rclass == R1_REGS)
+      && !reload_completed
+      && GET_MODE_SIZE (to) <= GET_MODE_SIZE (DFmode)
+      && GET_MODE_SIZE (from) <= GET_MODE_SIZE (DFmode)
+      && ((GET_MODE_CLASS (from) == MODE_INT
+	   && GET_MODE_CLASS (to) == MODE_FLOAT)
+	  || (GET_MODE_CLASS (from) == MODE_FLOAT
+	      && GET_MODE_CLASS (to) == MODE_INT)))
+    return false;
+
   /* There is no way to load QImode or HImode values directly from memory
      to a FP register.  SImode loads to the FP registers are not zero
      extended.  On the 64-bit target, this conflicts with the definition
      of LOAD_EXTEND_OP.  Thus, we reject all mode changes in the FP registers
      except for DImode to SImode on the 64-bit target.  It is handled by
      register renaming in pa_print_operand.  */
-  if (MAYBE_FP_REG_CLASS_P (rclass))
+  if (!TARGET_SOFT_FLOAT && MAYBE_FP_REG_CLASS_P (rclass))
     return TARGET_64BIT && from == DImode && to == SImode;
 
   /* TARGET_HARD_REGNO_MODE_OK places modes with sizes larger than a word
@@ -10527,7 +10696,7 @@ pa_can_change_mode_class (machine_mode from, machine_mode to,
 
    We should return FALSE for QImode and HImode because these modes
    are not ok in the floating-point registers.  However, this prevents
-   tieing these modes to SImode and DImode in the general registers.
+   tying these modes to SImode and DImode in the general registers.
    So, this isn't a good idea.  We rely on TARGET_HARD_REGNO_MODE_OK and
    TARGET_CAN_CHANGE_MODE_CLASS to prevent these modes from being used
    in the floating-point registers.  */
@@ -10651,10 +10820,7 @@ static void
 pa_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 {
   rtx fnaddr = XEXP (DECL_RTL (fndecl), 0);
-  rtx start_addr = gen_reg_rtx (Pmode);
-  rtx end_addr = gen_reg_rtx (Pmode);
-  rtx line_length = gen_reg_rtx (Pmode);
-  rtx r_tramp, tmp;
+  rtx start, end, r_tramp, tmp;
 
   emit_block_move (m_tramp, assemble_trampoline_template (),
 		   GEN_INT (TRAMPOLINE_SIZE), BLOCK_OP_NORMAL);
@@ -10662,6 +10828,9 @@ pa_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 
   if (!TARGET_64BIT)
     {
+      /* Start of trampoline code.  */
+      start = r_tramp;
+
       tmp = adjust_address (m_tramp, Pmode, 48);
       emit_move_insn (tmp, fnaddr);
       tmp = adjust_address (m_tramp, Pmode, 52);
@@ -10669,28 +10838,15 @@ pa_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 
       /* Create a fat pointer for the trampoline.  */
       tmp = adjust_address (m_tramp, Pmode, 56);
-      emit_move_insn (tmp, r_tramp);
+      emit_move_insn (tmp, start);
       tmp = adjust_address (m_tramp, Pmode, 60);
       emit_move_insn (tmp, gen_rtx_REG (Pmode, 19));
-
-      /* fdc and fic only use registers for the address to flush,
-	 they do not accept integer displacements.  We align the
-	 start and end addresses to the beginning of their respective
-	 cache lines to minimize the number of lines flushed.  */
-      emit_insn (gen_andsi3 (start_addr, r_tramp,
-			     GEN_INT (-MIN_CACHELINE_SIZE)));
-      tmp = force_reg (Pmode, plus_constant (Pmode, r_tramp,
-					     TRAMPOLINE_CODE_SIZE-1));
-      emit_insn (gen_andsi3 (end_addr, tmp,
-			     GEN_INT (-MIN_CACHELINE_SIZE)));
-      emit_move_insn (line_length, GEN_INT (MIN_CACHELINE_SIZE));
-      emit_insn (gen_dcacheflushsi (start_addr, end_addr, line_length));
-      emit_insn (gen_icacheflushsi (start_addr, end_addr, line_length,
-				    gen_reg_rtx (Pmode),
-				    gen_reg_rtx (Pmode)));
     }
   else
     {
+      /* Start of trampoline code.  */
+      start = force_reg (Pmode, plus_constant (Pmode, r_tramp, 32));
+
       tmp = adjust_address (m_tramp, Pmode, 56);
       emit_move_insn (tmp, fnaddr);
       tmp = adjust_address (m_tramp, Pmode, 64);
@@ -10698,28 +10854,15 @@ pa_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 
       /* Create a fat pointer for the trampoline.  */
       tmp = adjust_address (m_tramp, Pmode, 16);
-      emit_move_insn (tmp, force_reg (Pmode, plus_constant (Pmode,
-							    r_tramp, 32)));
+      emit_move_insn (tmp, start);
       tmp = adjust_address (m_tramp, Pmode, 24);
       emit_move_insn (tmp, gen_rtx_REG (Pmode, 27));
-
-      /* fdc and fic only use registers for the address to flush,
-	 they do not accept integer displacements.  We align the
-	 start and end addresses to the beginning of their respective
-	 cache lines to minimize the number of lines flushed.  */
-      tmp = force_reg (Pmode, plus_constant (Pmode, r_tramp, 32));
-      emit_insn (gen_anddi3 (start_addr, tmp,
-			     GEN_INT (-MIN_CACHELINE_SIZE)));
-      tmp = force_reg (Pmode, plus_constant (Pmode, tmp,
-					     TRAMPOLINE_CODE_SIZE - 1));
-      emit_insn (gen_anddi3 (end_addr, tmp,
-			     GEN_INT (-MIN_CACHELINE_SIZE)));
-      emit_move_insn (line_length, GEN_INT (MIN_CACHELINE_SIZE));
-      emit_insn (gen_dcacheflushdi (start_addr, end_addr, line_length));
-      emit_insn (gen_icacheflushdi (start_addr, end_addr, line_length,
-				    gen_reg_rtx (Pmode),
-				    gen_reg_rtx (Pmode)));
     }
+
+  end = force_reg (Pmode, plus_constant (Pmode, start, TRAMPOLINE_CODE_SIZE));
+
+  /* Flush trampoline.  */
+  emit_insn (gen_clear_cache (start, end));
 
 #ifdef HAVE_ENABLE_EXECUTE_STACK
   emit_library_call (gen_rtx_SYMBOL_REF (Pmode, "__enable_execute_stack"),
@@ -10883,6 +11026,41 @@ pa_function_section (tree decl, enum node_frequency freq,
 static bool
 pa_legitimate_constant_p (machine_mode mode, rtx x)
 {
+  /* Fix early multi-word constant leaks on 32-bit targets.  */
+  if (!TARGET_64BIT
+      && mode == DImode
+      && CONST_INT_P (x)
+      && !INT_14_BITS (x))
+    return false;
+
+  /* Reject naked symbolic and constant SF and DF mode addresses
+     unconditionally on 32-bit targets.  We intentionally do not unwrap
+     LO_SUM expressions here, as those are valid address calculations
+     for 14-bit displacement optimizations on PA 2.0.  */
+  if (!TARGET_64BIT && (mode == SFmode || mode == DFmode))
+    {
+      rtx base = x;
+      if (GET_CODE (base) == PLUS)
+	{
+	  /* Check both components of the addition for symbolic links.  */
+	  rtx op0 = XEXP (base, 0);
+	  rtx op1 = XEXP (base, 1);
+	  if (GET_CODE (op0) == SYMBOL_REF
+	      || GET_CODE (op0) == LABEL_REF
+	      || GET_CODE (op0) == CONST
+	      || GET_CODE (op1) == SYMBOL_REF
+	      || GET_CODE (op1) == LABEL_REF
+	      || GET_CODE (op1) == CONST)
+	    return false;
+	}
+
+      if (GET_CODE (base) == SYMBOL_REF
+	  || GET_CODE (base) == LABEL_REF
+	  || GET_CODE (base) == CONST)
+	return false;
+    }
+
+  /* All non-zero float constants are illegitimate. */
   if (GET_MODE_CLASS (mode) == MODE_FLOAT && x != CONST0_RTX (mode))
     return false;
 
@@ -11004,7 +11182,7 @@ pa_legitimate_address_p (machine_mode mode, rtx x, bool strict, code_helper)
 	  /* Long 14-bit displacements always okay for these cases.  */
 	  if (INT14_OK_STRICT
 	      || reload_completed
-	      || (reload_in_progress && !strict)
+	      || ((lra_in_progress || reload_in_progress) && !strict)
 	      || mode == QImode
 	      || mode == HImode)
 	    return true;
@@ -11086,10 +11264,84 @@ pa_legitimate_address_p (machine_mode mode, rtx x, bool strict, code_helper)
       return false;
     }
 
+  /* Reject symbolic and constant pool SF and DF mode addresses
+     unconditionally on 32-bit targets.  Even when 14-bit displacements
+     are active (PA 2.0), naked symbolic addresses cannot be loaded
+     directly into floating-point registers and must be forced through
+     a HIGH/LO_SUM split or reload.  */
+  if (!TARGET_64BIT
+      && (mode == SFmode || mode == DFmode)
+      && (GET_CODE (x) == SYMBOL_REF
+	  || GET_CODE (x) == LABEL_REF
+	  || GET_CODE (x) == CONST))
+    return false;
+
   if (GET_CODE (x) == CONST_INT && INT_5_BITS (x))
     return true;
 
   return false;
+}
+
+/* Implement TARGET_SPILL_CLASS.
+
+   On PA-RISC 1.x, floating-point loads and stores strictly require 5-bit
+   offsets, whereas integer loads and stores support full 14-bit offsets.
+   When LRA/reload runs out of hardware registers and needs to spill a
+   pseudo-register to a stack slot during heavy frame pressure, spilling
+   directly into or out of FP_REGS can violate these offset boundaries —
+   especially when handling type-punned subregisters (e.g., SImode/DImode
+   views of float data).
+
+   Forcing these scalar spills to route through GENERAL_REGS provides
+   a safe intermediate bounce path with a full 14-bit offset, preventing
+   compiler allocation failures (ICEs) during complex frame elimination.  */
+
+static reg_class_t
+pa_spill_class (reg_class_t rclass, machine_mode mode)
+{
+  if ((mode == SImode || mode == DImode) && FP_REG_CLASS_P (rclass))
+    return GENERAL_REGS;
+
+  /* If LRA attempts to spill out of the R1_REGS singleton class,
+     force it to route through GENERAL_REGS first.  This ensures that a
+     safe, fully valid general register is chosen to handle the frame
+     marker offsets.  */
+  if (rclass == R1_REGS)
+    return GENERAL_REGS;
+  return NO_REGS;
+}
+
+/* Implement TARGET_LEGITIMIZE_ADDRESS_DISPLACEMENT.  */
+
+static bool
+pa_legitimize_address_displacement (rtx *offset1, rtx *offset2,
+				    poly_int64 orig_offset,
+				    machine_mode mode)
+{
+  HOST_WIDE_INT val;
+
+  /* Ensure the incoming poly_int64 offset can be treated as a standard
+     scalar integer.  */
+  if (!orig_offset.is_constant (&val))
+    return false;
+
+  /* If it fits in 5 bits, do not split it.  */
+  if (VAL_5_BITS_P (val))
+    return false;
+
+  /* If it fits in 14 bits and the mode can handle it, do not split it.  */
+  if ((INT14_OK_STRICT || mode == QImode || mode == HImode)
+      && VAL_14_BITS_P (val))
+    return false;
+
+  /* Split displacement so residual 'lo' is a signed 5-bit
+     value (-16 to 15).  */
+  HOST_WIDE_INT lo = ((val + 16) & 0x1f) - 16;
+  HOST_WIDE_INT hi = val - lo;
+
+  *offset1 = GEN_INT (hi);
+  *offset2 = GEN_INT (lo);
+  return true;
 }
 
 /* Look for machine dependent ways to make the invalid address AD a
@@ -11164,6 +11416,17 @@ pa_legitimize_reload_address (rtx ad, machine_mode mode,
   return NULL_RTX;
 }
 
+/* Implement TARGET_CAN_SHARE_JUMP_TABLE_P.  casesi32 loads the address of
+   the table.  The PIC dispatches add the distance to the table to their
+   own address with one ldo, which only reaches a table close to the
+   jump.  */
+
+static bool
+pa_can_share_jump_table_p (rtx_insn *insn)
+{
+  return recog_memoized (insn) == CODE_FOR_casesi32;
+}
+
 /* Output address vector.  */
 
 void
@@ -11179,7 +11442,8 @@ pa_output_addr_vec (rtx lab, rtx body)
   for (idx = 0; idx < vlen; idx++)
     {
       ASM_OUTPUT_ADDR_VEC_ELT
-	(asm_out_file, CODE_LABEL_NUMBER (XEXP (XVECEXP (body, 0, idx), 0)));
+	(asm_out_file,
+	 CODE_LABEL_NUMBER (label_ref_label (XVECEXP (body, 0, idx))));
     }
   if (TARGET_GAS)
     fputs ("\t.end_brtab\n", asm_out_file);
@@ -11190,7 +11454,7 @@ pa_output_addr_vec (rtx lab, rtx body)
 void
 pa_output_addr_diff_vec (rtx lab, rtx body)
 {
-  rtx base = XEXP (XEXP (body, 0), 0);
+  rtx_insn *base = label_ref_label (XEXP (body, 0));
   int idx, vlen = XVECLEN (body, 1);
 
   targetm.asm_out.internal_label (asm_out_file, "L", CODE_LABEL_NUMBER (lab));
@@ -11201,7 +11465,7 @@ pa_output_addr_diff_vec (rtx lab, rtx body)
       ASM_OUTPUT_ADDR_DIFF_ELT
 	(asm_out_file,
 	 body,
-	 CODE_LABEL_NUMBER (XEXP (XVECEXP (body, 1, idx), 0)),
+	 CODE_LABEL_NUMBER (label_ref_label (XVECEXP (body, 1, idx))),
 	 CODE_LABEL_NUMBER (base));
     }
   if (TARGET_GAS)
@@ -11363,6 +11627,22 @@ pa_frame_pointer_required (void)
     return true;
 
   return false;
+}
+
+/* Implement TARGET_PREFERRED_RELOAD_CLASS.  */
+
+static reg_class_t
+pa_preferred_reload_class (rtx x, reg_class_t rclass)
+{
+  /* Prefer R1_REGS (%r1) when reloading HIGH expressions or PIC labels
+     so that single-instruction addil sequences are selected whenever %r1
+     is available, reserving the multi-instruction general-register
+     fallback for high register contention.  */
+  if ((GET_CODE (x) == HIGH || pic_label_operand (x, GET_MODE (x)))
+      && reg_class_subset_p (R1_REGS, rclass))
+    return R1_REGS;
+
+  return rclass;
 }
 
 #include "gt-pa.h"

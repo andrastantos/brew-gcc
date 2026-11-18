@@ -95,7 +95,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-dfa.h"
 #include "gdb/gdb-index.h"
 #include "rtl-iter.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "file-prefix-map.h" /* remap_debug_filename()  */
 
@@ -944,8 +943,12 @@ output_call_frame_info (int for_eh)
 			     eh_data_format_name (fde_encoding));
     }
 
-  FOR_EACH_VEC_ELT (*cie_cfi_vec, i, cfi)
-    output_cfi (cfi, NULL, for_eh);
+  /* cie_cfi_vec is created lazily by the dwarf2 frame pass.
+     The RTL front end allows for starting from a pass after that so that
+     this can be absent.  */
+  if (cie_cfi_vec)
+    FOR_EACH_VEC_ELT (*cie_cfi_vec, i, cfi)
+      output_cfi (cfi, NULL, for_eh);
 
   /* Pad the CIE out to an address sized boundary.  */
   ASM_OUTPUT_ALIGN (asm_out_file,
@@ -3161,15 +3164,15 @@ typedef struct GTY((chain_circular ("%h.die_sib"), for_user)) die_struct {
   unsigned int decl_id;
   enum dwarf_tag die_tag;
   /* Die is used and must not be pruned as unused.  */
-  BOOL_BITFIELD die_perennial_p : 1;
-  BOOL_BITFIELD comdat_type_p : 1; /* DIE has a type signature */
+  bool die_perennial_p : 1;
+  bool comdat_type_p : 1; /* DIE has a type signature */
   /* For an external ref to die_symbol if die_offset contains an extra
      offset to that symbol.  */
-  BOOL_BITFIELD with_offset : 1;
+  bool with_offset : 1;
   /* Whether this DIE was removed from the DIE tree, for example via
      prune_unused_types.  We don't consider those present from the
      DIE lookup routines.  */
-  BOOL_BITFIELD removed : 1;
+  bool removed : 1;
   /* Lots of spare bits.  */
 }
 die_node;
@@ -3866,8 +3869,8 @@ static void output_line_info (bool);
 static void output_file_names (void);
 static bool is_base_type (tree);
 static dw_die_ref subrange_type_die (tree, tree, tree, tree, dw_die_ref);
-static int decl_quals (const_tree);
-static dw_die_ref modified_type_die (tree, int, tree, bool, dw_die_ref);
+static cv_qualifier decl_quals (const_tree);
+static dw_die_ref modified_type_die (tree, cv_qualifier, tree, bool, dw_die_ref);
 static dw_die_ref generic_parameter_die (tree, tree, bool, dw_die_ref);
 static dw_die_ref template_parameter_pack_die (tree, tree, dw_die_ref);
 static unsigned int debugger_reg_number (const_rtx);
@@ -3935,7 +3938,7 @@ static dw_die_ref scope_die_for (tree, dw_die_ref);
 static inline bool local_scope_p (dw_die_ref);
 static inline bool class_scope_p (dw_die_ref);
 static inline bool class_or_namespace_scope_p (dw_die_ref);
-static void add_type_attribute (dw_die_ref, tree, int, bool, dw_die_ref);
+static void add_type_attribute (dw_die_ref, tree, cv_qualifier, bool, dw_die_ref);
 static void add_calling_convention_attribute (dw_die_ref, tree);
 static const char *type_tag (const_tree);
 static tree member_declared_type (const_tree);
@@ -3958,7 +3961,8 @@ static void gen_const_die (tree, dw_die_ref);
 static void gen_label_die (tree, dw_die_ref);
 static void gen_lexical_block_die (tree, dw_die_ref);
 static void gen_inlined_subroutine_die (tree, dw_die_ref);
-static void gen_field_die (tree, struct vlr_context *, dw_die_ref);
+static dw_die_ref gen_field_die (tree, struct vlr_context *, dw_die_ref,
+				 bool = false);
 static void gen_ptr_to_mbr_type_die (tree, dw_die_ref);
 static dw_die_ref gen_compile_unit_die (const char *);
 static void gen_inheritance_die (tree, tree, tree, dw_die_ref);
@@ -13580,7 +13584,7 @@ subrange_type_die (tree type, tree low, tree high, tree bias,
    the decl node.  This will normally be augmented with the
    cv_qualifiers of the underlying type in add_type_attribute.  */
 
-static int
+static cv_qualifier
 decl_quals (const_tree decl)
 {
   return ((TREE_READONLY (decl)
@@ -13597,11 +13601,13 @@ decl_quals (const_tree decl)
    of the given TYPE_QUALS, and return its qualifiers.  Ignore all
    qualifiers outside QUAL_MASK.  */
 
-static int
-get_nearest_type_subqualifiers (tree type, int type_quals, int qual_mask)
+static cv_qualifier
+get_nearest_type_subqualifiers (tree type, cv_qualifier type_quals,
+				cv_qualifier qual_mask)
 {
   tree t;
-  int best_rank = 0, best_qual = 0, max_rank;
+  int best_rank = 0, max_rank;
+  cv_qualifier best_qual = TYPE_UNQUALIFIED;
 
   type_quals &= qual_mask;
   max_rank = popcount_hwi (type_quals) - 1;
@@ -13609,7 +13615,7 @@ get_nearest_type_subqualifiers (tree type, int type_quals, int qual_mask)
   for (t = TYPE_MAIN_VARIANT (type); t && best_rank < max_rank;
        t = TYPE_NEXT_VARIANT (t))
     {
-      int q = TYPE_QUALS (t) & qual_mask;
+      auto q = TYPE_QUALS (t).intersect (qual_mask);
 
       if ((q & type_quals) == q && q != type_quals
 	  && check_base_type (t, type))
@@ -13627,7 +13633,7 @@ get_nearest_type_subqualifiers (tree type, int type_quals, int qual_mask)
   return best_qual;
 }
 
-struct dwarf_qual_info_t { int q; enum dwarf_tag t; };
+struct dwarf_qual_info_t { cv_qualifier q; enum dwarf_tag t; };
 static const dwarf_qual_info_t dwarf_qual_info[] =
 {
   { TYPE_QUAL_CONST, DW_TAG_const_type },
@@ -13642,7 +13648,7 @@ static const unsigned int dwarf_qual_info_size = ARRAY_SIZE (dwarf_qual_info);
    qualifiers added compared to the returned DIE.  */
 
 static dw_die_ref
-qualified_die_p (dw_die_ref die, int *mask, unsigned int depth)
+qualified_die_p (dw_die_ref die, cv_qualifier *mask, unsigned int depth)
 {
   unsigned int i;
   for (i = 0; i < dwarf_qual_info_size; i++)
@@ -13898,7 +13904,7 @@ maybe_gen_btf_decl_tag_dies (tree t, dw_die_ref target)
    in the reverse storage order wrt the target order.  */
 
 static dw_die_ref
-modified_type_die (tree type, int cv_quals, tree type_attrs, bool reverse,
+modified_type_die (tree type, cv_qualifier cv_quals, tree type_attrs, bool reverse,
 		   dw_die_ref context_die)
 {
   enum tree_code code = TREE_CODE (type);
@@ -13911,8 +13917,8 @@ modified_type_die (tree type, int cv_quals, tree type_attrs, bool reverse,
   dw_die_ref mod_scope;
   struct array_descr_info info;
   /* Only these cv-qualifiers are currently handled.  */
-  const int cv_qual_mask = (TYPE_QUAL_CONST | TYPE_QUAL_VOLATILE
-			    | TYPE_QUAL_RESTRICT | TYPE_QUAL_ATOMIC);
+  const auto cv_qual_mask = (TYPE_QUAL_CONST | TYPE_QUAL_VOLATILE
+			     | TYPE_QUAL_RESTRICT | TYPE_QUAL_ATOMIC);
   /* DW_AT_endianity is specified only for base types in the standard.  */
   const bool reverse_type
     = need_endianity_attribute_p (reverse)
@@ -13997,7 +14003,16 @@ modified_type_die (tree type, int cv_quals, tree type_attrs, bool reverse,
       tree dtype = TREE_TYPE (name);
 
       /* Skip the typedef for base types with DW_AT_endianity, no big deal.  */
-      if (qualified_type == dtype && !reverse_type)
+      if (!reverse_type
+	  && (qualified_type == dtype
+	      /* Pointer identity check above might fail when qualified_type
+		 is a different variant node of the same typedef yet requires
+		 the same handling as if they matched (see PR/125421).
+		 Skip this when btf_type_tag attributes are present, as those
+		 need to be handled in the else branch below.  */
+	      || (TYPE_NAME (qualified_type) == name
+		  && TYPE_QUALS (qualified_type) == TYPE_QUALS (dtype)
+		  && !lookup_attribute ("btf_type_tag", type_attrs))))
 	{
 	  tree origin = decl_ultimate_origin (name);
 
@@ -14009,12 +14024,12 @@ modified_type_die (tree type, int cv_quals, tree type_attrs, bool reverse,
 				      reverse, context_die);
 
 	  /* For a named type, use the typedef.  */
-	  gen_type_die (qualified_type, context_die);
-	  return lookup_type_die (qualified_type);
+	  gen_type_die (dtype, context_die);
+	  return lookup_type_die (dtype);
 	}
       else
 	{
-	  int dquals = TYPE_QUALS_NO_ADDR_SPACE (dtype);
+	  auto dquals = TYPE_QUALS_NO_ADDR_SPACE (dtype);
 	  dquals &= cv_qual_mask;
 	  if ((dquals & ~cv_quals) != TYPE_UNQUALIFIED
 	      || (cv_quals == dquals && DECL_ORIGINAL_TYPE (name) != type))
@@ -14056,7 +14071,7 @@ modified_type_die (tree type, int cv_quals, tree type_attrs, bool reverse,
 
   if (cv_quals)
     {
-      int sub_quals = 0, first_quals = 0;
+      cv_qualifier sub_quals = TYPE_UNQUALIFIED, first_quals = TYPE_UNQUALIFIED;
       unsigned i;
       dw_die_ref first = NULL, last = NULL;
 
@@ -14077,7 +14092,7 @@ modified_type_die (tree type, int cv_quals, tree type_attrs, bool reverse,
 	      needed = true;
 	    else if (needed && (dwarf_qual_info[i].q & cv_quals))
 	      {
-		sub_quals = 0;
+		sub_quals = TYPE_UNQUALIFIED;
 		break;
 	      }
 	}
@@ -14102,7 +14117,7 @@ modified_type_die (tree type, int cv_quals, tree type_attrs, bool reverse,
 	       count < (1U << dwarf_qual_info_size);
 	       count++, last = last->die_sib)
 	    {
-	      int quals = 0;
+	      cv_qualifier quals = TYPE_UNQUALIFIED;
 	      if (last == mod_scope->die_child)
 		break;
 	      if (qualified_die_p (last->die_sib, &quals, dwarf_qual_info_size)
@@ -14119,7 +14134,7 @@ modified_type_die (tree type, int cv_quals, tree type_attrs, bool reverse,
 	      {
 		for (d = first->die_sib; ; d = d->die_sib)
 		  {
-		    int quals = 0;
+		    cv_qualifier quals = TYPE_UNQUALIFIED;
 		    qualified_die_p (d, &quals, dwarf_qual_info_size);
 		    if (quals == (first_quals | dwarf_qual_info[i].q))
 		      break;
@@ -14623,7 +14638,7 @@ reg_loc_descriptor (rtx rtl, enum var_init_status initialized)
   if ((rtl == arg_pointer_rtx || rtl == frame_pointer_rtx)
       && (ira_use_lra_p
 	  ? lra_eliminate_regs (rtl, VOIDmode, NULL_RTX)
-	  : eliminate_regs (rtl, VOIDmode, NULL_RTX)) != rtl)
+	  : eliminate_regs (rtl, VOIDmode, nullptr)) != rtl)
     {
       dw_loc_descr_ref result = NULL;
 
@@ -15189,7 +15204,7 @@ based_loc_descr (rtx reg, poly_int64 offset,
     {
       rtx elim = (ira_use_lra_p
 		  ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-		  : eliminate_regs (reg, VOIDmode, NULL_RTX));
+		  : eliminate_regs (reg, VOIDmode, nullptr));
 
       if (elim != reg)
 	{
@@ -17108,6 +17123,7 @@ mem_loc_descriptor (rtx rtl, machine_mode mode,
 	      <= GET_MODE_BITSIZE (int_mode)))
 	{
 	  int shift, size;
+	  const int addr_bits = DWARF2_ADDR_SIZE * BITS_PER_UNIT;
 	  op0 = mem_loc_descriptor (XEXP (rtl, 0), inner_mode,
 				    mem_mode, VAR_INIT_STATUS_INITIALIZED);
 	  if (op0 == 0)
@@ -17121,17 +17137,16 @@ mem_loc_descriptor (rtx rtl, machine_mode mode,
 	  shift = INTVAL (XEXP (rtl, 2));
 	  if (BITS_BIG_ENDIAN)
 	    shift = GET_MODE_BITSIZE (inner_mode) - shift - size;
-	  if (shift + size != (int) DWARF2_ADDR_SIZE)
+	  if (shift + size != addr_bits)
 	    {
 	      add_loc_descr (&mem_loc_result,
-			     int_loc_descriptor (DWARF2_ADDR_SIZE
-						 - shift - size));
+			     int_loc_descriptor (addr_bits - shift - size));
 	      add_loc_descr (&mem_loc_result, new_loc_descr (DW_OP_shl, 0, 0));
 	    }
-	  if (size != (int) DWARF2_ADDR_SIZE)
+	  if (size != addr_bits)
 	    {
 	      add_loc_descr (&mem_loc_result,
-			     int_loc_descriptor (DWARF2_ADDR_SIZE - size));
+			     int_loc_descriptor (addr_bits - size));
 	      add_loc_descr (&mem_loc_result, new_loc_descr (op, 0, 0));
 	    }
 	}
@@ -18321,7 +18336,7 @@ cst_pool_loc_descr (tree loc)
   if (!TREE_ASM_WRITTEN (SYMBOL_REF_DECL (XEXP (rtl, 0))))
     {
       expansion_failed (loc, NULL_RTX,
-			"CST value in contant pool but not marked.");
+			"CST value in constant pool but not marked.");
       return 0;
     }
   return mem_loc_descriptor (XEXP (rtl, 0), get_address_mode (rtl),
@@ -18356,7 +18371,7 @@ loc_list_for_address_of_addr_expr_of_indirect_ref (tree loc, bool toplev,
   if (!INDIRECT_REF_P (obj))
     {
       expansion_failed (obj,
-			NULL_RTX, "no indirect ref in inner refrence");
+			NULL_RTX, "no indirect ref in inner reference");
       return 0;
     }
   if (!offset && known_eq (bitpos, 0))
@@ -18609,7 +18624,7 @@ resolve_args_picking_1 (dw_loc_descr_ref loc, unsigned initial_frame_offset,
 	     one stack slot per argument (0 for the first one, 1 for the second
 	     one, etc.).
 
-	     The targetted argument number (N) is already set as the operand,
+	     The targeted argument number (N) is already set as the operand,
 	     and the number of temporaries can be computed with:
 	       frame_offsets_ - dpi->args_count */
 	  off += frame_offset_ - dpi->args_count;
@@ -19029,7 +19044,7 @@ typed_binop_from_tree (enum dwarf_location_atom op, tree loc,
 /* Generate Dwarf location list representing LOC.
    If WANT_ADDRESS is false, expression computing LOC will be computed
    If WANT_ADDRESS is 1, expression computing address of LOC will be returned
-   if WANT_ADDRESS is 2, expression computing address useable in location
+   if WANT_ADDRESS is 2, expression computing address usable in location
      will be returned (i.e. DW_OP_reg can be used
      to refer to register values).
 
@@ -21608,7 +21623,7 @@ compute_frame_pointer_to_fb_displacement (poly_int64 offset)
 
   elim = (ira_use_lra_p
 	  ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-	  : eliminate_regs (reg, VOIDmode, NULL_RTX));
+	  : eliminate_regs (reg, VOIDmode, nullptr));
   elim = strip_offset_and_add (elim, &offset);
 
   frame_pointer_fb_offset = -offset;
@@ -22737,7 +22752,7 @@ class_or_namespace_scope_p (dw_die_ref context_die)
    adds a DW_AT_type attribute below the given die.  */
 
 static void
-add_type_attribute (dw_die_ref object_die, tree type, int cv_quals,
+add_type_attribute (dw_die_ref object_die, tree type, cv_qualifier cv_quals,
 		    bool reverse, dw_die_ref context_die)
 {
   enum tree_code code  = TREE_CODE (type);
@@ -22762,7 +22777,7 @@ add_type_attribute (dw_die_ref object_die, tree type, int cv_quals,
     return;
 
   type_die = modified_type_die (type,
-				cv_quals | TYPE_QUALS (type),
+				cv_quals | TYPE_QUALS_NO_ADDR_SPACE (type),
 				TYPE_ATTRIBUTES (type),
 				reverse,
 				context_die);
@@ -22912,7 +22927,7 @@ gen_array_type_die (tree type, dw_die_ref context_die)
      there is no difference between an array of arrays and a multidimensional
      array.  We don't do this for Ada to remain as close as possible to the
      actual representation, which is especially important against the language
-     flexibilty wrt arrays of variable size.  */
+     flexibility wrt arrays of variable size.  */
 
   bool collapse_nested_arrays = !is_ada ();
 
@@ -23171,8 +23186,7 @@ gen_descr_array_type_die (tree type, struct array_descr_info *info,
 
   gen_type_die (info->element_type, context_die);
   add_type_attribute (array_die, info->element_type, TYPE_UNQUALIFIED,
-		      TREE_CODE (type) == ARRAY_TYPE
-		      && TYPE_REVERSE_STORAGE_ORDER (type),
+		      info->reverse_storage_order,
 		      context_die);
 
   if (get_AT (array_die, DW_AT_name))
@@ -24860,7 +24874,7 @@ override_type_for_decl_p (tree decl, dw_die_ref old_die,
 			  dw_die_ref context_die)
 {
   tree type = TREE_TYPE (decl);
-  int cv_quals;
+  cv_qualifier cv_quals;
 
   if (decl_by_reference_p (decl))
     {
@@ -24872,7 +24886,7 @@ override_type_for_decl_p (tree decl, dw_die_ref old_die,
 
   dw_die_ref type_die
     = modified_type_die (type,
-			 cv_quals | TYPE_QUALS (type),
+			 cv_quals | TYPE_QUALS_NO_ADDR_SPACE (type),
 			 TYPE_ATTRIBUTES (type),
 			 false,
 			 context_die);
@@ -25556,18 +25570,21 @@ gen_inlined_subroutine_die (tree stmt, dw_die_ref context_die)
 }
 
 /* Generate a DIE for a field in a record, or structure.  CTX is required: see
-   the comment for VLR_CONTEXT.  */
+   the comment for VLR_CONTEXT.  If ANONYMOUS is true, create an anonymous DIE
+   and do not equate it to the field.  */
 
-static void
-gen_field_die (tree decl, struct vlr_context *ctx, dw_die_ref context_die)
+static dw_die_ref
+gen_field_die (tree decl, struct vlr_context *ctx, dw_die_ref context_die,
+	       bool anonymous)
 {
   dw_die_ref decl_die;
 
   if (TREE_TYPE (decl) == error_mark_node)
-    return;
+    return NULL;
 
   decl_die = new_die (DW_TAG_member, context_die, decl);
-  add_name_and_src_coords_attributes (decl_die, decl);
+  if (!anonymous)
+    add_name_and_src_coords_attributes (decl_die, decl);
   add_type_attribute (decl_die, member_declared_type (decl), decl_quals (decl),
 		      TYPE_REVERSE_STORAGE_ORDER (DECL_FIELD_CONTEXT (decl)),
 		      context_die);
@@ -25601,7 +25618,9 @@ gen_field_die (tree decl, struct vlr_context *ctx, dw_die_ref context_die)
 	}
 
   /* Equate decl number to die, so that we can look up this decl later on.  */
-  equate_decl_number_to_die (decl, decl_die);
+  if (!anonymous)
+    equate_decl_number_to_die (decl, decl_die);
+  return decl_die;
 }
 
 /* Generate a DIE for a pointer to a member type.  TYPE can be an
@@ -25640,6 +25659,8 @@ static char *producer_string;
 static const char *
 highest_c_language (const char *lang1, const char *lang2)
 {
+  if (strcmp ("GNU C++29", lang1) == 0 || strcmp ("GNU C++29", lang2) == 0)
+    return "GNU C++29";
   if (strcmp ("GNU C++26", lang1) == 0 || strcmp ("GNU C++26", lang2) == 0)
     return "GNU C++26";
   if (strcmp ("GNU C++23", lang1) == 0 || strcmp ("GNU C++23", lang2) == 0)
@@ -25794,7 +25815,13 @@ gen_compile_unit_die (const char *filename)
 	    {
 	      language = DW_LANG_C_plus_plus_14;
 	      lname = DW_LNAME_C_plus_plus;
-	      lversion = 202400;
+	      lversion = 202603;
+	    }
+	  else if (strcmp (language_string, "GNU C++29") == 0)
+	    {
+	      language = DW_LANG_C_plus_plus_14;
+	      lname = DW_LNAME_C_plus_plus;
+	      lversion = 202700;
 	    }
 	}
     }
@@ -25917,21 +25944,37 @@ is_variant_part (tree decl)
 	  && TREE_CODE (TREE_TYPE (decl)) == QUAL_UNION_TYPE);
 }
 
-/* Check that OPERAND is a reference to a field in STRUCT_TYPE.  If it is,
-   return the FIELD_DECL.  Return NULL_TREE otherwise.  */
+/* Check that OPERAND is a reference to a field or sub-field of STRUCT_TYPE
+   whose prefix is a PLACEHOLDER_EXPR and, in the case of a sub-field, check
+   that the containing fields are at offset 0.  If it is, return the field or
+   sub-field, or else return NULL_TREE.  */
 
 static tree
-analyze_discr_in_predicate (tree operand, tree struct_type)
+extract_discr_in_expr (tree operand, tree struct_type)
 {
   while (CONVERT_EXPR_P (operand))
     operand = TREE_OPERAND (operand, 0);
 
-  /* Match field access to members of struct_type only.  */
-  if (TREE_CODE (operand) == COMPONENT_REF
-      && TREE_CODE (TREE_OPERAND (operand, 0)) == PLACEHOLDER_EXPR
-      && TREE_TYPE (TREE_OPERAND (operand, 0)) == struct_type
-      && TREE_CODE (TREE_OPERAND (operand, 1)) == FIELD_DECL)
-    return TREE_OPERAND (operand, 1);
+  if (TREE_CODE (operand) != COMPONENT_REF)
+    return NULL_TREE;
+
+  tree op0 = TREE_OPERAND (operand, 0);
+  tree op1 = TREE_OPERAND (operand, 1);
+  tree field;
+
+  /* The direct case of a field of STRUCT_TYPE.  */
+  if (TREE_CODE (op0) == PLACEHOLDER_EXPR
+      && TREE_TYPE (op0) == struct_type
+      && TREE_CODE (op1) == FIELD_DECL)
+    return op1;
+
+  /* The case of a sub-field of STRUCT_TYPE with containing field at 0.  */
+  else if ((field = extract_discr_in_expr (op0, struct_type))
+	   && integer_zerop (DECL_FIELD_OFFSET (field))
+	   && integer_zerop (DECL_FIELD_BIT_OFFSET (field)))
+    return op1;
+
+  /* Otherwise, neither field nor sub-field.  */
   else
     return NULL_TREE;
 }
@@ -26066,8 +26109,8 @@ analyze_variants_discr (tree variant_part_decl,
 	      tree integer_cst = TREE_OPERAND (match_expr, 1);
 
 	      candidate_discr
-	       = analyze_discr_in_predicate (TREE_OPERAND (match_expr, 0),
-					     struct_type);
+		= extract_discr_in_expr (TREE_OPERAND (match_expr, 0),
+					 struct_type);
 
 	      new_node = ggc_cleared_alloc<dw_discr_list_node> ();
 	      if (!get_discr_value (integer_cst,
@@ -26111,11 +26154,11 @@ analyze_variants_discr (tree variant_part_decl,
 		 is consistent with the same analysis in the second
 		 operand.  */
 	      candidate_discr_1
-	        = analyze_discr_in_predicate (TREE_OPERAND (lower_op, 0),
-					      struct_type);
+		= extract_discr_in_expr (TREE_OPERAND (lower_op, 0),
+					 struct_type);
 	      candidate_discr_2
-	        = analyze_discr_in_predicate (TREE_OPERAND (upper_op, 0),
-					      struct_type);
+		= extract_discr_in_expr (TREE_OPERAND (upper_op, 0),
+					 struct_type);
 	      if (candidate_discr_1 == candidate_discr_2)
 		candidate_discr = candidate_discr_1;
 	      else
@@ -26145,7 +26188,7 @@ analyze_variants_discr (tree variant_part_decl,
 	    }
 
 	  else if ((candidate_discr
-		      = analyze_discr_in_predicate (match_expr, struct_type))
+		      = extract_discr_in_expr (match_expr, struct_type))
 		   && (TREE_TYPE (candidate_discr) == boolean_type_node
 		       || TREE_TYPE (TREE_TYPE (candidate_discr))
 			  == boolean_type_node))
@@ -26192,9 +26235,9 @@ abort:
   *discr_decl = NULL_TREE;
 }
 
-/* Generate a DIE to represent VARIANT_PART_DECL, a variant part that is part
-   of STRUCT_TYPE, a record type.  This new DIE is emitted as the next child
-   under CONTEXT_DIE.
+/* Generate a DIE to represent VARIANT_PART_DECL, a variant part of the record
+   type VLR_CTX->STRUCT_TYPE.  This new DIE is emitted as the next child under
+   CONTEXT_DIE.
 
    Variant parts are supposed to be implemented as a FIELD_DECL whose type is a
    QUAL_UNION_TYPE: this is the VARIANT_PART_DECL parameter.  The members for
@@ -26236,12 +26279,20 @@ gen_variant_part (tree variant_part_decl, struct vlr_context *vlr_ctx,
     {
       dw_die_ref discr_die = lookup_decl_die (discr_decl);
 
-      if (discr_die)
-	add_AT_die_ref (variant_part_die, DW_AT_discr, discr_die);
-      else
-	/* We have no DIE for the discriminant, so just discard all
-	   discrimimant information in the output.  */
-	discr_decl = NULL_TREE;
+      /* If we have no DIE for the discriminant, this may be a sub-field of
+	 VLR_CTX->STRUCT_TYPE.  Generate an anonymous DIE for the sub-field
+	 in the non-variant part of VLR_CTX->STRUCT_TYPE.  This is necessary
+	 to work around a limitation of the DWARF description, which requires
+	 the DW_AT_discr attribute of the DW_TAG_variant_part DIE to be the
+	 reference to a DW_TAG_member DIE of the same record type.  */
+      if (!discr_die)
+	{
+	  vlr_ctx->variant_part_offset = NULL_TREE;
+	  discr_die = gen_field_die (discr_decl, vlr_ctx, context_die, true);
+	  vlr_ctx->variant_part_offset = variant_part_offset;
+	}
+
+       add_AT_die_ref (variant_part_die, DW_AT_discr, discr_die);
     }
 
   /* If the offset for this variant part is more complex than a constant,
@@ -26947,8 +26998,12 @@ gen_type_die_with_usage (tree type, dw_die_ref context_die,
       gen_tagged_type_die (type, context_die, usage, reverse);
       return;
 
-    case VOID_TYPE:
     case OPAQUE_TYPE:
+      if (SCALAR_INT_MODE_P (TYPE_MODE (type)))
+	/* C++ std::meta::info type.  */
+	goto unspecified_type;
+      gcc_fallthrough ();
+    case VOID_TYPE:
     case INTEGER_TYPE:
     case REAL_TYPE:
     case FIXED_POINT_TYPE:
@@ -28570,13 +28625,13 @@ dwarf2out_var_location (rtx_insn *loc_note)
 
   if (!NOTE_P (loc_note))
     {
-      if (CALL_P (loc_note))
+      if (auto call = dyn_cast<rtx_call_insn *> (loc_note))
 	{
-	  maybe_reset_location_view (loc_note, cur_line_info_table);
+	  maybe_reset_location_view (call, cur_line_info_table);
 	  call_site_count++;
-	  if (SIBLING_CALL_P (loc_note))
+	  if (SIBLING_CALL_P (call))
 	    tail_call_site_count++;
-	  if (find_reg_note (loc_note, REG_CALL_ARG_LOCATION, NULL_RTX))
+	  if (find_reg_note (call, REG_CALL_ARG_LOCATION, NULL_RTX))
 	    {
 	      call_insn = loc_note;
 	      loc_note = NULL;

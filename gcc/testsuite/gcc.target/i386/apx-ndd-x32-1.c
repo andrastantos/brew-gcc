@@ -1,7 +1,7 @@
 /* PR target/113711 */
-/* { dg-do assemble { target { apxf && { ! ia32 } } } } */
+/* { dg-do assemble { target { apxf && { { ! ia32 } && { ! *-*-darwin* } } } } } */
 /* { dg-require-effective-target maybe_x32 } */
-/* { dg-options "-mapxf -O2 -mx32" } */
+/* { dg-options "-mapxf -mtune-ctrl=enable_ndd_mem -O2 -mx32" } */
 
 typedef long long int64_t;
 
@@ -11,7 +11,7 @@ foo_##OP_NAME##_##TYPE (int off, TYPE *ptr)		\
 {							\
   TYPE b = ptr[off + 0x100] + IMM;			\
   return b;						\
-}			
+}
 
 FOO (char, add, +, 0x7)
 FOO (short, add, +, 0x2000)

@@ -42,7 +42,7 @@ update_lineno (const char *l, size_t len)
 CID	[[:alpha:]_][[:alnum:]_]*
 WS	[[:space:]]+
 HWS	[ \t\r\v\f]*
-IWORD	short|long|(un)?signed|char|int|HOST_WIDE_INT|uint64_t|int64_t|bool|size_t|BOOL_BITFIELD|CPPCHAR_SIGNED_T|ino_t|dev_t|HARD_REG_SET
+IWORD	short|long|(un)?signed|char|int|HOST_WIDE_INT|uint64_t|int64_t|bool|size_t|CPPCHAR_SIGNED_T|ino_t|dev_t|HARD_REG_SET
 ITYPE	{IWORD}({WS}{IWORD})*
     /* Include '::' in identifiers to capture C++ scope qualifiers.  */
 ID	{CID}({HWS}::{HWS}{CID})*
@@ -119,8 +119,7 @@ CXX_KEYWORD inline|public:|private:|protected:|template|operator|friend|static|m
   return NUM;
 }
 
-{IWORD}({WS}{IWORD})*/{EOID}		|
-"ENUM_BITFIELD"{WS}?"("{WS}?{ID}{WS}?")"	{
+{IWORD}({WS}{IWORD})*/{EOID}	{
   size_t len;
 
   for (len = yyleng; ISSPACE (yytext[len-1]); len--)

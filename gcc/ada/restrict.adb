@@ -23,23 +23,24 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Atree;          use Atree;
-with Casing;         use Casing;
-with Einfo.Entities; use Einfo.Entities;
-with Einfo.Utils;    use Einfo.Utils;
-with Errout;         use Errout;
-with Debug;          use Debug;
-with Fname;          use Fname;
-with Fname.UF;       use Fname.UF;
-with Lib;            use Lib;
-with Opt;            use Opt;
-with Sinfo.Nodes;    use Sinfo.Nodes;
-with Sinfo.Utils;    use Sinfo.Utils;
-with Sinput;         use Sinput;
-with Stand;          use Stand;
-with Targparm;       use Targparm;
-with Uname;          use Uname;
-with Warnsw;         use Warnsw;
+with Atree;                        use Atree;
+with Casing;                       use Casing;
+with Einfo.Entities;               use Einfo.Entities;
+with Einfo.Utils;                  use Einfo.Utils;
+with Errid.Restriction_Repository; use Errid.Restriction_Repository;
+with Errout;                       use Errout;
+with Debug;                        use Debug;
+with Fname;                        use Fname;
+with Fname.UF;                     use Fname.UF;
+with Lib;                          use Lib;
+with Opt;                          use Opt;
+with Sinfo.Nodes;                  use Sinfo.Nodes;
+with Sinfo.Utils;                  use Sinfo.Utils;
+with Sinput;                       use Sinput;
+with Stand;                        use Stand;
+with Targparm;                     use Targparm;
+with Uname;                        use Uname;
+with Warnsw;                       use Warnsw;
 
 package body Restrict is
 
@@ -650,7 +651,8 @@ package body Restrict is
          Error_Msg_Warn := No_Specification_Of_Aspect_Warning (A_Id);
          Error_Msg_N
            ("<*<violation of restriction `No_Specification_Of_Aspect '='> &`#",
-            Id);
+            Id,
+            Rest_To_Diag_Mappping (No_Specification_Of_Aspect));
       end if;
    end Check_Restriction_No_Specification_Of_Aspect;
 
@@ -696,7 +698,9 @@ package body Restrict is
          Error_Msg_Name_1 := Attr_Nam;
          Error_Msg_Warn   := No_Use_Of_Attribute_Warning (Attr_Id);
          Error_Msg_N
-           ("<*<violation of restriction `No_Use_Of_Attribute '='> %` #", N);
+           ("<*<violation of restriction `No_Use_Of_Attribute '='> %` #",
+            N,
+            Rest_To_Diag_Mappping (Rident.No_Use_Of_Attribute));
       end if;
    end Check_Restriction_No_Use_Of_Attribute;
 
@@ -825,7 +829,9 @@ package body Restrict is
       if Error_Msg_Sloc /= No_Location then
          Error_Msg_Warn := No_Use_Of_Pragma_Warning (P_Id);
          Error_Msg_N
-           ("<*<violation of restriction `No_Use_Of_Pragma '='> &` #", Id);
+           ("<*<violation of restriction `No_Use_Of_Pragma '='> &` #",
+            Id,
+            Rest_To_Diag_Mappping (Rident.No_Use_Of_Pragma));
       end if;
    end Check_Restriction_No_Use_Of_Pragma;
 
@@ -1048,7 +1054,7 @@ package body Restrict is
          Error_Msg_Name_1 := Old_Name;
          Error_Msg_N ("restriction identifier % is obsolescent?j?", N);
          Error_Msg_Name_1 := New_Name;
-         Error_Msg_N ("|use restriction identifier % instead?j?", N);
+         Error_Msg_N ("\use restriction identifier % instead?j?", N);
       end if;
 
       return New_Name;
@@ -1246,13 +1252,19 @@ package body Restrict is
          end if;
 
          Add_Char ('!');
-         Error_Msg_N (Msg (1 .. Len), N);
+         Error_Msg_N
+           (Msg        => Msg (1 .. Len),
+            N          => N,
+            Error_Code => Rest_To_Diag_Mappping (R));
 
       --  Case of secondary profile continuation message present
 
       else
          Add_Char ('!');
-         Error_Msg_N (Msg (1 .. Len), N);
+         Error_Msg_N
+           (Msg        => Msg (1 .. Len),
+            N          => N,
+            Error_Code => Rest_To_Diag_Mappping (R));
 
          Len := 0;
          Add_Char ('\');
@@ -1277,7 +1289,10 @@ package body Restrict is
          --  Output unconditional message and we are done
 
          Add_Char ('!');
-         Error_Msg_N (Msg (1 .. Len), N);
+         Error_Msg_N
+           (Msg        => Msg (1 .. Len),
+            N          => N,
+            Error_Code => Rest_To_Diag_Mappping (R));
       end if;
    end Restriction_Msg;
 

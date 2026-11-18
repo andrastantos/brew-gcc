@@ -22,10 +22,10 @@
   "@internal The stack register.")
 
 (define_register_constraint "Uci" "W8_W11_REGS"
-  "@internal r8-r11, which can be used to index ZA.")
+  "GPRs r8-r11, can be used to index ZA.")
 
 (define_register_constraint "Ucj" "W12_W15_REGS"
-  "@internal r12-r15, which can be used to index ZA.")
+  "GPRs r12-r15, can be used to index ZA.")
 
 (define_register_constraint "Ucs" "TAILCALL_ADDR_REGS"
   "@internal Registers suitable for an indirect tail call")
@@ -40,20 +40,31 @@
    veneer.")
 
 (define_register_constraint "w" "FP_REGS"
-  "Floating point and SIMD vector registers.")
+  "SVE/AdvSIMD/FP registers, V0 - V31.")
 
 (define_register_constraint "x" "FP_LO_REGS"
-  "Floating point and SIMD vector registers V0 - V15.")
+  "SVE/AdvSIMD/FP registers, V0 - V15.")
 
 (define_register_constraint "y" "FP_LO8_REGS"
-  "Floating point and SIMD vector registers V0 - V7.")
+  "SVE/AdvSIMD/FP  registers, V0 - V7.")
+
+(define_register_constraint "z" "FP_HI_REGS"
+  "SVE/AdvSIMD/FP registers, V16 - V31.")
+
+(define_register_constraint "Ux2" "FP_LO_REGS"
+  "Even SVE/AdvSIMD/FP registers, V0, V2, ..., V14."
+  "regno % 2 == 0")
+
+(define_register_constraint "Uz2" "FP_HI_REGS"
+  "Even SVE/AdvSIMD/FP registers, V16, V18, ..., V30."
+  "regno % 2 == 0")
 
 (define_register_constraint "Uw2" "FP_REGS"
-  "Even floating point and SIMD vector registers."
+  "Even SVE/AdvSIMD/FP registers, V0, V2, ..., V30."
   "regno % 2 == 0")
 
 (define_register_constraint "Uw4" "FP_REGS"
-  "4-tuple-aligned floating point and SIMD vector registers."
+  "4-tuple-aligned SVE/AdvSIMD/FP registers, V0, V4, ..., V28."
   "regno % 4 == 0")
 
 (define_register_constraint "Uwd" "FP_REGS"
@@ -63,6 +74,10 @@
 (define_register_constraint "Uwt" "FP_REGS"
   "@internal The first register in a tuple of 4 strided FPRs."
   "(regno & 0xc) == 0")
+
+(define_register_constraint "Uwo" "FP_REGS"
+  "@internal Control Vector Register (One of Z20-Z23 or Z28-Z31)."
+  "(regno & 0x14) == 0x14")
 
 (define_register_constraint "Upa" "PR_REGS"
   "SVE predicate registers p0 - p15.")
@@ -503,6 +518,13 @@
  (and (match_code "const_vector")
       (match_test "aarch64_simd_valid_xor_imm (op)")))
 
+(define_constraint "Dc"
+ "@internal
+  A constraint that matches an FP constant vector in which the low register
+  element can be materialized using FMOV and all other elements are zero."
+ (and (match_code "const_vector")
+      (match_test "aarch64_const_vec_fmov_p (op)")))
+
 (define_constraint "Dn"
   "@internal
  A constraint that matches vector of immediates."
@@ -524,6 +546,11 @@
  (and (match_code "const_int")
       (match_test "aarch64_simd_scalar_immediate_valid_for_move (op,
 						 QImode)")))
+(define_constraint "Da"
+  "@internal
+  A constraint that matches all sub-64-bit AdvSIMD vectors."
+  (and (match_code "const_vector")
+       (match_test "aarch64_advsimd_sub_dword_mode_p (GET_MODE (op))")))
 
 (define_constraint "Dt"
   "@internal

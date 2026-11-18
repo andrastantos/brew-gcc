@@ -77,6 +77,11 @@ public:
     RANGE_TO,
     RANGE_INCLUSIVE,
     RANGE_TO_INCLUSIVE,
+    RANGE_INCLUSIVE_NEW,
+
+    // https://github.com/rust-lang/rust/blob/master/library/core/src/ops/unsize.rs
+    COERCE_UNSIZED,
+    DISPATCH_FROM_DYN,
 
     // https://github.com/rust-lang/rust/blob/master/library/core/src/marker.rs
     PHANTOM_DATA,
@@ -90,7 +95,10 @@ public:
     // markers
     COPY,
     CLONE,
+    DROP,
     SIZED,
+    FREEZE,
+    UNSIZE,
     SYNC,
 
     // https://github.com/Rust-GCC/gccrs/issues/1896
@@ -124,6 +132,9 @@ public:
     SLICE_U8,
     SLICE,
     STR,
+    // NOTE: CStr is not present in Rust 1.49, and is only backported for
+    // compilation of Rust for Linux with a patched core lib.
+    CSTR,
     F32_RUNTIME,
     F64_RUNTIME,
 
@@ -155,6 +166,37 @@ public:
     DISCRIMINANT_KIND,
 
     MANUALLY_DROP,
+    DROP_IN_PLACE,
+
+    EXCHANGE_MALLOC,
+    OWNED_BOX,
+    OOM,
+    ALLOC_LAYOUT,
+    BOX_FREE,
+    MAYBE_UNINIT,
+
+    UNSAFE_CELL,
+
+    FUTURE_TRAIT,
+    POLL,
+    READY,
+    PENDING,
+    GENERATOR,
+    GENERATOR_STATE,
+
+    VA_LIST,
+    PIN,
+    UNPIN,
+
+    PANIC,
+    PANIC_INFO,
+    PANIC_LOCATION,
+    PANIC_BOUNDS_CHECK,
+    PANIC_STR,
+    ALIGN_OFFSET,
+    NEW_UNCHECKED,
+    FROM_GENERATOR,
+    GET_CONTEXT,
   };
 
   static const BiMap<std::string, Kind> lang_items;

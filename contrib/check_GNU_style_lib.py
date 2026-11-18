@@ -78,11 +78,10 @@ class CheckError:
 class LineLengthCheck:
     def __init__(self):
         self.limit = 80
-        self.expanded_tab = ' ' * ts
 
     def check(self, filename, lineno, line):
-        line_expanded = line.replace('\t', self.expanded_tab)
-        if len(line_expanded) > self.limit:
+        line_expanded = line.expandtabs(ts)
+        if not filename.endswith(".opt") and len(line_expanded) > self.limit:
             return CheckError(filename, lineno,
                 line_expanded[:self.limit]
                     + error_string(line_expanded[self.limit:]),
@@ -120,7 +119,7 @@ class TrailingWhitespaceCheck:
     def check(self, filename, lineno, line):
         assert(len(line) == 0 or line[-1] != '\n')
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(1)] + error_string(ws_char * len(m.group(1)))
                 + line[m.end(1):],
@@ -132,7 +131,7 @@ class SentenceSeparatorCheck:
 
     def check(self, filename, lineno, line):
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(1)] + error_string(ws_char * len(m.group(1)))
                 + line[m.end(1):],
@@ -144,7 +143,7 @@ class SentenceEndOfCommentCheck:
 
     def check(self, filename, lineno, line):
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(1)] + error_string(ws_char * len(m.group(1)))
                 + line[m.end(1):],
@@ -156,7 +155,7 @@ class SentenceDotEndCheck:
 
     def check(self, filename, lineno, line):
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(1)] + error_string(m.group(1)) + line[m.end(1):],
                 'dot, space, space, end of comment', m.start(1))
@@ -167,11 +166,14 @@ class FunctionParenthesisCheck:
         self.re = re.compile(r'\w(\s{2,})?(\()')
 
     def check(self, filename, lineno, line):
+        if filename.endswith(".opt"):
+            return None
+
         if '#define' in line:
             return None
 
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(2)] + error_string(m.group(2)) + line[m.end(2):],
                 'there should be exactly one space between function name ' \
@@ -186,7 +188,7 @@ class SquareBracketCheck:
             return None
 
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(1)] + error_string(m.group(1)) + line[m.end(1):],
                 'there should be no space before a left square bracket',
@@ -198,7 +200,7 @@ class ClosingParenthesisCheck:
 
     def check(self, filename, lineno, line):
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(1)] + error_string(m.group(1)) + line[m.end(1):],
                 'there should be no space before closing parenthesis',
@@ -212,7 +214,7 @@ class BracesOnSeparateLineCheck:
 
     def check(self, filename, lineno, line):
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(2)] + error_string(m.group(2)) + line[m.end(2):],
                 'braces should be on a separate line', m.start(2))
@@ -224,7 +226,7 @@ class TrailingOperatorCheck:
 
     def check(self, filename, lineno, line):
         m = self.re.search(line)
-        if m != None:
+        if m is not None:
             return CheckError(filename, lineno,
                 line[:m.start(1)] + error_string(m.group(1)) + line[m.end(1):],
                 'trailing operator', m.start(1))
@@ -292,11 +294,11 @@ def check_GNU_style_file(file, format):
         for hunk in pfile:
             delta = 0
             for line in hunk:
-                if line.is_added and line.target_line_no != None:
+                if line.is_added and line.target_line_no is not None:
                     for check in checks:
                         line_chomp = line.value.replace('\n', '')
                         e = check.check(t, line.target_line_no, line_chomp)
-                        if e != None:
+                        if e is not None:
                             errors.append(e)
 
     if format == 'stdio':

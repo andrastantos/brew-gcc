@@ -27,50 +27,14 @@
 #include "rust-diagnostics.h"
 #include "rust-keyword-values.h"
 #include "rust-cloneable.h"
+#include "rust-ast-identifier.h"
+#include "rust-raw-path.h"
 
 namespace Rust {
 // TODO: remove typedefs and make actual types for these
 typedef int TupleIndex;
 struct Session;
 struct MacroExpander;
-
-class Identifier
-{
-public:
-  // Create dummy identifier
-  Identifier () : ident (""), loc (UNDEF_LOCATION) {}
-  // Create identifier with dummy location
-  Identifier (std::string ident, location_t loc = UNDEF_LOCATION)
-    : ident (ident), loc (loc)
-  {}
-  // Create identifier from token
-  Identifier (const_TokenPtr token)
-    : ident (token->get_str ()), loc (token->get_locus ())
-  {}
-
-  Identifier (const Identifier &) = default;
-  Identifier (Identifier &&) = default;
-  Identifier &operator= (const Identifier &) = default;
-  Identifier &operator= (Identifier &&) = default;
-
-  location_t get_locus () const { return loc; }
-  const std::string &as_string () const { return ident; }
-
-  bool empty () const { return ident.empty (); }
-
-  bool operator== (const Identifier &other) const
-  {
-    return ident == other.ident;
-  }
-
-  operator const std::string & () const { return ident; }
-
-private:
-  std::string ident;
-  location_t loc;
-};
-
-std::ostream &operator<< (std::ostream &os, Identifier const &i);
 
 namespace AST {
 // foward decl: ast visitor
@@ -209,6 +173,7 @@ public:
       case STRING_LITERAL:
       case BYTE_STRING_LITERAL:
       case RAW_STRING_LITERAL:
+      case C_STRING_LITERAL:
 	return true;
       default:
 	return false;
@@ -272,6 +237,7 @@ public:
     BYTE,
     BYTE_STRING,
     RAW_STRING,
+    C_STRING,
     INT,
     FLOAT,
     BOOL,
@@ -372,10 +338,8 @@ public:
 };
 
 // A simple path without generic or type arguments
-class SimplePath
+class SimplePath : public RawPath<SimplePathSegment>
 {
-  bool opening_scope_resolution;
-  std::vector<SimplePathSegment> segments;
   location_t locus;
   NodeId node_id;
 
@@ -384,14 +348,13 @@ public:
   explicit SimplePath (std::vector<SimplePathSegment> path_segments,
 		       bool has_opening_scope_resolution = false,
 		       location_t locus = UNDEF_LOCATION)
-    : opening_scope_resolution (has_opening_scope_resolution),
-      segments (std::move (path_segments)), locus (locus),
-      node_id (Analysis::Mappings::get ().get_next_node_id ())
+    : RawPath (std::move (path_segments), has_opening_scope_resolution),
+      locus (locus), node_id (Analysis::Mappings::get ().get_next_node_id ())
   {}
 
   explicit SimplePath (Identifier ident)
-    : opening_scope_resolution (false),
-      segments ({SimplePathSegment (ident.as_string (), ident.get_locus ())}),
+    : RawPath ({SimplePathSegment (ident.as_string (), ident.get_locus ())},
+	       false),
       locus (ident.get_locus ()),
       node_id (Analysis::Mappings::get ().get_next_node_id ())
   {}
@@ -402,15 +365,7 @@ public:
     return SimplePath (std::vector<SimplePathSegment> ());
   }
 
-  // Returns whether the SimplePath is empty, i.e. has path segments.
-  bool is_empty () const { return segments.empty (); }
-
   const std::string as_string () const;
-
-  bool has_opening_scope_resolution () const
-  {
-    return opening_scope_resolution;
-  }
 
   location_t get_locus () const { return locus; }
   NodeId get_node_id () const { return node_id; }
@@ -433,18 +388,6 @@ public:
     std::vector<AST::SimplePathSegment> single_segments
       = {AST::SimplePathSegment (std::move (str), locus)};
     return SimplePath (std::move (single_segments), false, locus);
-  }
-
-  const std::vector<SimplePathSegment> &get_segments () const
-  {
-    return segments;
-  }
-
-  std::vector<SimplePathSegment> &get_segments () { return segments; }
-
-  const SimplePathSegment &get_final_segment () const
-  {
-    return segments.back ();
   }
 };
 
@@ -1107,6 +1050,7 @@ public:
     UseDeclaration,
     Function,
     TypeAlias,
+    TraitAlias,
     Struct,
     EnumItem,
     Enum,
@@ -2126,7 +2070,7 @@ public:
     // TODO: is this the best way to do this?
   }
 
-  void inject_extern_crate (std::string name);
+  NodeId inject_extern_crate (std::string name);
   void inject_inner_attribute (Attribute attribute);
 
   NodeId get_node_id () const { return node_id; }

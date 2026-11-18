@@ -1,4 +1,5 @@
 /* { dg-additional-options "-fdiagnostics-text-art-charset=unicode" } */
+/* { dg-skip-if "" { avr-*-* } } */
 
 #include <string.h>
 #include "analyzer-decls.h"
@@ -15,7 +16,7 @@ char *test_fixed_size_heap_2_invalid (void)
 
 /* { dg-begin-multiline-output "" }
   ┌──────────────────────────────────────────────────────────────────────┐
-  │                           write of 4 bytes                           │
+  │                  write from 'str' (type: 'char[4]')                  │
   └──────────────────────────────────────────────────────────────────────┘
                             │                                   │
                             │                                   │

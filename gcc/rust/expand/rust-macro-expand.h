@@ -296,10 +296,9 @@ struct MacroExpander
   unsigned int expansion_depth = 0;
 
   MacroExpander (AST::Crate &crate, ExpansionCfg cfg, Session &session)
-    : cfg (cfg), crate (crate), session (session),
-      sub_stack (SubstitutionScope ()),
+    : cfg (cfg), session (session), sub_stack (SubstitutionScope ()),
       expanded_fragment (AST::Fragment::create_error ()),
-      has_changed_flag (false), had_duplicate_error (false),
+      has_changed_flag (false), had_duplicate_error (false), crate (crate),
       resolver (Resolver::Resolver::get ()),
       mappings (Analysis::Mappings::get ())
   {}
@@ -413,7 +412,7 @@ struct MacroExpander
   AST::Fragment expand_derive_proc_macro (T &item, AST::SimplePath &path)
   {
     tl::optional<CustomDeriveProcMacro &> macro
-      = mappings.lookup_derive_proc_macro_invocation (path);
+      = mappings.pmacro.invocations.derives.lookup (path.get_node_id ());
     if (!macro.has_value ())
       {
 	rust_error_at (path.get_locus (), "macro not found");
@@ -436,7 +435,7 @@ struct MacroExpander
 					AST::MacroInvocation &invocation)
   {
     tl::optional<BangProcMacro &> macro
-      = mappings.lookup_bang_proc_macro_invocation (invocation);
+      = mappings.pmacro.invocations.bangs.lookup (invocation.get_node_id ());
     if (!macro.has_value ())
       {
 	rust_error_at (invocation.get_locus (), "macro not found");
@@ -458,7 +457,7 @@ struct MacroExpander
   AST::Fragment expand_attribute_proc_macro (T &item, AST::SimplePath &path)
   {
     tl::optional<AttributeProcMacro &> macro
-      = mappings.lookup_attribute_proc_macro_invocation (path);
+      = mappings.pmacro.invocations.attributes.lookup (path.get_node_id ());
     if (!macro.has_value ())
       {
 	rust_error_at (path.get_locus (), "macro not found");
@@ -502,7 +501,6 @@ struct MacroExpander
 private:
   AST::Fragment parse_proc_macro_output (ProcMacro::TokenStream ts);
 
-  AST::Crate &crate;
   Session &session;
   SubstitutionScope sub_stack;
   std::vector<ContextType> context;
@@ -516,6 +514,9 @@ private:
   bool had_duplicate_error;
 
 public:
+  /* The current crate we are expanding within */
+  AST::Crate &crate;
+
   Resolver::Resolver *resolver;
   Analysis::Mappings &mappings;
 };

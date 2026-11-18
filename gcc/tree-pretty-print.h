@@ -55,7 +55,6 @@ extern void pretty_print_string (pretty_printer *, const char *, size_t);
 extern void print_call_name (pretty_printer *, tree, dump_flags_t);
 extern void pp_tree_identifier (pretty_printer *, tree);
 extern void dump_function_header (FILE *, tree, dump_flags_t);
-extern void pp_double_int (pretty_printer *pp, double_int d, bool uns);
 extern void dump_location (pretty_printer *pp, location_t loc,
 			   dump_flags_t = TDF_NONE);
 

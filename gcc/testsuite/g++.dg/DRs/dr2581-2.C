@@ -61,7 +61,7 @@
 #define __cpp_hex_float 201603L			// { dg-error "'__cpp_hex_float' redefined" "" { target c++20 } }
 #define __cpp_if_consteval 202106L		// { dg-error "'__cpp_if_consteval' redefined" "" { target c++23 } }
 #define __cpp_if_constexpr 201606L		// { dg-error "'__cpp_if_constexpr' redefined" "" { target c++20 } }
-#define __cpp_impl_coroutine 201902L		// { dg-error "'__cpp_impl_coroutine' redefined" "" { target c++20 } }
+#define __cpp_impl_coroutine 202606L		// { dg-error "'__cpp_impl_coroutine' redefined" "" { target c++20 } }
 #define __cpp_impl_destroying_delete 201806L	// { dg-error "'__cpp_impl_destroying_delete' redefined" "" { target c++20 } }
 #define __cpp_impl_three_way_comparison 201907L	// { dg-error "'__cpp_impl_three_way_comparison' redefined" "" { target c++20 } }
 #define __cpp_impl_reflection 202603L		// { dg-error "'__cpp_impl_reflection' redefined" "" { target c++26 } }
@@ -73,7 +73,7 @@
 #define __cpp_lambdas 200907L			// { dg-error "'__cpp_lambdas' redefined" "" { target c++20 } }
 #define __cpp_modules 201907L			// { dg-error "'__cpp_modules' redefined" "" { target c++20 } }
 #define __cpp_multidimensional_subscript 202211L // { dg-error "'__cpp_multidimensional_subscript' redefined" "" { target c++23 } }
-#define __cpp_named_character_escapes 202207L	// { dg-error "'__cpp_named_character_escapes' redefined" "" { target c++23 } }
+#define __cpp_named_character_escapes 202606L	// { dg-error "'__cpp_named_character_escapes' redefined" "" { target c++23 } }
 #define __cpp_namespace_attributes 201411L	// { dg-error "'__cpp_namespace_attributes' redefined" "" { target c++20 } }
 #define __cpp_noexcept_function_type 201510L	// { dg-error "'__cpp_noexcept_function_type' redefined" "" { target c++20 } }
 #define __cpp_nontype_template_args 201911L	// { dg-error "'__cpp_nontype_template_args' redefined" "" { target c++17 } }
@@ -95,7 +95,7 @@
 #define __cpp_template_parameters 202502L
 #define __cpp_template_template_args 201611L	// { dg-error "'__cpp_template_template_args' redefined" "" { target c++20 } }
 #define __cpp_threadsafe_static_init 200806L	// { dg-error "'__cpp_threadsafe_static_init' redefined" "" { target c++20 } }
-#define __cpp_trivial_union 202502L
+#define __cpp_trivial_union 202502L		// { dg-error "'__cpp_trivial_union' redefined" "" { target c++26 } }
 #define __cpp_unicode_characters 200704L	// { dg-error "'__cpp_unicode_characters' redefined" "" { target c++17 } }
 #define __cpp_unicode_literals 200710L		// { dg-error "'__cpp_unicode_literals' redefined" "" { target c++20 } }
 #define __cpp_user_defined_literals 200809L	// { dg-error "'__cpp_user_defined_literals' redefined" "" { target c++20 } }

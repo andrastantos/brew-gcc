@@ -155,7 +155,8 @@ and warnings}.
 -Wuse-without-only -Wintrinsics-std -Wline-truncation -Wno-align-commons
 -Wno-overwrite-recursive -Wno-tabs -Wreal-q-constant -Wsurprising
 -Wunderflow -Wunused-parameter -Wrealloc-lhs -Wrealloc-lhs-all
--Wfrontend-loop-interchange -Wtarget-lifetime -fmax-errors=@var{n}
+-Wfrontend-loop-interchange -Wtarget-lifetime -Wundefined-vars
+-Wunused-intent-out -Wunused-read -fmax-errors=@var{n}
 -fsyntax-only -pedantic
 -pedantic-errors
 }
@@ -190,7 +191,7 @@ and warnings}.
 -fbounds-check -ftail-call-workaround -ftail-call-workaround=@var{n}
 -fcheck-array-temporaries
 -fcheck=<all|array-temps|bits|bounds|do|mem|pointer|recursion>
--fcoarray=<none|single|lib> -fexternal-blas -fexternal-blas64 -ff2c
+-fcoarray=<none|single|shared|lib> -fexternal-blas -fexternal-blas64 -ff2c
 -ffrontend-loop-interchange -ffrontend-optimize
 -finit-character=@var{n} -finit-integer=@var{n} -finit-local-zero
 -finit-derived -finit-logical=<true|false>
@@ -996,8 +997,8 @@ This currently includes @option{-Waliasing}, @option{-Wampersand},
 @option{-Wconversion}, @option{-Wsurprising}, @option{-Wc-binding-type},
 @option{-Wintrinsics-std}, @option{-Wtabs}, @option{-Wintrinsic-shadow},
 @option{-Wline-truncation}, @option{-Wtarget-lifetime},
-@option{-Winteger-division}, @option{-Wreal-q-constant}, @option{-Wunused}
-and @option{-Wundefined-do-loop}.
+@option{-Winteger-division}, @option{-Wreal-q-constant}, @option{-Wunused},
+@option{-Wundefined-do-loop} and @option{-Wundefined-vars}.
 
 @opindex Waliasing
 @cindex aliasing
@@ -1083,7 +1084,7 @@ Warn for usage of deprecated OpenMP code.
 
 @opindex Wexternal-argument-mismatch
 @cindex warnings, argument mismatch
-@cindex argment mismatch, warnings
+@cindex argument mismatch, warnings
 @item -Wexternal-argument-mismatch
 Warn about argument mismatches for dummy external procedures.  This is
 implied by @option{-fc-prototypes-external} because generation of a
@@ -1096,7 +1097,8 @@ by @option{-Wall}.
 @item -Wextra
 Enables some warning options for usages of language features that
 may be problematic. This currently includes @option{-Wcompare-reals},
-@option{-Wunused-parameter} and @option{-Wdo-subscript}.
+@option{-Wunused-parameter}, @option{-Wdo-subscript},
+@option{-Wunused-intent-out} and @option{-Wunused-read}.
 
 @opindex Wfrontend-loop-interchange
 @cindex warnings, loop interchange
@@ -1208,6 +1210,13 @@ or an overflow
 during iteration of an induction variable of the loop.
 This option is implied by @option{-Wall}.
 
+@opindex Wundefined-vars
+@cindex warnings, undefined variables
+@item -Wundefined-vars
+Warn if variables are found to be used that cannot be defined (have a
+value assigned to them).  This also includes using allocatable
+variables that are not allocated.
+
 @opindex Wunderflow
 @cindex warnings, underflow
 @cindex underflow
@@ -1249,6 +1258,45 @@ about unused dummy arguments (see @option{-Wunused-dummy-argument}),
 but about unused @code{PARAMETER} values. @option{-Wunused-parameter}
 is implied by @option{-Wextra} if also @option{-Wunused} or
 @option{-Wall} is used.
+
+@opindex Wunused-intent-out
+@cindex warnings, unused INTENT(OUT) argument
+@cindex unused INTENT(OUT) argument
+@item -Wunused-intent-out
+Warn about variables passed to @code{INTENT(OUT)} arguments whose
+values are then unused.  This option is implied by @option{-Wextra}.
+The following code shows an example where this warning will be
+emitted:
+
+@smallexample
+module y
+  implicit none
+contains
+  subroutine bar
+    real :: a
+    call foo(a) ! Warning will be emitted here
+  end subroutine bar
+  subroutine foo(x)
+    real, intent(out) :: x
+    x = 0.4
+  end subroutine foo
+end module y
+@end smallexample
+
+@opindex Wunused-read
+@cindex warnings, unused read
+@cindex unused read warnings
+@item -Wunused-read
+Warn about variables in @code{READ} statements whose values are
+never used. This warning is implied by @option{-Wextra}.
+The following code shows an example where this warning will be
+emitted:
+@smallexample
+program main
+  real :: x
+  read (*,*) x
+end program main
+@end smallexample
 
 @opindex Walign-commons
 @cindex warnings, alignment of @code{COMMON} blocks
@@ -1517,7 +1565,7 @@ values for conversion on most systems are: @samp{native}, the default;
 big-endian representation for unformatted files; @samp{little-endian}, use
 little-endian representation for unformatted files.
 
-On POWER systems that suppport @option{-mabi=ieeelongdouble},
+On POWER systems that support @option{-mabi=ieeelongdouble},
 there are additional options, which can be combined with others with
 commas.  Those are
 @itemize @w{}
@@ -1792,6 +1840,9 @@ statements produces a compile-time error. (Default)
 
 @item @samp{single}
 Single-image mode, i.e. @code{num_images()} is always one.
+
+@item @samp{shared}
+Use shared-memory multithreading parallelization.
 
 @item @samp{lib}
 Library-based coarray parallelization; a suitable GNU Fortran coarray
@@ -2239,7 +2290,7 @@ shared by @command{gfortran}, @command{gcc}, and other GNU compilers.
 @table @gcctabopt
 
 @opindex fc-prototypes
-@cindex Generating C prototypes from Fortran BIND(C) enteties
+@cindex Generating C prototypes from Fortran BIND(C) entities
 @item -fc-prototypes
 This option generates C prototypes from @code{BIND(C)} variable
 declarations, types and procedure interfaces and writes them to

@@ -75,6 +75,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "recog.h"
 #include "output.h"
 #include "gimplify_reg_info.h"
+#include "tree-ssa-loop-niter.h" /* For simplify_replace_tree.  */
 
 /* Identifier for a basic condition, mapping it to other basic conditions of
    its Boolean expression.  Basic conditions given the same uid (in the same
@@ -183,6 +184,9 @@ enum gimplify_omp_var_data
 
   /* Flag for GOVD_FIRSTPRIVATE: OMP_CLAUSE_FIRSTPRIVATE_IMPLICIT.  */
   GOVD_FIRSTPRIVATE_IMPLICIT = 0x4000000,
+
+  /* Flag to indicate this an allocator for the uses_allocators clause.  */
+  GOVD_USES_ALLOCATORS_ALLOCATOR = 0x8000000,
 
   GOVD_DATA_SHARE_CLASS = (GOVD_SHARED | GOVD_PRIVATE | GOVD_FIRSTPRIVATE
 			   | GOVD_LASTPRIVATE | GOVD_REDUCTION | GOVD_LINEAR
@@ -896,131 +900,6 @@ gimple_add_tmp_var (tree tmp)
     }
 }
 
-
-
-/* This page contains routines to unshare tree nodes, i.e. to duplicate tree
-   nodes that are referenced more than once in GENERIC functions.  This is
-   necessary because gimplification (translation into GIMPLE) is performed
-   by modifying tree nodes in-place, so gimplification of a shared node in a
-   first context could generate an invalid GIMPLE form in a second context.
-
-   This is achieved with a simple mark/copy/unmark algorithm that walks the
-   GENERIC representation top-down, marks nodes with TREE_VISITED the first
-   time it encounters them, duplicates them if they already have TREE_VISITED
-   set, and finally removes the TREE_VISITED marks it has set.
-
-   The algorithm works only at the function level, i.e. it generates a GENERIC
-   representation of a function with no nodes shared within the function when
-   passed a GENERIC function (except for nodes that are allowed to be shared).
-
-   At the global level, it is also necessary to unshare tree nodes that are
-   referenced in more than one function, for the same aforementioned reason.
-   This requires some cooperation from the front-end.  There are 2 strategies:
-
-     1. Manual unsharing.  The front-end needs to call unshare_expr on every
-        expression that might end up being shared across functions.
-
-     2. Deep unsharing.  This is an extension of regular unsharing.  Instead
-        of calling unshare_expr on expressions that might be shared across
-        functions, the front-end pre-marks them with TREE_VISITED.  This will
-        ensure that they are unshared on the first reference within functions
-        when the regular unsharing algorithm runs.  The counterpart is that
-        this algorithm must look deeper than for manual unsharing, which is
-        specified by LANG_HOOKS_DEEP_UNSHARING.
-
-  If there are only few specific cases of node sharing across functions, it is
-  probably easier for a front-end to unshare the expressions manually.  On the
-  contrary, if the expressions generated at the global level are as widespread
-  as expressions generated within functions, deep unsharing is very likely the
-  way to go.  */
-
-/* Similar to copy_tree_r but do not copy SAVE_EXPR or TARGET_EXPR nodes.
-   These nodes model computations that must be done once.  If we were to
-   unshare something like SAVE_EXPR(i++), the gimplification process would
-   create wrong code.  However, if DATA is non-null, it must hold a pointer
-   set that is used to unshare the subtrees of these nodes.  */
-
-static tree
-mostly_copy_tree_r (tree *tp, int *walk_subtrees, void *data)
-{
-  tree t = *tp;
-  enum tree_code code = TREE_CODE (t);
-
-  /* Do not copy SAVE_EXPR, TARGET_EXPR or BIND_EXPR nodes themselves, but
-     copy their subtrees if we can make sure to do it only once.  */
-  if (code == SAVE_EXPR || code == TARGET_EXPR || code == BIND_EXPR)
-    {
-      if (data && !((hash_set<tree> *)data)->add (t))
-	;
-      else
-	*walk_subtrees = 0;
-    }
-
-  /* Stop at types, decls, constants like copy_tree_r.  */
-  else if (TREE_CODE_CLASS (code) == tcc_type
-	   || TREE_CODE_CLASS (code) == tcc_declaration
-	   || TREE_CODE_CLASS (code) == tcc_constant)
-    *walk_subtrees = 0;
-
-  /* Cope with the statement expression extension.  */
-  else if (code == STATEMENT_LIST)
-    ;
-
-  /* Leave the bulk of the work to copy_tree_r itself.  */
-  else
-    copy_tree_r (tp, walk_subtrees, NULL);
-
-  return NULL_TREE;
-}
-
-/* Callback for walk_tree to unshare most of the shared trees rooted at *TP.
-   If *TP has been visited already, then *TP is deeply copied by calling
-   mostly_copy_tree_r.  DATA is passed to mostly_copy_tree_r unmodified.  */
-
-static tree
-copy_if_shared_r (tree *tp, int *walk_subtrees, void *data)
-{
-  tree t = *tp;
-  enum tree_code code = TREE_CODE (t);
-
-  /* Skip types, decls, and constants.  But we do want to look at their
-     types and the bounds of types.  Mark them as visited so we properly
-     unmark their subtrees on the unmark pass.  If we've already seen them,
-     don't look down further.  */
-  if (TREE_CODE_CLASS (code) == tcc_type
-      || TREE_CODE_CLASS (code) == tcc_declaration
-      || TREE_CODE_CLASS (code) == tcc_constant)
-    {
-      if (TREE_VISITED (t))
-	*walk_subtrees = 0;
-      else
-	TREE_VISITED (t) = 1;
-    }
-
-  /* If this node has been visited already, unshare it and don't look
-     any deeper.  */
-  else if (TREE_VISITED (t))
-    {
-      walk_tree (tp, mostly_copy_tree_r, data, NULL);
-      *walk_subtrees = 0;
-    }
-
-  /* Otherwise, mark the node as visited and keep looking.  */
-  else
-    TREE_VISITED (t) = 1;
-
-  return NULL_TREE;
-}
-
-/* Unshare most of the shared trees rooted at *TP.  DATA is passed to the
-   copy_if_shared_r callback unmodified.  */
-
-void
-copy_if_shared (tree *tp, void *data)
-{
-  walk_tree (tp, copy_if_shared_r, data, NULL);
-}
-
 /* Unshare all the trees in the body of FNDECL, as well as in the bodies of
    any nested functions.  */
 
@@ -1087,41 +966,6 @@ unvisit_body (tree fndecl)
     for (cgn = first_nested_function (cgn);
 	 cgn; cgn = next_nested_function (cgn))
       unvisit_body (cgn->decl);
-}
-
-/* Unconditionally make an unshared copy of EXPR.  This is used when using
-   stored expressions which span multiple functions, such as BINFO_VTABLE,
-   as the normal unsharing process can't tell that they're shared.  */
-
-tree
-unshare_expr (tree expr)
-{
-  walk_tree (&expr, mostly_copy_tree_r, NULL, NULL);
-  return expr;
-}
-
-/* Worker for unshare_expr_without_location.  */
-
-static tree
-prune_expr_location (tree *tp, int *walk_subtrees, void *)
-{
-  if (EXPR_P (*tp))
-    SET_EXPR_LOCATION (*tp, UNKNOWN_LOCATION);
-  else
-    *walk_subtrees = 0;
-  return NULL_TREE;
-}
-
-/* Similar to unshare_expr but also prune all expression locations
-   from EXPR.  */
-
-tree
-unshare_expr_without_location (tree expr)
-{
-  walk_tree (&expr, mostly_copy_tree_r, NULL, NULL);
-  if (EXPR_P (expr))
-    walk_tree (&expr, prune_expr_location, NULL, NULL);
-  return expr;
 }
 
 /* Return the EXPR_LOCATION of EXPR, if it (maybe recursively) has
@@ -1440,28 +1284,64 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
 	      && DECL_CONTEXT (t) == current_function_decl
 	      && TREE_USED (t)
 	      && (attr = lookup_attribute ("omp allocate", DECL_ATTRIBUTES (t)))
-		 != NULL_TREE)
+		 != NULL_TREE
+	      /* In C++, bad attributes are marked instead of removed.  */
+	      && TREE_PURPOSE (TREE_VALUE (attr)) != error_mark_node)
 	    {
 	      gcc_assert (!DECL_HAS_VALUE_EXPR_P (t));
 	      tree alloc = TREE_PURPOSE (TREE_VALUE (attr));
 	      tree align = TREE_VALUE (TREE_VALUE (attr));
+	      /* The C++ front end smuggles a location through the chain field,
+		 this conflicts with Fortran handling, clear it.  */
+	      if (TREE_CHAIN (TREE_VALUE (attr)) != NULL_TREE
+		  && TREE_CODE (TREE_CHAIN (TREE_VALUE (attr))) == NOP_EXPR)
+		TREE_CHAIN (TREE_VALUE (attr)) = NULL_TREE;
+
 	      /* Allocate directives that appear in a target region must specify
 		 an allocator clause unless a requires directive with the
 		 dynamic_allocators clause is present in the same compilation
 		 unit.  */
 	      bool missing_dyn_alloc = false;
-	      if (alloc == NULL_TREE
-		  && ((omp_requires_mask & OMP_REQUIRES_DYNAMIC_ALLOCATORS)
-		      == 0))
+	      if ((omp_requires_mask & OMP_REQUIRES_DYNAMIC_ALLOCATORS) == 0)
 		{
 		  /* This comes too early for omp_discover_declare_target...,
 		     but should at least catch the most common cases.  */
 		  missing_dyn_alloc
-		    = cgraph_node::get (current_function_decl)->offloadable;
+		    = (alloc == NULL_TREE
+		       && cgraph_node::get (current_function_decl)->offloadable);
 		  for (struct gimplify_omp_ctx *ctx2 = ctx;
 		       ctx2 && !missing_dyn_alloc; ctx2 = ctx2->outer_context)
 		    if (ctx2->code == OMP_TARGET)
-		      missing_dyn_alloc = true;
+		      {
+			if (alloc == NULL_TREE)
+			  missing_dyn_alloc = true;
+			else if (TREE_CODE (alloc) != INTEGER_CST)
+			  {
+			    tree alloc2 = alloc;
+			    if (TREE_CODE (alloc2) == MEM_REF
+				|| TREE_CODE (alloc2) == INDIRECT_REF)
+			      alloc2 = TREE_OPERAND (alloc2, 0);
+			    tree c2;
+			    for (c2 = ctx2->clauses; c2;
+				 c2 = OMP_CLAUSE_CHAIN (c2))
+			      if (OMP_CLAUSE_CODE (c2)
+				  == OMP_CLAUSE_USES_ALLOCATORS)
+				{
+				  tree t2
+				    = OMP_CLAUSE_USES_ALLOCATORS_ALLOCATOR (c2);
+				  if (operand_equal_p (alloc2, t2))
+				    break;
+				}
+			    if (c2 == NULL_TREE)
+			      error_at (EXPR_LOC_OR_LOC (
+					  alloc, DECL_SOURCE_LOCATION (t)),
+					"%qE in %<allocator%> clause inside a "
+					"target region must be specified in an "
+					"%<uses_allocators%> clause on the "
+					"%<target%> directive", alloc2);
+			  }
+			break;
+		      }
 		}
 	      if (missing_dyn_alloc)
 		error_at (DECL_SOURCE_LOCATION (t),
@@ -2221,7 +2101,7 @@ gimplify_decl_expr (tree *stmt_p, gimple_seq *seq_p)
 	    walk_tree (&init, force_labels_r, NULL, NULL);
 	}
       /* When there is no explicit initializer, if the user requested,
-	 We should insert an artifical initializer for this automatic
+	 We should insert an artificial initializer for this automatic
 	 variable.  */
       else if (var_needs_auto_init_p (decl)
 	       && !decl_had_value_expr_p)
@@ -2241,7 +2121,7 @@ gimplify_decl_expr (tree *stmt_p, gimple_seq *seq_p)
 	     since __builtin_clear_padding will take the address of the
 	     variable.  As a result, if a long double/_Complex long double
 	     variable will spilled into stack later, its padding is 0XFE.  */
-	  if (flag_auto_var_init == AUTO_INIT_PATTERN
+	  if ((flag_auto_var_init & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN
 	      && !is_gimple_reg (decl)
 	      && clear_padding_type_may_have_padding_p (TREE_TYPE (decl)))
 	    gimple_add_padding_init_for_auto_var (decl, is_vla, seq_p);
@@ -3281,12 +3161,19 @@ canonicalize_component_ref (tree *expr_p)
 #ifdef ENABLE_TYPES_CHECKING
       tree old_type = TREE_TYPE (expr);
 #endif
-      int type_quals;
+      auto type_quals = TYPE_QUALS (type);
+      gcc_checking_assert (/* Fields should lack address space
+			      qualification.  */
+			   ADDR_SPACE_GENERIC_P (type_quals.addr_space ()));
 
       /* We need to preserve qualifiers and propagate them from
 	 operand 0.  */
-      type_quals = TYPE_QUALS (type)
-	| TYPE_QUALS (TREE_TYPE (TREE_OPERAND (expr, 0)));
+      addr_space_t op_as;
+      cv_qualifier op_cv;
+      std::tie (op_cv, op_as)
+	= TYPE_QUALS (TREE_TYPE (TREE_OPERAND (expr, 0))).split ();
+      type_quals |= op_cv;
+      type_quals.set_as (op_as);
       if (TYPE_QUALS (type) != type_quals)
 	type = build_qualified_type (TYPE_MAIN_VARIANT (type), type_quals);
 
@@ -3487,6 +3374,13 @@ recalculate_side_effects (tree t)
 
     case tcc_constant:
       /* No side-effects.  */
+      return;
+
+    case tcc_declaration:
+      /* These can have side-effects if TREE_THIS_VOLATILE,
+	 but those should be set elsewhere, not in
+	 recalculate_side_effects.  Can be triggered e.g. if
+	 a comparison is folded into one of its operands.  */
       return;
 
     default:
@@ -6460,7 +6354,7 @@ gimplify_init_constructor (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	struct gimplify_init_ctor_preeval_data preeval_data;
 	HOST_WIDE_INT num_ctor_elements, num_nonzero_elements;
 	HOST_WIDE_INT num_unique_nonzero_elements;
-	int complete_p;
+	ctor_completeness complete_p;
 	bool valid_const_initializer;
 
 	/* Aggregate types must lower constructors to initialization of
@@ -6545,7 +6439,7 @@ gimplify_init_constructor (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	     objects.  Initializers for such objects must explicitly set
 	     every field that needs to be set.  */
 	  cleared = false;
-	else if (!complete_p)
+	else if (complete_p.sparse)
 	  /* If the constructor isn't complete, clear the whole object
 	     beforehand, unless CONSTRUCTOR_NO_CLEARING is set on it.
 
@@ -6570,7 +6464,8 @@ gimplify_init_constructor (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	   That will avoid wasting cycles preserving any padding bits
 	   that might be there, and if there aren't any, the compiler
 	   is smart enough to optimize the clearing out.  */
-	else if (complete_p <= 0
+	else if ((complete_p.sparse || complete_p.padded_union
+		  || complete_p.padded_non_union)
 		 && !TREE_ADDRESSABLE (ctor)
 		 && !TREE_THIS_VOLATILE (object)
 		 && (TYPE_MODE (type) != BLKmode || TYPE_NO_FORCE_BLK (type))
@@ -6589,7 +6484,7 @@ gimplify_init_constructor (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	   clearing), and don't try to make bitwise copies of
 	   TREE_ADDRESSABLE types.  */
 	if (valid_const_initializer
-	    && complete_p
+	    && !complete_p.sparse
 	    && !(cleared || num_nonzero_elements == 0)
 	    && !TREE_ADDRESSABLE (type))
 	  {
@@ -6642,6 +6537,24 @@ gimplify_init_constructor (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 		   pretend we didn't do anything here to let that happen.  */
 		return GS_UNHANDLED;
 	      }
+	  }
+
+	if (!cleared)
+	  {
+	    if (complete_p.padded_non_union
+		&& warn_zero_init_padding_bits >= ZERO_INIT_PADDING_BITS_ALL)
+		warning (OPT_Wzero_init_padding_bits_,
+			 "padding might not be initialized to zero; "
+			 "if code relies on it being zero, consider "
+			 "using %<-fzero-init-padding-bits=all%>");
+	    else if (complete_p.padded_union
+		     && warn_zero_init_padding_bits
+			>= ZERO_INIT_PADDING_BITS_UNIONS)
+		warning (OPT_Wzero_init_padding_bits_,
+			 "padding might not be initialized to zero; "
+			 "if code relies on it being zero, consider "
+			 "using %<-fzero-init-padding-bits=unions%> "
+			 "or %<-fzero-init-padding-bits=all%>");
 	  }
 
 	/* If a single access to the target must be ensured and there are
@@ -7464,7 +7377,7 @@ gimplify_modify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	return ret;
     }
 
-  /* In case of va_arg internal fn wrappped in a WITH_SIZE_EXPR, add the type
+  /* In case of va_arg internal fn wrapped in a WITH_SIZE_EXPR, add the type
      size as argument to the call.  */
   if (TREE_CODE (*from_p) == WITH_SIZE_EXPR)
     {
@@ -8580,7 +8493,7 @@ gimplify_target_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
       if (var_needs_auto_init_p (temp) && VOID_TYPE_P (TREE_TYPE (init)))
 	{
 	  gimple_add_init_for_auto_var (temp, flag_auto_var_init, &init_pre_p);
-	  if (flag_auto_var_init == AUTO_INIT_PATTERN
+	  if ((flag_auto_var_init & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN
 	      && !is_gimple_reg (temp)
 	      && clear_padding_type_may_have_padding_p (TREE_TYPE (temp)))
 	    gimple_add_padding_init_for_auto_var (temp, is_vla, &init_pre_p);
@@ -9182,7 +9095,7 @@ oacc_default_clause (struct gimplify_omp_ctx *ctx, tree decl, unsigned flags)
 
   /* For Fortran COMMON blocks, only used variables in those blocks are
      transferred and remapped.  The block itself will have a private clause to
-     avoid transfering the data twice.
+     avoid transferring the data twice.
      The hook evaluates to false by default.  For a variable in Fortran's COMMON
      or EQUIVALENCE block, returns 'true' (as we have shared=false) - as only
      the variables in such a COMMON/EQUIVALENCE block shall be privatized not
@@ -9302,7 +9215,7 @@ omp_notice_variable (struct gimplify_omp_ctx *ctx, tree decl, bool in_code)
       if (DECL_HAS_VALUE_EXPR_P (decl))
 	{
 	  if (ctx->region_type & ORT_ACC)
-	    /* For OpenACC, defer expansion of value to avoid transfering
+	    /* For OpenACC, defer expansion of value to avoid transferring
 	       privatized common block data instead of im-/explicitly
 	       transferred variables which are in common blocks.  */
 	    ;
@@ -9758,19 +9671,19 @@ gimplify_omp_affinity (tree *list_p, gimple_seq *pre_p)
 		  }
 		for (tree it = TREE_PURPOSE (t); it; it = TREE_CHAIN (it))
 		  {
-		    if (gimplify_expr (&TREE_VEC_ELT (it, 1), pre_p, NULL,
+		    if (gimplify_expr (&OMP_ITERATOR_BEGIN (it), pre_p, NULL,
 				       is_gimple_val, fb_rvalue) == GS_ERROR
-			|| gimplify_expr (&TREE_VEC_ELT (it, 2), pre_p, NULL,
+			|| gimplify_expr (&OMP_ITERATOR_END (it), pre_p, NULL,
 					  is_gimple_val, fb_rvalue) == GS_ERROR
-			|| gimplify_expr (&TREE_VEC_ELT (it, 3), pre_p, NULL,
+			|| gimplify_expr (&OMP_ITERATOR_STEP (it), pre_p, NULL,
 					  is_gimple_val, fb_rvalue) == GS_ERROR
-			|| (gimplify_expr (&TREE_VEC_ELT (it, 4), pre_p, NULL,
-					   is_gimple_val, fb_rvalue)
+			|| (gimplify_expr (&OMP_ITERATOR_ORIG_STEP (it), pre_p,
+					   NULL, is_gimple_val, fb_rvalue)
 			    == GS_ERROR))
 		      return;
 		  }
 	    last_iter = TREE_PURPOSE (t);
-	    tree block = TREE_VEC_ELT (TREE_PURPOSE (t), 5);
+	    tree block = OMP_ITERATOR_BLOCK (TREE_PURPOSE (t));
 	    last_bind = build3 (BIND_EXPR, void_type_node, BLOCK_VARS (block),
 				NULL, block);
 	    last_body = &BIND_EXPR_BODY (last_bind);
@@ -9778,10 +9691,10 @@ gimplify_omp_affinity (tree *list_p, gimple_seq *pre_p)
 	    location_t loc = OMP_CLAUSE_LOCATION (c);
 	    for (tree it = TREE_PURPOSE (t); it; it = TREE_CHAIN (it))
 	      {
-		tree var = TREE_VEC_ELT (it, 0);
-		tree begin = TREE_VEC_ELT (it, 1);
-		tree end = TREE_VEC_ELT (it, 2);
-		tree step = TREE_VEC_ELT (it, 3);
+		tree var = OMP_ITERATOR_VAR (it);
+		tree begin = OMP_ITERATOR_BEGIN (it);
+		tree end = OMP_ITERATOR_END (it);
+		tree step = OMP_ITERATOR_STEP (it);
 		loc = DECL_SOURCE_LOCATION (var);
 		tree tem = build2_loc (loc, MODIFY_EXPR, void_type_node,
 				       var, begin);
@@ -9858,20 +9771,20 @@ compute_omp_iterator_count (tree it, gimple_seq *pre_p)
   tree tcnt = size_one_node;
   for (; it; it = TREE_CHAIN (it))
     {
-      if (gimplify_expr (&TREE_VEC_ELT (it, 1), pre_p, NULL,
+      if (gimplify_expr (&OMP_ITERATOR_BEGIN (it), pre_p, NULL,
 			 is_gimple_val, fb_rvalue) == GS_ERROR
-	  || gimplify_expr (&TREE_VEC_ELT (it, 2), pre_p, NULL,
+	  || gimplify_expr (&OMP_ITERATOR_END (it), pre_p, NULL,
 			    is_gimple_val, fb_rvalue) == GS_ERROR
-	  || gimplify_expr (&TREE_VEC_ELT (it, 3), pre_p, NULL,
+	  || gimplify_expr (&OMP_ITERATOR_STEP (it), pre_p, NULL,
 			    is_gimple_val, fb_rvalue) == GS_ERROR
-	  || (gimplify_expr (&TREE_VEC_ELT (it, 4), pre_p, NULL,
+	  || (gimplify_expr (&OMP_ITERATOR_ORIG_STEP (it), pre_p, NULL,
 			     is_gimple_val, fb_rvalue) == GS_ERROR))
 	return NULL_TREE;
-      tree var = TREE_VEC_ELT (it, 0);
-      tree begin = TREE_VEC_ELT (it, 1);
-      tree end = TREE_VEC_ELT (it, 2);
-      tree step = TREE_VEC_ELT (it, 3);
-      tree orig_step = TREE_VEC_ELT (it, 4);
+      tree var = OMP_ITERATOR_VAR (it);
+      tree begin = OMP_ITERATOR_BEGIN (it);
+      tree end = OMP_ITERATOR_END (it);
+      tree step = OMP_ITERATOR_STEP (it);
+      tree orig_step = OMP_ITERATOR_ORIG_STEP (it);
       tree type = TREE_TYPE (var);
       tree stype = TREE_TYPE (step);
       location_t loc = DECL_SOURCE_LOCATION (var);
@@ -9885,10 +9798,17 @@ compute_omp_iterator_count (tree it, gimple_seq *pre_p)
 	endmbegin = fold_build2_loc (loc, POINTER_DIFF_EXPR, stype, end, begin);
       else
 	endmbegin = fold_build2_loc (loc, MINUS_EXPR, type, end, begin);
-      tree stepm1 = fold_build2_loc (loc, MINUS_EXPR, stype, step,
-				     build_int_cst (stype, 1));
-      tree stepp1 = fold_build2_loc (loc, PLUS_EXPR, stype, step,
-				     build_int_cst (stype, 1));
+      /* Account for iteration stopping on the end value in Fortran rather
+	 than before it.  */
+      tree stepm1 = step;
+      tree stepp1 = step;
+      if (!lang_GNU_Fortran ())
+	{
+	  stepm1 = fold_build2_loc (loc, MINUS_EXPR, stype, step,
+				    build_int_cst (stype, 1));
+	  stepp1 = fold_build2_loc (loc, PLUS_EXPR, stype, step,
+				    build_int_cst (stype, 1));
+	}
       tree pos = fold_build2_loc (loc, PLUS_EXPR, stype,
 				  unshare_expr (endmbegin), stepm1);
       pos = fold_build2_loc (loc, TRUNC_DIV_EXPR, stype, pos, step);
@@ -9900,10 +9820,11 @@ compute_omp_iterator_count (tree it, gimple_seq *pre_p)
 	}
       neg = fold_build2_loc (loc, TRUNC_DIV_EXPR, stype, neg, step);
       step = NULL_TREE;
-      tree cond = fold_build2_loc (loc, LT_EXPR, boolean_type_node, begin, end);
+      tree_code cmp_op = lang_GNU_Fortran () ? LE_EXPR : LT_EXPR;
+      tree cond = fold_build2_loc (loc, cmp_op, boolean_type_node, begin, end);
       pos = fold_build3_loc (loc, COND_EXPR, stype, cond, pos,
 			     build_int_cst (stype, 0));
-      cond = fold_build2_loc (loc, LT_EXPR, boolean_type_node, end, begin);
+      cond = fold_build2_loc (loc, cmp_op, boolean_type_node, end, begin);
       neg = fold_build3_loc (loc, COND_EXPR, stype, cond, neg,
 			     build_int_cst (stype, 0));
       tree osteptype = TREE_TYPE (orig_step);
@@ -9931,18 +9852,20 @@ build_omp_iterator_loop (tree it, gimple_seq *pre_p, tree *last_bind)
 {
   if (*last_bind)
     gimplify_and_add (*last_bind, pre_p);
-  tree block = TREE_VEC_ELT (it, 5);
+  tree block = OMP_ITERATOR_BLOCK (it);
+  tree block_stmts = lang_GNU_Fortran () ? BLOCK_SUBBLOCKS (block) : NULL_TREE;
   *last_bind = build3 (BIND_EXPR, void_type_node,
 		       BLOCK_VARS (block), NULL, block);
   TREE_SIDE_EFFECTS (*last_bind) = 1;
   tree *p = &BIND_EXPR_BODY (*last_bind);
   for (; it; it = TREE_CHAIN (it))
     {
-      tree var = TREE_VEC_ELT (it, 0);
-      tree begin = TREE_VEC_ELT (it, 1);
-      tree end = TREE_VEC_ELT (it, 2);
-      tree step = TREE_VEC_ELT (it, 3);
-      tree orig_step = TREE_VEC_ELT (it, 4);
+      tree var = OMP_ITERATOR_VAR (it);
+      tree begin = OMP_ITERATOR_BEGIN (it);
+      tree end = OMP_ITERATOR_END (it);
+      tree step = OMP_ITERATOR_STEP (it);
+      tree orig_step = OMP_ITERATOR_ORIG_STEP (it);
+      block = OMP_ITERATOR_BLOCK (it);
       tree type = TREE_TYPE (var);
       location_t loc = DECL_SOURCE_LOCATION (var);
       /* Emit:
@@ -9953,9 +9876,9 @@ build_omp_iterator_loop (tree it, gimple_seq *pre_p, tree *last_bind)
 	 var = var + step;
 	 cond_label:
 	 if (orig_step > 0) {
-	   if (var < end) goto beg_label;
+	   if (var < end) goto beg_label;  // <= for Fortran
 	 } else {
-	   if (var > end) goto beg_label;
+	   if (var > end) goto beg_label;  // >= for Fortran
 	 }
 	 for each iterator, with inner iterators added to
 	 the ... above.  */
@@ -9981,10 +9904,12 @@ build_omp_iterator_loop (tree it, gimple_seq *pre_p, tree *last_bind)
       append_to_statement_list_force (tem, p);
       tem = build1 (LABEL_EXPR, void_type_node, cond_label);
       append_to_statement_list (tem, p);
-      tree cond = fold_build2_loc (loc, LT_EXPR, boolean_type_node, var, end);
+      tree cond = fold_build2_loc (loc, lang_GNU_Fortran () ? LE_EXPR : LT_EXPR,
+				   boolean_type_node, var, end);
       tree pos = fold_build3_loc (loc, COND_EXPR, void_type_node, cond,
 				  build_and_jump (&beg_label), void_node);
-      cond = fold_build2_loc (loc, GT_EXPR, boolean_type_node, var, end);
+      cond = fold_build2_loc (loc, lang_GNU_Fortran () ? GE_EXPR : GT_EXPR,
+			      boolean_type_node, var, end);
       tree neg = fold_build3_loc (loc, COND_EXPR, void_type_node, cond,
 				  build_and_jump (&beg_label), void_node);
       tree osteptype = TREE_TYPE (orig_step);
@@ -9993,6 +9918,11 @@ build_omp_iterator_loop (tree it, gimple_seq *pre_p, tree *last_bind)
       tem = fold_build3_loc (loc, COND_EXPR, void_type_node, cond, pos, neg);
       append_to_statement_list_force (tem, p);
       p = &BIND_EXPR_BODY (bind);
+      /* The Fortran front-end stashes statements into the BLOCK_SUBBLOCKS
+	 of the last element of the first iterator.  These should go into the
+	 body of the innermost loop.  */
+      if (!TREE_CHAIN (it))
+	append_to_statement_list_force (block_stmts, p);
     }
 
   return p;
@@ -10011,17 +9941,17 @@ find_var_decl (tree *tp, int *, void *data)
   return NULL_TREE;
 }
 
-/* Returns an element-by-element copy of OMP iterator tree IT.  */
-
+/* Returns an element-by-element copy of OMP iterator tree IT.  If
+   EXPAND is true, force the result to be an expanded iterator; otherwise
+   it makes the copy the same size as IT.  */
 static tree
-copy_omp_iterator (tree it, int elem_count = -1)
+copy_omp_iterator (tree it, bool expand = false)
 {
-  if (elem_count < 0)
-    elem_count = TREE_VEC_LENGTH (it);
-  tree new_it = make_tree_vec (elem_count);
+  int elem_count = TREE_VEC_LENGTH (it);
+  tree new_it =
+    (expand ? make_expanded_omp_iterator () : make_tree_vec (elem_count));
   for (int i = 0; i < TREE_VEC_LENGTH (it); i++)
     TREE_VEC_ELT (new_it, i) = TREE_VEC_ELT (it, i);
-
   return new_it;
 }
 
@@ -10066,28 +9996,18 @@ remove_unused_omp_iterator_vars (tree *list_p)
       bool need_new_iterators = false;
       for (tree it = OMP_CLAUSE_ITERATORS (c); it; it = TREE_CHAIN (it))
 	{
-	  tree var = TREE_VEC_ELT (it, 0);
+	  tree var = OMP_ITERATOR_VAR (it);
 	  tree t = walk_tree (&OMP_CLAUSE_DECL (c), find_var_decl, var, NULL);
 	  if (t == NULL_TREE)
 	    t = walk_tree (&OMP_CLAUSE_SIZE (c), find_var_decl, var, NULL);
 	  if (t == NULL_TREE)
-	    {
-	      need_new_iterators = true;
-	      if ((OMP_CLAUSE_CODE (c) == OMP_CLAUSE_MAP
-		   && (OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_TO
-		       || OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_FROM))
-		  || OMP_CLAUSE_CODE (c) == OMP_CLAUSE_TO
-		  || OMP_CLAUSE_CODE (c) == OMP_CLAUSE_FROM)
-		warning_at (OMP_CLAUSE_LOCATION (c), OPT_Wopenmp,
-			    "iterator variable %qE not used in clause "
-			    "expression", DECL_NAME (var));
-	    }
+	    need_new_iterators = true;
 	  else
 	    vars.safe_push (var);
 	}
       if (!need_new_iterators)
 	continue;
-      if (need_new_iterators && vars.is_empty ())
+      if (vars.is_empty ())
 	{
 	  /* No iteration variables are used in the clause - remove the
 	     iterator from the clause.  */
@@ -10122,7 +10042,7 @@ remove_unused_omp_iterator_vars (tree *list_p)
 	  for (tree it = OMP_CLAUSE_ITERATORS (c); it && i < vars.length();
 	       it = TREE_CHAIN (it))
 	    {
-	      tree var = TREE_VEC_ELT (it, 0);
+	      tree var = OMP_ITERATOR_VAR (it);
 	      if (var == vars[i])
 		{
 		  *new_iters_p = copy_omp_iterator (it);
@@ -10130,15 +10050,21 @@ remove_unused_omp_iterator_vars (tree *list_p)
 					    DECL_NAME (var), TREE_TYPE (var));
 		  DECL_ARTIFICIAL (*new_vars_p) = 1;
 		  DECL_CONTEXT (*new_vars_p) = DECL_CONTEXT (var);
-		  TREE_VEC_ELT (*new_iters_p, 0) = *new_vars_p;
+		  OMP_ITERATOR_VAR (*new_iters_p) = *new_vars_p;
 		  new_iters_p = &TREE_CHAIN (*new_iters_p);
 		  new_vars_p = &DECL_CHAIN (*new_vars_p);
 		  i++;
 		}
 	    }
+	  tree old_block = OMP_ITERATOR_BLOCK (OMP_CLAUSE_ITERATORS (c));
 	  tree new_block = make_node (BLOCK);
 	  BLOCK_VARS (new_block) = new_vars;
-	  TREE_VEC_ELT (new_iters, 5) = new_block;
+	  if (BLOCK_SUBBLOCKS (old_block))
+	    {
+	      BLOCK_SUBBLOCKS (new_block) = BLOCK_SUBBLOCKS (old_block);
+	      BLOCK_SUBBLOCKS (old_block) = NULL_TREE;
+	    }
+	  OMP_ITERATOR_BLOCK (new_iters) = new_block;
 	  new_iterators.safe_push (new_iters);
 	  iter_vars.safe_push (vars.copy ());
 	  OMP_CLAUSE_ITERATORS (c) = new_iters;
@@ -10149,7 +10075,7 @@ remove_unused_omp_iterator_vars (tree *list_p)
       for (tree it = OMP_CLAUSE_ITERATORS (c); it; it = TREE_CHAIN (it))
 	{
 	  tree old_var = vars[i++];
-	  tree new_var = TREE_VEC_ELT (it, 0);
+	  tree new_var = OMP_ITERATOR_VAR (it);
 	  remap_omp_iterator_var (&OMP_CLAUSE_DECL (c), old_var, new_var);
 	  remap_omp_iterator_var (&OMP_CLAUSE_SIZE (c), old_var, new_var);
 	}
@@ -10243,6 +10169,8 @@ build_omp_iterators_loops (tree *list_p, gimple_seq *loops_seq_p)
 	{
 	  /* Handle dynamic sizes.  */
 	  sorry ("dynamic iterator sizes not implemented yet");
+	  OMP_CLAUSE_ITERATORS (c) = NULL_TREE;
+	  continue;
 	}
 
       /* BEFORE LOOP:  */
@@ -10254,12 +10182,10 @@ build_omp_iterators_loops (tree *list_p, gimple_seq *loops_seq_p)
       gimplify_and_add (tem, loops_seq_p);
 
       /* Make a copy of the iterator with extra info at the end.  */
-      int elem_count = TREE_VEC_LENGTH (OMP_CLAUSE_ITERATORS (c));
-      tree new_iterator = copy_omp_iterator (OMP_CLAUSE_ITERATORS (c),
-					     elem_count + 3);
-      TREE_VEC_ELT (new_iterator, elem_count) = loop.body_label;
-      TREE_VEC_ELT (new_iterator, elem_count + 1) = elems;
-      TREE_VEC_ELT (new_iterator, elem_count + 2) = loop.index;
+      tree new_iterator = copy_omp_iterator (OMP_CLAUSE_ITERATORS (c), true);
+      OMP_ITERATOR_LABEL (new_iterator) = loop.body_label;
+      OMP_ITERATOR_INDEX (new_iterator) = loop.index;
+      OMP_ITERATOR_ELEMS (new_iterator) = elems;
       TREE_CHAIN (new_iterator) = TREE_CHAIN (OMP_CLAUSE_ITERATORS (c));
       OMP_CLAUSE_ITERATORS (c) = new_iterator;
 
@@ -10310,7 +10236,7 @@ enter_omp_iterator_loop_context_1 (tree iterator, gimple_seq *loops_seq_p)
 	  {
 	    glabel *label_stmt = as_a<glabel *> (stmt);
 	    tree label = gimple_label_label (label_stmt);
-	    if (label == TREE_VEC_ELT (iterator, 6))
+	    if (label == OMP_ITERATOR_LABEL (iterator))
 	      return loops_seq_p;
 	  }
 	  break;
@@ -10813,7 +10739,8 @@ build_omp_struct_comp_nodes (enum tree_code code, tree grp_start, tree grp_end,
 static tree
 extract_base_bit_offset (tree base, poly_int64 *bitposp,
 			 poly_offset_int *poffsetp,
-			 bool *variable_offset)
+			 bool *variable_offset,
+			 tree iterator)
 {
   tree offset;
   poly_int64 bitsize, bitpos;
@@ -10822,6 +10749,18 @@ extract_base_bit_offset (tree base, poly_int64 *bitposp,
   poly_offset_int poffset;
 
   STRIP_NOPS (base);
+
+  if (iterator)
+    {
+      /* Replace any iterator variables with the lower bound of the iterator.
+	 This will give us the nominal offset and bit position of the first
+	 element, which is all we should need to lay out the mappings.  The
+	 actual locations of the iterated mappings are elsewhere.  */
+      tree it;
+      for (it = iterator; it; it = TREE_CHAIN (it))
+	base = simplify_replace_tree (base, OMP_ITERATOR_VAR (it),
+				      OMP_ITERATOR_BEGIN (it));
+    }
 
   base = get_inner_reference (base, &bitsize, &bitpos, &offset, &mode,
 			      &unsignedp, &reversep, &volatilep);
@@ -10982,6 +10921,7 @@ omp_get_attachment (omp_mapping_group *grp)
 	  case GOMP_MAP_FIRSTPRIVATE_POINTER:
 	  case GOMP_MAP_FIRSTPRIVATE_REFERENCE:
 	  case GOMP_MAP_POINTER_TO_ZERO_LENGTH_ARRAY_SECTION:
+	  case GOMP_MAP_USES_ALLOCATORS:
 	    return NULL_TREE;
 
 	  case GOMP_MAP_ATTACH_DETACH:
@@ -11026,6 +10966,7 @@ omp_get_attachment (omp_mapping_group *grp)
     case GOMP_MAP_FIRSTPRIVATE_INT:
     case GOMP_MAP_USE_DEVICE_PTR:
     case GOMP_MAP_ATTACH_ZERO_LENGTH_ARRAY_SECTION:
+    case GOMP_MAP_USES_ALLOCATORS:
       return NULL_TREE;
 
     default:
@@ -11314,6 +11255,7 @@ omp_group_base (omp_mapping_group *grp, unsigned int *chained,
     case GOMP_MAP_FIRSTPRIVATE_INT:
     case GOMP_MAP_USE_DEVICE_PTR:
     case GOMP_MAP_ATTACH_ZERO_LENGTH_ARRAY_SECTION:
+    case GOMP_MAP_USES_ALLOCATORS:
       return NULL_TREE;
 
     case GOMP_MAP_FIRSTPRIVATE_POINTER:
@@ -12649,8 +12591,11 @@ omp_accumulate_sibling_list (enum omp_region_type region_type,
     }
 
   bool variable_offset;
+  tree iterators = OMP_CLAUSE_HAS_ITERATORS (grp_end)
+		     ? OMP_CLAUSE_ITERATORS (grp_end) : NULL_TREE;
   tree base
-    = extract_base_bit_offset (ocd, &cbitpos, &coffset, &variable_offset);
+    = extract_base_bit_offset (ocd, &cbitpos, &coffset, &variable_offset,
+			       iterators);
 
   int base_token;
   for (base_token = addr_tokens.length () - 1; base_token >= 0; base_token--)
@@ -12979,8 +12924,12 @@ omp_accumulate_sibling_list (enum omp_region_type region_type,
 	      sc_decl = TREE_OPERAND (sc_decl, 0);
 
 	    bool variable_offset2;
+	    tree iterators2 = OMP_CLAUSE_HAS_ITERATORS (*sc)
+				? OMP_CLAUSE_ITERATORS (*sc) : NULL_TREE;
+
 	    tree base2 = extract_base_bit_offset (sc_decl, &bitpos, &offset,
-						  &variable_offset2);
+						  &variable_offset2,
+						  iterators2);
 	    if (!base2 || !operand_equal_p (base2, base, 0))
 	      break;
 	    if (scp)
@@ -13817,6 +13766,8 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
       || code == OACC_UPDATE
       || code == OACC_DECLARE)
     {
+      if (!(region_type & ORT_ACC))
+	*list_p = omp_remove_duplicate_maps (*list_p, false);
       groups = omp_gather_mapping_groups (list_p);
 
       if (groups)
@@ -14902,7 +14853,23 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	case OMP_CLAUSE_WORKER:
 	case OMP_CLAUSE_VECTOR:
 	  if (OMP_CLAUSE_OPERAND (c, 0)
-	      && !is_gimple_min_invariant (OMP_CLAUSE_OPERAND (c, 0)))
+	      && TREE_CODE (OMP_CLAUSE_OPERAND (c, 0)) == TREE_LIST)
+	    {
+	      for (tree t = OMP_CLAUSE_OPERAND (c, 0); t; t = TREE_CHAIN (t))
+		if (!is_gimple_min_invariant (TREE_VALUE (t)))
+		  {
+		    if (error_operand_p (TREE_VALUE (t)))
+		      {
+			remove = true;
+			break;
+		      }
+		    TREE_VALUE (t)
+		      = get_initialized_tmp_var (TREE_VALUE (t), pre_p,
+						 NULL, true);
+		  }
+	    }
+	  else if (OMP_CLAUSE_OPERAND (c, 0)
+		   && !is_gimple_min_invariant (OMP_CLAUSE_OPERAND (c, 0)))
 	    {
 	      if (error_operand_p (OMP_CLAUSE_OPERAND (c, 0)))
 		{
@@ -14931,8 +14898,15 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	  break;
 
 	case OMP_CLAUSE_USES_ALLOCATORS:
-	  sorry_at (OMP_CLAUSE_LOCATION (c), "%<uses_allocators%> clause");
-	  remove = 1;
+	  if (TREE_CODE (OMP_CLAUSE_USES_ALLOCATORS_ALLOCATOR (c))
+	      != INTEGER_CST)
+	    {
+	      decl = OMP_CLAUSE_USES_ALLOCATORS_ALLOCATOR (c);
+	      omp_add_variable (ctx, decl,
+				GOVD_SEEN | GOVD_USES_ALLOCATORS_ALLOCATOR);
+	    }
+	  else
+	    remove = true;
 	  break;
 
 	case OMP_CLAUSE_ORDERED:
@@ -14943,9 +14917,9 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	case OMP_CLAUSE_SEQ:
 	case OMP_CLAUSE_INDEPENDENT:
 	case OMP_CLAUSE_MERGEABLE:
+	case OMP_CLAUSE_MESSAGE:
 	case OMP_CLAUSE_PROC_BIND:
 	case OMP_CLAUSE_SAFELEN:
-	case OMP_CLAUSE_SIMDLEN:
 	case OMP_CLAUSE_NOGROUP:
 	case OMP_CLAUSE_THREADS:
 	case OMP_CLAUSE_SIMD:
@@ -14957,6 +14931,15 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	case OMP_CLAUSE_USE:
 	case OMP_CLAUSE_DESTROY:
 	case OMP_CLAUSE_DEVICE_TYPE:
+	  break;
+
+	case OMP_CLAUSE_SIMDLEN:
+	  if (OMP_CLAUSE_SIMDLEN_TYPE (c))
+	    {
+	      remove = true;
+	      sorry_at (OMP_CLAUSE_LOCATION (c),
+			"%<simdlen%> clause with %<scaled%> modifier");
+	    }
 	  break;
 
 	case OMP_CLAUSE_DYN_GROUPPRIVATE:
@@ -15077,7 +15060,7 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	  decl = OMP_CLAUSE_ALLOCATE_ALLOCATOR (c);
 	  if (decl
 	      && TREE_CODE (decl) == INTEGER_CST
-	      && wi::eq_p (wi::to_widest (decl), GOMP_OMP_PREDEF_ALLOC_THREADS)
+	      && wi::eq_p (wi::to_widest (decl), GOMP_OMP_PREDEF_ALLOC_THREAD)
 	      && (code == OMP_TARGET || code == OMP_TASK || code == OMP_TASKLOOP))
 	    warning_at (OMP_CLAUSE_LOCATION (c), OPT_Wopenmp,
 			"allocator with access trait set to %<thread%> "
@@ -15090,6 +15073,49 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	    {
 	      remove = true;
 	      break;
+	    }
+	  if ((omp_requires_mask & OMP_REQUIRES_DYNAMIC_ALLOCATORS) == 0
+	      && OMP_CLAUSE_ALLOCATE_ALLOCATOR (c)
+	      && TREE_CODE (OMP_CLAUSE_ALLOCATE_ALLOCATOR (c)) != INTEGER_CST)
+	    {
+	      tree allocator = OMP_CLAUSE_ALLOCATE_ALLOCATOR (c);
+	      tree clauses = NULL_TREE;
+
+	      /* Get clause list of the nearest enclosing target construct.  */
+	      if (ctx->code == OMP_TARGET)
+		clauses = *orig_list_p;
+	      else
+		{
+		  struct gimplify_omp_ctx *tctx = ctx->outer_context;
+		  while (tctx && tctx->code != OMP_TARGET)
+		    tctx = tctx->outer_context;
+		  if (tctx)
+		    clauses = tctx->clauses;
+		}
+
+	      if (clauses)
+		{
+		  tree uc;
+		  if (TREE_CODE (allocator) == MEM_REF
+		      || TREE_CODE (allocator) == INDIRECT_REF)
+		    allocator = TREE_OPERAND (allocator, 0);
+		  for (uc = clauses; uc; uc = OMP_CLAUSE_CHAIN (uc))
+		    if (OMP_CLAUSE_CODE (uc) == OMP_CLAUSE_USES_ALLOCATORS)
+		      {
+			tree uc_allocator
+			  = OMP_CLAUSE_USES_ALLOCATORS_ALLOCATOR (uc);
+			if (operand_equal_p (allocator, uc_allocator))
+			  break;
+		      }
+		  if (uc == NULL_TREE)
+		    {
+		      error_at (OMP_CLAUSE_LOCATION (c), "allocator %qE "
+				"requires %<uses_allocators(%E)%> clause in "
+				"target region", allocator, allocator);
+		      remove = true;
+		      break;
+		    }
+		}
 	    }
 	  if (gimplify_expr (&OMP_CLAUSE_ALLOCATE_ALLOCATOR (c), pre_p, NULL,
 			     is_gimple_val, fb_rvalue) == GS_ERROR)
@@ -15409,6 +15435,8 @@ gimplify_adjust_omp_clauses_1 (splay_tree_node n, void *data)
       code = OMP_CLAUSE__CONDTEMP_;
       gimple_add_tmp_var (decl);
     }
+  else if (flags & GOVD_USES_ALLOCATORS_ALLOCATOR)
+    return 0;
   else
     gcc_unreachable ();
 
@@ -16453,6 +16481,7 @@ end_adjust_omp_map_clause:
 	case OMP_CLAUSE_EXCLUSIVE:
 	case OMP_CLAUSE_USES_ALLOCATORS:
 	case OMP_CLAUSE_DEVICE_TYPE:
+	case OMP_CLAUSE_MESSAGE:
 	  break;
 
 	case OMP_CLAUSE_NOHOST:
@@ -18776,6 +18805,12 @@ computable_teams_clause (tree *tp, int *walk_subtrees, void *)
 static void
 optimize_target_teams (tree target, gimple_seq *pre_p)
 {
+  /* If the NUM_TEAMS clause is on TARGET, assume that the front end already
+     took care of the target-consistent clauses.  Note that user code cannot
+     specify 'num_teams' on 'target', only on 'teams'.  */
+  if (omp_find_clause (OMP_TARGET_CLAUSES (target), OMP_CLAUSE_NUM_TEAMS))
+    return;
+
   tree body = OMP_BODY (target);
   tree teams = walk_tree (&body, find_omp_teams, NULL, NULL);
   tree num_teams_lower = NULL_TREE;
@@ -19011,6 +19046,39 @@ gimplify_omp_workshare (tree *expr_p, gimple_seq *pre_p)
       stmt = gimple_build_omp_scope (body, OMP_CLAUSES (expr));
       break;
     case OMP_TARGET:
+      /* Handle 'device_type(nohost)'.  */
+      if (tree c = omp_find_clause (OMP_CLAUSES (expr), OMP_CLAUSE_DEVICE_TYPE))
+	if (OMP_CLAUSE_DEVICE_TYPE_KIND (c) == OMP_CLAUSE_DEVICE_TYPE_NOHOST)
+	  {
+	    location_t loc = gimple_location (body);
+	    tree fn = builtin_decl_explicit (BUILT_IN_OMP_IS_INITIAL_DEVICE);
+	    fn = build_call_expr_loc (loc, fn, 0);
+	    tree err = builtin_decl_explicit (BUILT_IN_GOMP_ERROR);
+	    const char *str = "Executing device-type 'nohost' target region "
+			      "on the host";
+	    tree msg = build_string_literal (strlen (str) + 1, str);
+	    tree msglen = build_int_cst (size_type_node, -2);
+	    err = build_call_expr_loc (loc, err, 2, msg, msglen);
+	    tree l1 = create_artificial_label (UNKNOWN_LOCATION);
+	    tree l2 = create_artificial_label (UNKNOWN_LOCATION);
+	    tree l3 = create_artificial_label (UNKNOWN_LOCATION);
+
+	    gimple_seq new_body = NULL;
+
+	    gimplify_expr (&fn, &new_body, NULL, is_gimple_val, fb_rvalue);
+	    gcond *cond = gimple_build_cond (NE_EXPR, fn,
+					     build_int_cst (TREE_TYPE (fn), 0),
+					     l1, l2);
+	    gimplify_seq_add_stmt (&new_body, cond);
+	    gimplify_seq_add_stmt (&new_body, gimple_build_label (l1));
+	    gimplify_and_add (err, &new_body);
+	    gimplify_seq_add_stmt (&new_body, gimple_build_goto (l3));
+	    gimplify_seq_add_stmt (&new_body, gimple_build_label (l2));
+	    gimple_seq_add_seq (&new_body, body);
+	    gimplify_seq_add_stmt (&new_body, gimple_build_label (l3));
+	    body = gimple_build_bind (NULL_TREE, new_body, make_node (BLOCK));
+	    gimple_set_location (body, loc);
+	  }
       stmt = gimple_build_omp_target (body, GF_OMP_TARGET_KIND_REGION,
 				      OMP_CLAUSES (expr), iterator_loops_seq);
       break;

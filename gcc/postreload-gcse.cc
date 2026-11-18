@@ -769,21 +769,21 @@ record_opr_changes (rtx_insn *insn)
       record_last_reg_set_info (insn, XEXP (note, 0));
 
   /* Finally, if this is a call, record all call clobbers.  */
-  if (CALL_P (insn))
+  if (auto call = dyn_cast<rtx_call_insn *> (insn))
     {
       unsigned int regno;
       hard_reg_set_iterator hrsi;
       /* We don't track modes of hard registers, so we need to be
 	 conservative and assume that partial kills are full kills.  */
       HARD_REG_SET callee_clobbers
-	= insn_callee_abi (insn).full_and_partial_reg_clobbers ();
+	= insn_callee_abi (call).full_and_partial_reg_clobbers ();
       EXECUTE_IF_SET_IN_HARD_REG_SET (callee_clobbers, 0, regno, hrsi)
-	record_last_reg_set_info_regno (insn, regno);
+	record_last_reg_set_info_regno (call, regno);
 
-      if (! RTL_CONST_OR_PURE_CALL_P (insn)
-	  || RTL_LOOPING_CONST_OR_PURE_CALL_P (insn)
-	  || can_throw_external (insn))
-	record_last_mem_set_info (insn);
+      if (! RTL_CONST_OR_PURE_CALL_P (call)
+	  || RTL_LOOPING_CONST_OR_PURE_CALL_P (call)
+	  || can_throw_external (call))
+	record_last_mem_set_info (call);
     }
 }
 
@@ -1349,7 +1349,7 @@ delete_redundant_insns (void)
    due to spilling.  */
 
 static void
-gcse_after_reload_main (rtx f ATTRIBUTE_UNUSED)
+gcse_after_reload_main (rtx_insn *f ATTRIBUTE_UNUSED)
 {
   /* Disable computing transparentness if it is too expensive.  */
   bool do_transp
@@ -1372,7 +1372,7 @@ gcse_after_reload_main (rtx f ATTRIBUTE_UNUSED)
 
   if (!expr_table->is_empty ())
     {
-      /* Knowing which MEMs are transparent through a block can signifiantly
+      /* Knowing which MEMs are transparent through a block can significantly
 	 increase the number of redundant loads found.  So compute transparency
 	 information for each memory expression in the hash table.  */
       df_analyze ();

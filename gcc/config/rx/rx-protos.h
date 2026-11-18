@@ -57,7 +57,7 @@ extern char *		rx_gen_move_template (rtx *, bool);
 extern bool		rx_is_legitimate_constant (machine_mode, rtx);
 extern bool		rx_is_restricted_memory_address (rtx,
 							 machine_mode);
-extern bool		rx_match_ccmode (rtx, machine_mode);
+extern bool		rx_match_ccmode (rtx_insn *, machine_mode);
 extern rtx		rx_maybe_pidify_operand (rtx, int);
 extern void		rx_notice_update_cc (rtx, rtx);
 extern void		rx_split_cbranch (machine_mode, enum rtx_code,
@@ -70,6 +70,8 @@ extern void rx_copy_reg_dead_or_unused_notes (rtx reg, const rtx_insn* src,
 
 extern bool rx_fuse_in_memory_bitop (rtx* operands, rtx_insn* curr_insn,
 				     rtx (*gen_insn)(rtx, rtx));
+extern void rx_split_double_move (rtx* operands, machine_mode mode);
+extern void rx_relax_double_operands (rtx* operands, machine_mode mode);
 
 /* Result value of rx_find_set_of_reg.  */
 struct set_of_reg

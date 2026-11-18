@@ -33,7 +33,6 @@
 #include "langhooks.h"
 #include "target.h"
 
-
 #define builtin_define(TXT) cpp_define (pfile, TXT)
 #define builtin_assert(TXT) cpp_assert (pfile, TXT)
 
@@ -181,11 +180,9 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
   switch (aarch64_cmodel)
     {
       case AARCH64_CMODEL_TINY:
-      case AARCH64_CMODEL_TINY_PIC:
 	builtin_define ("__AARCH64_CMODEL_TINY__");
 	break;
       case AARCH64_CMODEL_SMALL:
-      case AARCH64_CMODEL_SMALL_PIC:
 	builtin_define ("__AARCH64_CMODEL_SMALL__");
 	break;
       case AARCH64_CMODEL_LARGE:
@@ -228,12 +225,21 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
 			&& (AARCH64_HAVE_ISA (SVE2) || TARGET_SME2),
 			"__ARM_FEATURE_SVE_B16B16", pfile);
   aarch64_def_or_undef (AARCH64_HAVE_ISA (SVE2), "__ARM_FEATURE_SVE2", pfile);
-  aarch64_def_or_undef (TARGET_SVE2_AES, "__ARM_FEATURE_SVE2_AES", pfile);
-  aarch64_def_or_undef (TARGET_SVE2_BITPERM,
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SVE2) && AARCH64_HAVE_ISA (SVE_AES),
+			"__ARM_FEATURE_SVE2_AES", pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SVE_AES2), "__ARM_FEATURE_SVE_AES2",
+			pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SSVE_AES), "__ARM_FEATURE_SSVE_AES",
+			pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SVE_BITPERM)
+			&& AARCH64_HAVE_ISA (SVE2),
 			"__ARM_FEATURE_SVE2_BITPERM", pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SSVE_BITPERM),
+			"__ARM_FEATURE_SSVE_BITPERM", pfile);
   aarch64_def_or_undef (TARGET_SVE2_SHA3, "__ARM_FEATURE_SVE2_SHA3", pfile);
   aarch64_def_or_undef (TARGET_SVE2_SM4, "__ARM_FEATURE_SVE2_SM4", pfile);
   aarch64_def_or_undef (TARGET_SVE2p1, "__ARM_FEATURE_SVE2p1", pfile);
+  aarch64_def_or_undef (TARGET_SVE2p2, "__ARM_FEATURE_SVE2p2", pfile);
 
   aarch64_def_or_undef (TARGET_LSE, "__ARM_FEATURE_ATOMICS", pfile);
   aarch64_def_or_undef (TARGET_AES, "__ARM_FEATURE_AES", pfile);
@@ -297,6 +303,7 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
 			"__ARM_FEATURE_LS64", pfile);
   aarch64_def_or_undef (TARGET_RCPC, "__ARM_FEATURE_RCPC", pfile);
   aarch64_def_or_undef (TARGET_D128, "__ARM_FEATURE_SYSREG128", pfile);
+  aarch64_def_or_undef (TARGET_CSSC, "__ARM_FEATURE_CSSC", pfile);
 
   aarch64_def_or_undef (TARGET_SME, "__ARM_FEATURE_SME", pfile);
   aarch64_def_or_undef (TARGET_SME_I16I64, "__ARM_FEATURE_SME_I16I64", pfile);
@@ -310,10 +317,19 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
 			"__ARM_FEATURE_SME_F16F16", pfile);
   aarch64_def_or_undef (TARGET_SME_F64F64, "__ARM_FEATURE_SME_F64F64", pfile);
   aarch64_def_or_undef (TARGET_SME2, "__ARM_FEATURE_SME2", pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SME_MOP4), "__ARM_FEATURE_SME_MOP4",
+			pfile);
   aarch64_def_or_undef (AARCH64_HAVE_ISA (SME2p1),
 			"__ARM_FEATURE_SME2p1", pfile);
+  aarch64_def_or_undef (TARGET_SME2p2, "__ARM_FEATURE_SME2p2", pfile);
   aarch64_def_or_undef (TARGET_FAMINMAX, "__ARM_FEATURE_FAMINMAX", pfile);
   aarch64_def_or_undef (TARGET_PCDPHINT, "__ARM_FEATURE_PCDPHINT", pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SME_TMOP),
+			"__ARM_FEATURE_SME_TMOP", pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SSVE_FEXPA),
+			"__ARM_FEATURE_SSVE_FEXPA", pfile);
+  builtin_define ("__ARM_PREFETCH_RANGE");
+  aarch64_def_or_undef (TARGET_F16F32DOT, "__ARM_FEATURE_F16F32DOT", pfile);
 
   // Function multi-versioning defines
   aarch64_def_or_undef (targetm.has_ifunc_p (),
@@ -331,6 +347,9 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
 
   aarch64_def_or_undef (TARGET_F8F16MM, "__ARM_FEATURE_F8F16MM", pfile);
   aarch64_def_or_undef (TARGET_F8F32MM, "__ARM_FEATURE_F8F32MM", pfile);
+  aarch64_def_or_undef (TARGET_F16MM, "__ARM_FEATURE_F16MM", pfile);
+  aarch64_def_or_undef (TARGET_F16F32MM, "__ARM_FEATURE_F16F32MM", pfile);
+  aarch64_def_or_undef (TARGET_SVE_B16MM, "__ARM_FEATURE_SVE_B16MM", pfile);
   aarch64_def_or_undef (TARGET_SVE_F16F32MM, "__ARM_FEATURE_SVE_F16F32MM",
 			pfile);
 }
@@ -358,7 +377,7 @@ aarch64_pragma_target_parse (tree args, tree pop_target)
       if (!aarch64_process_target_attr (args))
 	return false;
 
-      aarch64_override_options_internal (&global_options);
+      aarch64_override_options_internal (&global_options, &global_options_set);
     }
 
   /* args is NULL, restore to the state described in pop_target.  */
@@ -386,7 +405,7 @@ aarch64_pragma_target_parse (tree args, tree pop_target)
 
   cpp_opts->warn_unused_macros = saved_warn_unused_macros;
 
-  /* If we're popping or reseting make sure to update the globals so that
+  /* If we're popping or resetting make sure to update the globals so that
      the optab availability predicates get recomputed.  */
   if (pop_target)
     aarch64_save_restore_target_globals (pop_target);
@@ -407,15 +426,15 @@ aarch64_pragma_aarch64 (cpp_reader *)
 
   const char *name = TREE_STRING_POINTER (x);
   if (strcmp (name, "arm_sve.h") == 0)
-    aarch64_sve::handle_arm_sve_h (false);
+    aarch64_acle::handle_arm_sve_h (false);
   else if (strcmp (name, "arm_sme.h") == 0)
-    aarch64_sve::handle_arm_sme_h (false);
+    aarch64_acle::handle_arm_sme_h (false);
   else if (strcmp (name, "arm_neon.h") == 0)
-    handle_arm_neon_h ();
+    aarch64_acle::handle_arm_neon_h (false);
   else if (strcmp (name, "arm_acle.h") == 0)
     handle_arm_acle_h ();
   else if (strcmp (name, "arm_neon_sve_bridge.h") == 0)
-    aarch64_sve::handle_arm_neon_sve_bridge_h (false);
+    aarch64_acle::handle_arm_neon_sve_bridge_h (false);
   else
     error ("unknown %<#pragma GCC aarch64%> option %qs", name);
 }
@@ -439,8 +458,8 @@ aarch64_resolve_overloaded_builtin (location_t location,
 							 uncast_arglist);
       break;
     case AARCH64_BUILTIN_SVE:
-      new_fndecl = aarch64_sve::resolve_overloaded_builtin (location, subcode,
-							    arglist);
+      new_fndecl = aarch64_acle::resolve_overloaded_builtin (location, subcode,
+							     arglist);
       break;
     }
   if (new_fndecl == NULL_TREE || new_fndecl == error_mark_node)
@@ -463,8 +482,8 @@ aarch64_check_builtin_call (location_t loc, vec<location_t> arg_loc,
       return aarch64_general_check_builtin_call (loc, arg_loc, subcode,
 						 orig_fndecl, nargs, args);
     case AARCH64_BUILTIN_SVE:
-      return aarch64_sve::check_builtin_call (loc, arg_loc, subcode,
-					      orig_fndecl, nargs, args);
+      return aarch64_acle::check_builtin_call (loc, arg_loc, subcode,
+					       orig_fndecl, nargs, args);
     }
   gcc_unreachable ();
 }

@@ -24,9 +24,9 @@
 !  <http://www.gnu.org/licenses/>.
 
       module omp_lib_kinds
-        use iso_c_binding, only: c_int, c_intptr_t
+        use iso_c_binding, only: c_int, c_intptr_t, c_int32_t
         implicit none
-        private :: c_int, c_intptr_t
+        private :: c_int, c_intptr_t, c_int32_t
         integer, parameter :: omp_lock_kind = @OMP_LOCK_KIND@
         integer, parameter :: omp_nest_lock_kind = @OMP_NEST_LOCK_KIND@
         integer, parameter :: omp_sched_kind = 4
@@ -34,6 +34,7 @@
         integer, parameter :: omp_sync_hint_kind = 4
         integer, parameter :: omp_lock_hint_kind = omp_sync_hint_kind
         integer, parameter :: omp_pause_resource_kind = 4
+        integer, parameter :: omp_access_kind = c_int
         integer, parameter :: omp_allocator_handle_kind = c_intptr_t
         integer, parameter :: omp_alloctrait_key_kind = c_int
         integer, parameter :: omp_alloctrait_val_kind = c_intptr_t
@@ -44,6 +45,8 @@
         integer, parameter :: omp_interop_fr_kind = c_int
         integer, parameter :: omp_interop_property_kind = c_int
         integer, parameter :: omp_interop_rc_kind = c_int
+        integer, parameter :: omp_control_tool_kind = c_int32_t
+        integer, parameter :: omp_control_tool_result_kind = c_int
         integer (omp_sched_kind), parameter :: omp_sched_static = 1
         integer (omp_sched_kind), parameter :: omp_sched_dynamic = 2
         integer (omp_sched_kind), parameter :: omp_sched_guided = 3
@@ -88,6 +91,8 @@
                  parameter :: omp_pause_soft = 1
         integer (kind=omp_pause_resource_kind), &
                  parameter :: omp_pause_hard = 2
+        integer (kind=omp_pause_resource_kind), &
+                 parameter :: omp_pause_tool = 3
         integer (kind=omp_alloctrait_key_kind), &
                  parameter :: omp_atk_sync_hint = 1
         integer (kind=omp_alloctrait_key_kind), &
@@ -215,6 +220,22 @@
         integer (omp_interop_rc_kind), parameter :: omp_irc_type_ptr = -4
         integer (omp_interop_rc_kind), parameter :: omp_irc_type_str = -5
         integer (omp_interop_rc_kind), parameter :: omp_irc_other = -6
+        integer (omp_access_kind), parameter :: omp_access_cgroup = 0
+        integer (omp_access_kind), parameter :: omp_access_pteam = 1
+        integer (omp_control_tool_kind), parameter :: omp_control_tool_start = 1
+        integer (omp_control_tool_kind), parameter :: omp_control_tool_pause = 2
+        integer (omp_control_tool_kind), parameter :: omp_control_tool_flush = 3
+        integer (omp_control_tool_kind), parameter :: omp_control_tool_end = 4
+        integer (omp_control_tool_kind), &
+          parameter :: omp_control_tool_max = huge(0_omp_control_tool_kind)
+        integer (omp_control_tool_result_kind), &
+          parameter :: omp_control_tool_notool = -2
+        integer (omp_control_tool_result_kind), &
+          parameter :: omp_control_tool_nocallback = -1
+        integer (omp_control_tool_result_kind), &
+          parameter :: omp_control_tool_success = 0
+        integer (omp_control_tool_result_kind), &
+          parameter :: omp_control_tool_ignored = 1
 
         type omp_alloctrait
           integer (kind=omp_alloctrait_key_kind) key
@@ -371,9 +392,27 @@
         end interface
 
         interface
+          ! Implementation choice: bind(C) and no default-kind-8 integer
+          function omp_get_num_threads_dim (dim) bind(C)
+            use, intrinsic :: iso_c_binding, only : c_int
+            integer (c_int) :: omp_get_num_threads_dim
+            integer (c_int), value :: dim
+          end function omp_get_num_threads_dim
+        end interface
+
+        interface
           function omp_get_thread_num ()
             integer (4) :: omp_get_thread_num
           end function omp_get_thread_num
+        end interface
+
+        interface
+          ! Implementation choice: bind(C) and no default-kind-8 integer
+          function omp_get_thread_num_dim (dim) bind(C)
+            use, intrinsic :: iso_c_binding, only : c_int
+            integer (c_int) :: omp_get_thread_num_dim
+            integer (c_int), value :: dim
+          end function omp_get_thread_num_dim
         end interface
 
         interface
@@ -426,6 +465,24 @@
           function omp_get_thread_limit ()
             integer (4) :: omp_get_thread_limit
           end function omp_get_thread_limit
+        end interface
+
+        interface
+          ! Implementation choice: bind(C) and no default-kind-8 integer
+          function omp_get_thread_limit_dim (dim) bind(C)
+            use, intrinsic :: iso_c_binding, only : c_int
+            integer (c_int) :: omp_get_thread_limit_dim
+            integer (c_int), value :: dim
+          end function omp_get_thread_limit_dim
+        end interface
+
+        interface
+          ! Use bind(C) for simplicity; will fail with default-kind-8 integer
+          function omp_get_device_teams_thread_limit (device_num) bind(C)
+            use iso_c_binding, only: c_int
+            integer (c_int), value :: device_num
+            integer (c_int) :: omp_get_device_teams_thread_limit
+          end function omp_get_device_teams_thread_limit
         end interface
 
         interface omp_set_max_active_levels
@@ -588,9 +645,36 @@
         end interface
 
         interface
+          ! Implementation choice: bind(C) and no default-kind-8 integer
+          function omp_get_num_teams_dim (dim) bind(C)
+            use, intrinsic :: iso_c_binding, only : c_int
+            integer (c_int) :: omp_get_num_teams_dim
+            integer (c_int), value :: dim
+          end function omp_get_num_teams_dim
+        end interface
+
+        interface
+          ! Use bind(C) for simplicity; will fail with default-kind-8 integer
+          function omp_get_device_num_teams (device_num) bind(C)
+            use iso_c_binding, only: c_int
+            integer (c_int), value :: device_num
+            integer (c_int) :: omp_get_device_num_teams
+          end function omp_get_device_num_teams
+        end interface
+
+        interface
           function omp_get_team_num ()
             integer (4) :: omp_get_team_num
           end function omp_get_team_num
+        end interface
+
+        interface
+          ! Implementation choice: bind(C) and no default-kind-8 integer
+          function omp_get_team_num_dim (dim) bind(C)
+            use, intrinsic :: iso_c_binding, only : c_int
+            integer (c_int) :: omp_get_team_num_dim
+            integer (c_int), value :: dim
+          end function omp_get_team_num_dim
         end interface
 
         interface
@@ -627,6 +711,14 @@
         end interface
 
         interface
+          ! Use bind(C) for simplicity; will fail with default-kind-8 integer
+          subroutine omp_set_device_num_teams (num_teams, device_num) bind(C)
+            use iso_c_binding, only: c_int
+            integer (c_int), value, intent (in) :: num_teams, device_num
+          end subroutine omp_set_device_num_teams
+        end interface
+
+        interface
           function omp_get_max_teams ()
             integer (4) :: omp_get_max_teams
           end function omp_get_max_teams
@@ -642,9 +734,28 @@
         end interface
 
         interface
+          ! Use bind(C) for simplicity; will fail with default-kind-8 integer
+          subroutine omp_set_device_teams_thread_limit (thread_limit, device_num) &
+              bind(C)
+            use iso_c_binding, only: c_int
+            integer (c_int), value, intent (in) :: thread_limit, device_num
+          end subroutine omp_set_device_teams_thread_limit
+        end interface
+
+        interface
           function omp_get_teams_thread_limit ()
             integer (4) :: omp_get_teams_thread_limit
           end function omp_get_teams_thread_limit
+        end interface
+
+        interface
+          integer (kind=c_size_t) function omp_get_gprivate_limit (&
+              device_num, access_group)
+            use, intrinsic :: iso_c_binding, only : c_size_t, c_int
+            import :: omp_access_kind
+            integer (kind=c_int), value :: device_num
+            integer (kind=omp_access_kind), value, optional :: access_group
+          end function omp_get_gprivate_limit
         end interface
 
         interface
@@ -1038,20 +1149,86 @@
           end function omp_get_device_from_uid
         end interface
 
+        interface omp_get_supported_active_team_dims
+          ! Implementation choice: no default-kind-8 integer
+          function omp_get_supported_active_team_dims (device_num, &
+             native_support)
+            use, intrinsic :: iso_c_binding, only : c_int
+           integer (4) :: omp_get_supported_active_team_dims
+           integer (4), intent(in) :: device_num
+           logical (4), intent(in) :: native_support
+          end function omp_get_supported_active_team_dims
+        end interface
+
+        interface omp_get_supported_active_league_dims
+          ! Implementation choice: no default-kind-8 integer
+          function omp_get_supported_active_league_dims ( &
+              device_num, native_support)
+            integer (4) :: omp_get_supported_active_league_dims
+            integer (4), intent(in) :: device_num
+            logical (4), intent(in) :: native_support
+          end function omp_get_supported_active_league_dims
+        end interface
+
+        interface omp_get_supported_teams_dim
+          ! Implementation choice: bind(C) and no default-kind-8 integer
+          function omp_get_supported_teams_dim (device_num, dim) bind(C)
+            use, intrinsic :: iso_c_binding, only : c_int
+            integer (c_int) :: omp_get_supported_teams_dim
+            integer (c_int), value :: device_num, dim
+          end function omp_get_supported_teams_dim
+        end interface
+
+        interface omp_get_supported_threads_dim
+          ! Implementation choice: bind(C) and no default-kind-8 integer
+          function omp_get_supported_threads_dim (device_num, dim) bind(C)
+            use, intrinsic :: iso_c_binding, only : c_int
+            integer (c_int) :: omp_get_supported_threads_dim
+            integer (c_int), value :: device_num, dim
+          end function omp_get_supported_threads_dim
+        end interface
+
         interface omp_get_uid_from_device
           ! Deviation from OpenMP 6.0: VALUE added.
           character(:) function omp_get_uid_from_device (device_num)
-            use iso_c_binding
+            use iso_c_binding, only: c_int32_t
             pointer :: omp_get_uid_from_device
             integer(c_int32_t), intent(in), value :: device_num
           end function omp_get_uid_from_device
 
           character(:) function omp_get_uid_from_device_8 (device_num)
-            use iso_c_binding
+            use iso_c_binding, only: c_int64_t
             pointer :: omp_get_uid_from_device_8
             integer(c_int64_t), intent(in), value :: device_num
           end function omp_get_uid_from_device_8
         end interface omp_get_uid_from_device
+
+        interface
+          ! This function only supports integer(4) for simplicity.
+          ! Contrary to OpenMP 6.1, it also uses bind(C) and value
+          ! and an explicit-size instead of assumed-size array.
+          subroutine omp_get_device_distances (ndevs, devs, distances) bind(C)
+            use iso_c_binding
+            integer(c_int), value, intent(in) :: ndevs
+            integer(c_int), intent(in) :: devs(ndevs)
+            integer(c_int), intent(out) :: distances(ndevs)
+          end subroutine omp_get_device_distances
+        end interface
+
+        interface omp_control_tool
+          integer (kind=omp_control_tool_result_kind) function &
+              omp_control_tool (command, modifier)
+            import :: omp_control_tool_result_kind, omp_control_tool_kind
+            integer (kind=omp_control_tool_kind) command
+            integer(4) modifier
+          end function
+          integer (kind=omp_control_tool_result_kind) function &
+              omp_control_tool_8 (command, modifier)
+            import :: omp_control_tool_result_kind, omp_control_tool_kind
+            integer (kind=omp_control_tool_kind) command
+            integer(8) modifier
+          end function
+        end interface omp_control_tool
 
 #if _OPENMP >= 201811
 !GCC$ ATTRIBUTES DEPRECATED :: omp_get_nested, omp_set_nested

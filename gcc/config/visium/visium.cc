@@ -980,14 +980,13 @@ ok_for_simple_arith_logic_operands (rtx *, machine_mode)
 int
 empty_delay_slot (rtx_insn *insn)
 {
-  rtx seq;
 
   /* If no previous instruction (should not happen), return true.  */
   if (PREV_INSN (insn) == NULL)
     return 1;
 
-  seq = NEXT_INSN (PREV_INSN (insn));
-  if (GET_CODE (PATTERN (seq)) == SEQUENCE)
+  rtx_insn *seq = NEXT_INSN (PREV_INSN (insn));
+  if (is_a <rtx_sequence *> (PATTERN (seq)))
     return 0;
 
   return 1;
@@ -1096,7 +1095,7 @@ gr5_hazard_bypass_p (rtx_insn *out_insn, rtx_insn *in_insn)
 /* Return true if INSN is an empty asm instruction.  */
 
 static bool
-empty_asm_p (rtx insn)
+empty_asm_p (rtx_insn *insn)
 {
   rtx body = PATTERN (insn);
   const char *templ;
@@ -1277,10 +1276,10 @@ gr5_hazard_avoidance (void)
       {
 	rtx pat = PATTERN (insn);
 
-	if (GET_CODE (pat) == SEQUENCE)
+	if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (pat))
 	  {
-	    for (int i = 0; i < XVECLEN (pat, 0); i++)
-	      gr5_avoid_hazard (as_a <rtx_insn *> (XVECEXP (pat, 0, i)),
+	    for (int i = 0; i < seq->len (); i++)
+	      gr5_avoid_hazard (seq->insn (i),
 				&last_reg, &last_insn_call);
 	  }
 
@@ -3749,12 +3748,12 @@ visium_epilogue_uses (int regno)
 
 /* Wrapper around emit_insn that sets RTX_FRAME_RELATED_P on the insn.  */
 
-static rtx
+static rtx_insn *
 emit_frame_insn (rtx x)
 {
-  x = emit_insn (x);
-  RTX_FRAME_RELATED_P (x) = 1;
-  return x;
+  rtx_insn *insn = emit_insn (x);
+  RTX_FRAME_RELATED_P (insn) = 1;
+  return insn;
 }
 
 /* Allocate ALLOC bytes on the stack and save the registers LOW_REGNO to
@@ -3777,7 +3776,7 @@ visium_save_regs (int alloc, int offset, int low_regno, int high_regno)
     {
       enum reg_type reg_type = GET_REG_TYPE (regno);
       int mask_bit = 1 << (regno - first_regno[reg_type]);
-      rtx insn;
+      rtx_insn *insn;
 
       if (current_frame_info.mask[reg_type] & mask_bit)
 	{
@@ -3917,11 +3916,11 @@ visium_expand_prologue (void)
 
       if (alloc_size > 65535)
 	{
-	  rtx tmp = gen_rtx_REG (SImode, PROLOGUE_TMP_REGNUM), insn;
+	  rtx tmp = gen_rtx_REG (SImode, PROLOGUE_TMP_REGNUM);
 	  emit_insn (gen_movsi (tmp, GEN_INT (alloc_size)));
-	  insn = emit_frame_insn (gen_subsi3_flags (stack_pointer_rtx,
-						    stack_pointer_rtx,
-						    tmp));
+	  rtx_insn *insn = emit_frame_insn (gen_subsi3_flags (stack_pointer_rtx,
+							      stack_pointer_rtx,
+							      tmp));
 	  add_reg_note (insn, REG_FRAME_RELATED_EXPR,
 			gen_rtx_SET (stack_pointer_rtx,
 				     gen_rtx_PLUS (Pmode, stack_pointer_rtx,
@@ -3981,7 +3980,7 @@ visium_add_cfa_restore_note (rtx reg)
 /* Add queued REG_CFA_RESTORE notes to INSN, if any.  */
 
 static void
-visium_add_queued_cfa_restore_notes (rtx insn)
+visium_add_queued_cfa_restore_notes (rtx_insn *insn)
 {
   rtx last;
   if (!cfa_restores)
@@ -4109,7 +4108,7 @@ visium_restore_regs (int dealloc, int offset, int high_regno, int low_regno)
     }
 
   /* Deallocate the stack space.  */
-  rtx insn = emit_frame_insn (gen_stack_pop (GEN_INT (dealloc)));
+  rtx_insn *insn = emit_frame_insn (gen_stack_pop (GEN_INT (dealloc)));
   add_reg_note (insn, REG_FRAME_RELATED_EXPR,
 		gen_rtx_SET (stack_pointer_rtx,
 			     gen_rtx_PLUS (Pmode, stack_pointer_rtx,
@@ -4162,7 +4161,8 @@ visium_expand_epilogue (void)
       else
 	src = gen_frame_mem (SImode, stack_pointer_rtx);
 
-      rtx insn = emit_frame_insn (gen_movsi (hard_frame_pointer_rtx, src));
+      rtx_insn *insn = emit_frame_insn (gen_movsi (hard_frame_pointer_rtx,
+						   src));
       add_reg_note (insn, REG_CFA_ADJUST_CFA,
 		    gen_rtx_SET (stack_pointer_rtx,
 				 hard_frame_pointer_rtx));
@@ -4205,7 +4205,7 @@ visium_expand_epilogue (void)
   else if (fsize)
     {
       const int pop_size = reg_size ? local_frame_offset + var_size : fsize;
-      rtx insn;
+      rtx_insn *insn;
 
       if (pop_size > 65535)
 	{

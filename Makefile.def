@@ -77,7 +77,7 @@ host_modules= { module= gprofng; };
 host_modules= { module= gettext; bootstrap=true; no_install=true;
                 module_srcdir= "gettext/gettext-runtime";
 		// We always build gettext with pic, because some packages (e.g. gdbserver)
-		// need it in some configuratons, which is determined via nontrivial tests.
+		// need it in some configurations, which is determined via nontrivial tests.
 		// Always enabling pic seems to make sense for something tied to
 		// user-facing output.
 		extra_configure_flags='--disable-shared --disable-threads --disable-java --disable-csharp --with-pic --disable-libasprintf';
@@ -282,6 +282,7 @@ flags_to_pass = { flag= CFLAGS_FOR_BUILD ; };
 flags_to_pass = { flag= CXX_FOR_BUILD ; };
 flags_to_pass = { flag= EXPECT ; };
 flags_to_pass = { flag= FLEX ; };
+flags_to_pass = { flag= GNATMAKE_FOR_BUILD ; };
 flags_to_pass = { flag= INSTALL ; };
 flags_to_pass = { flag= INSTALL_DATA ; };
 flags_to_pass = { flag= INSTALL_PROGRAM ; };
@@ -369,10 +370,9 @@ dependencies = { module=all-build-libcpp; on=all-build-libiberty; };
 
 // Host modules specific to gcc.
 dependencies = { module=configure-gcc; on=configure-gettext; };
-dependencies = { module=configure-gcc; on=all-gmp; };
-dependencies = { module=configure-gcc; on=all-mpfr; };
-dependencies = { module=configure-gcc; on=all-mpc; };
-dependencies = { module=configure-gcc; on=all-isl; };
+// gcc/configure only needs gmp.h, which configure-gmp generates.
+// gcc/configure.ac checks that gmp.h can be used.
+dependencies = { module=configure-gcc; on=configure-gmp; };
 dependencies = { module=configure-gcc; on=all-lto-plugin; };
 dependencies = { module=configure-gcc; on=all-binutils; };
 dependencies = { module=configure-gcc; on=all-gas; };
@@ -382,6 +382,7 @@ dependencies = { module=configure-gcc; on=all-libiconv; };
 dependencies = { module=all-gcc; on=all-libiberty; hard=true; };
 dependencies = { module=all-gcc; on=all-libgrust; };
 dependencies = { module=all-gcc; on=all-gettext; };
+dependencies = { module=all-gcc; on=all-gmp; };
 dependencies = { module=all-gcc; on=all-mpfr; };
 dependencies = { module=all-gcc; on=all-mpc; };
 dependencies = { module=all-gcc; on=all-isl; };
@@ -679,7 +680,6 @@ dependencies = { module=configure-target-libphobos; on=configure-target-zlib; };
 dependencies = { module=all-target-libphobos; on=all-target-libbacktrace; };
 dependencies = { module=all-target-libphobos; on=all-target-zlib; };
 dependencies = { module=all-target-libphobos; on=all-target-libatomic; };
-dependencies = { module=configure-target-libstdc++-v3; on=configure-target-libgomp; };
 dependencies = { module=configure-target-libsanitizer; on=all-target-libstdc++-v3; };
 dependencies = { module=configure-target-libvtv; on=all-target-libstdc++-v3; };
 dependencies = { module=configure-target-libgrust; on=all-target-libstdc++-v3; };

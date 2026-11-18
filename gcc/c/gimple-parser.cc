@@ -110,7 +110,8 @@ static void c_parser_gimple_label (gimple_parser &, gimple_seq *);
 static void c_parser_gimple_statement (gimple_parser &, gimple_seq *);
 static struct c_expr c_parser_gimple_binary_expression (gimple_parser &, tree);
 static struct c_expr c_parser_gimple_unary_expression (gimple_parser &);
-static struct c_expr c_parser_gimple_postfix_expression (gimple_parser &);
+static struct c_expr c_parser_gimple_postfix_expression
+			(gimple_parser &, tree = error_mark_node);
 static struct c_expr c_parser_gimple_postfix_expression_after_primary
 			(gimple_parser &, location_t, struct c_expr);
 static void c_parser_gimple_declaration (gimple_parser &);
@@ -452,7 +453,7 @@ c_parser_gimple_compound_statement (gimple_parser &parser, gimple_seq *seq)
   if (! c_parser_require (parser, CPP_OPEN_BRACE, "expected %<{%>"))
     return false;
 
-  /* A compund statement starts with optional declarations.  */
+  /* A compound statement starts with optional declarations.  */
   while (c_parser_next_tokens_start_declaration (parser))
     {
       c_parser_gimple_declaration (parser);
@@ -790,6 +791,11 @@ c_parser_gimple_statement (gimple_parser &parser, gimple_seq *seq)
   loc = EXPR_LOCATION (lhs.value);
   rhs.set_error ();
 
+  /* The parser already reported the error in an invalid statement.  */
+  if (c_parser_next_token_is (parser, CPP_SEMICOLON)
+      && lhs.value == error_mark_node)
+    return;
+
   /* GIMPLE call statement without LHS.  */
   if (c_parser_next_token_is (parser, CPP_SEMICOLON)
       && TREE_CODE (lhs.value) == CALL_EXPR)
@@ -804,6 +810,22 @@ c_parser_gimple_statement (gimple_parser &parser, gimple_seq *seq)
   /* All following cases are statements with LHS.  */
   if (! c_parser_require (parser, CPP_EQ, "expected %<=%>"))
     return;
+
+  /* Eat and ignore {v} right after the =, the has_volatile_ops is
+     redundant and re-computed by the operand scanner.  */
+  if (c_parser_next_token_is (parser, CPP_OPEN_BRACE)
+      && !(c_parser_peek_token (parser)->flags & PREV_WHITE)
+      && c_parser_peek_2nd_token (parser)->type == CPP_NAME
+      && !(c_parser_peek_2nd_token (parser)->flags & PREV_WHITE)
+      && strcmp ("v", IDENTIFIER_POINTER
+			(c_parser_peek_2nd_token (parser)->value)) == 0
+      && c_parser_peek_nth_token (parser, 3)->type == CPP_CLOSE_BRACE
+      && !(c_parser_peek_nth_token (parser, 3)->flags & PREV_WHITE))
+    {
+      c_parser_consume_token (parser);
+      c_parser_consume_token (parser);
+      c_parser_consume_token (parser);
+    }
 
   /* Cast expression.  */
   if (c_parser_next_token_is (parser, CPP_OPEN_PAREN)
@@ -1023,7 +1045,7 @@ c_parser_gimple_binary_expression (gimple_parser &parser, tree ret_type)
   struct c_expr ret, lhs, rhs;
   enum tree_code code = ERROR_MARK;
   ret.set_error ();
-  lhs = c_parser_gimple_postfix_expression (parser);
+  lhs = c_parser_gimple_postfix_expression (parser, ret_type);
   if (c_parser_error (parser))
     return ret;
   switch (c_parser_peek_token (parser)->type)
@@ -1422,7 +1444,9 @@ c_parser_gimple_call_internal (gimple_parser &parser)
       c_parser_skip_until_found (parser, CPP_CLOSE_PAREN, "expected %<)%>");
       if (ifn == IFN_LAST)
 	error_at (loc, "unknown internal function %qE", id);
-      else
+      else if (!exprlist.contains (error_mark_node)
+	       && check_internal_fn_args (loc, ifn, exprlist.length (),
+					  exprlist.address ()))
 	{
 	  expr.value = build_call_expr_internal_loc_array
 	    (loc, ifn, void_type_node, exprlist.length (),
@@ -1488,7 +1512,7 @@ c_parser_gimple_typespec (gimple_parser &parser)
 */
 
 static struct c_expr
-c_parser_gimple_postfix_expression (gimple_parser &parser)
+c_parser_gimple_postfix_expression (gimple_parser &parser, tree ret_type)
 {
   location_t loc = c_parser_peek_token (parser)->location;
   source_range tok_range = c_parser_peek_token (parser)->get_range ();
@@ -1530,6 +1554,7 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 	      /* __MEM '<' type-name [ ',' number ] '>'
 	               '(' [ '(' type-name ')' ] unary-expression
 			   [ '+' number ]
+			   [ ',' number ]
 			   [ ',' number ':' number ] ')'  */
 	      location_t loc = c_parser_peek_token (parser)->location;
 	      c_parser_consume_token (parser);
@@ -1542,6 +1567,8 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 	      index2.value = NULL_TREE;
 	      unsigned short clique = 0;
 	      unsigned short base = 0;
+	      bool reverse_order = false;
+	      struct c_expr ro;
 	      if (c_parser_require (parser, CPP_OPEN_PAREN, "expected %<(%>"))
 		{
 		  tree alias_type = NULL_TREE;
@@ -1626,10 +1653,29 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 		  if (c_parser_next_token_is (parser, CPP_COMMA))
 		    {
 		      struct c_expr cl, ba;
+		      bool has_clb = true;
 		      c_parser_consume_token (parser);
 		      cl = c_parser_gimple_postfix_expression (parser);
-		      if (c_parser_require (parser,
-					    CPP_COLON, "expected %<:%>"))
+		      if (!c_parser_next_token_is (parser, CPP_COLON))
+			{
+			  ro = cl;
+			  unsigned HOST_WIDE_INT tmp = 0;
+			  if (!tree_fits_uhwi_p (ro.value)
+			      || (tmp = tree_to_uhwi (ro.value)) > 1)
+			    error_at (ro.get_start (),
+				      "invalid reverse order value");
+			  reverse_order = tmp;
+			  has_clb = false;
+			  if (c_parser_next_token_is (parser, CPP_COMMA))
+			    {
+			      c_parser_consume_token (parser);
+			      cl = c_parser_gimple_postfix_expression (parser);
+		              has_clb = true;
+			    }
+			}
+		      if (has_clb
+			  && c_parser_require (parser,
+					       CPP_COLON, "expected %<:%>"))
 			{
 			  ba = c_parser_gimple_postfix_expression (parser);
 			  if (!tree_fits_uhwi_p (cl.value)
@@ -1664,6 +1710,14 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 		  cfun->last_clique = MAX (cfun->last_clique, clique);
 		  MR_DEPENDENCE_CLIQUE (expr.value) = clique;
 		  MR_DEPENDENCE_BASE (expr.value) = base;
+		}
+	      if (reverse_order)
+		{
+		  if (TREE_CODE (expr.value) == MEM_REF)
+		    REF_REVERSE_STORAGE_ORDER (expr.value) = reverse_order;
+		  else
+		    error_at (ro.get_start (),
+			      "target mem ref cannot have reverse order");
 		}
 	      break;
 	    }
@@ -1722,6 +1776,38 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 		}
 	      break;
 	    }
+	  else if (strcmp (IDENTIFIER_POINTER (id), "__CLOBBER") == 0)
+	    {
+	      /* __CLOBBER [ '(' bob | eob | bos | eos ')' ]  */
+	      clobber_kind kind = CLOBBER_UNDEF;
+	      c_parser_consume_token (parser);
+	      if (c_parser_next_token_is (parser, CPP_OPEN_PAREN))
+		{
+		  c_parser_consume_token (parser);
+		  auto tok = c_parser_peek_token (parser);
+		  if (c_parser_require (parser, CPP_NAME,
+					"expected clobber kind"))
+		    {
+		      const char *kind_str = IDENTIFIER_POINTER (tok->value);
+		      if (strcmp (kind_str, "bos") == 0)
+			kind = CLOBBER_STORAGE_BEGIN;
+		      else if (strcmp (kind_str, "bob") == 0)
+			kind = CLOBBER_OBJECT_BEGIN;
+		      else if (strcmp (kind_str, "eob") == 0)
+			kind = CLOBBER_OBJECT_END;
+		      else if (strcmp (kind_str, "eos") == 0)
+			kind = CLOBBER_STORAGE_END;
+		      else
+			c_parser_error (parser, "expected one of %<bos%>, "
+					"%<eos%>, %<bob>, %<eob%>");
+		    }
+		  c_parser_skip_until_found (parser, CPP_CLOSE_PAREN,
+					     "expected %<)%>");
+		}
+	      /* We infer the (redundant) type from the LHS.  */
+	      expr.value = build_clobber (ret_type, kind);
+	      break;
+	    }
 	  else if (strcmp (IDENTIFIER_POINTER (id), "_Literal") == 0)
 	    {
 	      /* _Literal '(' type-name ')' ( [ '-' ] constant | constructor ) */
@@ -1758,7 +1844,8 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 		  if (VECTOR_TYPE_P (type)
 		      && !c_parser_next_token_is (parser, CPP_CLOSE_BRACE))
 		    {
-		      vec_alloc (v, TYPE_VECTOR_SUBPARTS (type).to_constant ());
+		      vec_alloc (v, constant_lower_bound (
+				      TYPE_VECTOR_SUBPARTS (type)));
 		      do
 			{
 			  tree val

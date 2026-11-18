@@ -179,6 +179,13 @@ class swap_web_entry : public web_entry_base
   unsigned int special_handling : 4;
   /* Set if the web represented by this entry cannot be optimized.  */
   unsigned int web_not_optimizable : 1;
+  /* Set if the swappable insns in the web represented by this entry
+     have to be fixed. Swappable insns have to be fixed in:
+       - webs containing permuting loads/stores and the swap insns
+	 in such webs have been marked for removal
+       - webs where non-permuting loads/stores have been converted
+	 to permuting loads/stores  */
+  unsigned int web_requires_special_handling : 1;
   /* Set if this insn should be deleted.  */
   unsigned int will_delete : 1;
 };
@@ -199,7 +206,7 @@ enum special_handling_values {
 /* Union INSN with all insns containing definitions that reach USE.
    Detect whether USE is live-in to the current function.  */
 static void
-union_defs (swap_web_entry *insn_entry, rtx insn, df_ref use)
+union_defs (swap_web_entry *insn_entry, rtx_insn *insn, df_ref use)
 {
   struct df_link *link = DF_REF_CHAIN (use);
 
@@ -213,7 +220,7 @@ union_defs (swap_web_entry *insn_entry, rtx insn, df_ref use)
 
       if (DF_REF_INSN_INFO (link->ref))
 	{
-	  rtx def_insn = DF_REF_INSN (link->ref);
+	  rtx_insn *def_insn = DF_REF_INSN (link->ref);
 	  gcc_assert (NONDEBUG_INSN_P (def_insn));
 	  unionfind_union (insn_entry + INSN_UID (insn),
 			   insn_entry + INSN_UID (def_insn));
@@ -226,7 +233,7 @@ union_defs (swap_web_entry *insn_entry, rtx insn, df_ref use)
 /* Union INSN with all insns containing uses reached from DEF.
    Detect whether DEF is live-out from the current function.  */
 static void
-union_uses (swap_web_entry *insn_entry, rtx insn, df_ref def)
+union_uses (swap_web_entry *insn_entry, rtx_insn *insn, df_ref def)
 {
   struct df_link *link = DF_REF_CHAIN (def);
 
@@ -242,7 +249,7 @@ union_uses (swap_web_entry *insn_entry, rtx insn, df_ref def)
 
       if (DF_REF_INSN_INFO (link->ref))
 	{
-	  rtx use_insn = DF_REF_INSN (link->ref);
+	  rtx_insn *use_insn = DF_REF_INSN (link->ref);
 	  if (NONDEBUG_INSN_P (use_insn))
 	    unionfind_union (insn_entry + INSN_UID (insn),
 			     insn_entry + INSN_UID (use_insn));
@@ -270,7 +277,7 @@ pattern_is_rotate64 (rtx pat)
 /* Return 1 iff INSN is a load insn, including permuting loads that
    represent an lvxd2x instruction; else return 0.  */
 static unsigned int
-insn_is_load_p (rtx insn)
+insn_is_load_p (rtx_insn *insn)
 {
   rtx body = PATTERN (insn);
 
@@ -303,7 +310,7 @@ insn_is_load_p (rtx insn)
 /* Return 1 iff INSN is a store insn, including permuting stores that
    represent an stvxd2x instruction; else return 0.  */
 static unsigned int
-insn_is_store_p (rtx insn)
+insn_is_store_p (rtx_insn *insn)
 {
   rtx body = PATTERN (insn);
   if (GET_CODE (body) == SET && MEM_P (SET_DEST (body)))
@@ -319,7 +326,7 @@ insn_is_store_p (rtx insn)
 /* Return 1 iff INSN swaps doublewords.  This may be a reg-reg swap,
    a permuting load, or a permuting store.  */
 static unsigned int
-insn_is_swap_p (rtx insn)
+insn_is_swap_p (rtx_insn *insn)
 {
   rtx body = PATTERN (insn);
   if (GET_CODE (body) != SET)
@@ -403,7 +410,7 @@ quad_aligned_load_p (swap_web_entry *insn_entry, rtx_insn *insn)
       || def_link->next)
     return false;
 
-  rtx def_insn = DF_REF_INSN (def_link->ref);
+  rtx_insn *def_insn = DF_REF_INSN (def_link->ref);
   unsigned uid2 = INSN_UID (def_insn);
   /* We're looking for a load-with-swap insn.  If this is not that,
      return false.  */
@@ -456,13 +463,13 @@ quad_aligned_store_p (swap_web_entry *insn_entry, rtx_insn *insn)
       if (!rtx_equal_p (DF_REF_REG (use), swap_reg))
 	continue;
 
-      /* If there is no def or the def is artifical or there are
+      /* If there is no def or the def is artificial or there are
 	 multiple defs, punt.  */
       if (!def_link || !def_link->ref || DF_REF_IS_ARTIFICIAL (def_link->ref)
 	  || def_link->next)
 	return false;
 
-      rtx def_insn = DF_REF_INSN (def_link->ref);
+      rtx_insn *def_insn = DF_REF_INSN (def_link->ref);
       unsigned uid2 = INSN_UID (def_insn);
 
       /* If this source value is not a simple swap, return false */
@@ -492,7 +499,7 @@ quad_aligned_store_p (swap_web_entry *insn_entry, rtx_insn *insn)
 static unsigned int
 swap_feeds_both_load_and_store (swap_web_entry *insn_entry)
 {
-  rtx insn = insn_entry->insn;
+  rtx_insn *insn = insn_entry->insn;
   struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
   df_ref def, use;
   struct df_link *link = 0;
@@ -521,7 +528,7 @@ swap_feeds_both_load_and_store (swap_web_entry *insn_entry)
 
 /* Return TRUE if insn is a swap fed by a load from the constant pool.  */
 static bool
-const_load_sequence_p (swap_web_entry *insn_entry, rtx insn)
+const_load_sequence_p (swap_web_entry *insn_entry, rtx_insn *insn)
 {
   unsigned uid = INSN_UID (insn);
   if (!insn_entry[uid].is_swap || insn_entry[uid].is_load)
@@ -533,7 +540,7 @@ const_load_sequence_p (swap_web_entry *insn_entry, rtx insn)
   df_ref use;
 
   /* Iterate over the definitions that are used by this insn.  Since
-     this is known to be a swap insn, expect only one used definnition.  */
+     this is known to be a swap insn, expect only one used definition.  */
   FOR_EACH_INSN_INFO_USE (use, insn_info)
     {
       struct df_link *def_link = DF_REF_CHAIN (use);
@@ -544,7 +551,7 @@ const_load_sequence_p (swap_web_entry *insn_entry, rtx insn)
 	  || def_link->next)
 	return false;
 
-      rtx def_insn = DF_REF_INSN (def_link->ref);
+      rtx_insn *def_insn = DF_REF_INSN (def_link->ref);
       unsigned uid2 = INSN_UID (def_insn);
       /* If this is not a load or is not a swap, return false.  */
       if (!insn_entry[uid2].is_load || !insn_entry[uid2].is_swap)
@@ -587,7 +594,7 @@ const_load_sequence_p (swap_web_entry *insn_entry, rtx insn)
 	  if (DF_REF_IS_ARTIFICIAL (base_def_link->ref))
 	    return false;
 
-	  rtx tocrel_insn = DF_REF_INSN (base_def_link->ref);
+	  rtx_insn *tocrel_insn = DF_REF_INSN (base_def_link->ref);
 	  rtx tocrel_body = PATTERN (tocrel_insn);
 	  rtx base, offset;
 	  if (GET_CODE (tocrel_body) != SET)
@@ -864,7 +871,7 @@ rtx_is_swappable_p (rtx op, unsigned int *special)
    if vector doublewords are swapped in memory (in which case
    *SPECIAL is changed to a value indicating how).  */
 static unsigned int
-insn_is_swappable_p (swap_web_entry *insn_entry, rtx insn,
+insn_is_swappable_p (swap_web_entry *insn_entry, rtx_insn *insn,
 		     unsigned int *special)
 {
   /* Calls are always bad.  */
@@ -938,7 +945,7 @@ insn_is_swappable_p (swap_web_entry *insn_entry, rtx insn,
 	    return 0;
 
 	  for (; link; link = link->next) {
-	    rtx use_insn = DF_REF_INSN (link->ref);
+	    rtx_insn *use_insn = DF_REF_INSN (link->ref);
 	    rtx use_body = PATTERN (use_insn);
 	    if (GET_CODE (use_body) != SET
 		|| GET_CODE (SET_SRC (use_body)) != UNSPEC
@@ -1024,7 +1031,7 @@ chain_contains_only_swaps (swap_web_entry *insn_entry, struct df_link *link,
       if (DF_REF_IS_ARTIFICIAL (link->ref))
 	return false;
 
-      rtx reached_insn = DF_REF_INSN (link->ref);
+      rtx_insn *reached_insn = DF_REF_INSN (link->ref);
       unsigned uid = INSN_UID (reached_insn);
       struct df_insn_info *insn_info = DF_INSN_INFO_GET (reached_insn);
 
@@ -1044,7 +1051,7 @@ chain_contains_only_swaps (swap_web_entry *insn_entry, struct df_link *link,
 		  if (DF_REF_IS_ARTIFICIAL (link->ref))
 		    return false;
 
-		  rtx swap_def_insn = DF_REF_INSN (swap_link->ref);
+		  rtx_insn *swap_def_insn = DF_REF_INSN (swap_link->ref);
 		  unsigned uid2 = INSN_UID (swap_def_insn);
 
 		  /* Only permuting loads are allowed.  */
@@ -1067,7 +1074,7 @@ chain_contains_only_swaps (swap_web_entry *insn_entry, struct df_link *link,
 		  if (DF_REF_IS_ARTIFICIAL (link->ref))
 		    return false;
 
-		  rtx swap_use_insn = DF_REF_INSN (swap_link->ref);
+		  rtx_insn *swap_use_insn = DF_REF_INSN (swap_link->ref);
 		  unsigned uid2 = INSN_UID (swap_use_insn);
 
 		  /* Permuting stores or register swaps are allowed.  */
@@ -1090,7 +1097,7 @@ chain_contains_only_swaps (swap_web_entry *insn_entry, struct df_link *link,
 static void
 mark_swaps_for_removal (swap_web_entry *insn_entry, unsigned int i)
 {
-  rtx insn = insn_entry[i].insn;
+  rtx_insn *insn = insn_entry[i].insn;
   struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
 
   if (insn_entry[i].is_load)
@@ -1104,7 +1111,7 @@ mark_swaps_for_removal (swap_web_entry *insn_entry, unsigned int i)
 	     them confidently.  */
 	  while (link)
 	    {
-	      rtx use_insn = DF_REF_INSN (link->ref);
+	      rtx_insn *use_insn = DF_REF_INSN (link->ref);
 	      insn_entry[INSN_UID (use_insn)].will_delete = 1;
 	      link = link->next;
 	    }
@@ -1126,7 +1133,7 @@ mark_swaps_for_removal (swap_web_entry *insn_entry, unsigned int i)
 	     them confidently.  */
 	  while (link)
 	    {
-	      rtx def_insn = DF_REF_INSN (link->ref);
+	      rtx_insn *def_insn = DF_REF_INSN (link->ref);
 	      insn_entry[INSN_UID (def_insn)].will_delete = 1;
 	      link = link->next;
 	    }
@@ -1468,14 +1475,6 @@ handle_special_swappables (swap_web_entry *insn_entry, unsigned i)
       if (dump_file)
 	fprintf (dump_file, "Adjusting subreg in insn %d\n", i);
       break;
-    case SH_NOSWAP_LD:
-      /* Convert a non-permuting load to a permuting one.  */
-      permute_load (insn);
-      break;
-    case SH_NOSWAP_ST:
-      /* Convert a non-permuting store to a permuting one.  */
-      permute_store (insn);
-      break;
     case SH_EXTRACT:
       /* Change the lane on an extract operation.  */
       adjust_extract (insn);
@@ -1652,7 +1651,7 @@ replace_swapped_aligned_store (swap_web_entry *insn_entry,
       if (!rtx_equal_p (DF_REF_REG (use), swap_reg))
 	continue;
 
-      /* If there is no def or the def is artifical or there are
+      /* If there is no def or the def is artificial or there are
 	 multiple defs, we should not be here.  */
       gcc_assert (def_link && def_link->ref && !def_link->next
 		  && !DF_REF_IS_ARTIFICIAL (def_link->ref));
@@ -1750,7 +1749,7 @@ rs6000_gen_lvx (enum machine_mode mode, rtx dest_exp, rtx src_exp)
    load-with-swap, replace the load with an aligned load (without
    swap) and replace the swap with a copy insn.  */
 static void
-replace_swapped_aligned_load (swap_web_entry *insn_entry, rtx swap_insn)
+replace_swapped_aligned_load (swap_web_entry *insn_entry, rtx_insn *swap_insn)
 {
   /* Find the load.  */
   unsigned uid = INSN_UID (swap_insn);
@@ -1867,7 +1866,7 @@ replace_swapped_aligned_load (swap_web_entry *insn_entry, rtx swap_insn)
   A better solution is to fix the code generator to emit lvx/stvx for
   those.  */
 static void
-replace_swapped_load_constant (swap_web_entry *insn_entry, rtx swap_insn)
+replace_swapped_load_constant (swap_web_entry *insn_entry, rtx_insn *swap_insn)
 {
   /* Find the load.  */
   struct df_insn_info *insn_info = DF_INSN_INFO_GET (swap_insn);
@@ -2401,6 +2400,25 @@ recombine_lvx_stvx_patterns (function *fun)
   free (to_delete);
 }
 
+/* Return true if insn is a non-permuting load/store.  */
+static bool
+non_permuting_mem_insn (swap_web_entry *insn_entry, unsigned int i)
+{
+  return insn_entry[i].special_handling == SH_NOSWAP_LD
+	 || insn_entry[i].special_handling == SH_NOSWAP_ST;
+}
+
+/* Convert a non-permuting load/store insn to a permuting one.  */
+static void
+convert_mem_insn (swap_web_entry *insn_entry, unsigned int i)
+{
+  rtx_insn *insn = insn_entry[i].insn;
+  if (insn_entry[i].special_handling == SH_NOSWAP_LD)
+    permute_load (insn);
+  if (insn_entry[i].special_handling == SH_NOSWAP_ST)
+    permute_store (insn);
+}
+
 /* Main entry point for this pass.  */
 unsigned int
 rs6000_analyze_swaps (function *fun)
@@ -2458,7 +2476,7 @@ rs6000_analyze_swaps (function *fun)
 		 use.  */
 	      if (mode == DImode && DF_REF_INSN_INFO (mention))
 		{
-		  rtx feeder = DF_REF_INSN (mention);
+		  rtx_insn *feeder = DF_REF_INSN (mention);
 		  /* FIXME:  It is pretty hard to get from the df mention
 		     to the mode of the use in the insn.  We arbitrarily
 		     pick a vector mode here, even though the use might
@@ -2584,7 +2602,7 @@ rs6000_analyze_swaps (function *fun)
 	 by a register swap, the optimization isn't appropriate.  */
       else if (insn_entry[i].is_load && insn_entry[i].is_swap)
 	{
-	  rtx insn = insn_entry[i].insn;
+	  rtx_insn *insn = insn_entry[i].insn;
 	  struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
 	  df_ref def;
 
@@ -2601,7 +2619,7 @@ rs6000_analyze_swaps (function *fun)
 	}
       else if (insn_entry[i].is_store && insn_entry[i].is_swap)
 	{
-	  rtx insn = insn_entry[i].insn;
+	  rtx_insn *insn = insn_entry[i].insn;
 	  struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
 	  df_ref use;
 
@@ -2624,25 +2642,55 @@ rs6000_analyze_swaps (function *fun)
       dump_swap_insn_table (insn_entry);
     }
 
-  /* For each load and store in an optimizable web (which implies
-     the loads and stores are permuting), find the associated
-     register swaps and mark them for removal.  Due to various
-     optimizations we may mark the same swap more than once.  Also
-     perform special handling for swappable insns that require it.  */
+  /* There are two kinds of optimizations that can be performed on an
+     optimizable web:
+     1. Remove the register swaps associated with permuting load/store
+	in an optimizable web
+     2. Convert the vanilla loads/stores (that have not yet been split
+	into a permuting load/store and a swap) into a permuting
+	load/store (which effectively removes the swap)
+     In both the cases, swappable instructions in the webs need
+     special handling to fix them up.  */
   for (i = 0; i < e; ++i)
+    /* For each permuting load/store in an optimizable web, find
+       the associated register swaps and mark them for removal.
+       Due to various optimizations we may mark the same swap more
+       than once.  */
     if ((insn_entry[i].is_load || insn_entry[i].is_store)
 	&& insn_entry[i].is_swap)
       {
 	swap_web_entry* root_entry
 	  = (swap_web_entry*)((&insn_entry[i])->unionfind_root ());
 	if (!root_entry->web_not_optimizable)
-	  mark_swaps_for_removal (insn_entry, i);
+	  {
+	    mark_swaps_for_removal (insn_entry, i);
+	    root_entry->web_requires_special_handling = true;
+	  }
       }
-    else if (insn_entry[i].is_swappable && insn_entry[i].special_handling)
+    /* Convert the non-permuting loads/stores into a permuting
+       load/store.  */
+    else if (insn_entry[i].is_swappable
+	     && non_permuting_mem_insn (insn_entry, i))
       {
 	swap_web_entry* root_entry
 	  = (swap_web_entry*)((&insn_entry[i])->unionfind_root ());
 	if (!root_entry->web_not_optimizable)
+	  {
+	    convert_mem_insn (insn_entry, i);
+	    root_entry->web_requires_special_handling = true;
+	  }
+      }
+
+  /* Now that the webs which require special handling have been
+     identified, modify the instructions that are sensitive to
+     element order.  */
+  for (i = 0; i < e; ++i)
+    if (insn_entry[i].is_swappable && insn_entry[i].special_handling
+	&& !non_permuting_mem_insn (insn_entry, i))
+      {
+	swap_web_entry* root_entry
+	  = (swap_web_entry*)((&insn_entry[i])->unionfind_root ());
+	if (root_entry->web_requires_special_handling)
 	  handle_special_swappables (insn_entry, i);
       }
 

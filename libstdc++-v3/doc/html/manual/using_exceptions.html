@@ -21,7 +21,7 @@ exception neutrality and exception safety.
     Please note that using exceptions in combination with templates
     imposes an additional requirement for exception
     safety. Instantiating types are required to have destructors that
-    do no throw.
+    do not throw.
   </p><p>
     Using the layered approach from Abrahams, can classify library
     components as providing set levels of safety. These will be called
@@ -39,7 +39,7 @@ exception neutrality and exception safety.
     Two. Don't leak resources when exceptions are thrown. This is
     also referred to as the <span class="quote">“<span class="quote">basic</span>”</span> exception safety guarantee.
   </p><p>
-    This applicable throughout the standard library.
+    This is applicable throughout the standard library.
   </p></li><li class="listitem"><p>
     Three. Commit-or-rollback semantics.  This is
     referred to as <span class="quote">“<span class="quote">strong</span>”</span> exception safety guarantee.
@@ -56,9 +56,9 @@ exception neutrality and exception safety.
     propagating exceptions should not be swallowed in
     gratuitous <code class="literal">catch(...)</code> blocks. Instead,
     matching <code class="literal">try</code> and <code class="literal">catch</code>
-    blocks should have specific catch handlers and allow un-handed
+    blocks should have specific catch handlers and allow unhandled
     exception objects to propagate. If a
-    terminating <code class="literal">catch(...)</code> blocks exist then it
+    terminating <code class="literal">catch(...)</code> block exists then it
     should end with a <code class="literal">throw</code> to re-throw the current
     exception.
   </p><p>
@@ -186,7 +186,7 @@ exception neutrality and exception safety.
     configuration of the C++ compiler. On recent hardware with GNU
     system software of the same age, the combined code and data size
     overhead for enabling exception handling is around 7%. Of course,
-    if code size is of singular concern than using the appropriate
+    if code size is of singular concern then using the appropriate
     optimizer setting with exception handling enabled
     (ie, <code class="literal">-Os -fexceptions</code>) may save up to twice
     that, and preserve error checking.
@@ -321,7 +321,7 @@ is called.
   catch(...)
   { this-&gt;_M_setstate(ios_base::badbit); }
 </pre></div></div><div class="bibliography"><div class="titlepage"><div><div><h3 class="title"><a id="using.exceptions.biblio"></a>Bibliography</h3></div></div></div><div class="biblioentry"><a id="id-1.3.3.4.9.10.2"></a><p><span class="title"><em>
-	<a class="link" href="http://www.opengroup.org/austin/" target="_top">
+	<a class="link" href="https://www.opengroup.org/austin/" target="_top">
 	System Interface Definitions, Issue 7 (IEEE Std. 1003.1-2008)
 	</a>
       </em>. </span><span class="pagenums">

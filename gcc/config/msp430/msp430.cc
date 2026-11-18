@@ -540,7 +540,7 @@ static char const * const special_convention_function_names[] =
   NULL
 };
 
-/* TRUE if the function passed is a "speical" function.  Special
+/* TRUE if the function passed is a "special" function.  Special
    functions pass two DImode parameters in registers.  */
 static bool
 msp430_special_register_convention_p (const char *name)
@@ -1657,6 +1657,9 @@ msp430_insn_cost (rtx_insn *insn, bool speed ATTRIBUTE_UNUSED)
   if (recog_memoized (insn) < 0)
     return 0;
 
+  if (INSN_CODE (insn) == NOOP_MOVE_INSN_CODE)
+    return 0;
+
   /* The returned cost must be relative to COSTS_N_INSNS (1). An insn with a
      length of 2 bytes is the smallest possible size and so must be equivalent
      to COSTS_N_INSNS (1).  */
@@ -1704,6 +1707,13 @@ msp430_insn_cost (rtx_insn *insn, bool speed ATTRIBUTE_UNUSED)
 
 /* We use this to wrap all emitted insns in the prologue, so they get
    the "frame-related" (/f) flag set.  */
+static rtx_insn *
+F (rtx_insn *x)
+{
+  RTX_FRAME_RELATED_P (x) = 1;
+  return x;
+}
+
 static rtx
 F (rtx x)
 {
@@ -2883,7 +2893,7 @@ msp430_expand_prologue (void)
      that there is a single rtx representing the stack pointer,
      namely stack_pointer_rtx, and uses == to recognize it.  */
   rtx sp = stack_pointer_rtx;
-  rtx p;
+  rtx_insn *p;
 
   if (is_naked_func ())
     {
@@ -3004,7 +3014,7 @@ msp430_expand_epilogue (int is_eh)
   int i, j;
   int fs;
   rtx sp = stack_pointer_rtx;
-  rtx p;
+  rtx_insn *p;
   int helper_n = 0;
 
   if (is_naked_func ())
@@ -3165,8 +3175,7 @@ msp430_expand_epilogue (int is_eh)
   emit_jump_insn (gen_msp430_return ());
 }
 
-/* Implements EH_RETURN_STACKADJ_RTX.  Saved and used later in
-   m32c_emit_eh_epilogue.  */
+/* Implements EH_RETURN_STACKADJ_RTX.  */
 rtx
 msp430_eh_return_stackadj_rtx (void)
 {
@@ -3319,8 +3328,8 @@ msp430_expand_helper (rtx *operands, const char *helper_name,
 
   c = gen_call_value_internal (gen_rtx_REG (arg0mode, 12), fsym, GEN_INT (0));
 
-  c = emit_call_insn (c);
-  RTL_CONST_CALL_P (c) = 1;
+  rtx_insn *call = emit_call_insn (c);
+  RTL_CONST_CALL_P (call) = 1;
 
   /* Add register usage information for the arguments to the call.  */
   fusage = NULL;
@@ -3334,7 +3343,7 @@ msp430_expand_helper (rtx *operands, const char *helper_name,
       else
 	use_regs (&fusage, arg2, arg1sz);
     }
-  add_function_usage_to (c, fusage);
+  add_function_usage_to (call, fusage);
 
   emit_move_insn (operands[0],
 		  /* Return value will always start in R12.  */
@@ -4080,7 +4089,7 @@ msp430_op_not_in_high_mem (rtx op)
        memory.  */
     return true;
 
-  /* Check possibilites for (mem (plus)).
+  /* Check possibilities for (mem (plus)).
      e.g. (mem (const (plus ((symbol_ref) (const_int))))) : &addr+2.  */
   if (msp430_check_plus_not_high_mem (op0)
       || ((GET_CODE (op0) == CONST)

@@ -144,7 +144,7 @@ riscv_sr_match_epilogue (void)
      standard epilogue (of the form we expect to handle) consists of the
      following instructions:
 
-     1. A stack_tiesi or stack_tiedi (for RV32 and RV64 respectively),
+     1. A stack tie instruction,
 
      2. An optional use instruction for the register holding the return
         value.  This will be missing in functions with no return value,
@@ -154,7 +154,9 @@ riscv_sr_match_epilogue (void)
      4. A jump instruction of type gpr_restore_return.  */
   start = insn;
   if (INSN_CODE (insn) != CODE_FOR_stack_tiesi
-      && INSN_CODE (insn) != CODE_FOR_stack_tiedi)
+      && INSN_CODE (insn) != CODE_FOR_stack_tiedi
+      && INSN_CODE (insn) != CODE_FOR_stack_tie_spsi
+      && INSN_CODE (insn) != CODE_FOR_stack_tie_spdi)
     return NULL;
 
   insn = NEXT_INSN (insn);
@@ -188,7 +190,7 @@ check_for_no_return_call (rtx_insn *prologue)
      NOTE_INSN_PROLOGUE_END
      A no-return call instruction
 
-     If we do, then we can remove the prologue instruction safely. Remember
+     If we do, then we can remove the prologue instruction safely.  Remember
      that we've already confirmed by this point that the prologue is a call
      to riscv_save_0.  */
 
@@ -391,12 +393,9 @@ riscv_remove_unneeded_save_restore_calls (void)
      has no more than 1 call (checked above).  To convert this single call
      into a tail call we rely on the call being the last thing before the
      epilogue.  */
-  if (GET_CODE (insn_before_epilogue) != CALL_INSN)
+  auto call = dyn_cast<rtx_call_insn *> (insn_before_epilogue);
+  if (!call)
     return;
-
-  /* The last instruction in this block, just before the epilogue is a
-     call.  We can potentially change this call into a tail call.  */
-  rtx_insn *call = insn_before_epilogue;
 
   /* Transform call in insn to a sibcall, this will only be done if the
      last thing in the function is a call.  */
@@ -447,20 +446,18 @@ riscv_remove_unneeded_save_restore_calls (void)
       && !SIBCALL_REG_P (REGNO (target)))
     return;
 
-  riscv_cc cc = get_riscv_cc (XVECEXP (callpat, 0, 1));
   rtx sibcall = NULL;
   if (set_target != NULL)
-    sibcall = gen_sibcall_value_internal (set_target, target, const0_rtx,
-					  gen_int_mode (cc, SImode));
+    sibcall = gen_sibcall_value_internal (set_target, target, const0_rtx);
   else
-    sibcall
-      = gen_sibcall_internal (target, const0_rtx, gen_int_mode (cc, SImode));
+    sibcall = gen_sibcall_internal (target, const0_rtx);
 
   rtx_insn *before_call = PREV_INSN (call);
   remove_insn (call);
   rtx_insn *insn = emit_call_insn_after_setloc (sibcall, before_call,
 						INSN_LOCATION (call));
   REG_NOTES (insn) = REG_NOTES (call);
+  CALL_INSN_ABI_ID (insn) = CALL_INSN_ABI_ID (call);
   SIBLING_CALL_P (insn) = 1;
 
   /* Now update the prologue and epilogue to take account of the

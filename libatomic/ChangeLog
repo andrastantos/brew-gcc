@@ -1,3 +1,74 @@
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Use AC_CANONICAL_TARGET instead of
+	AC_CANONICAL_SYSTEM.
+
+2026-11-04  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_CONFIG_HEADER with AC_CONFIG_HEADERS.
+
+2026-10-26  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* acinclude.m4 (LIBAT_CHECK_LINKER_FEATURES): Update AC_PROG_LD to LT_PATH_LD.
+	* configure: Regenerate.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* configure: Regenerate.
+	* configure.ac: Drop AC_HEADER_STDC.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+
+2026-09-28  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* config/linux/aarch64/host-config.h (has_lse2): Mark unused arg.
+	(has_lse128): Change to use HWCAPs and check size of struct.
+	(has_rcpc3): Likewise.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* acinclude.m4: Replace AC_ERROR with AS_MSG_ERROR.  Replace AC_TRY_LINK
+	with AC_LINK_IFELSE.  Replace AC_TRY_COMPILE with AC_COMPILE_IFELSE.
+	Replace AC_HELP_STRING with AS_HELP_STRING.  Replace
+	AC_TRY_RUN with AC_RUN_IFELSE.
+	* configure.ac: Replace AM_PROG_LIBTOOL with LT_INIT.  Replace
+	AC_STDC_HEADERS with AC_HEADER_STDC.
+
+2026-06-17  Muhammad Kamran  <muhammad.kamran@arm.com>
+
+	* config/linux/aarch64/atomic_16.S (FEATURE_1_AND_MARK): Define.
+	Use AArch64 build attributes when __ARM_BUILDATTR64_FV is
+	available, otherwise emit a GNU property note.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/mingw/lock.c: Fix typos.
+	* config/posix/lock.c: Likewise.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* acinclude.m4: Fix typos.
+	* libatomic_i.h (__attribute__): Likewise.
+	* configure: Regenerate.
+
+2026-05-05  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* Makefile.in: Regenerate.
+	* acinclude.m4: Delete LIBAT_CHECK_ATTRIBUTE_VISIBILITY.
+	* aclocal.m4: Regenerate.
+	* configure: Likewise.
+	* configure.ac: Use GCC_CHECK_ATTRIBUTE_VISIBILITY instead of
+	LIBAT_CHECK_ATTRIBUTE_VISIBILITY.
+	* testsuite/Makefile.in: Regenerate.
+
 2026-02-21  Jakub Jelinek  <jakub@redhat.com>
 
 	* Makefile.am (all-local): Depend on stmp-libatomic and otherwise

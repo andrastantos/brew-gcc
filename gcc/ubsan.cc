@@ -31,7 +31,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tm_p.h"
 #include "ssa.h"
 #include "cgraph.h"
-#include "tree-pretty-print.h"
+#include "pretty-print.h"
 #include "stor-layout.h"
 #include "cfganal.h"
 #include "gimple-iterator.h"
@@ -127,7 +127,7 @@ tree
 ubsan_encode_value (tree t, enum ubsan_encode_value_phase phase)
 {
   tree type = TREE_TYPE (t);
-  if (TREE_CODE (type) == BITINT_TYPE)
+  if (BITINT_TYPE_P (type))
     {
       if (TYPE_PRECISION (type) <= POINTER_SIZE)
 	{
@@ -374,8 +374,7 @@ ubsan_type_descriptor (tree type, enum ubsan_print_style pstyle)
     {
       /* Temporary hack for -fsanitize=shift with _BitInt(129) and more.
 	 libubsan crashes if it is not TK_Integer type.  */
-      if (TREE_CODE (type) == BITINT_TYPE
-	  && TYPE_PRECISION (type) > MAX_FIXED_MODE_SIZE)
+      if (BITINT_TYPE_P (type) && TYPE_PRECISION (type) > MAX_FIXED_MODE_SIZE)
 	type3 = build_qualified_type (type, TYPE_QUAL_CONST);
       if (type3 == type)
 	pstyle = UBSAN_PRINT_NORMAL;
@@ -432,7 +431,7 @@ ubsan_type_descriptor (tree type, enum ubsan_print_style pstyle)
 
   if (tname == NULL)
     {
-      if (TREE_CODE (type2) == BITINT_TYPE)
+      if (BITINT_TYPE_P (type2))
 	{
 	  snprintf (tname_bitint, sizeof (tname_bitint),
 	  	    "%s_BitInt(%d)", TYPE_UNSIGNED (type2) ? "unsigned " : "",
@@ -506,10 +505,16 @@ ubsan_type_descriptor (tree type, enum ubsan_print_style pstyle)
   switch (TREE_CODE (eltype))
     {
     case BOOLEAN_TYPE:
-    case ENUMERAL_TYPE:
     case INTEGER_TYPE:
       tkind = 0x0000;
       break;
+    case ENUMERAL_TYPE:
+      if (!BITINT_TYPE_P (eltype))
+	{
+	  tkind = 0x0000;
+	  break;
+	}
+      /* FALLTHRU */
     case BITINT_TYPE:
       if (TYPE_PRECISION (eltype) <= MAX_FIXED_MODE_SIZE)
 	tkind = 0x0000;
@@ -1667,7 +1672,7 @@ instrument_si_overflow (gimple_stmt_iterator gsi)
      Also punt on bit-fields.  */
   if (!INTEGRAL_TYPE_P (lhsinner)
       || TYPE_OVERFLOW_WRAPS (lhsinner)
-      || (TREE_CODE (lhsinner) != BITINT_TYPE
+      || (!BITINT_TYPE_P (lhsinner)
 	  && maybe_ne (GET_MODE_BITSIZE (TYPE_MODE (lhsinner)),
 		       TYPE_PRECISION (lhsinner))))
     return;
@@ -1770,8 +1775,8 @@ instrument_bool_enum_load (gimple_stmt_iterator *gsi)
 
   addr_space_t as = TYPE_ADDR_SPACE (TREE_TYPE (rhs));
   if (as != TYPE_ADDR_SPACE (utype))
-    utype = build_qualified_type (utype, TYPE_QUALS (utype)
-					 | ENCODE_QUAL_ADDR_SPACE (as));
+    utype = build_qualified_type (utype,
+				  TYPE_QUALS (utype).with_as (as));
   bool ends_bb = stmt_ends_bb_p (stmt);
   location_t loc = gimple_location (stmt);
   tree lhs = gimple_assign_lhs (stmt);
@@ -1856,7 +1861,7 @@ instrument_bool_enum_load (gimple_stmt_iterator *gsi)
 }
 
 /* Determine if we can propagate given LOCATION to ubsan_data descriptor to use
-   new style handlers.  Libubsan uses heuristics to destinguish between old and
+   new style handlers.  Libubsan uses heuristics to distinguish between old and
    new styles and relies on these properties for filename:
 
    a) Location's filename must not be NULL.

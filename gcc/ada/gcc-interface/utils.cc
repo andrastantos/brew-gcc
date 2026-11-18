@@ -47,6 +47,7 @@
 #include "langhooks.h"
 #include "tree-dump.h"
 #include "tree-inline.h"
+#include "attr-handlers.h"
 
 #include "ada.h"
 #include "types.h"
@@ -86,69 +87,41 @@ tree gnat_raise_decls[(int) LAST_REASON_CODE + 1];
 tree gnat_raise_decls_ext[(int) LAST_REASON_CODE + 1];
 
 /* Forward declarations for handlers of attributes.  */
-static tree handle_const_attribute (tree *, tree, tree, int, bool *);
-static tree handle_nothrow_attribute (tree *, tree, tree, int, bool *);
-static tree handle_expected_throw_attribute (tree *, tree, tree, int, bool *);
-static tree handle_pure_attribute (tree *, tree, tree, int, bool *);
-static tree handle_novops_attribute (tree *, tree, tree, int, bool *);
-static tree handle_nonnull_attribute (tree *, tree, tree, int, bool *);
-static tree handle_sentinel_attribute (tree *, tree, tree, int, bool *);
-static tree handle_noreturn_attribute (tree *, tree, tree, int, bool *);
-static tree handle_stack_protect_attribute (tree *, tree, tree, int, bool *);
-static tree handle_no_stack_protector_attribute (tree *, tree, tree, int, bool *);
-static tree handle_strub_attribute (tree *, tree, tree, int, bool *);
-static tree handle_noinline_attribute (tree *, tree, tree, int, bool *);
-static tree handle_noclone_attribute (tree *, tree, tree, int, bool *);
-static tree handle_noicf_attribute (tree *, tree, tree, int, bool *);
-static tree handle_noipa_attribute (tree *, tree, tree, int, bool *);
-static tree handle_leaf_attribute (tree *, tree, tree, int, bool *);
-static tree handle_always_inline_attribute (tree *, tree, tree, int, bool *);
-static tree handle_malloc_attribute (tree *, tree, tree, int, bool *);
-static tree handle_type_generic_attribute (tree *, tree, tree, int, bool *);
-static tree handle_flatten_attribute (tree *, tree, tree, int, bool *);
-static tree handle_used_attribute (tree *, tree, tree, int, bool *);
-static tree handle_uninitialized_attribute (tree *, tree, tree, int, bool *);
-static tree handle_cold_attribute (tree *, tree, tree, int, bool *);
-static tree handle_hot_attribute (tree *, tree, tree, int, bool *);
-static tree handle_simd_attribute (tree *, tree, tree, int, bool *);
-static tree handle_target_attribute (tree *, tree, tree, int, bool *);
-static tree handle_target_clones_attribute (tree *, tree, tree, int, bool *);
-static tree handle_vector_size_attribute (tree *, tree, tree, int, bool *);
-static tree handle_vector_type_attribute (tree *, tree, tree, int, bool *);
-static tree handle_zero_call_used_regs_attribute (tree *, tree, tree, int,
-						  bool *);
-
-static const struct attribute_spec::exclusions attr_cold_hot_exclusions[] =
-{
-  { "cold", true,  true,  true  },
-  { "hot" , true,  true,  true  },
-  { NULL  , false, false, false }
-};
+static tree ada_handle_const_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_nothrow_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_expected_throw_attribute (tree *, tree, tree, int,
+						 bool *);
+static tree ada_handle_pure_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_nonnull_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_sentinel_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_noreturn_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_stack_protect_attribute (tree *, tree, tree, int,
+						bool *);
+static tree ada_handle_no_stack_protector_attribute (tree *, tree, tree, int,
+						     bool *);
+static tree ada_handle_strub_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_noclone_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_noicf_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_noipa_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_leaf_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_malloc_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_flatten_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_uninitialized_attribute (tree *, tree, tree, int,
+						bool *);
+static tree ada_handle_cold_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_hot_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_simd_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_target_clones_attribute (tree *, tree, tree, int,
+						bool *);
+static tree ada_handle_vector_size_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_vector_type_attribute (tree *, tree, tree, int, bool *);
+static tree ada_handle_zero_call_used_regs_attribute (tree *, tree, tree, int,
+						      bool *);
 
 static const struct attribute_spec::exclusions attr_stack_protect_exclusions[] =
 {
   { "stack_protect", true, false, false },
   { "no_stack_protector", true, false, false },
-  { NULL, false, false, false },
-};
-
-static const struct attribute_spec::exclusions attr_always_inline_exclusions[] =
-{
-  { "noinline", true, true, true },
-  { "target_clones", true, true, true },
-  { NULL, false, false, false },
-};
-
-static const struct attribute_spec::exclusions attr_noinline_exclusions[] =
-{
-  { "always_inline", true, true, true },
-  { NULL, false, false, false },
-};
-
-static const struct attribute_spec::exclusions attr_target_exclusions[] =
-{
-  { "target_clones", TARGET_HAS_FMV_TARGET_ATTRIBUTE,
-    TARGET_HAS_FMV_TARGET_ATTRIBUTE, TARGET_HAS_FMV_TARGET_ATTRIBUTE },
   { NULL, false, false, false },
 };
 
@@ -171,72 +144,72 @@ static const attribute_spec gnat_internal_attributes[] =
   /* { name, min_len, max_len, decl_req, type_req, fn_type_req,
        affects_type_identity, handler, exclude } */
   { "const",        0, 0,  true,  false, false, false,
-    handle_const_attribute, NULL },
+    ada_handle_const_attribute, NULL },
   { "nothrow",      0, 0,  true,  false, false, false,
-    handle_nothrow_attribute, NULL },
+    ada_handle_nothrow_attribute, NULL },
   { "expected_throw", 0, 0, true,  false, false, false,
-    handle_expected_throw_attribute, NULL },
+    ada_handle_expected_throw_attribute, NULL },
   { "pure",         0, 0,  true,  false, false, false,
-    handle_pure_attribute, NULL },
+    ada_handle_pure_attribute, NULL },
   { "no vops",      0, 0,  true,  false, false, false,
     handle_novops_attribute, NULL },
   { "nonnull",      0, -1, false, true,  true,  false,
-    handle_nonnull_attribute, NULL },
+    ada_handle_nonnull_attribute, NULL },
   { "sentinel",     0, 1,  false, true,  true,  false,
-    handle_sentinel_attribute, NULL },
+    ada_handle_sentinel_attribute, NULL },
   { "noreturn",     0, 0,  true,  false, false, false,
-    handle_noreturn_attribute, NULL },
+    ada_handle_noreturn_attribute, NULL },
   { "stack_protect",0, 0, true,  false, false, false,
-    handle_stack_protect_attribute,
+    ada_handle_stack_protect_attribute,
     attr_stack_protect_exclusions },
   { "no_stack_protector",0, 0, true,  false, false, false,
-    handle_no_stack_protector_attribute,
+    ada_handle_no_stack_protector_attribute,
     attr_stack_protect_exclusions },
   { "strub",	    0, 1, false, true, false, true,
-    handle_strub_attribute, NULL },
+    ada_handle_strub_attribute, NULL },
   { "noinline",     0, 0,  true,  false, false, false,
     handle_noinline_attribute, attr_noinline_exclusions },
   { "noclone",      0, 0,  true,  false, false, false,
-    handle_noclone_attribute, NULL },
+    ada_handle_noclone_attribute, NULL },
   { "no_icf",       0, 0,  true,  false, false, false,
-    handle_noicf_attribute, NULL },
+    ada_handle_noicf_attribute, NULL },
   { "noipa",        0, 0,  true,  false, false, false,
-    handle_noipa_attribute, NULL },
+    ada_handle_noipa_attribute, NULL },
   { "leaf",         0, 0,  true,  false, false, false,
-    handle_leaf_attribute, NULL },
+    ada_handle_leaf_attribute, NULL },
   { "always_inline",0, 0,  true,  false, false, false,
     handle_always_inline_attribute, attr_always_inline_exclusions },
   { "malloc",       0, 0,  true,  false, false, false,
-    handle_malloc_attribute, NULL },
+    ada_handle_malloc_attribute, NULL },
   { "type generic", 0, 0,  false, true,  true,  false,
     handle_type_generic_attribute, NULL },
 
   { "flatten",      0, 0,  true,  false, false, false,
-    handle_flatten_attribute, NULL },
+    ada_handle_flatten_attribute, NULL },
   { "used",         0, 0,  true,  false, false, false,
     handle_used_attribute, NULL },
   { "uninitialized",0, 0,  true,  false, false, false,
-    handle_uninitialized_attribute, NULL },
+    ada_handle_uninitialized_attribute, NULL },
   { "cold",         0, 0,  true,  false, false, false,
-    handle_cold_attribute, attr_cold_hot_exclusions },
+    ada_handle_cold_attribute, attr_cold_hot_exclusions },
   { "hot",          0, 0,  true,  false, false, false,
-    handle_hot_attribute, attr_cold_hot_exclusions },
+    ada_handle_hot_attribute, attr_cold_hot_exclusions },
   { "simd",         0, 1,  true,  false, false, false,
-    handle_simd_attribute, NULL },
+    ada_handle_simd_attribute, NULL },
   { "target",       1, -1, true,  false, false, false,
     handle_target_attribute, attr_target_exclusions },
   { "target_clones",1, -1, true,  false, false, false,
-    handle_target_clones_attribute, attr_target_clones_exclusions },
+    ada_handle_target_clones_attribute, attr_target_clones_exclusions },
 
   { "vector_size",  1, 1,  false, true,  false, false,
-    handle_vector_size_attribute, NULL },
+    ada_handle_vector_size_attribute, NULL },
   { "vector_type",  0, 0,  false, true,  false, false,
-    handle_vector_type_attribute, NULL },
+    ada_handle_vector_type_attribute, NULL },
   { "may_alias",    0, 0,  false, true,  false, false,
     NULL, NULL },
 
   { "zero_call_used_regs", 1, 1, true, false, false, false,
-    handle_zero_call_used_regs_attribute, NULL },
+    ada_handle_zero_call_used_regs_attribute, NULL },
 
   /* ??? format and format_arg are heavy and not supported, which actually
      prevents support for stdio builtins, which we however declare as part
@@ -937,7 +910,7 @@ gnat_pushdecl (tree decl, Node_Id gnat_node)
   /* Mark functions really nested in another function, that is to say defined
      there as opposed to imported from elsewhere, as initially needing a static
      chain for the sake of uniformity (lower_nested_functions will recompute it
-     exacly later) and as private to the translation unit (the static chain may
+     exactly later) and as private to the translation unit (the static chain may
      be clobbered by calling conventions used across translation units).  */
   if (TREE_CODE (decl) == FUNCTION_DECL
       && !DECL_EXTERNAL (decl)
@@ -1763,6 +1736,16 @@ maybe_pad_type (tree type, tree size, unsigned int align,
 	       size_binop (EXACT_DIV_EXPR, TYPE_SIZE (record),
 			   bitsize_unit_node));
 
+  /* Propagate the storage order from an aggregate type to the padded type.
+     Ideally this should not be necessary, because the flag on the padded
+     type has no semantic effects given that its only field is not scalar.
+     However, when the aggregate type contains a single scalar field, SRA
+     may totally scalarize the padded type without taking into account the
+     intermediate aggregate type and, therefore, may test the flag on the
+     former instead of the latter to generate a reverse memory access.  */
+  if (AGGREGATE_TYPE_P (type))
+    TYPE_REVERSE_STORAGE_ORDER (record) = TYPE_REVERSE_STORAGE_ORDER (type);
+
   /* If we are changing the alignment and the input type is a record with
      BLKmode and a small constant size, try to make a form that has an
      integral mode.  This might allow the padding record to also have an
@@ -1857,7 +1840,7 @@ maybe_pad_type (tree type, tree size, unsigned int align,
 	}
 
       /* There is no need to show what we are a subtype of when outputting as
-	 few encodings as possible: regular debugging infomation makes this
+	 few encodings as possible: regular debugging information makes this
 	 redundant.  */
       if (gnat_encodings == DWARF_GNAT_ENCODINGS_ALL)
 	{
@@ -2383,7 +2366,7 @@ finish_record_type (tree record_type, tree field_list, int rep_level,
 	     the REP part of a record with a variant part for which the
 	     variant part has a rep clause but not the fixed part, in
 	     which case this REP part may contain overlapping fields
-	     and thus needs to be treated like a union tyoe above, so
+	     and thus needs to be treated like a union type above, so
 	     use a MAX in that case.  Also, if this field is a variant
 	     part, we need to take into account the previous size in
 	     the case of empty variants.  */
@@ -3588,7 +3571,7 @@ process_deferred_decl_context (bool force)
 	  processed = true;
 	}
 
-      /* If this node has been successfuly processed, remove it from the
+      /* If this node has been successfully processed, remove it from the
 	 queue.  Then move to the next node.  */
       if (processed)
 	{
@@ -4646,7 +4629,8 @@ update_pointer_to (tree old_type, tree new_type)
      initial set, and will often end up with OLD_TYPE == NEW_TYPE then.  */
   new_type
     = build_qualified_type (new_type,
-			    TYPE_QUALS (old_type) | TYPE_QUALS (new_type));
+			    ada_type_quals (old_type)
+			    | ada_type_quals (new_type));
 
   /* If old type and new type are identical, there is nothing to do.  */
   if (old_type == new_type)
@@ -6181,6 +6165,19 @@ unchecked_convert (tree type, tree expr, bool notrunc_p)
       return unchecked_convert (type, expr, notrunc_p);
     }
 
+  /* If we are converting the result of a binary operation to an array type,
+     create a temporary to hold the result and convert the temporary.  This
+     will avoid problems downstream when slices of the array are taken.  */
+  else if (!AGGREGATE_TYPE_P (etype)
+	   && code == ARRAY_TYPE
+	   && (tem = remove_conversions (expr, false))
+	   && BINARY_CLASS_P (tem))
+    {
+      expr = build1 (SAVE_EXPR, etype, expr);
+      TREE_SIDE_EFFECTS (expr) = 1;
+      return unchecked_convert (type, expr, notrunc_p);
+    }
+
   /* If we are converting a string constant to a pointer to character, make
      sure that the string is not folded into an integer constant.  */
   else if (TREE_CODE (expr) == STRING_CST
@@ -6877,7 +6874,7 @@ install_builtin_attributes (void)
 #define DEF_ATTR_NULL_TREE(ENUM)				\
   built_in_attributes[(int) ENUM] = NULL_TREE;
 #define DEF_ATTR_INT(ENUM, VALUE)				\
-  built_in_attributes[(int) ENUM] = build_int_cst (NULL_TREE, VALUE);
+  built_in_attributes[(int) ENUM] = build_int_cst (integer_type_node, VALUE);
 #define DEF_ATTR_STRING(ENUM, VALUE)				\
   built_in_attributes[(int) ENUM] = build_string (strlen (VALUE), VALUE);
 #define DEF_ATTR_IDENT(ENUM, STRING)				\
@@ -6899,9 +6896,9 @@ install_builtin_attributes (void)
    struct attribute_spec.handler.  */
 
 static tree
-handle_const_attribute (tree *node, tree ARG_UNUSED (name),
-			tree ARG_UNUSED (args), int ARG_UNUSED (flags),
-			bool *no_add_attrs)
+ada_handle_const_attribute (tree *node, tree ARG_UNUSED (name),
+			    tree ARG_UNUSED (args), int ARG_UNUSED (flags),
+			    bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL)
     TREE_READONLY (*node) = 1;
@@ -6915,9 +6912,9 @@ handle_const_attribute (tree *node, tree ARG_UNUSED (name),
    struct attribute_spec.handler.  */
 
 static tree
-handle_nothrow_attribute (tree *node, tree ARG_UNUSED (name),
-			  tree ARG_UNUSED (args), int ARG_UNUSED (flags),
-			  bool *no_add_attrs)
+ada_handle_nothrow_attribute (tree *node, tree ARG_UNUSED (name),
+			      tree ARG_UNUSED (args), int ARG_UNUSED (flags),
+			      bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL)
     TREE_NOTHROW (*node) = 1;
@@ -6931,9 +6928,9 @@ handle_nothrow_attribute (tree *node, tree ARG_UNUSED (name),
    struct attribute_spec.handler.  */
 
 static tree
-handle_expected_throw_attribute (tree *node, tree ARG_UNUSED (name),
-				 tree ARG_UNUSED (args), int ARG_UNUSED (flags),
-				 bool *no_add_attrs)
+ada_handle_expected_throw_attribute (tree *node, tree ARG_UNUSED (name),
+				     tree ARG_UNUSED (args),
+				     int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL)
     /* No flag to set here.  */;
@@ -6947,8 +6944,9 @@ handle_expected_throw_attribute (tree *node, tree ARG_UNUSED (name),
    struct attribute_spec.handler.  */
 
 static tree
-handle_pure_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-		       int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_pure_attribute (tree *node, tree name,
+			   tree ARG_UNUSED (args), int ARG_UNUSED (flags),
+			   bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL)
     DECL_PURE_P (*node) = 1;
@@ -6960,19 +6958,6 @@ handle_pure_attribute (tree *node, tree name, tree ARG_UNUSED (args),
       *no_add_attrs = true;
     }
 
-  return NULL_TREE;
-}
-
-/* Handle a "no vops" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_novops_attribute (tree *node, tree ARG_UNUSED (name),
-			 tree ARG_UNUSED (args), int ARG_UNUSED (flags),
-			 bool *ARG_UNUSED (no_add_attrs))
-{
-  gcc_assert (TREE_CODE (*node) == FUNCTION_DECL);
-  DECL_IS_NOVOPS (*node) = 1;
   return NULL_TREE;
 }
 
@@ -6992,9 +6977,9 @@ get_nonnull_operand (tree arg_num_expr, unsigned HOST_WIDE_INT *valp)
 
 /* Handle the "nonnull" attribute.  */
 static tree
-handle_nonnull_attribute (tree *node, tree ARG_UNUSED (name),
-			  tree args, int ARG_UNUSED (flags),
-			  bool *no_add_attrs)
+ada_handle_nonnull_attribute (tree *node, tree ARG_UNUSED (name),
+			      tree args, int ARG_UNUSED (flags),
+			      bool *no_add_attrs)
 {
   tree type = *node;
   unsigned HOST_WIDE_INT attr_arg_num;
@@ -7071,8 +7056,8 @@ handle_nonnull_attribute (tree *node, tree ARG_UNUSED (name),
 /* Handle a "sentinel" attribute.  */
 
 static tree
-handle_sentinel_attribute (tree *node, tree name, tree args,
-			   int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_sentinel_attribute (tree *node, tree name, tree args,
+			       int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   if (!prototype_p (*node))
     {
@@ -7118,8 +7103,8 @@ handle_sentinel_attribute (tree *node, tree name, tree args,
    struct attribute_spec.handler.  */
 
 static tree
-handle_noreturn_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-			   int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_noreturn_attribute (tree *node, tree name, tree ARG_UNUSED (args),
+			       int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   tree type = TREE_TYPE (*node);
 
@@ -7145,8 +7130,8 @@ handle_noreturn_attribute (tree *node, tree name, tree ARG_UNUSED (args),
    struct attribute_spec.handler.  */
 
 static tree
-handle_stack_protect_attribute (tree *node, tree name, tree, int,
-				bool *no_add_attrs)
+ada_handle_stack_protect_attribute (tree *node, tree name, tree, int,
+				    bool *no_add_attrs)
 {
   if (TREE_CODE (*node) != FUNCTION_DECL)
     {
@@ -7161,8 +7146,8 @@ handle_stack_protect_attribute (tree *node, tree name, tree, int,
    struct attribute_spec.handler.  */
 
 static tree
-handle_no_stack_protector_attribute (tree *node, tree name, tree, int,
-				   bool *no_add_attrs)
+ada_handle_no_stack_protector_attribute (tree *node, tree name, tree, int,
+					 bool *no_add_attrs)
 {
   if (TREE_CODE (*node) != FUNCTION_DECL)
     {
@@ -7177,9 +7162,9 @@ handle_no_stack_protector_attribute (tree *node, tree name, tree, int,
    struct attribute_spec.handler.  */
 
 static tree
-handle_strub_attribute (tree *node, tree name,
-			tree args,
-			int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_strub_attribute (tree *node, tree name,
+			    tree args,
+			    int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   bool enable = true;
 
@@ -7251,32 +7236,13 @@ handle_strub_attribute (tree *node, tree name,
   return NULL_TREE;
 }
 
-/* Handle a "noinline" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_noinline_attribute (tree *node, tree name,
-			   tree ARG_UNUSED (args),
-			   int ARG_UNUSED (flags), bool *no_add_attrs)
-{
-  if (TREE_CODE (*node) == FUNCTION_DECL)
-    DECL_UNINLINABLE (*node) = 1;
-  else
-    {
-      warning (OPT_Wattributes, "%qE attribute ignored", name);
-      *no_add_attrs = true;
-    }
-
-  return NULL_TREE;
-}
-
 /* Handle a "noclone" attribute; arguments as in
    struct attribute_spec.handler.  */
 
 static tree
-handle_noclone_attribute (tree *node, tree name,
-			  tree ARG_UNUSED (args),
-			  int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_noclone_attribute (tree *node, tree name,
+			      tree ARG_UNUSED (args),
+			      int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   if (TREE_CODE (*node) != FUNCTION_DECL)
     {
@@ -7291,9 +7257,9 @@ handle_noclone_attribute (tree *node, tree name,
    struct attribute_spec.handler.  */
 
 static tree
-handle_noicf_attribute (tree *node, tree name,
-			tree ARG_UNUSED (args),
-			int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_noicf_attribute (tree *node, tree name,
+			    tree ARG_UNUSED (args),
+			    int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   if (TREE_CODE (*node) != FUNCTION_DECL)
     {
@@ -7308,7 +7274,8 @@ handle_noicf_attribute (tree *node, tree name,
    struct attribute_spec.handler.  */
 
 static tree
-handle_noipa_attribute (tree *node, tree name, tree, int, bool *no_add_attrs)
+ada_handle_noipa_attribute (tree *node, tree name, tree, int,
+			    bool *no_add_attrs)
 {
   if (TREE_CODE (*node) != FUNCTION_DECL)
     {
@@ -7323,8 +7290,9 @@ handle_noipa_attribute (tree *node, tree name, tree, int, bool *no_add_attrs)
    struct attribute_spec.handler.  */
 
 static tree
-handle_leaf_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-		       int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_leaf_attribute (tree *node, tree name,
+			   tree ARG_UNUSED (args), int ARG_UNUSED (flags),
+			   bool *no_add_attrs)
 {
   if (TREE_CODE (*node) != FUNCTION_DECL)
     {
@@ -7340,33 +7308,12 @@ handle_leaf_attribute (tree *node, tree name, tree ARG_UNUSED (args),
   return NULL_TREE;
 }
 
-/* Handle a "always_inline" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_always_inline_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-				int ARG_UNUSED (flags), bool *no_add_attrs)
-{
-  if (TREE_CODE (*node) == FUNCTION_DECL)
-    {
-      /* Set the attribute and mark it for disregarding inline limits.  */
-      DECL_DISREGARD_INLINE_LIMITS (*node) = 1;
-    }
-  else
-    {
-      warning (OPT_Wattributes, "%qE attribute ignored", name);
-      *no_add_attrs = true;
-    }
-
-  return NULL_TREE;
-}
-
 /* Handle a "malloc" attribute; arguments as in
    struct attribute_spec.handler.  */
 
 static tree
-handle_malloc_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-			 int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_malloc_attribute (tree *node, tree name, tree ARG_UNUSED (args),
+			     int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL
       && POINTER_TYPE_P (TREE_TYPE (TREE_TYPE (*node))))
@@ -7393,29 +7340,13 @@ fake_attribute_handler (tree * ARG_UNUSED (node),
   return NULL_TREE;
 }
 
-/* Handle a "type_generic" attribute.  */
-
-static tree
-handle_type_generic_attribute (tree *node, tree ARG_UNUSED (name),
-			       tree ARG_UNUSED (args), int ARG_UNUSED (flags),
-			       bool * ARG_UNUSED (no_add_attrs))
-{
-  /* Ensure we have a function type.  */
-  gcc_assert (TREE_CODE (*node) == FUNCTION_TYPE);
-
-  /* Ensure we have a variadic function.  */
-  gcc_assert (!prototype_p (*node) || stdarg_p (*node));
-
-  return NULL_TREE;
-}
-
 /* Handle a "flatten" attribute; arguments as in
    struct attribute_spec.handler.  */
 
 static tree
-handle_flatten_attribute (tree *node, tree name,
-			  tree args ATTRIBUTE_UNUSED,
-			  int flags ATTRIBUTE_UNUSED, bool *no_add_attrs)
+ada_handle_flatten_attribute (tree *node, tree name,
+			      tree args ATTRIBUTE_UNUSED,
+			      int flags ATTRIBUTE_UNUSED, bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL)
     /* Do nothing else, just set the attribute.  We'll get at
@@ -7430,39 +7361,13 @@ handle_flatten_attribute (tree *node, tree name,
   return NULL_TREE;
 }
 
-/* Handle a "used" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_used_attribute (tree *pnode, tree name, tree ARG_UNUSED (args),
-		       int ARG_UNUSED (flags), bool *no_add_attrs)
-{
-  tree node = *pnode;
-
-  if (TREE_CODE (node) == FUNCTION_DECL
-      || (VAR_P (node) && TREE_STATIC (node))
-      || (TREE_CODE (node) == TYPE_DECL))
-    {
-      TREE_USED (node) = 1;
-      DECL_PRESERVE_P (node) = 1;
-      if (VAR_P (node))
-	DECL_READ_P (node) = 1;
-    }
-  else
-    {
-      warning (OPT_Wattributes, "%qE attribute ignored", name);
-      *no_add_attrs = true;
-    }
-
-  return NULL_TREE;
-}
-
 /* Handle an "uninitialized" attribute; arguments as in
    struct attribute_spec.handler.  */
 
 static tree
-handle_uninitialized_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-				int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_uninitialized_attribute (tree *node, tree name,
+				    tree ARG_UNUSED (args),
+				    int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   tree decl = *node;
   if (!VAR_P (decl))
@@ -7485,8 +7390,8 @@ handle_uninitialized_attribute (tree *node, tree name, tree ARG_UNUSED (args),
    struct attribute_spec.handler.  */
 
 static tree
-handle_cold_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-		       int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_cold_attribute (tree *node, tree name, tree ARG_UNUSED (args),
+			   int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL
       || TREE_CODE (*node) == LABEL_DECL)
@@ -7506,8 +7411,8 @@ handle_cold_attribute (tree *node, tree name, tree ARG_UNUSED (args),
    struct attribute_spec.handler.  */
 
 static tree
-handle_hot_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-		      int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_hot_attribute (tree *node, tree name, tree ARG_UNUSED (args),
+			  int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL
       || TREE_CODE (*node) == LABEL_DECL)
@@ -7526,7 +7431,8 @@ handle_hot_attribute (tree *node, tree name, tree ARG_UNUSED (args),
 /* Handle a "simd" attribute.  */
 
 static tree
-handle_simd_attribute (tree *node, tree name, tree args, int, bool *no_add_attrs)
+ada_handle_simd_attribute (tree *node, tree name, tree args, int,
+			   bool *no_add_attrs)
 {
   if (TREE_CODE (*node) == FUNCTION_DECL)
     {
@@ -7571,42 +7477,12 @@ handle_simd_attribute (tree *node, tree name, tree args, int, bool *no_add_attrs
   return NULL_TREE;
 }
 
-/* Handle a "target" attribute.  */
-
-static tree
-handle_target_attribute (tree *node, tree name, tree args, int flags,
-			 bool *no_add_attrs)
-{
-  /* Ensure we have a function type.  */
-  if (TREE_CODE (*node) != FUNCTION_DECL)
-    {
-      warning (OPT_Wattributes, "%qE attribute ignored", name);
-      *no_add_attrs = true;
-    }
-  else if (!targetm.target_option.valid_attribute_p (*node, name, args, flags))
-    *no_add_attrs = true;
-
-  /* Check that there's no empty string in values of the attribute.  */
-  for (tree t = args; t != NULL_TREE; t = TREE_CHAIN (t))
-    {
-      tree value = TREE_VALUE (t);
-      if (TREE_CODE (value) == STRING_CST
-	  && TREE_STRING_LENGTH (value) == 1
-	  && TREE_STRING_POINTER (value)[0] == '\0')
-	{
-	  warning (OPT_Wattributes, "empty string in attribute %<target%>");
-	  *no_add_attrs = true;
-	}
-    }
-
-  return NULL_TREE;
-}
-
 /* Handle a "target_clones" attribute.  */
 
 static tree
-handle_target_clones_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-			  int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_target_clones_attribute (tree *node, tree name,
+				    tree ARG_UNUSED (args),
+				    int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   /* Ensure we have a function type.  */
   if (TREE_CODE (*node) == FUNCTION_DECL)
@@ -7624,8 +7500,8 @@ handle_target_clones_attribute (tree *node, tree name, tree ARG_UNUSED (args),
    struct attribute_spec.handler.  */
 
 static tree
-handle_vector_size_attribute (tree *node, tree name, tree args,
-			      int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_vector_size_attribute (tree *node, tree name, tree args,
+				  int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   tree type = *node;
   tree vector_type;
@@ -7658,8 +7534,8 @@ handle_vector_size_attribute (tree *node, tree name, tree args,
    struct attribute_spec.handler.  */
 
 static tree
-handle_vector_type_attribute (tree *node, tree name, tree ARG_UNUSED (args),
-			      int ARG_UNUSED (flags), bool *no_add_attrs)
+ada_handle_vector_type_attribute (tree *node, tree name, tree ARG_UNUSED (args),
+				  int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   tree type = *node;
   tree vector_type;
@@ -7687,9 +7563,9 @@ handle_vector_type_attribute (tree *node, tree name, tree ARG_UNUSED (args),
    struct attribute_spec.handler.  */
 
 static tree
-handle_zero_call_used_regs_attribute (tree *node, tree name, tree args,
-				      int ARG_UNUSED (flags),
-				      bool *no_add_attrs)
+ada_handle_zero_call_used_regs_attribute (tree *node, tree name, tree args,
+					  int ARG_UNUSED (flags),
+					  bool *no_add_attrs)
 {
   tree decl = *node;
   tree id = TREE_VALUE (args);

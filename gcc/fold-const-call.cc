@@ -516,6 +516,91 @@ fold_const_pow (real_value *result, const real_value *arg0,
       return true;
     }
 
+  if (!flag_errno_math
+      && format->b == 2)
+    {
+      /* For any value of y (including NaN), if x is +1, 1.0 is returned. */
+      if (real_equal (arg0, &dconst1))
+	{
+	  *result = dconst1;
+	  return true;
+	}
+
+      /* For any value of x (including NaN), if y is +-0, 1.0 is returned.  */
+      if (arg1->cl == rvc_zero)
+	{
+	  *result = dconst1;
+	  return true;
+	}
+
+      /* If x is -1 and y is +-Inf, 1.0 shall be returned.  */
+      if (arg1->cl == rvc_inf
+	  && real_equal (arg0, &dconstm1))
+	{
+	  *result = dconst1;
+	  return true;
+	}
+
+      /* If |x| < 1, and y is -Inf, +Inf shall be returned.  */
+      /* If |x| > 1, and y is -Inf, +0 shall be returned.  */
+      if (arg1->cl == rvc_inf && arg1->sign == 1
+	  && arg0->cl == rvc_normal)
+	{
+	  *result = REAL_EXP (arg0) <= 0 ? dconstinf : dconst0;
+	  return true;
+	}
+
+      if (arg1->cl == rvc_inf && arg1->sign == 1
+	  && arg0->cl == rvc_inf)
+	{
+	  *result = dconst0;
+	  return true;
+	}
+
+      /* If |x| < 1, and y is +Inf, +0 shall be returned.  */
+      /* If |x| > 1, and y is +Inf, +Inf shall be returned.  */
+      if (arg1->cl == rvc_inf && arg1->sign == 0
+	  && arg0->cl == rvc_normal)
+	{
+	  *result = REAL_EXP (arg0) <= 0 ? dconst0 : dconstinf;
+	  return true;
+	}
+
+      if (arg1->cl == rvc_inf && arg1->sign == 0
+	  && arg0->cl == rvc_inf)
+	{
+	  *result = dconstinf;
+	  return true;
+	}
+
+      /* For y an odd integer < 0, if x is -Inf, -0 shall be returned.  */
+      /* For y < 0 and not an odd integer, if x is -Inf, +0 is returned.  */
+      if (arg0->cl == rvc_inf && arg0->sign == 1
+	  && arg1->cl == rvc_normal && arg1->sign == 1)
+	{
+	  *result = real_isoddinteger (arg1, format) ? dconstm0 : dconst0;
+	  return true;
+	}
+
+      /* For y an odd integer > 0, if x is -Inf, -Inf shall be returned.  */
+      /* For y > 0 and not an odd integer, if x is -Inf, +Inf is returned.  */
+      if (arg0->cl == rvc_inf && arg0->sign == 1
+	  && arg1->cl == rvc_normal && arg1->sign == 0)
+	{
+	  *result = real_isoddinteger (arg1, format) ? dconstninf : dconstinf;
+	  return true;
+	}
+
+      /* For y < 0, if x is +Inf, +0 shall be returned.  */
+      /* For y > 0, if x is +Inf, +Inf shall be returned.  */
+      if (arg0->cl == rvc_inf && arg0->sign == 0
+	  && arg1->cl == rvc_normal)
+	{
+	  *result = arg1->sign ? dconst0 : dconstinf;
+	  return true;
+	}
+    }
+
   return false;
 }
 
@@ -622,9 +707,42 @@ fold_const_builtin_nan (tree type, tree arg, bool quiet)
 static tree
 fold_const_reduction (tree type, tree arg, tree_code code)
 {
-  unsigned HOST_WIDE_INT nelts;
-  if (TREE_CODE (arg) != VECTOR_CST
-      || !VECTOR_CST_NELTS (arg).is_constant (&nelts))
+  if (TREE_CODE (arg) != VECTOR_CST)
+    return NULL_TREE;
+
+  bool idempotent_p = (code == MAX_EXPR
+		       || code == MIN_EXPR
+		       || code == BIT_AND_EXPR
+		       || code == BIT_IOR_EXPR);
+
+  unsigned HOST_WIDE_INT nelts = vector_cst_encoded_nelts (arg);
+  /* Fall back to the exact element count for singleton sNaN encodings, since
+     a known single-element vector performs no operation and so cannot raise an
+     exception.  */
+  bool singleton_snan_p
+    = (nelts == 1
+	&& tree_expr_maybe_signaling_nan_p (VECTOR_CST_ELT (arg, 0)));
+
+  if (idempotent_p
+      && !VECTOR_CST_STEPPED_P (arg)
+      && multiple_p (VECTOR_CST_NELTS (arg), nelts)
+      && !singleton_snan_p)
+    /* Operating on the first NELTS elements is enough.  */
+    ;
+  else if (code == BIT_XOR_EXPR
+	   && !VECTOR_CST_STEPPED_P (arg)
+	   && multiple_p (VECTOR_CST_NELTS (arg), nelts * 2))
+    {
+      if (VECTOR_CST_DUPLICATE_P (arg))
+	{
+	  /* Process two copies of a one-element-per-pattern encoding.  */
+	  nelts *= 2;
+	}
+      else
+	gcc_checking_assert (VECTOR_CST_NELTS_PER_PATTERN (arg) == 2);
+    }
+
+  else if (!VECTOR_CST_NELTS (arg).is_constant (&nelts))
     return NULL_TREE;
 
   tree res = VECTOR_CST_ELT (arg, 0);
@@ -1055,7 +1173,7 @@ fold_const_call_ss (wide_int *result, combined_fn fn, const wide_int_ref &arg,
 	int tmp;
 	if (wi::ne_p (arg, 0))
 	  tmp = wi::clz (arg);
-	else if (TREE_CODE (arg_type) == BITINT_TYPE)
+	else if (BITINT_TYPE_P (arg_type))
 	  tmp = TYPE_PRECISION (arg_type);
 	else if (!CLZ_DEFINED_VALUE_AT_ZERO (SCALAR_INT_TYPE_MODE (arg_type),
 					     tmp))
@@ -1070,7 +1188,7 @@ fold_const_call_ss (wide_int *result, combined_fn fn, const wide_int_ref &arg,
 	int tmp;
 	if (wi::ne_p (arg, 0))
 	  tmp = wi::ctz (arg);
-	else if (TREE_CODE (arg_type) == BITINT_TYPE)
+	else if (BITINT_TYPE_P (arg_type))
 	  tmp = TYPE_PRECISION (arg_type);
 	else if (!CTZ_DEFINED_VALUE_AT_ZERO (SCALAR_INT_TYPE_MODE (arg_type),
 					     tmp))
@@ -1094,12 +1212,14 @@ fold_const_call_ss (wide_int *result, combined_fn fn, const wide_int_ref &arg,
       *result = wi::shwi (wi::parity (arg), precision);
       return true;
 
-    case CFN_BUILT_IN_BSWAP16:
-    case CFN_BUILT_IN_BSWAP32:
-    case CFN_BUILT_IN_BSWAP64:
-    case CFN_BUILT_IN_BSWAP128:
+    CASE_CFN_BSWAP:
       *result = wi::bswap (wide_int::from (arg, precision,
 					   TYPE_SIGN (arg_type)));
+      return true;
+
+    CASE_CFN_BITREVERSE:
+      *result = wi::bitreverse (wide_int::from (arg, precision,
+						TYPE_SIGN (arg_type)));
       return true;
 
     default:
@@ -1276,7 +1396,7 @@ fold_const_call_1 (combined_fn fn, tree type, tree arg)
 
   if (integer_cst_p (arg))
     {
-      if (SCALAR_INT_MODE_P (mode))
+      if (INTEGRAL_TYPE_P (type))
 	{
 	  wide_int result;
 	  if (fold_const_call_ss (&result, fn, wi::to_wide (arg),
@@ -1477,6 +1597,38 @@ fold_const_vec_extract (tree, tree arg0, tree)
   return NULL_TREE;
 }
 
+/* Try to fold scalar integer IFN_SAT_ADD with operands OP0 and OP1.  */
+
+static tree
+fold_internal_fn_sat_add (tree type, tree op0, tree op1)
+{
+  if (!INTEGRAL_NB_TYPE_P (type))
+    return NULL_TREE;
+
+  if (TREE_CODE (op0) != INTEGER_CST
+      || TREE_CODE (op1) != INTEGER_CST)
+    return NULL_TREE;
+
+  wi::overflow_type overflow;
+  unsigned int prec = TYPE_PRECISION (type);
+  wide_int result = wi::add (wi::to_wide (op0), wi::to_wide (op1),
+			     TYPE_SIGN (type), &overflow);
+
+  if (overflow != wi::OVF_NONE)
+    {
+      if (TYPE_UNSIGNED (type))
+	result = wi::max_value (prec, UNSIGNED);
+      else if (overflow == wi::OVF_OVERFLOW)
+	result = wi::max_value (prec, SIGNED);
+      else if (overflow == wi::OVF_UNDERFLOW)
+	result = wi::min_value (prec, SIGNED);
+      else
+	return NULL_TREE;
+    }
+
+  return wide_int_to_tree (type, result);
+}
+
 /* Try to evaluate:
 
       *RESULT = FN (*ARG0, *ARG1)
@@ -1652,6 +1804,10 @@ fold_const_call_sss (wide_int *result, combined_fn fn,
 	return true;
       }
 
+    case CFN_CLMUL:
+      *result = wi::clmul (arg0, arg1, precision);
+      return true;
+
     default:
       return false;
     }
@@ -1695,7 +1851,7 @@ fold_const_call_1 (combined_fn fn, tree type, tree arg0, tree arg1)
 
   if (integer_cst_p (arg0) && integer_cst_p (arg1))
     {
-      if (SCALAR_INT_MODE_P (mode))
+      if (INTEGRAL_TYPE_P (type))
 	{
 	  wide_int result;
 	  if (fold_const_call_sss (&result, fn, wi::to_wide (arg0),
@@ -1877,6 +2033,17 @@ fold_const_call (combined_fn fn, tree type, tree arg0, tree arg1)
 	}
       return NULL_TREE;
 
+    case CFN_BUILT_IN_STRNLEN:
+      if ((p0 = c_getstr (arg0)))
+	{
+	  unsigned HOST_WIDE_INT s1 = 0;
+	  if (!size_t_cst_p (arg1, &s1))
+	    return NULL_TREE;
+
+	  return build_int_cst (type, strnlen (p0, s1));
+	}
+      return NULL_TREE;
+
     case CFN_FOLD_LEFT_PLUS:
       return fold_const_fold_left (type, arg0, arg1, PLUS_EXPR);
 
@@ -1885,6 +2052,9 @@ fold_const_call (combined_fn fn, tree type, tree arg0, tree arg1)
 
     case CFN_VEC_EXTRACT:
       return fold_const_vec_extract (type, arg0, arg1);
+
+    case CFN_SAT_ADD:
+      return fold_internal_fn_sat_add (type, arg0, arg1);
 
     case CFN_UBSAN_CHECK_ADD:
     case CFN_ADD_OVERFLOW:
@@ -1923,6 +2093,20 @@ fold_const_call (combined_fn fn, tree type, tree arg0, tree arg1)
 	    }
 	  else
 	    return build_complex (type, r, build_int_cst (itype, ovf));
+	}
+      return NULL_TREE;
+
+    case CFN_CLMUL_WIDEN:
+      if (integer_cst_p (arg0) && integer_cst_p (arg1))
+	{
+	  unsigned int prec = TYPE_PRECISION (TREE_TYPE (arg0));
+	  wide_int res = wi::clmul (wi::to_wide (arg0), wi::to_wide (arg1),
+				    prec * 2);
+	  wide_int lo = wide_int::from (res, prec, UNSIGNED);
+	  wide_int hi = wide_int::from (wi::rshift (res, prec, UNSIGNED),
+					prec, UNSIGNED);
+	  return build_complex (type, wide_int_to_tree (TREE_TYPE (type), lo),
+				wide_int_to_tree (TREE_TYPE (type), hi));
 	}
       return NULL_TREE;
 
@@ -2005,6 +2189,44 @@ fold_const_call_1 (combined_fn fn, tree type, tree arg0, tree arg1, tree arg2)
     }
 
   return NULL_TREE;
+}
+
+/* Given a CRC polynomial POLYNOMIAL_ARG, the current CRC value in CRC_ARG and
+   new data item DATA_ARG.  Compute the updated CRC result value in type TYPE.
+   The CRC direction is inferred from FN (forward vs reversed).  */
+
+static tree
+fold_const_crc (internal_fn fn, tree type, tree crc_arg, tree data_arg,
+		tree polynomial_arg)
+{
+  if (!integer_cst_p (crc_arg)
+      || !integer_cst_p (data_arg)
+      || !integer_cst_p (polynomial_arg))
+    return NULL_TREE;
+
+  unsigned int crc_bits = TYPE_PRECISION (type);
+  unsigned int data_bits = TYPE_PRECISION (TREE_TYPE (data_arg));
+
+  if ((data_bits != 8 && data_bits != 16 && data_bits != 32 && data_bits != 64)
+      || (crc_bits != 8 && crc_bits != 16 && crc_bits != 32 && crc_bits != 64)
+      || data_bits > crc_bits)
+    return NULL_TREE;
+
+  if (!tree_fits_uhwi_p (crc_arg)
+      || !tree_fits_uhwi_p (data_arg)
+      || !tree_fits_uhwi_p (polynomial_arg))
+    return NULL_TREE;
+
+  unsigned HOST_WIDE_INT crc = tree_to_uhwi (crc_arg);
+  unsigned HOST_WIDE_INT data = tree_to_uhwi (data_arg);
+  unsigned HOST_WIDE_INT polynomial = tree_to_uhwi (polynomial_arg);
+
+  if (fn == IFN_CRC_REV)
+    crc = calculate_reversed_crc (crc, data, polynomial, crc_bits, data_bits);
+  else
+    crc = calculate_crc (crc, data, polynomial, crc_bits, data_bits);
+
+  return build_int_cstu (type, crc);
 }
 
 /* Try to fold FN (ARG0, ARG1, ARG2) to a constant.  Return the constant on
@@ -2107,6 +2329,29 @@ fold_const_call (combined_fn fn, tree type, tree arg0, tree arg1, tree arg2)
 	  return build_complex (type, r2, build_int_cst (itype, ovf));
 	}
       return NULL_TREE;
+
+    case CFN_BUILT_IN_CRC8_DATA8:
+    case CFN_BUILT_IN_CRC16_DATA8:
+    case CFN_BUILT_IN_CRC16_DATA16:
+    case CFN_BUILT_IN_CRC32_DATA8:
+    case CFN_BUILT_IN_CRC32_DATA16:
+    case CFN_BUILT_IN_CRC32_DATA32:
+    case CFN_BUILT_IN_CRC64_DATA8:
+    case CFN_BUILT_IN_CRC64_DATA16:
+    case CFN_BUILT_IN_CRC64_DATA32:
+    case CFN_BUILT_IN_CRC64_DATA64:
+    case CFN_BUILT_IN_REV_CRC8_DATA8:
+    case CFN_BUILT_IN_REV_CRC16_DATA8:
+    case CFN_BUILT_IN_REV_CRC16_DATA16:
+    case CFN_BUILT_IN_REV_CRC32_DATA8:
+    case CFN_BUILT_IN_REV_CRC32_DATA16:
+    case CFN_BUILT_IN_REV_CRC32_DATA32:
+    case CFN_BUILT_IN_REV_CRC64_DATA8:
+    case CFN_BUILT_IN_REV_CRC64_DATA16:
+    case CFN_BUILT_IN_REV_CRC64_DATA32:
+    case CFN_BUILT_IN_REV_CRC64_DATA64:
+      return fold_const_crc (associated_internal_fn (fn, type),
+			     type, arg0, arg1, arg2);
 
     default:
       return fold_const_call_1 (fn, type, arg0, arg1, arg2);

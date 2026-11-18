@@ -67,7 +67,7 @@ void objc_common_register_features ();
   (INSTANCE_METHOD_OR_CLASS_METHOD_DECL_CHECK (DECL)->decl_common.size_unit)
 
 
-/* PROPERTY_DECL.  A PROPERTY_DECL repesents a @property declaration
+/* PROPERTY_DECL.  A PROPERTY_DECL represents a @property declaration
    (when attached to the list of properties of an interface) or a
    @synthesize or @dynamic declaration (when attached to the list of
    properties of an implementation).  */
@@ -302,7 +302,7 @@ struct GTY(()) imp_entry {
   tree imp_template;
   tree class_decl;		/* _OBJC[_v2]_CLASS/CATEGORY_<my_name>; */
   tree meta_decl;		/* _OBJC[_v2]_METACLASS_<my_name>; */
-  BOOL_BITFIELD has_cxx_cdtors : 1;
+  bool has_cxx_cdtors : 1;
 };
 
 extern GTY(()) struct imp_entry *imp_list;
@@ -778,4 +778,18 @@ is_ivar (tree decl_chain, tree ident)
   return NULL_TREE;
 }
 
+
+#ifdef OBJCPLUS
+inline tree
+objc_build_decl (location_t l, enum tree_code c, tree n, tree t)
+{
+  return build_lang_decl_loc (l, c, n, t);
+}
+#else
+inline tree
+objc_build_decl (location_t l, enum tree_code c, tree n, tree t)
+{
+  return build_decl (l, c, n, t);
+}
+#endif
 #endif /* GCC_OBJC_ACT_H */

@@ -55,18 +55,44 @@ enum a68_tree_index
   ATI_BITS_TYPE,
   ATI_LONG_BITS_TYPE,
   ATI_LONG_LONG_BITS_TYPE,
+  ATI_WORD_BITS_TYPE,
   ATI_BYTES_TYPE,
   ATI_LONG_BYTES_TYPE,
+  ATI_WORD_BYTES_TYPE,
   ATI_SHORT_SHORT_INT_TYPE,
   ATI_SHORT_INT_TYPE,
   ATI_INT_TYPE,
   ATI_LONG_INT_TYPE,
   ATI_LONG_LONG_INT_TYPE,
+  ATI_WORD_INT_TYPE,
   ATI_REAL_TYPE,
   ATI_LONG_REAL_TYPE,
   ATI_LONG_LONG_REAL_TYPE,
+  ATI_WORD_REAL_TYPE,
   /* Sentinel.  */
   ATI_MAX
+};
+
+enum a68_access
+{
+  /* Access.  See a68-parser-sprops.cc.  */
+  NO_ACCESS = 0,
+  ACCESS_NIL,
+  ACCESS_DIR,
+  ACCESS_IND,
+  ACCESS_VAR
+};
+
+typedef enum a68_access ACCESS_T;
+
+enum a68_kindo
+{
+  /* Kind of origin. See a68-parser-sprops.cc.  */
+  KINDO_NIL = 0,
+  KINDO_CST,
+  KINDO_IDE,
+  KINDO_VAR,
+  KINDO_GEN
 };
 
 /*
@@ -164,13 +190,13 @@ struct GTY((chain_next ("%h.more"), chain_prev ("%h.less"))) KEYWORD_T
 /* A MOID_T represents a mode indicator.
 
    NUMBER is an unique number assigned to the moid when it gets created.  A
-   renumber_moids function exists in a68-parser-modes.cc but it dosn't seem to
+   renumber_moids function exists in a68-parser-modes.cc but it doesn't seem to
    be used at all.
 
    ATTRIBUTE characterizes the kind of mode and is one of the values defined in
    a68-parser-attrs.def.  Valid values are:
 
-     PROC_SYMBOL for procecure modes.
+     PROC_SYMBOL for procedure modes.
      ROWS_SYMBOL for row modes.
      REF_SYMBOL for reference modes.
      FLEX_SYMBOL for flexible reference modes.
@@ -200,7 +226,7 @@ struct GTY((chain_next ("%h.more"), chain_prev ("%h.less"))) KEYWORD_T
    The interpretation of DIM depends on the kind of mode:
    - In VOID_SYMBOL, STANDARD or INDICANT mode, if DIM is positive it
      specifies the size of the longsety of the mode.  If DIM is negative then
-     abs (DIM) is the size of hte shortsety of the mode.
+     abs (DIM) is the size of the shortsety of the mode.
    - In ROW modes, DIM is the number of dimensions.
    - In STRUCT modes, DIM is the number of fields.
    - In UNION modes, DIM is the number of united modes.
@@ -272,6 +298,8 @@ struct MODES_T
     *C_STRING, *ERROR, *FILE, *FORMAT, *HEX_NUMBER, *HIP, *INT, *LONG_BITS, *LONG_BYTES,
     *LONG_COMPL, *LONG_COMPLEX, *LONG_INT, *LONG_LONG_BITS, *LONG_LONG_COMPL,
     *LONG_LONG_COMPLEX, *LONG_LONG_INT, *LONG_LONG_REAL, *LONG_REAL, *NUMBER,
+    *WORD_INT, *WORD_BITS, *WORD_BYTES, *WORD_REAL, *REF_WORD_INT, *REF_WORD_REAL,
+    *WORD_COMPLEX, *REF_WORD_COMPLEX,
     *PROC_REAL_REAL, *PROC_LONG_REAL_LONG_REAL, *PROC_REF_FILE_BOOL, *PROC_REF_FILE_VOID, *PROC_ROW_CHAR,
     *PROC_STRING, *PROC_VOID, *REAL, *REF_BITS, *REF_BOOL, *REF_BYTES,
     *REF_CHAR, *REF_COMPL, *REF_COMPLEX, *REF_FILE, *REF_INT,
@@ -318,52 +346,25 @@ struct GTY(()) OPTIONS_T
   bool nil_checking;
 };
 
-/* The access class static property of a stored value determines how the value
-   can be reached at run-time.  It is used by the lowering pass in order to
-   minimize copies at run-time.
+/* An ORIGIN_T is a set of static properties that keep track of the story of
+   the value represented by an AST node, i.e. the way it has been obtained.
 
-   CONSTANT is for constant literals.  At run-time these literals will either
-   reside in operand instructions or in space allocated in CONSTAB%.
+   KINDO is the kind of the origin.
+   BNO is the block number of the origin.
+   DEREFO is the flag dereferencing of the origin.
+   GENO is the flag local generator of the origin.
+   DIAGO is the location of the origin.  */
 
-   DIRIDEN (direct identifier) means that the value is stored on IDST% at some
-   static address.  This is the access class used for values ascribed to
-   identifiers as long as the block in hich they are declared has not been
-   left.  It is also used for values resulting from actions such as the
-   selection from a value possessed by an identifier or the dereferencing fo a
-   name corespodning to a variable.
+#define NO_ORIGIN ((ORIGIN_T *) 0)
 
-   VARIDEN (variable identifier) is used for values which are names/variables.
-   The name is stored on IDST%.  The static elaboration of the dereferencing of
-   a variable with access VARIDEN results in a value with access DIRIDEN, not
-   requiring any run-time action.  Same happens with selections of variables of
-   access VARIDEN.
-
-   INDIDEN (indirect identifier) is used for values that are stored in a memory
-   location in IDST%.  The static elaboration of a dereferencing applied to a
-   value of access DIRIDEN.
-
-   DIRWOST (direct working stack) is very much like DIRIDEN, except that the
-   value is stored in WOST% rathern than in IDST%.  This access is used for the
-   result of an action when this result does not preexist in memory and hence
-   has to be constructed in WOST%.
-
-   INDWOST (indirect working stack) is very similar to INDIDEN.  Such an access
-   can be obtained for example through the static elaboration of the
-   dereferencing of a name the access of which is DIRWOST.
-
-   NIHIL is used to characterize the absence of value.  This is used in the
-   static elaboration of a jump, a voiding and a call ith a void result.
-
-   Note that in all these classes we assume as run-time the intermediate
-   language level we are lowering to, i.e. GENERIC.  A DIRIDEN value, for
-   example, can very well stored in a register depending on further compiler
-   optimizations.  */
-
-#define ACCESS_NIHIL 0
-#define ACCESS_CONSTANT 1
-#define ACCESS_DIRIDEN 2
-#define ACCESS_INDIDEN 3
-#define ACCESS_DIRWOST 4
+struct GTY(()) ORIGIN_T
+{
+  enum a68_kindo kindo;
+  int bno;
+  bool derefo;
+  bool geno;
+  location_t diago;
+};
 
 /* A NODE_T is a node in the A68 Syntax tree produced by the lexer-scanner and
    later expanded by the Mailloux parser.
@@ -424,7 +425,11 @@ struct GTY(()) OPTIONS_T
    pass.
 
    ORIGIN is a static property that describes the history of the entity denoted
-   by the node.  This is only used in nodes denoting values.
+   by the node.  This is only used in nodes denoting constructs that yield a
+   value, i.e. units.
+
+   ACCESS is a static property that describes how to compute the value yielded
+   by the node given the GENERIC tree it lowers to.
 
    DYNAMIC_STACK_ALLOCS is a flag used in serial clause nodes.  It determines
    whether the elaboration of the phrases in the serial clause may involve
@@ -459,6 +464,8 @@ struct GTY((chain_next ("%h.next"), chain_prev ("%h.previous"))) NODE_T
   bool dynamic_stack_allocs;
   bool publicized;
   bool negated;
+  ORIGIN_T *origin;
+  enum a68_access access;
 };
 
 #define NO_NODE ((NODE_T *) 0)
@@ -470,7 +477,7 @@ struct GTY((chain_next ("%h.next"), chain_prev ("%h.previous"))) NODE_T
    routine texts.  This attribute is set for all the nodes in the syntax tree
    by the taxes collector and originally used by ALGOL 68 Genie's monitor.
    Even if at the moment this is not used by GCC, this field and the
-   correponding machinery is still here in case it is useful in the future.
+   corresponding machinery is still here in case it is useful in the future.
 
    PRIORITY (accessed as PRIO) is used by operator tree nodes and specifies the
    priority of the operator denoted by the node.  This is set tree wide by the
@@ -537,8 +544,7 @@ struct GTY((chain_next ("%h.next"))) LINE_T
 {
   char marker[6];
   char * GTY((skip)) string;
-  const char *filename;
-  int number;
+  location_t location;
   LINE_T *next, *previous;
 };
 #define NO_LINE ((LINE_T *) 0)
@@ -569,12 +575,20 @@ struct GTY(()) TABLE_T
 
    NODE is the defining identifier associated to the declaration.
 
-   SCOPE is the lexical depth of the tag.  Zero corresponds to the primal
-   scope.  It is set by the static scope checker.
+   SCOPE is the lexical depth of the scope of the value ascribed to the tag.
+   Zero corresponds to the primal scope.  Only valid when SCOPE_ASSIGNED is
+   set.  This field is set by the static scope checker.
 
    SCOPE_ASSIGNED determines whether a SCOPE has been actually assigned to the
-   tag.  It is set by the static scope checker.  The entities which get
-   assigned scopes are identities of format texts and routine texts.
+   tag.  This field is set by the static scope checker.
+
+   YOUNGEST_ENVIRON is used when NODE is either a ROUTINE_TEXT or a
+   FORMAT_TEXT, and contains the youngest (higher) lexical level of any object
+   directly declared in the routine or format body.  This is filled in and used
+   by the scope checker.
+
+   LEVEL is the lexical depth of the declaration in which tag was introduced.
+   It is set by the symbol table management.
 
    PORTABLE determines whether the construction associated with the tag is
    Algol 68 or some extension.
@@ -605,11 +619,6 @@ struct GTY(()) TABLE_T
    These declarations are optimized in a similar way than variable declarations
    in order to avoid indirect addressing.
 
-   YOUNGEST_ENVIRON is used when NODE is either a ROUTINE_TEXT or a
-   FORMAT_TEXT, and contains the youngest (higher) lexical level of any object
-   directly declared in the routine or format body.  This is filled in and used
-   by the scope checker.
-
    TREE_DECL is the GENERIC declaration for the definition of this symbol.
    This is set and used by the lower pass.  For mode indicants, it contains a
    function that generates a pointer to the given mode, and is used by
@@ -621,7 +630,20 @@ struct GTY(()) TABLE_T
    module declaration.  This is only used in entries where MOIF is not NO_MOIF.
 
    LOWERER is a lowering routine defined in a68-low-prelude.cc.  These are used
-   in taxes that denote some pre-defined operator.  */
+   in taxes that denote some pre-defined operator.
+
+   ORIGIN is a static property that describes the history of the value being
+   ascribed to the identifier.
+
+   ACCESS is a static property that describes how to compute the value yielded
+   by the identifier given the GENERIC tree it lowers to.
+
+   CTYPE is either NULL_TREE or a GENERIC type.  This is currently used for
+   declarers that are applied indicants, and is the type that is created in
+   a68_lower_mode_declaration, a variant derived from the actual ctype of the
+   MOID of the applied indicant.  The lowerers for identity declarations,
+   variable declarations etc must use this type if it exists in the declaration
+   declarer.  */
 
 struct GTY((chain_next ("%h.next"))) TAG_T
 {
@@ -633,9 +655,11 @@ struct GTY((chain_next ("%h.next"))) TAG_T
   bool ascribed_routine_text, is_recursive, publicized;
   int priority, heap, scope, youngest_environ, number;
   STATUS_MASK_T status;
-  tree tree_decl;
+  tree tree_decl, ctype;
   MOIF_T *moif;
   LOWERER_T lowerer;
+  ORIGIN_T *origin;
+  enum a68_access access;
   TAG_T *next, *body;
   const char *extern_symbol;
 };
@@ -768,7 +792,7 @@ struct MODE_CACHE_T
    buffer is known to be big enough to hold any substring from the source file.
    It is initialized in read_source_file.
 
-   MAX_SCAN_BUF_LENGTH is the useable size of SCAN_BUF.  This is used by the
+   MAX_SCAN_BUF_LENGTH is the usable size of SCAN_BUF.  This is used by the
    scanner to grow SCAN_BUF as it includes other files.
 
    TAG_NUMBER is a global counter used by the parser to assign an unique number
@@ -912,16 +936,16 @@ struct GTY(()) A68_T
  * in order to achieve a nice ALGOL-like field OF struct style.
  */
 
+#define ACCESS(p) ((p)->access)
 #define ASM_LABEL(m) ((m)->asm_label)
 #define BACKWARD(p) (p = PREVIOUS (p))
-#define DEFLEX(p) (DEFLEXED (p) != NO_MOID ? DEFLEXED(p) : (p))
-#define FORWARD(p) ((p) = NEXT (p))
 #define A(p) ((p)->a)
 #define ANNOTATION(p) ((p)->annotation)
 #define ANONYMOUS(p) ((p)->anonymous)
 #define ATTRIBUTE(p) ((p)->attribute)
 #define ASCRIBED_ROUTINE_TEXT(p) ((p)->ascribed_routine_text)
 #define B(p) ((p)->b)
+#define BNO(p) ((p)->origin->bno)
 #define BODY(p) ((p)->body)
 #define CAST(p) ((p)->cast)
 #define CHAR_IN_LINE(p) ((p)->char_in_line)
@@ -932,9 +956,11 @@ struct GTY(()) A68_T
 #define COMMENT_LINE(p) ((p)->comment_line)
 #define COMMENT_TYPE(p) ((p)->comment_type)
 #define CTYPE(p) ((p)->ctype)
+#define DEFLEX(p) (DEFLEXED (p) != NO_MOID ? DEFLEXED(p) : (p))
 #define DEFLEXED(p) ((p)->deflexed_mode)
-#define DEREFO(p) ((p).derefo)
+#define DEREFO(p) ((p)->origin->derefo)
 #define DERIVATE(p) ((p)->derivate)
+#define DIAGO(p) ((p)->origin->diago)
 #define DIM(p) ((p)->dim)
 #define DYNAMIC_STACK_ALLOCS(p) ((p)->dynamic_stack_allocs)
 #define EQUIVALENT(p) ((p)->equivalent_mode)
@@ -949,14 +975,12 @@ struct GTY(()) A68_T
 #define EXTRACT_VARIABLE(p) ((p)->variable)
 #define WARNING_COUNT(p) ((p)->warning_count)
 #define F(p) ((p)->f)
-#define FILENAME(p) ((p)->filename)
 #define FILE_SOURCE_FD(p) ((p)->file_source_fd)
 #define FILE_SOURCE_NAME(p) ((p)->file_source_name)
-#define FLEXO(p) ((p).flexo)
-#define FLEXO_KNOWN(p) ((p).flexo_known)
+#define FORWARD(p) ((p) = NEXT (p))
 #define G(p) ((p)->g)
 #define GINFO(p) ((p)->genie)
-#define GENO(p) ((p).geno)
+#define GENO(p) ((p)->origin->geno)
 #define GET(p) ((p)->get)
 #define GPARENT(p) (PARENT (GINFO (p)))
 #define GREEN(p) ((p)->green)
@@ -988,6 +1012,7 @@ struct GTY(()) A68_T
 #define JUMP_STAT(p) ((p)->jump_stat)
 #define JUMP_TO(p) ((p)->jump_to)
 #define K(q) ((q)->k)
+#define KINDO(p) ((p)->origin->kindo)
 #define LABELS(p) ((p)->labels)
 #define LAST(p) ((p)->last)
 #define LAST_LINE(p) ((p)->last_line)
@@ -996,10 +1021,11 @@ struct GTY(()) A68_T
 #define LEX_LEVEL(p) (LEVEL (TABLE (p)))
 #define LINBUF(p) ((p)->linbuf)
 #define LINE(p) ((p)->line)
+#define LOCATION(p) ((p)->location)
 #define LINE_APPLIED(p) ((p)->line_applied)
 #define LINE_DEFINED(p) ((p)->line_defined)
 #define LINE_END_MENDED(p) ((p)->line_end_mended)
-#define LINE_NUMBER(p) (NUMBER (LINE (INFO (p))))
+#define LINE_NUMBER(p) (LINE_NO (LINE (INFO (p))))
 #define LINSIZ(p) ((p)->linsiz)
 #define LIST(p) ((p)->list)
 #define ln(x) (log (x))
@@ -1060,6 +1086,7 @@ struct GTY(()) A68_T
 #define OPTION_LIST(p) (OPTIONS (p).list)
 #define OPTION_LOCAL(p) (OPTIONS (p).local)
 #define OPTION_NODEMASK(p) (OPTIONS (p).nodemask)
+#define ORIGIN(p) ((p)->origin)
 #define OUT(p) ((p)->out)
 #define OUTER(p) ((p)->outer)
 #define P(q) ((q)->p)
@@ -1131,23 +1158,27 @@ struct GTY(()) A68_T
    || (m) == M_LONG_INT					  \
    || (m) == M_LONG_LONG_INT				  \
    || (m) == M_SHORT_INT				  \
-   || (m) == M_SHORT_SHORT_INT)
+   || (m) == M_SHORT_SHORT_INT				  \
+   || (m) == M_WORD_INT)
 #define IS_BITS(m)						  \
   ((m) == M_BITS						  \
    || (m) == M_LONG_BITS					  \
    || (m) == M_LONG_LONG_BITS					  \
    || (m) == M_SHORT_BITS					  \
-   || (m) == M_SHORT_SHORT_BITS)
+   || (m) == M_SHORT_SHORT_BITS					  \
+   || (m) == M_WORD_BITS)
 #define IS_BYTES(m)				\
-  ((m) == M_BYTES || (m) == M_LONG_BYTES)
+  ((m) == M_BYTES || (m) == M_LONG_BYTES || (m) == M_WORD_BYTES)
 #define IS_COMPLEX(m)				\
   ((m) == M_COMPLEX				\
    || (m) == M_LONG_COMPLEX			\
-   || (m) == M_LONG_LONG_COMPLEX)
+   || (m) == M_LONG_LONG_COMPLEX		\
+   || (m) == M_WORD_COMPLEX)
 #define IS_REAL(m)				\
   ((m) == M_REAL				\
    || (m) == M_LONG_REAL			\
-   || (m) == M_LONG_LONG_REAL)
+   || (m) == M_LONG_LONG_REAL                   \
+   || (m) == M_WORD_REAL)
 #define IS_ROW(m) IS ((m), ROW_SYMBOL)
 #define IS_STRUCT(m) IS ((m), STRUCT_SYMBOL)
 #define IS_UNION(m) IS ((m), UNION_SYMBOL)

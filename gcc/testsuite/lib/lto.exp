@@ -25,8 +25,9 @@
 # MESSAGES_FOR_FILE is a list of expected messages, akin to DejaGnu's
 # "dg-messages" variable.
 # TEXT is the textual output from the LTO link.
+# OPTSTR is the LTO option set in effect.
 
-proc lto_handle_diagnostics_for_file { name filename messages_for_file text } {
+proc lto_handle_diagnostics_for_file { name filename messages_for_file text optstr } {
     global dg-linenum-format
 
     set filename_without_path [file tail $filename]
@@ -69,8 +70,9 @@ proc lto_handle_diagnostics_for_file { name filename messages_for_file text } {
 
 	# Unlike dg-test, add the filename to the PASS/FAIL message (rather
 	# than just the line number) so that the user can identify the
-	# pertinent directive.
-	set describe_where "$filename_without_path line $line"
+	# pertinent directive.  Also append the option set, so that the same
+	# directive checked under several LTO options got a unique test name.
+	set describe_where "$filename_without_path line $line $optstr"
 
 	# Issue the PASS/FAIL, adding "LTO" to the messages (e.g. "LTO errors")
 	# to distinguish them from the non-LTO case (in case we ever need to
@@ -112,8 +114,9 @@ proc lto_handle_diagnostics_for_file { name filename messages_for_file text } {
 # Return TEXT, stripped of any diagnostics that were handled.
 #
 # TEXT is the textual output from the LTO link.
+# OPTSTR is the LTO option set in effect.
 
-proc lto_handle_diagnostics { text } {
+proc lto_handle_diagnostics { text optstr } {
     global testcase
 
     upvar dg-messages-by-file messages_by_file
@@ -128,7 +131,7 @@ proc lto_handle_diagnostics { text } {
 	set dg-messages $messages_by_file($src)
 	verbose "  messages for $src: ${dg-messages}" 3
 	set text [lto_handle_diagnostics_for_file $testcase $src \
-		      ${dg-messages} $text]
+		      ${dg-messages} $text $optstr]
     }
 
     verbose "lto_handle_diagnostics: exit: $text" 2
@@ -372,6 +375,7 @@ proc lto-link-and-maybe-run { testname objlist dest optall optfile optstr } {
     global tool
     global compile_type
     global board_info
+    global gluefile
 
     upvar dg-messages-by-file dg-messages-by-file
 
@@ -405,16 +409,49 @@ proc lto-link-and-maybe-run { testname objlist dest optall optfile optstr } {
 	set board_info($target_board,ldscript) ""
     }
 
+    set is_incr_link [string equal "incr-link" $optstr]
+    if { $is_incr_link } {
+	# An incremental LTO link must contain only the test's LTO objects.
+	lappend options "additional_flags=-nostdlib"
+	foreach property {ldflags libs} {
+	    if { [board_info $target_board exists $property] } {
+		set saved_board_info($property) \
+		    [board_info $target_board $property]
+		set board_info($target_board,$property) ""
+	    }
+	}
+
+	if { [info exists gluefile] } {
+	    set sav_gluefile $gluefile
+	    # Setting gluefile to an empty string arranges that we still pass
+	    # the needed -wrap flags to the linker, but not the object file.
+	    set gluefile ""
+	}
+    }
+
     # Link the objects into an executable.
     set comp_output [${tool}_target_compile "$objlist" $dest executable \
 		     "$options"]
+
+    if { [info exists sav_gluefile] } {
+	set gluefile $sav_gluefile
+    }
+
+    foreach property {ldflags libs} {
+	if { [info exists saved_board_info($property)] } {
+	    set board_info($target_board,$property) \
+		$saved_board_info($property)
+	}
+    }
 
     if { $relocatable } {
 	set board_info($target_board,ldscript) $saved_ldscript
     }
 
     # Check for diagnostics specified by directives
-    set comp_output [lto_handle_diagnostics $comp_output]
+    if { ! $is_incr_link } {
+	set comp_output [lto_handle_diagnostics $comp_output $optstr]
+    }
 
     # Prune unimportant visibility warnings before checking output.
     set comp_output [lto_prune_warns $comp_output]
@@ -429,7 +466,8 @@ proc lto-link-and-maybe-run { testname objlist dest optall optfile optstr } {
 
     # Return if we only needed to link.
     if { ![string compare "link" $compile_type] \
-        || ![string compare "ar-link" $compile_type] } {
+        || ![string compare "ar-link" $compile_type] \
+        || ![string compare "incr-link" $compile_type] } {
 	return
     }
 
@@ -504,6 +542,7 @@ proc lto-get-options-main { src } {
 
     # dg-options sets a variable called dg-extra-tool-flags.
     set dg-extra-tool-flags ""
+    set lto-additional-tool-flags ""
 
     # dg-options sets a variable called tool_flags.
     set tool_flags ""
@@ -538,6 +577,18 @@ proc lto-get-options-main { src } {
 		unresolved "$src: $errmsg for \"$op\""
 		return
 	    }
+	} elseif { [string match "dg-lto-additional-options" $cmd] } {
+	    set op [lreplace $op 0 0 "dg-additional-options"]
+	    set saved-dg-extra-tool-flags ${dg-extra-tool-flags}
+	    set dg-extra-tool-flags ${lto-additional-tool-flags}
+	    set status [catch "$op" errmsg]
+	    if { $status != 0 } {
+		perror "src: $errmsg for \"$op\"\n"
+		unresolved "$src: $errmsg for \"$op\""
+		return
+	    }
+	    set lto-additional-tool-flags ${dg-extra-tool-flags}
+	    set dg-extra-tool-flags ${saved-dg-extra-tool-flags}
 	} elseif { ![string compare "dg-xfail-if" $cmd] \
 		   || ![string compare "dg-options" $cmd] } {
 	    warning "lto.exp does not support $cmd in primary source file"
@@ -562,6 +613,8 @@ proc lto-get-options-main { src } {
 		set compile_type "link"
 	    } elseif { ![string compare "ar-link" $dgdo] } {
 		set compile_type "ar-link"
+	    } elseif { ![string compare "incr-link" $dgdo] } {
+		set compile_type "incr-link"
 	    } else {
 		warning "lto.exp does not support dg-lto-do $dgdo"
 	    }
@@ -607,7 +660,8 @@ proc lto-get-options-main { src } {
     # Return flags to use for compiling the primary source file and for
     # linking.
     verbose "dg-extra-tool-flags for main is ${dg-extra-tool-flags}"
-    return ${dg-extra-tool-flags}
+    verbose "lto-additional-tool-flags for main is ${lto-additional-tool-flags}"
+    return [list ${dg-extra-tool-flags} ${lto-additional-tool-flags}]
 }
 
 
@@ -689,7 +743,7 @@ proc lto-execute-1 { src1 sid } {
     set compile_type "run"
     set dg-do-what [list ${dg-do-what-default} "" P]
     array set dg-messages-by-file [list]
-    set extra_flags(0) [lto-get-options-main $src1]
+    lassign [lto-get-options-main $src1] extra_flags(0) additional-flags
     set compile_xfail(0) "" 
 
     # If the main file defines dg-options, those flags are used to
@@ -711,9 +765,19 @@ proc lto-execute-1 { src1 sid } {
     set i 1
     set done 0
     while { !$done } {
-	set names [glob -nocomplain -types f -- "${dir}/${base}_${i}.{c,C,ii,\[fF\]{,90,95,03,08},d,m,mm}"]
+	set prefix "${dir}/${base}_${i}"
+
+	# glob returns a case insensitive list if filesystem is case
+	# insensitive.  To have a case sensitive list, fetch the extended list
+	# and then filter it to avoid duplicates.
+	regsub -all {([.^$*+?()$${}|])} $prefix {\\\1} pattern
+	set pattern [format {^%s.(c|C|ii|[fF](|90|95|03|08)|d|m|mm)$} $pattern]
+	set names [lsearch -inline -all -regexp \
+	  [glob -nocomplain -types f -- "${prefix}.*"] $pattern]
+
 	if { [llength ${names}] > 1 } {
-	    warning "lto-execute: more than one file matched ${dir}/${base}_${i}.{c,C,ii,\[fF\]{,90,95,03,08},d,m,mm}"
+	    warning "lto-execute: more than one file matched $pattern"
+	    verbose "matching files: $names"
 	}
 	if { [llength ${names}] == 1 } {
 	    lappend src_list [lindex ${names} 0]
@@ -745,8 +809,12 @@ proc lto-execute-1 { src1 sid } {
 
     # The test needs to build all but the main file into an archive and then
     # link them all together.
-    if { ![string compare "ar-link" $compile_type] } {
+    set is_incr_link [string equal "incr-link" $compile_type]
+    set is_ar_link [string equal "ar-link" $compile_type]
+    if { $is_ar_link } {
         set arname "${sid}_${base}.a"
+    } elseif { $is_incr_link } {
+        set arname "${sid}_${base}.o"
     }
 
     # Remove the $srcdir and $tmpdir prefixes from $src1.  (It would
@@ -808,20 +876,27 @@ proc lto-execute-1 { src1 sid } {
 	# Compile pieces with the compiler under test.
 	set i 0
 	foreach src $src_list obj $obj_list {
-	    lto-obj $src $obj $option $extra_flags($i) $option \
+	    lto-obj $src $obj $option "$extra_flags($i) ${additional-flags}" $option \
 		    $compile_xfail($i)
 	    incr i
 	}
 
 	# Bundle all but the main file into an archive. Update objlist to only
 	# have the archive and the last file.
-	if { ![string compare "ar-link" $compile_type] } {
+	# Only attempt the incr-link mode if the linker plugin is explicitly in use.
+	set sav_compile_type $compile_type
+	set sav_obj_list $obj_list
+	if { $is_incr_link && [lsearch -exact $option "-fuse-linker-plugin"] < 0 } {
+	    set compile_type "link"
+	} elseif { $is_incr_link || $is_ar_link } {
 	    set mainsrc [lindex $obj_list 0]
 	    set obj_list [lrange $obj_list 1 end]
-	    lto-build-archive \
-		"[lindex $obj_list 1]-[lindex $obj_list end]" \
-		$obj_list $arname
-
+	    set testname "[lindex $obj_list 1]-[lindex $obj_list end]"
+	    if { $is_incr_link } {
+		lto-link-and-maybe-run $testname $obj_list $arname "-r" "" "incr-link"
+	    } else {
+		lto-build-archive $testname $obj_list $arname
+	    }
 	    set obj_list ""
 	    lappend obj_list $mainsrc
 	    lappend obj_list $arname
@@ -830,7 +905,7 @@ proc lto-execute-1 { src1 sid } {
 
 	# Link (using the compiler under test), run, and clean up tests.
 	if { ![string compare "run" $compile_type] \
-	     || ![string compare "ar-link" $compile_type] \
+	     || $is_ar_link || $is_incr_link \
 	     || ![string compare "link" $compile_type] } {
 
 	    # Filter out any link options we were asked to suppress.
@@ -844,10 +919,10 @@ proc lto-execute-1 { src1 sid } {
 
 	    lto-link-and-maybe-run \
 		    "[lindex $obj_list 0]-[lindex $obj_list end]" \
-		    $obj_list $execname $filtered ${dg-extra-ld-options} \
+		$obj_list $execname $filtered "${additional-flags} ${dg-extra-ld-options}" \
 		    $filtered
 
-	    if (![string compare "ar-link" $compile_type]) {
+	    if { $is_ar_link || $is_incr_link } {
 		file_on_host delete $arname
 	      }
 	}
@@ -896,7 +971,7 @@ proc lto-execute-1 { src1 sid } {
 	unset testname_with_flags
 	
 	if { ![string compare "run" $compile_type] \
-	     || ![string compare "ar-link" $compile_type] \
+	     || $is_ar_link || $is_incr_link \
 	     || ![string compare "link" $compile_type] } {
 	    file_on_host delete $execname
 	}
@@ -904,6 +979,9 @@ proc lto-execute-1 { src1 sid } {
 	if {$sid eq "f_lto"} {
 	    cleanup-modules ""
 	}
+
+	set compile_type $sav_compile_type
+	set obj_list $sav_obj_list
     }
 }
 
@@ -915,23 +993,21 @@ proc lto-execute { src1 sid } {
     initialize_prune_notes
 }
 
-# Call pass if object readelf is ok, otherwise fail.
-# example: /* { dg-final { object-readelf Tag_ABI_enum_size int} } */
-proc object-readelf { args } {
+proc object-readelf { option is_negative directive args } {
     global readelf
     global base_dir
-    upvar 2 execname execname
+    upvar 3 execname execname
 
-    if { [llength $args] < 2 } {
-	error "object-readelf: too few arguments"
+    if { [llength $args] < 1 } {
+	error "$directive: too few arguments"
 	return
     }
-    if { [llength $args] > 3 } {
-	error "object-readelf: too many arguments"
+    if { [llength $args] > 2 } {
+	error "$directive: too many arguments"
 	return
     }
-    if { [llength $args] >= 3 } {
-	switch [dg-process-target [lindex $args 2]] {
+    if { [llength $args] >= 2 } {
+	switch [dg-process-target [lindex $args 1]] {
 	    "S" { }
 	    "N" { return }
 	    "F" { setup_xfail "*-*-*" }
@@ -939,7 +1015,7 @@ proc object-readelf { args } {
 	}
     }
 
-    # Find size like we find g++ in g++.exp.
+    # Find readelf like we find g++ in g++.exp.
     if ![info exists readelf]  {
 	set readelf [findfile $base_dir/../../../binutils/readelf \
 		$base_dir/../../../binutils/readelf \
@@ -949,47 +1025,52 @@ proc object-readelf { args } {
 	verbose -log "readelf is $readelf"
     }
 
-    set what [lindex $args 0]
-    set with [lindex $args 1]
+    set regex [lindex $args 0]
 
     if ![file_on_host exists $execname] {
 	verbose -log "$execname does not exist"
-	unresolved "object-readelf $what "
+	unresolved "$directive $regex "
 	return
     }
 
-    set output [remote_exec host "$readelf -A" "$execname"]
+    set output [remote_exec host "$readelf $option" "$execname"]
     set status [lindex $output 0]
     if { $status != 0 } {
-	verbose -log "object-readelf: $readelf failed"
-	unresolved "object-readelf $what $execname"
+	verbose -log "$directive: $readelf failed"
+	unresolved "$directive $regex $execname"
 	return
     }
 
     set text [lindex $output 1]
-    set lines [split $text "\n"]
+    set match [regexp -- $regex $text]
 
-    set done 0
-    set i 0
-    while { !$done } {
-	set line_tex [lindex $lines $i]
-	if { [llength ${line_tex}] > 1} {
-	    incr i
-	    if [regexp -- $what $line_tex] {
-	        set match [regexp -- $with $line_tex]
-		set done 1
-	    }
-	} else {
-	    set done 1
-	}
-    }
-
-    verbose -log "$what size is $with;"
-    if { $match == 1 } {
-	pass "object-readelf $what size is correct."
+    if { ($is_negative && $match == 0) || (!$is_negative && $match == 1) } {
+	pass "$directive $regex pattern is correct."
     } else {
-	fail "object-readelf $what size is incorrect."
+	fail "$directive $regex pattern is incorrect."
     }
 }
 
+# Call pass if regex ($args 0) matches readelf -A output, otherwise fail.
+# example: /* { dg-final { object-readelf-attributes {Tag_ABI_enum_size:\s+int} } } */
+proc object-readelf-attributes { args } {
+    object-readelf "-A" 0 object-readelf-attributes {*}$args
+}
 
+# Call pass if regex ($args 0) does not match readelf -A output, otherwise fail.
+# example: /* { dg-final { object-readelf-attributes {Tag_ABI_enum_size:\s+int} } } */
+proc object-readelf-attributes-not { args } {
+    object-readelf "-A" 1 object-readelf-attributes-not {*}$args
+}
+
+# Call pass if regex ($args 0) matches readelf -n output, otherwise fail.
+# example: /* { dg-final { object-readelf-notes {AArch64 feature:\s+BTI,\s+PAC,\s+GCS} } } */
+proc object-readelf-notes { args } {
+    object-readelf "-n" 0 object-readelf-notes {*}$args
+}
+
+# Call pass if regex ($args 0) does not readelf -n output, otherwise fail.
+# example: /* { dg-final { object-readelf-notes-not {AArch64 feature:\s+BTI,\s+PAC,\s+GCS} } } */
+proc object-readelf-notes-not { args } {
+    object-readelf "-n" 1 object-readelf-notes-not {*}$args
+}

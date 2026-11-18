@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/EVALUATE__A__OR__a_.out" }
         program-id. prog.
         data division.

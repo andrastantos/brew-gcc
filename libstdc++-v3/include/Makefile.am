@@ -129,6 +129,7 @@ bits_freestanding = \
 	${bits_srcdir}/alloc_traits.h \
 	${bits_srcdir}/atomic_base.h \
 	${bits_srcdir}/c++0x_warning.h \
+	${bits_srcdir}/binders.h \
 	${bits_srcdir}/boost_concept_check.h \
 	${bits_srcdir}/concept_check.h \
 	${bits_srcdir}/char_traits.h \
@@ -137,8 +138,14 @@ bits_freestanding = \
 	${bits_srcdir}/enable_special_members.h \
 	${bits_srcdir}/functexcept.h \
 	${bits_srcdir}/functional_hash.h \
+	${bits_srcdir}/inplace_tags.h \
 	${bits_srcdir}/intcmp.h \
 	${bits_srcdir}/invoke.h \
+	${bits_srcdir}/iosfwd.h \
+	${bits_srcdir}/iosfwd_file.h \
+	${bits_srcdir}/iosfwd_span.h \
+	${bits_srcdir}/iosfwd_string.h \
+	${bits_srcdir}/iosfwd_sync.h \
 	${bits_srcdir}/iterator_concepts.h \
 	${bits_srcdir}/new_except.h \
 	${bits_srcdir}/new_throw.h \
@@ -146,6 +153,7 @@ bits_freestanding = \
 	${bits_srcdir}/memoryfwd.h \
 	${bits_srcdir}/monostate.h \
 	${bits_srcdir}/move.h \
+	${bits_srcdir}/optional_ref.h \
 	${bits_srcdir}/ostream.h \
 	${bits_srcdir}/out_ptr.h \
 	${bits_srcdir}/predefined_ops.h \
@@ -201,7 +209,6 @@ bits_headers = \
 	${bits_srcdir}/basic_ios.tcc \
 	${bits_srcdir}/basic_string.h \
 	${bits_srcdir}/basic_string.tcc \
-	${bits_srcdir}/binders.h \
 	${bits_srcdir}/charconv.h \
 	${bits_srcdir}/chrono.h \
 	${bits_srcdir}/chrono_io.h \
@@ -268,12 +275,15 @@ bits_headers = \
 	${bits_srcdir}/shared_ptr_atomic.h \
 	${bits_srcdir}/shared_ptr_base.h \
 	${bits_srcdir}/simd_alg.h \
+	${bits_srcdir}/simd_bit.h \
+	${bits_srcdir}/simd_complex.h \
 	${bits_srcdir}/simd_details.h \
 	${bits_srcdir}/simd_flags.h \
 	${bits_srcdir}/simd_iterator.h \
 	${bits_srcdir}/simd_loadstore.h \
 	${bits_srcdir}/simd_mask.h \
 	${bits_srcdir}/simd_mask_reductions.h \
+	${bits_srcdir}/simd_math.h \
 	${bits_srcdir}/simd_reductions.h \
 	${bits_srcdir}/simd_vec.h \
 	${bits_srcdir}/simd_x86.h \

@@ -17,7 +17,13 @@ end
 ! { dg-final { scan-tree-dump-not " _gfortran_internal_pack" "original" } }
 ! { dg-final { scan-tree-dump-times "parm.\[0-9\]+.data = \\(void .\\) &\\(.xxx.\[0-9\]+\\)\\\[0\\\];" 1 "original" } }
 ! { dg-final { scan-tree-dump-times "parm.\[0-9\]+.data = \\(void .\\) &\\(.xxx.\[0-9\]+\\)\\\[D.\[0-9\]+ \\* 4\\\];" 1 "original" } }
-! { dg-final { scan-tree-dump-times "parm.\[0-9\]+.data = \\(void .\\) yyy.\[0-9\]+;" 1 "original" } }
-! { dg-final { scan-tree-dump-times "parm.\[0-9\]+.data = \\(void .\\) yyy.\[0-9\]+ \\+ \\(sizetype\\) \\(D.\[0-9\]+ \\* 16\\);" 1 "original" } }
+! The elements of a TARGET assumed-shape dummy can be spaced by more than the
+! element length.  The spacing is folded into the strides on entry where the
+! element length is the element alignment, so that the elements are addressed
+! by the constant element length rather than by a span loaded from the
+! descriptor.  Elsewhere they are addressed by the span.
+! { dg-final { scan-tree-dump-not "span.\[0-9\]+ = yyy->span;" "original" { target natural_alignment_32 } } }
+! { dg-final { scan-tree-dump-times "parm.\[0-9\]+.data = \\(void .\\) yyy.\[0-9\]+;" 1 "original" { target natural_alignment_32 } } }
+! { dg-final { scan-tree-dump-times "parm.\[0-9\]+.data = \\(void .\\) yyy.\[0-9\]+ \\+ \\(sizetype\\) \\(D.\[0-9\]+ \\* 16\\);" 1 "original" { target natural_alignment_32 } } }
 
 ! { dg-final { scan-tree-dump-times "D.\[0-9\]+ = parm.\[0-9\]+.data;\[^;]+ptr\[1-4\] = D.\[0-9\]+;" 4 "original" } }

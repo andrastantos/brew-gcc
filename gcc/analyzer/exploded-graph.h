@@ -62,8 +62,7 @@ class impl_region_model_context : public region_model_context
   void add_note (std::unique_ptr<pending_note> pn) final override;
   void add_event (std::unique_ptr<checker_event> event) final override;
   void on_svalue_leak (const svalue *) override;
-  void on_liveness_change (const svalue_set &live_svalues,
-			   const region_model *model) final override;
+  void on_liveness_change (symbolic::liveness_context &) final override;
   logger *get_logger () final override
   {
     return m_logger.get_logger ();
@@ -82,7 +81,8 @@ class impl_region_model_context : public region_model_context
 
   void on_pop_frame (const frame_region *frame_reg) final override;
 
-  void on_unknown_change (const svalue *sval, bool is_mutable) final override;
+  void on_unknown_change (const symbolic::value_node &val,
+			  bool is_mutable) final override;
 
   void on_phi (const gphi *phi, tree rhs) final override;
 
@@ -93,7 +93,7 @@ class impl_region_model_context : public region_model_context
 
   uncertainty_t *get_uncertainty () final override;
 
-  void purge_state_involving (const svalue *sval) final override;
+  void purge_state_involving (const symbolic::node &node) final override;
 
   void bifurcate (std::unique_ptr<custom_edge_info> info) final override;
   void terminate_path () final override;
@@ -150,6 +150,15 @@ public:
     gcc_assert (state.m_valid);
   }
 
+  point_and_state (const point_and_state &other) = default;
+
+  point_and_state (point_and_state &&other)
+  : m_point (other.m_point),
+    m_state (std::move (other.m_state)),
+    m_hash (other.m_hash)
+  {
+  }
+
   hashval_t hash () const
   {
     return m_hash;
@@ -165,6 +174,12 @@ public:
   void set_state (const program_state &state)
   {
     m_state = state;
+    m_hash = m_point.hash () ^ m_state.hash ();
+  }
+
+  void set_state (program_state &&state)
+  {
+    m_state = std::move (state);
     m_hash = m_point.hash () ^ m_state.hash ();
   }
 
@@ -231,6 +246,7 @@ class exploded_node : public dnode<eg_traits>
   static const char * status_to_str (enum status s);
 
   exploded_node (const point_and_state &ps, int index);
+  exploded_node (point_and_state &&ps, int index);
 
   hashval_t hash () const { return m_ps.hash (); }
 
@@ -239,9 +255,12 @@ class exploded_node : public dnode<eg_traits>
     const final override;
   void dump_dot_id (pretty_printer *pp) const;
 
-  void dump_to_pp (pretty_printer *pp, const extrinsic_state &ext_state) const;
-  void dump (FILE *fp, const extrinsic_state &ext_state) const;
-  void dump (const extrinsic_state &ext_state) const;
+  std::unique_ptr<text_art::tree_widget>
+  make_dump_widget (symbolic::node_dump_state &nds) const;
+
+  void dump () const;
+  void dump_to_pp (pretty_printer *) const;
+  void dump_to_logger (logger &log) const;
 
   void dump_processed_stmts (pretty_printer *pp) const;
   void dump_saved_diagnostics (pretty_printer *pp) const;
@@ -322,10 +341,6 @@ private:
 public:
   /* The index of this exploded_node.  */
   const int m_index;
-
-  /* The number of stmts that were processed when process_node was
-     called on this enode.  */
-  unsigned m_num_processed_stmts;
 };
 
 /* An edge within the exploded graph.
@@ -381,9 +396,9 @@ private:
 class interprocedural_call : public custom_edge_info
 {
 public:
-  interprocedural_call (const gcall &call_stmt,
+  interprocedural_call (const call_and_return_op &op,
 			function &callee_fun)
-  : m_call_stmt (call_stmt),
+  : m_op (op),
     m_callee_fun (callee_fun)
   {}
 
@@ -402,10 +417,16 @@ public:
 
   void add_events_to_path (checker_path *emission_path,
 			   const exploded_edge &eedge,
-			   pending_diagnostic &pd) const final override;
+			   pending_diagnostic &pd,
+			   const state_transition *state_trans) const final override;
+
+  bool
+  try_to_rewind_data_flow (rewind_context &) const final override;
+
+  const gcall &get_gcall () const;
 
 private:
-  const gcall &m_call_stmt;
+  const call_and_return_op &m_op;
   function &m_callee_fun;
 };
 
@@ -434,7 +455,11 @@ public:
 
   void add_events_to_path (checker_path *emission_path,
 			   const exploded_edge &eedge,
-			   pending_diagnostic &pd) const final override;
+			   pending_diagnostic &pd,
+			   const state_transition *state_trans) const final override;
+
+  bool
+  try_to_rewind_data_flow (rewind_context &) const final override;
 
 private:
   const gcall &m_call_stmt;
@@ -463,7 +488,8 @@ public:
 
   void add_events_to_path (checker_path *emission_path,
 			   const exploded_edge &eedge,
-			   pending_diagnostic &pd) const final override;
+			   pending_diagnostic &pd,
+			   const state_transition *state_trans) const final override;
 
   program_point
   get_point_before_setjmp () const
@@ -876,6 +902,12 @@ public:
   exploded_node *find_previous_entry_to (function *top_of_stack_fun,
 					 exploded_node *enode) const;
 
+  std::unique_ptr<diagnostics::digraphs::digraph>
+  make_diagnostics_digraph () const;
+
+  const worklist &
+  get_worklist () const { return m_worklist; }
+
 private:
   void print_bar_charts (pretty_printer *pp) const;
 
@@ -926,34 +958,6 @@ private:
   hash_set<function *> m_functions_with_enodes;
 };
 
-/* A path within an exploded_graph: a sequence of edges.  */
-
-class exploded_path
-{
-public:
-  exploded_path () : m_edges () {}
-  exploded_path (const exploded_path &other);
-
-  unsigned length () const { return m_edges.length (); }
-
-  bool find_stmt_backwards (const gimple *search_stmt,
-			    int *out_idx) const;
-
-  exploded_node *get_final_enode () const;
-
-  void dump_to_pp (pretty_printer *pp,
-		   const extrinsic_state *ext_state) const;
-  void dump (FILE *fp, const extrinsic_state *ext_state) const;
-  void dump (const extrinsic_state *ext_state = nullptr) const;
-  void dump_to_file (const char *filename,
-		     const extrinsic_state &ext_state) const;
-
-  bool feasible_p (logger *logger, std::unique_ptr<feasibility_problem> *out,
-		    engine *eng, const exploded_graph *eg) const;
-
-  auto_vec<const exploded_edge *> m_edges;
-};
-
 /* A reason why a particular exploded_path is infeasible.  */
 
 class feasibility_problem
@@ -966,7 +970,15 @@ public:
     m_rc (std::move (rc))
   {}
 
+  std::unique_ptr<text_art::tree_widget>
+  make_dump_widget (symbolic::node_dump_state &nds) const;
+
+  void dump () const;
   void dump_to_pp (pretty_printer *pp) const;
+  void dump_to_logger (logger &log) const;
+
+  std::unique_ptr<json::object>
+  to_json () const;
 
   unsigned m_eedge_idx;
   const exploded_edge &m_eedge;
@@ -997,16 +1009,15 @@ public:
   auto_sbitmap &get_snodes_visited () { return m_snodes_visited; }
   const auto_sbitmap &get_snodes_visited () const { return m_snodes_visited; }
 
-  void dump_to_pp (pretty_printer *pp, bool simple, bool multiline) const;
+  std::unique_ptr<text_art::tree_widget>
+  make_dump_widget (symbolic::node_dump_state &nds) const;
+
+  void dump_to_pp (pretty_printer *pp) const;
 
 private:
   region_model m_model;
   auto_sbitmap m_snodes_visited;
 };
-
-/* Finding the shortest exploded_path within an exploded_graph.  */
-
-typedef shortest_paths<eg_traits, exploded_path> shortest_exploded_paths;
 
 // TODO: split the above up?
 

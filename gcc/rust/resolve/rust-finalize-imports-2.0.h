@@ -26,33 +26,24 @@
 namespace Rust {
 namespace Resolver2_0 {
 
-class GlobbingVisitor : public AST::DefaultASTVisitor
+class GlobbingVisitor
 {
-  using AST::DefaultASTVisitor::visit;
-
 public:
-  GlobbingVisitor (NameResolutionContext &ctx) : ctx (ctx) {}
+  GlobbingVisitor (NameResolutionContext &ctx) : ctx (ctx), dirty (false) {}
 
   void go (AST::GlobContainer *container);
 
-  void visit_crate_container (AST::Crate &crate);
-  void visit_module_container (AST::Module &module);
-  void visit_enum_container (AST::Enum &item);
+  template <typename T> void visit_container (T &stack, NodeId nodeid);
 
-  void visit (AST::Module &module) override;
-  void visit (AST::MacroRulesDefinition &macro) override;
-  void visit (AST::Function &function) override;
-  void visit (AST::StaticItem &static_item) override;
-  void visit (AST::StructStruct &struct_item) override;
-  void visit (AST::TupleStruct &tuple_struct) override;
-  void visit (AST::Enum &enum_item) override;
-  void visit (AST::Union &union_item) override;
-  void visit (AST::ConstantItem &const_item) override;
-  void visit (AST::ExternCrate &crate) override;
-  void visit (AST::UseDeclaration &use) override;
+  void visit_container (NodeId nodeid);
+
+  void glob_definitions (Rib &dst, Rib &src);
+
+  bool is_dirty () const { return dirty; }
 
 private:
   NameResolutionContext &ctx;
+  bool dirty;
 };
 
 } // namespace Resolver2_0

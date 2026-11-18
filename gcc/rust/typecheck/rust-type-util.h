@@ -38,7 +38,8 @@ TyTy::BaseType *unify_site_and (HirId id, TyTy::TyWithLocation lhs,
 				TyTy::TyWithLocation rhs,
 				location_t unify_locus, bool emit_errors,
 				bool commit_if_ok, bool implicit_infer_vars,
-				bool cleanup, bool check_bounds = true);
+				bool cleanup, bool check_bounds = true,
+				bool allow_never_coercion = true);
 
 TyTy::BaseType *coercion_site (HirId id, TyTy::TyWithLocation lhs,
 			       TyTy::TyWithLocation rhs,
@@ -55,6 +56,12 @@ AssociatedImplTrait *
 lookup_associated_impl_block (const TyTy::TypeBoundPredicate &bound,
 			      TyTy::BaseType *binding,
 			      bool *ambigious = nullptr);
+
+TyTy::BaseType *normalize_projection (TyTy::ProjectionType *proj,
+				      location_t locus, bool emit_errors,
+				      bool unify_self);
+
+void rebind_projection_self_from_fn (TyTy::FnType &fn, TyTy::BaseType *root);
 
 } // namespace Resolver
 } // namespace Rust

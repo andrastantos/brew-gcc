@@ -50,7 +50,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-vrp.h"
 #include "tree-ssanames.h"
 #include "intl.h"
-#include "stringpool.h"
 #include "hash-map.h"
 #include "hash-traits.h"
 #include "attribs.h"
@@ -61,6 +60,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "value-query.h"
 #include "tree-pretty-print.h"
 #include "tree-eh.h"
+#include "regs.h"
+#include "function-abi.h"
 
 /* Like PREFERRED_STACK_BOUNDARY but in units of bytes, not bits.  */
 #define STACK_BYTES (PREFERRED_STACK_BOUNDARY / BITS_PER_UNIT)
@@ -231,7 +232,7 @@ prepare_call_address (tree fndecl_or_type, rtx funexp, rtx static_chain_value,
       if ((flags & ECF_BY_DESCRIPTOR) && !flag_trampolines)
 	{
 	  const int bit_val = targetm.calls.custom_function_descriptors;
-	  rtx call_lab = gen_label_rtx ();
+	  rtx_code_label *call_lab = gen_label_rtx ();
 
 	  gcc_assert (fndecl_or_type && TYPE_P (fndecl_or_type));
 	  fndecl_or_type
@@ -512,6 +513,7 @@ emit_call_1 (rtx funexp, tree fntree ATTRIBUTE_UNUSED, tree fndecl ATTRIBUTE_UNU
       cfun->calls_setjmp = 1;
     }
 
+  CALL_INSN_ABI_ID (call_insn) = (funtype ? fntype_abi (funtype).id () : 0);
   SIBLING_CALL_P (call_insn) = ((ecf_flags & ECF_SIBCALL) != 0);
 
   /* Restore this now, so that we do defer pops for this call's args
@@ -2252,10 +2254,20 @@ load_register_parameters (struct arg_data *args, int num_actuals,
 		   && !TREE_SIDE_EFFECTS (tree_value)
 		   && immediate_const_ctor_p (DECL_INITIAL (tree_value)))
 	    {
+	      HOST_WIDE_INT size = int_expr_size (DECL_INITIAL (tree_value));
 	      rtx target = gen_reg_rtx (word_mode);
 	      store_constructor (DECL_INITIAL (tree_value), target, 0,
-				 int_expr_size (DECL_INITIAL (tree_value)),
-				 false);
+				 size, false);
+	      /* On big-endian targets, store_constructor places fields
+		 from the MSB, which places any padding bits in the least
+		 significant bytes.  If required, use a logical right shift
+		 to place things where expected in a register parameter.  */
+	      if (BYTES_BIG_ENDIAN
+		  && size < UNITS_PER_WORD
+		  && args[i].locate.where_pad == PAD_DOWNWARD)
+		target = expand_shift (RSHIFT_EXPR, word_mode, target,
+				       (UNITS_PER_WORD - size) * BITS_PER_UNIT,
+				       NULL_RTX, 1);
 	      reg = gen_rtx_REG (word_mode, REGNO (reg));
 	      emit_move_insn (reg, target);
 	    }
@@ -4116,8 +4128,8 @@ fixup_tail_calls (void)
 
       /* There are never REG_EQUIV notes for the incoming arguments
 	 after the NOTE_INSN_FUNCTION_BEG note, so stop if we see it.  */
-      if (NOTE_P (insn)
-	  && NOTE_KIND (insn) == NOTE_INSN_FUNCTION_BEG)
+      auto note_insn = dyn_cast<rtx_note *> (insn);
+      if (note_insn && NOTE_KIND (note_insn) == NOTE_INSN_FUNCTION_BEG)
 	break;
 
       note = find_reg_note (insn, REG_EQUIV, 0);

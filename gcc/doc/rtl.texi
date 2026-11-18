@@ -636,6 +636,15 @@ branch is not taken.  When @code{INSN_ANNULLED_BRANCH_P} is not set,
 this insn will always be executed.  Stored in the @code{in_struct}
 field and printed as @samp{/s}.
 
+@findex JUMP_TABLE_SHARED_P
+@cindex @code{addr_vec} and @samp{/u}
+@cindex @code{addr_diff_vec} and @samp{/u}
+@cindex @code{unchanging}, in @code{addr_vec} and @code{addr_diff_vec}
+@item JUMP_TABLE_SHARED_P (@var{x})
+In an @code{addr_vec} or @code{addr_diff_vec}, nonzero if several table
+jumps can use the jump table.  The flag stays set when users are deleted.
+Stored in the @code{unchanging} field and printed as @samp{/u}.
+
 @findex LABEL_PRESERVE_P
 @cindex @code{code_label} and @samp{/i}
 @cindex @code{note} and @samp{/i}
@@ -702,6 +711,42 @@ writable, but after control is transferred from the runtime loader to the
 application, this memory will never be subsequently modified.
 
 Stored in the @code{unchanging} field and printed as @samp{/u}.
+
+@findex MEM_INDEPENDENT_P
+@cindex @code{mem} and @samp{/i}
+@item MEM_INDEPENDENT_P (@var{x})
+This flag only applies to @code{mem}s that have vector addresses (that is,
+to @code{mem}s whose addresses have a vector mode).  The flag is nonzero
+if the creator asserts that the @code{mem}'s address vector specifies
+independent, non-overlapping memory locations, so that the @code{mem}
+does not refer to the same byte twice.
+
+This assertion does not mean that overlap is numerically impossible.
+It instead means that, if the instruction containing the @code{mem}
+is reached, the semantics of the source program require the addresses
+to be independent.  The behavior in other cases is undefined.
+
+RTL semantics apply the following restrictions:
+
+@itemize
+@item
+If the assertion made by @code{MEM_INDEPENDENT_P} does not hold at runtime,
+reading from the @code{mem} will return an undefined value, but will have
+no side effects other than reading from the specified bytes.
+
+@item
+Similarly, writing to such a @code{mem} will set the specified bytes
+to undefined values, but will have no side effects other than that.
+@end itemize
+
+@code{MEM_INDEPENDENT_P} can be useful when writing to a @code{mem}
+that has a vector address.  RTL semantics require such writes to behave
+@emph{as if} they processed the vector in left-to-right order, with later
+writes winning over earlier writes.  However, when @code{MEM_INDEPENDENT_P}
+is true, an instruction can adhere to these semantics by writing to the
+bytes in any order, or in parallel.
+
+Stored in the @code{return_val} field and printed as @samp{/i}.
 
 @findex PREFETCH_SCHEDULE_BARRIER_P
 @cindex @code{prefetch} and @samp{/v}
@@ -1012,6 +1057,9 @@ something in the per-function constant pool.
 
 In a @code{call_insn} 1 means that this instruction is a call to a const
 function.
+
+In an @code{addr_vec} or @code{addr_diff_vec}, 1 means that several table
+jumps can share the jump table.
 
 In an RTL dump, this flag is represented as @samp{/u}.
 
@@ -1577,9 +1625,9 @@ Returns the number of fractional bits of a datum of fixed-point mode @var{m}.
 
 @findex GET_MODE_MASK
 @item GET_MODE_MASK (@var{m})
-Returns a bitmask containing 1 for all bits in a word that fit within
-mode @var{m}.  This macro can only be used for modes whose bitsize is
-less than or equal to @code{HOST_BITS_PER_INT}.
+Returns a bitmask containing 1 for all bits in a @code{HOST_WIDE_INT}
+that fit within mode @var{m}.  This macro can only be used for modes
+whose bitsize is less than or equal to @code{HOST_BITS_PER_WIDE_INT}.
 
 @findex GET_MODE_ALIGNMENT
 @item GET_MODE_ALIGNMENT (@var{m})
@@ -1917,7 +1965,7 @@ of relocation operator.  @var{m} should be a valid address mode.
 
 @findex high
 @item (high:@var{m} @var{exp})
-Represents the high-order bits of @var{exp}.  
+Represents the high-order bits of @var{exp}.
 The number of bits is machine-dependent and is
 normally the number of bits specified in an instruction that initializes
 the high order bits of a register.  It is used with @code{lo_sum} to
@@ -2369,6 +2417,15 @@ a unit of memory is accessed.  @var{alias} specifies an alias set for the
 reference.  In general two items are in different alias sets if they cannot
 reference the same memory address.
 
+The @var{addr} expression can represent either a scalar base address, or a
+vector of addresses (using an appropriate vector mode).  In the vector case,
+the number of lanes in the address mode must match the number of lanes in the
+data mode @var{m}.  Each vector lane can be viewed as an independent memory
+access of the corresponding scalar mode, performed in left-to-right order.  The
+@code{MEM_INDEPENDENT_P} flag can be used to assert that the addresses will not
+conflict.  All lanes are assumed to have the same attributes (address space,
+volatile, etc.).
+
 The construct @code{(mem:BLK (scratch))} is considered to alias all
 other memories.  Thus it may be used as a memory barrier in epilogue
 stack deallocation patterns.
@@ -2620,7 +2677,7 @@ integers.
 @cindex bitwise complement
 @item (not:@var{m} @var{x})
 Represents the bitwise complement of the value represented by @var{x},
-carried out in mode @var{m}, which must be a fixed-point machine mode.
+carried out in mode @var{m}, which must be an integral machine mode.
 
 @findex and
 @cindex logical-and, bitwise
@@ -2628,23 +2685,23 @@ carried out in mode @var{m}, which must be a fixed-point machine mode.
 @item (and:@var{m} @var{x} @var{y})
 Represents the bitwise logical-and of the values represented by
 @var{x} and @var{y}, carried out in machine mode @var{m}, which must be
-a fixed-point machine mode.
+an integral machine mode.
 
 @findex ior
 @cindex inclusive-or, bitwise
 @cindex bitwise inclusive-or
 @item (ior:@var{m} @var{x} @var{y})
 Represents the bitwise inclusive-or of the values represented by @var{x}
-and @var{y}, carried out in machine mode @var{m}, which must be a
-fixed-point mode.
+and @var{y}, carried out in machine mode @var{m}, which must be an
+integral machine mode.
 
 @findex xor
 @cindex exclusive-or, bitwise
 @cindex bitwise exclusive-or
 @item (xor:@var{m} @var{x} @var{y})
 Represents the bitwise exclusive-or of the values represented by @var{x}
-and @var{y}, carried out in machine mode @var{m}, which must be a
-fixed-point mode.
+and @var{y}, carried out in machine mode @var{m}, which must be an
+integral machine mode.
 
 @findex ashift
 @findex ss_ashift
@@ -2664,8 +2721,8 @@ in case of a change in the sign bit; @code{ss_ashift} and @code{us_ashift}
 saturates to the minimum or maximum representable value if any of the bits
 shifted out differs from the final sign bit.
 
-@var{x} have mode @var{m}, a fixed-point machine mode.  @var{c}
-be a fixed-point mode or be a constant with mode @code{VOIDmode}; which
+@var{x} has mode @var{m}, an integral machine mode.  @var{c}
+be an integral mode or be a constant with mode @code{VOIDmode}; which
 mode is determined by the mode called for in the machine description
 entry for the left-shift instruction.  For example, on the VAX, the mode
 of @var{c} is @code{QImode} regardless of @var{m}.
@@ -2751,13 +2808,13 @@ integer of mode @var{m}.  The mode of @var{x} must be @var{m} or
 @findex bswap
 @item (bswap:@var{m} @var{x})
 Represents the value @var{x} with the order of bytes reversed, carried out
-in mode @var{m}, which must be a fixed-point machine mode.
+in mode @var{m}, which must be an integral machine mode.
 The mode of @var{x} must be @var{m} or @code{VOIDmode}.
 
 @findex bitreverse
 @item (bitreverse:@var{m} @var{x})
 Represents the value @var{x} with the order of bits reversed, carried out
-in mode @var{m}, which must be a fixed-point machine mode.
+in mode @var{m}, which must be an integral machine mode.
 The mode of @var{x} must be @var{m} or @code{VOIDmode}.
 
 @findex copysign
@@ -2826,13 +2883,13 @@ are not equal, otherwise 0.
 @cindex greater than
 @item (gt:@var{m} @var{x} @var{y})
 @code{STORE_FLAG_VALUE} if the @var{x} is greater than @var{y}.  If they
-are fixed-point, the comparison is done in a signed sense.
+are integral, the comparison is done in a signed sense.
 
 @findex gtu
 @cindex greater than
 @cindex unsigned greater than
 @item (gtu:@var{m} @var{x} @var{y})
-Like @code{gt} but does unsigned comparison, on fixed-point numbers only.
+Like @code{gt} but does unsigned comparison, on integral modes only.
 
 @findex lt
 @cindex less than
@@ -2996,21 +3053,21 @@ to do it.
 
 For all conversion operations, @var{x} must not be @code{VOIDmode}
 because the mode in which to do the conversion would not be known.
-The conversion must either be done at compile-time or @var{x}
+The conversion must either be done at compile time or @var{x}
 must be placed into a register.
 
 @table @code
 @findex sign_extend
 @item (sign_extend:@var{m} @var{x})
 Represents the result of sign-extending the value @var{x}
-to machine mode @var{m}.  @var{m} must be a fixed-point mode
-and @var{x} a fixed-point value of a mode narrower than @var{m}.
+to machine mode @var{m}.  @var{m} must be an integral mode
+and @var{x} an integral value of a mode narrower than @var{m}.
 
 @findex zero_extend
 @item (zero_extend:@var{m} @var{x})
 Represents the result of zero-extending the value @var{x}
-to machine mode @var{m}.  @var{m} must be a fixed-point mode
-and @var{x} a fixed-point value of a mode narrower than @var{m}.
+to machine mode @var{m}.  @var{m} must be an integral mode
+and @var{x} an integral value of a mode narrower than @var{m}.
 
 @findex float_extend
 @item (float_extend:@var{m} @var{x})
@@ -3021,21 +3078,21 @@ and @var{x} a floating point value of a mode narrower than @var{m}.
 @findex truncate
 @item (truncate:@var{m} @var{x})
 Represents the result of truncating the value @var{x}
-to machine mode @var{m}.  @var{m} must be a fixed-point mode
-and @var{x} a fixed-point value of a mode wider than @var{m}.
+to machine mode @var{m}.  @var{m} must be an integral mode
+and @var{x} an integral value of a mode wider than @var{m}.
 
 @findex ss_truncate
 @item (ss_truncate:@var{m} @var{x})
 Represents the result of truncating the value @var{x}
 to machine mode @var{m}, using signed saturation in the case of
-overflow.  Both @var{m} and the mode of @var{x} must be fixed-point
+overflow.  Both @var{m} and the mode of @var{x} must be integral
 modes.
 
 @findex us_truncate
 @item (us_truncate:@var{m} @var{x})
 Represents the result of truncating the value @var{x}
 to machine mode @var{m}, using unsigned saturation in the case of
-overflow.  Both @var{m} and the mode of @var{x} must be fixed-point
+overflow.  Both @var{m} and the mode of @var{x} must be integral
 modes.
 
 @findex float_truncate
@@ -3046,12 +3103,12 @@ and @var{x} a floating point value of a mode wider than @var{m}.
 
 @findex float
 @item (float:@var{m} @var{x})
-Represents the result of converting fixed point value @var{x},
+Represents the result of converting integral value @var{x},
 regarded as signed, to floating point mode @var{m}.
 
 @findex unsigned_float
 @item (unsigned_float:@var{m} @var{x})
-Represents the result of converting fixed point value @var{x},
+Represents the result of converting integral value @var{x},
 regarded as unsigned, to floating point mode @var{m}.
 
 @findex fix
@@ -3800,13 +3857,16 @@ function calls.  It is important to distinguish these instructions because
 they imply that certain registers and memory locations may be altered
 unpredictably.
 
-@findex CALL_INSN_FUNCTION_USAGE
 @code{call_insn} insns have the same extra fields as @code{insn} insns,
-accessed in the same way and in addition contain a field
-@code{CALL_INSN_FUNCTION_USAGE}, which contains a list (chain of
-@code{expr_list} expressions) containing @code{use}, @code{clobber} and
-sometimes @code{set} expressions that denote hard registers and
-@code{mem}s used or clobbered by the called function.
+accessed in the same way.  They have two further fields:
+
+@table @code
+@findex CALL_INSN_FUNCTION_USAGE
+@item CALL_INSN_FUNCTION_USAGE
+This field contains a list (chain of @code{expr_list} expressions)
+containing @code{use}, @code{clobber} and sometimes @code{set}
+expressions that denote hard registers and @code{mem}s used or
+clobbered by the called function.
 
 A @code{mem} generally points to a stack slot in which arguments passed
 to the libcall by reference (@pxref{Register Arguments,
@@ -3824,6 +3884,13 @@ If the list contains a @code{set} involving two registers, it indicates
 that the function returns one of its arguments.  Such a @code{set} may
 look like a no-op if the same register holds the argument and the return
 value.
+
+@findex CALL_INSN_ABI_ID
+@item CALL_INSN_ABI_ID
+This field identifies the callee's calling convention, as an index in
+the range [0, @code{NUM_ABI_IDS} - 1].  See @file{function-abi.h} for
+more details about the representation of these calling conventions.
+@end table
 
 @findex code_label
 @findex CODE_LABEL_NUMBER
@@ -3876,13 +3943,14 @@ To set the kind of a label, use the @code{SET_LABEL_KIND} macro.
 @findex jump_table_data
 @item jump_table_data
 A @code{jump_table_data} insn is a placeholder for the jump-table data
-of a @code{casesi} or @code{tablejump} insn.  They are placed after
-a @code{tablejump_p} insn.  A @code{jump_table_data} insn is not part of
-a basic block but it is associated with the basic block that ends with
-the @code{tablejump_p} insn.  The @code{PATTERN} of a @code{jump_table_data}
-is always either an @code{addr_vec} or an @code{addr_diff_vec}, and a
-@code{jump_table_data} insn is always preceded by a @code{code_label}.
-The @code{tablejump_p} insn refers to that @code{code_label} via its
+of a @code{casesi} or @code{tablejump} insn.  It is normally placed after
+the @code{tablejump_p} insn and associated with that insn's basic block.
+A late RTL pass can instead make several table jumps share one table.  The
+table then follows only one of them and its pattern has
+@code{JUMP_TABLE_SHARED_P} set.  A @code{jump_table_data} insn is not part
+of a basic block.  Its @code{PATTERN} is always either an @code{addr_vec}
+or an @code{addr_diff_vec}, and it is always preceded by a @code{code_label}.
+Each @code{tablejump_p} insn refers to that @code{code_label} through its
 @code{JUMP_LABEL}.
 
 @findex barrier
@@ -4430,7 +4498,7 @@ using namespace rtl_ssa;
 However, this is purely a matter of taste, and the examples in the rest of
 this section do not require it.
 
-The RTL SSA represention is an optional on-the-side feature that applies
+The RTL SSA representation is an optional on-the-side feature that applies
 on top of the normal RTL instructions.  It is currently local to individual
 RTL passes and is not maintained across passes.
 
@@ -4520,7 +4588,7 @@ structures and the underlying CFG @code{basic_block} structures
 @cindex ``real'' instructions, RTL SSA
 @anchor{real RTL SSA insns}
 If a CFG basic block @var{bb} contains an RTL instruction @var{insn},
-the RTL SSA represenation of @var{bb} also contains an RTL SSA representation
+the RTL SSA representation of @var{bb} also contains an RTL SSA representation
 of @var{insn}@footnote{Note that this excludes non-instruction things like
 @code{note}s and @code{barrier}s that also appear in the chain of RTL
 instructions.}.  Within RTL SSA, these instructions are referred to as

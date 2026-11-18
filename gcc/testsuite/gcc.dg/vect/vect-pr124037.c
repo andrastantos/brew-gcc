@@ -7,6 +7,10 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#if defined(__APPLE__) && !defined(MAP_ANONYMOUS)
+#define MAP_ANONYMOUS MAP_ANON
+#endif
+
 #define MAX 65536
 
 typedef struct {

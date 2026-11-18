@@ -54,7 +54,7 @@
 /* This file should be included last.  */
 #include "target-def.h"
 
-static rtx emit_addhi3_postreload (rtx, rtx, rtx);
+static rtx_insn *emit_addhi3_postreload (rtx, rtx, rtx);
 static void xstormy16_asm_out_constructor (rtx, int);
 static void xstormy16_asm_out_destructor (rtx, int);
 static void xstormy16_asm_output_mi_thunk (FILE *, tree, HOST_WIDE_INT,
@@ -311,7 +311,7 @@ xstormy16_emit_cbranch (enum rtx_code code, rtx op0, rtx op1, rtx loc)
     {
       int unsigned_p = (code == GTU || code == LEU);
       int gt_p = (code == GT || code == GTU);
-      rtx lab = NULL_RTX;
+      rtx_code_label *lab = nullptr;
 
       if (gt_p)
 	lab = gen_label_rtx ();
@@ -328,7 +328,7 @@ xstormy16_emit_cbranch (enum rtx_code code, rtx op0, rtx op1, rtx loc)
 	   && op1 != const0_rtx)
     {
       rtx op0_word, op1_word;
-      rtx lab = NULL_RTX;
+      rtx_code_label *lab = nullptr;
       int num_words = GET_MODE_BITSIZE (mode) / BITS_PER_WORD;
       int i;
 
@@ -964,7 +964,7 @@ xstormy16_split_move (machine_mode mode, rtx dest, rtx src)
   end = direction < 0 ? -1 : num_words;
   for (i = direction < 0 ? num_words - 1 : 0; i != end; i += direction)
     {
-      rtx w_src, w_dest, insn;
+      rtx w_src, w_dest;
 
       if (src_modifies)
 	w_src = gen_rtx_MEM (word_mode, mem_operand);
@@ -984,11 +984,9 @@ xstormy16_split_move (machine_mode mode, rtx dest, rtx src)
       gcc_assert (GET_CODE (w_src) != SUBREG
 		  && GET_CODE (w_dest) != SUBREG);
 
-      insn = emit_insn (gen_rtx_SET (w_dest, w_src));
+      rtx_insn *insn = emit_insn (gen_rtx_SET (w_dest, w_src));
       if (auto_inc_reg_rtx)
-        REG_NOTES (insn) = alloc_EXPR_LIST (REG_INC,
-                                            auto_inc_reg_rtx,
-					    REG_NOTES (insn));
+	add_reg_note (insn, REG_INC, auto_inc_reg_rtx);
     }
 }
 
@@ -1161,10 +1159,11 @@ xstormy16_initial_elimination_offset (int from, int to)
   return result;
 }
 
-static rtx
+static rtx_insn *
 emit_addhi3_postreload (rtx dest, rtx src0, rtx src1)
 {
-  rtx set, clobber, insn;
+  rtx set, clobber;
+  rtx_insn *insn;
 
   set = gen_rtx_SET (dest, gen_rtx_PLUS (HImode, src0, src1));
   clobber = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
@@ -1188,7 +1187,7 @@ xstormy16_expand_prologue (void)
 {
   struct xstormy16_stack_layout layout;
   int regno;
-  rtx insn;
+  rtx_insn *insn;
   rtx mem_push_rtx;
   const int ifun = xstormy16_interrupt_function_p ();
 
@@ -1460,7 +1459,7 @@ xstormy16_expand_builtin_va_start (tree valist, rtx nextarg ATTRIBUTE_UNUSED)
 		  NULL_TREE);
 
   t = make_tree (TREE_TYPE (base), virtual_incoming_args_rtx);
-  u = build_int_cst (NULL_TREE, - INCOMING_FRAME_SP_OFFSET);
+  u = build_int_cst (integer_type_node, - INCOMING_FRAME_SP_OFFSET);
   u = fold_convert (TREE_TYPE (count), u);
   t = fold_build_pointer_plus (t, u);
   t = build2 (MODIFY_EXPR, TREE_TYPE (base), base, t);
@@ -1468,7 +1467,7 @@ xstormy16_expand_builtin_va_start (tree valist, rtx nextarg ATTRIBUTE_UNUSED)
   expand_expr (t, const0_rtx, VOIDmode, EXPAND_NORMAL);
 
   t = build2 (MODIFY_EXPR, TREE_TYPE (count), count,
-	      build_int_cst (NULL_TREE,
+	      build_int_cst (integer_type_node,
 			     crtl->args.info * UNITS_PER_WORD));
   TREE_SIDE_EFFECTS (t) = 1;
   expand_expr (t, const0_rtx, VOIDmode, EXPAND_NORMAL);
@@ -2050,7 +2049,8 @@ xstormy16_expand_casesi (rtx index, rtx lower_bound, rtx range,
    all reach.  */
 
 void
-xstormy16_output_addr_vec (FILE *file, rtx label ATTRIBUTE_UNUSED, rtx table)
+xstormy16_output_addr_vec (FILE *file, rtx_insn *label ATTRIBUTE_UNUSED,
+			   rtx table)
 {
   int vlen, idx;
 
@@ -2846,6 +2846,10 @@ xstormy16_push_rounding (poly_int64 bytes)
 #define TARGET_ASM_OUTPUT_MI_THUNK xstormy16_asm_output_mi_thunk
 #undef  TARGET_ASM_CAN_OUTPUT_MI_THUNK
 #define TARGET_ASM_CAN_OUTPUT_MI_THUNK default_can_output_mi_thunk_no_vcall
+
+/* The table is a run of jmpf insns that the dispatch branches into.  */
+#undef  TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P hook_bool_rtx_insn_false
 
 #undef  TARGET_PRINT_OPERAND
 #define TARGET_PRINT_OPERAND xstormy16_print_operand

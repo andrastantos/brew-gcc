@@ -2904,9 +2904,6 @@ $as_echo "$version_specific_libs" >&6; }
 #
 # Also, if this library is being configured as part of a cross compiler, the
 # top-level configure script will pass the "real" host as $with_cross_host.
-#
-# Do not delete or change the following two lines.  For why, see
-# http://gcc.gnu.org/ml/libstdc++/2003-07/msg00451.html
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking host system type" >&5
 $as_echo_n "checking host system type... " >&6; }
 if ${ac_cv_host+:} false; then :
@@ -2982,11 +2979,9 @@ test -n "$target_alias" &&
 
 
 
-
 target_alias=${target_alias-$host_alias}
 
-
-# Sets up automake.  Must come after AC_CANONICAL_SYSTEM.  Each of the
+# Sets up automake.  Must come after AC_CANONICAL_TARGET.  Each of the
 # following is magically included in AUTOMAKE_OPTIONS in each Makefile.am.
 #  1.9.6:  minimum required version
 #  no-define:  PACKAGE and VERSION will not be #define'd in config.h (a bunch
@@ -3626,7 +3621,7 @@ if test $cross_compiling = no && test $multilib = yes \
    cross_compiling=maybe
 fi
 
-ac_config_commands="$ac_config_commands default-1"
+ac_config_commands="$ac_config_commands multilib"
 
 
 # Handy for debugging:
@@ -6974,10 +6969,6 @@ fi
 
 # Configure libtool
 #AC_MSG_NOTICE([====== Starting libtool configuration])
-enable_dlopen=yes
-
-
-
 case `pwd` in
   *\ * | *\	*)
     { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: Libtool does not cope well with whitespace in \`pwd\`" >&5
@@ -9686,6 +9677,7 @@ done
 
 
 # Set options
+enable_dlopen=yes
 
 
 
@@ -13245,7 +13237,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 13248 "configure"
+#line 13240 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -13351,7 +13343,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 13354 "configure"
+#line 13346 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -16987,6 +16979,68 @@ rm -rf conftest*
 fi
 
 
+
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for 64-bit time_t" >&5
+$as_echo_n "checking for 64-bit time_t... " >&6; }
+if ${libgfor_cv_time_bits64+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#include <time.h>
+#include <sys/types.h>
+int verify_y2038[(sizeof (time_t) >= 8) ? 1 : -1];
+
+int
+main ()
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  libgfor_cv_time_bits64="already 64-bit"
+else
+
+      cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#define _TIME_BITS 64
+#include <time.h>
+#include <sys/types.h>
+int verify_y2038[(sizeof (time_t) >= 8) ? 1 : -1];
+
+int
+main ()
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  libgfor_cv_time_bits64="yes"
+else
+  libgfor_cv_time_bits64="no"
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgfor_cv_time_bits64" >&5
+$as_echo "$libgfor_cv_time_bits64" >&6; }
+  if test "x$libgfor_cv_time_bits64" = xyes; then
+
+$as_echo "#define _TIME_BITS 64" >>confdefs.h
+
+  fi
+
+
 # Types
 ac_fn_c_check_type "$LINENO" "off_t" "ac_cv_type_off_t" "$ac_includes_default"
 if test "x$ac_cv_type_off_t" = xyes; then :
@@ -17917,7 +17971,30 @@ fi
 # correctly enabled
 
 case $host_os in
-        darwin* | hpux* | linux* | osf* | solaris*)
+        solaris*)
+        # Solaris 11.4 introduced XPG7 support and did away with the need for
+        # _REENTRANT.
+
+        cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#            undef _XOPEN_SOURCE
+#            include <sys/feature_tests.h>
+#            if _XOPEN_VERSION < 700
+             AX_PTHREAD_SOLARIS__REENTRANT
+#            endif
+
+_ACEOF
+if (eval "$ac_cpp conftest.$ac_ext") 2>&5 |
+  $EGREP "AX_PTHREAD_SOLARIS__REENTRANT" >/dev/null 2>&1; then :
+  ax_pthread_check_macro="_REENTRANT"
+else
+  ax_pthread_check_macro="--"
+fi
+rm -f conftest*
+
+        ;;
+        darwin* | hpux* | linux* | osf*)
         ax_pthread_check_macro="_REENTRANT"
         ;;
 
@@ -18452,6 +18529,15 @@ fi
 rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
   CFLAGS="$save_CFLAGS"
 fi
+case ${host} in
+  *-*-darwin[89]* | *-*-darwin10*)
+    # These versions define PTHREAD_PROCESS_SHARED but the functionality
+    # is not available at runtime, so the configure check misleads.
+    enable_caf_shmem=false;;
+  *-*-cygwin* | *-*-mingw*)
+    # The specific implementation for these platforms does not use pthread.
+    enable_caf_shmem=true;;
+esac
  if test x$enable_caf_shmem = xtrue; then
   ENABLE_CAF_SHMEM_TRUE=
   ENABLE_CAF_SHMEM_FALSE='#'
@@ -22837,6 +22923,54 @@ _ACEOF
 
 
 
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for powl" >&5
+$as_echo_n "checking for powl... " >&6; }
+if ${gcc_cv_math_func_powl+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  if test x$gcc_no_link = xyes; then
+  as_fn_error $? "Link tests are not allowed after GCC_NO_EXECUTABLES." "$LINENO" 5
+fi
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#ifdef HAVE_COMPLEX_H
+#include <complex.h>
+#endif
+#ifdef HAVE_MATH_H
+#include <math.h>
+#endif
+
+int (*ptr)() = (int (*)())powl;
+
+int
+main ()
+{
+  return 0;
+}
+
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  gcc_cv_math_func_powl=yes
+else
+  gcc_cv_math_func_powl=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $gcc_cv_math_func_powl" >&5
+$as_echo "$gcc_cv_math_func_powl" >&6; }
+  if test $gcc_cv_math_func_powl = yes; then
+
+cat >>confdefs.h <<_ACEOF
+#define HAVE_POWL 1
+_ACEOF
+
+  fi
+
+
+
+
   { $as_echo "$as_me:${as_lineno-$LINENO}: checking for cpowf" >&5
 $as_echo_n "checking for cpowf... " >&6; }
 if ${gcc_cv_math_func_cpowf+:} false; then :
@@ -25230,6 +25364,54 @@ $as_echo "$gcc_cv_math_func_erf" >&6; }
 
 cat >>confdefs.h <<_ACEOF
 #define HAVE_ERF 1
+_ACEOF
+
+  fi
+
+
+
+
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for erfl" >&5
+$as_echo_n "checking for erfl... " >&6; }
+if ${gcc_cv_math_func_erfl+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  if test x$gcc_no_link = xyes; then
+  as_fn_error $? "Link tests are not allowed after GCC_NO_EXECUTABLES." "$LINENO" 5
+fi
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#ifdef HAVE_COMPLEX_H
+#include <complex.h>
+#endif
+#ifdef HAVE_MATH_H
+#include <math.h>
+#endif
+
+int (*ptr)() = (int (*)())erfl;
+
+int
+main ()
+{
+  return 0;
+}
+
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  gcc_cv_math_func_erfl=yes
+else
+  gcc_cv_math_func_erfl=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $gcc_cv_math_func_erfl" >&5
+$as_echo "$gcc_cv_math_func_erfl" >&6; }
+  if test $gcc_cv_math_func_erfl = yes; then
+
+cat >>confdefs.h <<_ACEOF
+#define HAVE_ERFL 1
 _ACEOF
 
   fi
@@ -31908,6 +32090,7 @@ main ()
 
   #ifdef _SOFT_FLOAT
   int ok;
+  (void)ok;
   #else
   choke me
   #endif
@@ -32021,7 +32204,7 @@ fi
 
   { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether the target supports hidden visibility" >&5
 $as_echo_n "checking whether the target supports hidden visibility... " >&6; }
-if ${libgfor_cv_have_attribute_visibility+:} false; then :
+if ${gcc_cv_have_attribute_visibility+:} false; then :
   $as_echo_n "(cached) " >&6
 else
 
@@ -32039,16 +32222,16 @@ main ()
 }
 _ACEOF
 if ac_fn_c_try_compile "$LINENO"; then :
-  libgfor_cv_have_attribute_visibility=yes
+  gcc_cv_have_attribute_visibility=yes
 else
-  libgfor_cv_have_attribute_visibility=no
+  gcc_cv_have_attribute_visibility=no
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
   CFLAGS="$save_CFLAGS"
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgfor_cv_have_attribute_visibility" >&5
-$as_echo "$libgfor_cv_have_attribute_visibility" >&6; }
-  if test $libgfor_cv_have_attribute_visibility = yes; then
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $gcc_cv_have_attribute_visibility" >&5
+$as_echo "$gcc_cv_have_attribute_visibility" >&6; }
+  if test $gcc_cv_have_attribute_visibility = yes; then
 
 $as_echo "#define HAVE_ATTRIBUTE_VISIBILITY 1" >>confdefs.h
 
@@ -32105,7 +32288,7 @@ else
 fi
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
-int foovar = 0;
+__INT64_TYPE__ foovar = 0;
 int
 main ()
 {
@@ -33835,7 +34018,7 @@ for ac_config_target in $ac_config_targets
 do
   case $ac_config_target in
     "config.h") CONFIG_HEADERS="$CONFIG_HEADERS config.h" ;;
-    "default-1") CONFIG_COMMANDS="$CONFIG_COMMANDS default-1" ;;
+    "multilib") CONFIG_COMMANDS="$CONFIG_COMMANDS multilib" ;;
     "depfiles") CONFIG_COMMANDS="$CONFIG_COMMANDS depfiles" ;;
     "libtool") CONFIG_COMMANDS="$CONFIG_COMMANDS libtool" ;;
     "gstdint.h") CONFIG_COMMANDS="$CONFIG_COMMANDS gstdint.h" ;;
@@ -34436,7 +34619,7 @@ $as_echo "$as_me: executing $ac_file commands" >&6;}
 
 
   case $ac_file$ac_mode in
-    "default-1":C)
+    "multilib":C)
 # Only add multilib support code if we just rebuilt the top-level
 # Makefile.
 case " $CONFIG_FILES " in

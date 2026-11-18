@@ -234,27 +234,23 @@ remap_ssa_name (tree name, copy_body_data *id)
 	  && DECL_IGNORED_P (var)
 	  && !DECL_NAME (var)))
     {
-      struct ptr_info_def *pi;
+      const pt_solution *pt;
       new_tree = make_ssa_name (remap_type (TREE_TYPE (name), id));
       if (!var && SSA_NAME_IDENTIFIER (name))
 	SET_SSA_NAME_VAR_OR_IDENTIFIER (new_tree, SSA_NAME_IDENTIFIER (name));
       insert_decl_map (id, name, new_tree);
       SSA_NAME_OCCURS_IN_ABNORMAL_PHI (new_tree)
 	= SSA_NAME_OCCURS_IN_ABNORMAL_PHI (name);
+      /* Range info can be transferred, if local addresses are removed.  */
+      if (SSA_NAME_RANGE_INFO (name))
+	duplicate_ssa_name_range_info (new_tree, name, true);
       /* At least IPA points-to info can be directly transferred.  */
       if (id->src_cfun->gimple_df
 	  && id->src_cfun->gimple_df->ipa_pta
 	  && POINTER_TYPE_P (TREE_TYPE (name))
-	  && (pi = SSA_NAME_PTR_INFO (name))
-	  && !pi->pt.anything)
-	{
-	  struct ptr_info_def *new_pi = get_ptr_info (new_tree);
-	  new_pi->pt = pi->pt;
-	}
-      /* So can range-info.  */
-      if (!POINTER_TYPE_P (TREE_TYPE (name))
-	  && SSA_NAME_RANGE_INFO (name))
-	duplicate_ssa_name_range_info (new_tree, name);
+	  && (pt = ssa_name_pt_solution (name))
+	  && !pt->anything)
+	set_ssa_name_pt_solution (new_tree, *pt);
       return new_tree;
     }
 
@@ -273,25 +269,13 @@ remap_ssa_name (tree name, copy_body_data *id)
 	  || TREE_CODE (SSA_NAME_VAR (name)) != RESULT_DECL
 	  || !id->transform_return_to_modify))
     {
-      struct ptr_info_def *pi;
+      const pt_solution *pt;
       new_tree = make_ssa_name (new_tree);
       insert_decl_map (id, name, new_tree);
       SSA_NAME_OCCURS_IN_ABNORMAL_PHI (new_tree)
 	= SSA_NAME_OCCURS_IN_ABNORMAL_PHI (name);
-      /* At least IPA points-to info can be directly transferred.  */
-      if (id->src_cfun->gimple_df
-	  && id->src_cfun->gimple_df->ipa_pta
-	  && POINTER_TYPE_P (TREE_TYPE (name))
-	  && (pi = SSA_NAME_PTR_INFO (name))
-	  && !pi->pt.anything)
-	{
-	  struct ptr_info_def *new_pi = get_ptr_info (new_tree);
-	  new_pi->pt = pi->pt;
-	}
-      /* So can range-info.  */
-      if (!POINTER_TYPE_P (TREE_TYPE (name))
-	  && SSA_NAME_RANGE_INFO (name))
-	duplicate_ssa_name_range_info (new_tree, name);
+
+      tree zero = NULL_TREE;
       if (SSA_NAME_IS_DEFAULT_DEF (name))
 	{
 	  /* By inlining function having uninitialized variable, we might
@@ -313,7 +297,7 @@ remap_ssa_name (tree name, copy_body_data *id)
 	    {
 	      gimple_stmt_iterator gsi = gsi_last_bb (id->entry_bb);
 	      gimple *init_stmt;
-	      tree zero = build_zero_cst (TREE_TYPE (new_tree));
+	      zero = build_zero_cst (TREE_TYPE (new_tree));
 
 	      init_stmt = gimple_build_assign (new_tree, zero);
 	      gsi_insert_after (&gsi, init_stmt, GSI_NEW_STMT);
@@ -325,6 +309,17 @@ remap_ssa_name (tree name, copy_body_data *id)
 	      set_ssa_default_def (cfun, SSA_NAME_VAR (new_tree), new_tree);
 	    }
 	}
+      /* Range info can be transferred if local addresses are removed
+	 and no uninitialized name was processed and set to zero.  */
+      if (!zero && SSA_NAME_RANGE_INFO (name))
+	duplicate_ssa_name_range_info (new_tree, name, true);
+      /* At least IPA points-to info can be directly transferred.  */
+      if (id->src_cfun->gimple_df
+	  && id->src_cfun->gimple_df->ipa_pta
+	  && POINTER_TYPE_P (TREE_TYPE (name))
+	  && (pt = ssa_name_pt_solution (name))
+	  && !pt->anything)
+	set_ssa_name_pt_solution (new_tree, *pt);
     }
   else
     insert_decl_map (id, name, new_tree);
@@ -575,7 +570,7 @@ remap_type_1 (tree type, copy_body_data *id)
       gcc_unreachable ();
     }
 
-  /* All variants of type share the same size, so use the already remaped data.  */
+  /* All variants of type share the same size, so use the already remapped data.  */
   if (TYPE_MAIN_VARIANT (new_tree) != new_tree)
     {
       tree s = TYPE_SIZE (type);
@@ -1475,8 +1470,8 @@ copy_tree_body_r (tree *tp, int *walk_subtrees, void *data)
 	      for (int i = 0; i <= 4; i++)
 		walk_tree (&TREE_VEC_ELT (TREE_PURPOSE (t), i),
 			   copy_tree_body_r, id, NULL);
-	      if (TREE_VEC_ELT (TREE_PURPOSE (t), 5))
-		remap_block (&TREE_VEC_ELT (TREE_PURPOSE (t), 5), id);
+	      if (OMP_ITERATOR_BLOCK (TREE_PURPOSE (t)))
+		remap_block (&OMP_ITERATOR_BLOCK (TREE_PURPOSE (t)), id);
 	      walk_tree (&TREE_VALUE (t), copy_tree_body_r, id, NULL);
 	    }
 	}
@@ -2896,6 +2891,7 @@ initialize_cfun (tree new_fndecl, tree callee_fndecl, profile_count count)
   cfun->can_delete_dead_exceptions = src_cfun->can_delete_dead_exceptions;
   cfun->returns_struct = src_cfun->returns_struct;
   cfun->returns_pcc_struct = src_cfun->returns_pcc_struct;
+  cfun->assume_function = src_cfun->assume_function;
 
   init_empty_tree_cfg ();
 
@@ -3760,9 +3756,11 @@ initialize_inlined_parameters (copy_body_data *id, gimple *stmt,
   gcc_assert (fn != current_function_decl);
   if (p)
     {
-      /* No static chain?  Seems like a bug in tree-nested.cc.  */
-      gcc_assert (static_chain);
-
+      /* Calling a function that requires a static chain directly
+	 without setting up the static chain has undefined behavior
+	 at run-time.  */
+      if (!static_chain)
+	static_chain = null_pointer_node;
       setup_one_parameter (id, p, static_chain, fn, bb, &vars);
     }
 
@@ -3972,7 +3970,7 @@ declare_return_variable (copy_body_data *id, tree return_slot, tree modify_dest,
 }
 
 /* Determine if the function can be copied.  If so return NULL.  If
-   not return a string describng the reason for failure.  */
+   not return a string describing the reason for failure.  */
 
 const char *
 copy_forbidden (struct function *fun)
@@ -4150,7 +4148,7 @@ inline_forbidden_p (tree fndecl)
     return true;
 
   /* Next, walk the statements of the function looking for
-     constraucts we can't handle, or are non-optimal for inlining.  */
+     constructs we can't handle, or are non-optimal for inlining.  */
   hash_set<tree> visited_nodes;
   memset (&wi, 0, sizeof (wi));
   wi.info = (void *) fndecl;
@@ -4545,7 +4543,7 @@ estimate_num_insns (gimple *stmt, eni_weights *weights)
 	    if ((node = cgraph_node::get (decl))
 		&& node->definition)
 	      ;
-	    /* For buitins that are likely expanded to nothing or
+	    /* For builtins that are likely expanded to nothing or
 	       inlined do not account operand costs.  */
 	    else if (is_simple_builtin (decl))
 	      return 0;
@@ -6133,7 +6131,7 @@ copy_decl_for_dup_finish (copy_body_data *id, tree decl, tree copy)
   return copy;
 }
 
-/* Create a new VAR_DECL that is indentical in all respect to DECL except that
+/* Create a new VAR_DECL that is identical in all respect to DECL except that
    DECL can be either a VAR_DECL, a PARM_DECL or RESULT_DECL.  The original
    DECL must come from ID->src_fn and the copy will be part of ID->dst_fn.  */
 

@@ -1,5 +1,6 @@
 /* { dg-lto-do link } */
 /* { dg-require-effective-target pie } */
+/* { dg-skip-if "fpie only allowed on exes" { *-*-darwin* } } */
 /* { dg-lto-options { { -O -flto -fpie } } } */
 /* { dg-extra-ld-options { -r -nostdlib -flinker-output=nolto-rel } } */
 

@@ -113,6 +113,49 @@ vrange_printer::visit (const irange &r) const
 }
 
 void
+vrange_printer::print_addr (const prange &r) const
+{
+  bool known_p = false;
+  tree addr = r.addr_known ();
+  if (addr)
+    known_p = true;
+  else
+    addr = r.addr_excluded ();
+
+  if (addr)
+    {
+      if (known_p)
+	pp_string (pp, " -> ");
+      else
+	pp_string (pp, " ! -> ");
+      dump_generic_node (pp, addr, 0, TDF_NONE | TDF_NOUID, false);
+      if (known_p)
+	{
+	  int_range_max sz;
+	  int_range_max off;
+	  tree b;
+	  b = r.addr_base ();
+	  r.addr_offset(off);
+	  r.addr_size (sz);
+	  pp_string (pp, " { Base: ");
+	  dump_generic_node (pp, b, 0, TDF_NONE | TDF_NOUID, false);
+	  if (!off.varying_p () && !off.undefined_p () && !off.zero_p ())
+	    {
+	      pp_string (pp, " ; Off: ");
+	      visit (off);
+	    }
+	  if (!sz.varying_p () && !sz.undefined_p ())
+	      {
+		pp_string (pp, " ; Size: ");
+		visit (sz);
+	      }
+	  pp_string (pp, " }");
+	}
+
+    }
+}
+
+void
 vrange_printer::visit (const prange &r) const
 {
   pp_string (pp, "[prange] ");
@@ -135,6 +178,8 @@ vrange_printer::visit (const prange &r) const
   print_int_bound (pp, r.upper_bound (), r.type ());
   pp_character (pp, ']');
   print_irange_bitmasks (pp, r.m_bitmask);
+  // Dump the address field if there is one.
+  print_addr (r);
 }
 
 void
@@ -174,15 +219,17 @@ vrange_printer::visit (const frange &r) const
       print_frange_nan (r);
       return;
     }
-  pp_character (pp, '[');
-  bool has_endpoints = !r.known_isnan ();
-  if (has_endpoints)
-    {
-      print_real_value (type, r.lower_bound ());
-      pp_string (pp, ", ");
-      print_real_value (type, r.upper_bound ());
-    }
-  pp_character (pp, ']');
+  if (r.known_isnan ())
+    pp_string (pp, "[]");
+  else
+    for (unsigned i = 0; i < r.num_pairs (); ++i)
+      {
+	pp_character (pp, '[');
+	print_real_value (type, r.lower_bound (i));
+	pp_string (pp, ", ");
+	print_real_value (type, r.upper_bound (i));
+	pp_character (pp, ']');
+      }
   print_frange_nan (r);
 }
 

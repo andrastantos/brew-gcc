@@ -2076,7 +2076,7 @@ dwarf2out_frame_debug_expr (rtx expr)
 
           /* Rule 18: If stack is aligned, we will use FP as a
 	     reference to represent the address of the stored
-	     regiser.  */
+	     register.  */
           if (fde
               && fde->stack_realign
 	      && REG_P (src)
@@ -2657,7 +2657,7 @@ create_trace_edges (rtx_insn *insn)
 	  n = GET_NUM_ELEM (vec);
 	  for (i = 0; i < n; ++i)
 	    {
-	      rtx_insn *lab = as_a <rtx_insn *> (XEXP (RTVEC_ELT (vec, i), 0));
+	      rtx_insn *lab = label_ref_label (RTVEC_ELT (vec, i));
 	      maybe_record_trace_start (lab, insn);
 	    }
 
@@ -2683,7 +2683,7 @@ create_trace_edges (rtx_insn *insn)
 	  for (i = 0; i < n; ++i)
 	    {
 	      rtx_insn *lab =
-		as_a <rtx_insn *> (XEXP (ASM_OPERANDS_LABEL (tmp, i), 0));
+		label_ref_label (ASM_OPERANDS_LABEL (tmp, i));
 	      maybe_record_trace_start (lab, insn);
 	    }
 	}
@@ -2694,18 +2694,18 @@ create_trace_edges (rtx_insn *insn)
 	  maybe_record_trace_start (lab, insn);
 	}
     }
-  else if (CALL_P (insn))
+  else if (auto call = dyn_cast<rtx_call_insn *> (insn))
     {
       /* Sibling calls don't have edges inside this function.  */
-      if (SIBLING_CALL_P (insn))
+      if (SIBLING_CALL_P (call))
 	return;
 
       /* Process non-local goto edges.  */
-      if (can_nonlocal_goto (insn))
+      if (can_nonlocal_goto (call))
 	for (rtx_insn_list *lab = nonlocal_goto_handler_labels;
 	     lab;
 	     lab = lab->next ())
-	  maybe_record_trace_start_abnormal (lab->insn (), insn);
+	  maybe_record_trace_start_abnormal (lab->insn (), call);
     }
   else if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (PATTERN (insn)))
     {

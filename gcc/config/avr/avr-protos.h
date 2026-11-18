@@ -38,6 +38,7 @@ extern void avr_declare_function_name (FILE *, const char *, tree);
 extern void asm_output_external (FILE *file, tree decl, char *name);
 extern int avr_progmem_p (tree decl, tree attributes);
 extern bool avr_addr_space_supported_p (addr_space_t, location_t loc = UNKNOWN_LOCATION);
+extern void avr_find_double (tree typ, hash_set<tree> *pset);
 
 #ifdef RTX_CODE /* inside TREE_CODE */
 extern void avr_init_cumulative_args (CUMULATIVE_ARGS*, tree, rtx, tree);
@@ -119,6 +120,7 @@ extern const char* avr_out_xload (rtx_insn *, rtx*, int*);
 extern const char* avr_out_fload (rtx_insn *, rtx*, int*);
 extern const char* avr_out_cpymem (rtx_insn *, rtx*, int*);
 extern const char* avr_out_insert_bits (rtx*, int*);
+extern const char* avr_out_delay_loop (rtx_insn*, rtx*, int*);
 extern bool avr_popcount_each_byte (rtx, int, int);
 extern bool avr_xor_noclobber_dconst (rtx, int);
 extern bool avr_has_nibble_0xf (rtx);
@@ -193,12 +195,15 @@ extern void asm_output_float (FILE *file, REAL_VALUE_TYPE n);
 #endif
 
 extern bool avr_have_dimode;
+extern bool avr_uses_vtable_p;
 
 /* From avr-passes.cc */
 
 namespace gcc { class context; }
 class rtl_opt_pass;
+class gimple_opt_pass;
 
+extern gimple_opt_pass *make_avr_pass_has (gcc::context *);
 extern rtl_opt_pass *make_avr_pass_fuse_add (gcc::context *);
 extern rtl_opt_pass *make_avr_pass_fuse_move (gcc::context *);
 extern rtl_opt_pass *make_avr_pass_pre_proep (gcc::context *);
@@ -235,6 +240,7 @@ typedef struct
   unsigned address_cost :1;
   unsigned builtin :1;
   unsigned constraints :1;
+  unsigned insert_attributes :1;
   unsigned insn_addresses :1;
   unsigned legitimate_address_p :1;
   unsigned legitimize_address :1;

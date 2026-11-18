@@ -28,18 +28,19 @@
 #if defined __nvptx_softstack__ && defined __nvptx_unisimt__
 
 #include "libgomp.h"
+#include "target-indirect.h"
 #include <stdlib.h>
 #include <string.h>
 
 #define UNLIKELY(x) (__builtin_expect ((x), 0))
 
-extern void *GOMP_INDIRECT_ADDR_MAP;
-
 struct gomp_thread *nvptx_thrs __attribute__((shared,nocommon));
 int __gomp_team_num __attribute__((shared,nocommon));
 
 static void gomp_thread_start (struct gomp_thread_pool *);
-extern void build_indirect_map (void);
+
+#if __PTX_ISA_VERSION_MAJOR__ > 4 \
+    || (__PTX_ISA_VERSION_MAJOR__ == 4 && __PTX_ISA_VERSION_MINOR__ >= 1)
 
 /* There should be some .shared space reserved for us.  There's no way to
    express this magic extern sizeless array in C so use asm.  */
@@ -47,6 +48,8 @@ asm (".extern .shared .u8 __nvptx_lowlat_pool[];\n");
 
 /* Defined in basic-allocator.c via config/nvptx/allocator.c.  */
 void __nvptx_lowlat_init (void *heap, size_t size);
+
+#endif
 
 /* This externally visible function handles target region entry.  It
    sets up a per-team thread pool and transfers control by calling FN (FN_DATA)
@@ -81,16 +84,16 @@ gomp_nvptx_main (void (*fn) (void *), void *fn_data)
       if (UNLIKELY (GOMP_INDIRECT_ADDR_MAP != NULL && block_id == 0))
 	build_indirect_map ();
 
+#if __PTX_ISA_VERSION_MAJOR__ > 4 \
+    || (__PTX_ISA_VERSION_MAJOR__ == 4 && __PTX_ISA_VERSION_MINOR__ >= 1)
       /* Find the low-latency heap details ....  */
       uint32_t *shared_pool;
       uint32_t shared_pool_size = 0;
       asm ("cvta.shared.u64\t%0, __nvptx_lowlat_pool;" : "=r"(shared_pool));
-#if __PTX_ISA_VERSION_MAJOR__ > 4 \
-    || (__PTX_ISA_VERSION_MAJOR__ == 4 && __PTX_ISA_VERSION_MINOR__ >= 1)
       asm ("mov.u32\t%0, %%dynamic_smem_size;\n"
 	   : "=r"(shared_pool_size));
-#endif
       __nvptx_lowlat_init (shared_pool, shared_pool_size);
+#endif
 
       /* Initialize the thread pool.  */
       struct gomp_thread_pool *pool = alloca (sizeof (*pool));
@@ -101,6 +104,7 @@ gomp_nvptx_main (void (*fn) (void *), void *fn_data)
       pool->threads_used = ntids;
       pool->threads_busy = 1;
       pool->last_team = NULL;
+      pool->prev_barrier = NULL;
       gomp_simple_barrier_init (&pool->threads_dock, ntids);
 
       nvptx_thrs[0].thread_pool = pool;
@@ -136,7 +140,7 @@ gomp_thread_start (struct gomp_thread_pool *pool)
       thr->fn = NULL;
 
       struct gomp_task *task = thr->task;
-      gomp_team_barrier_wait_final (&thr->ts.team->barrier);
+      gomp_team_barrier_wait_final (&thr->ts.team->barrier, thr->ts.team_id);
       gomp_finish_task (task);
     }
   /* Work around an NVIDIA driver bug: when generating sm_50 machine code,

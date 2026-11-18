@@ -105,7 +105,7 @@ arm_find_shift_sub_rtx (rtx pattern)
 
    Return nonzero if we found the SET RTX we expected.  */
 static int
-arm_get_set_operands (rtx producer, rtx consumer,
+arm_get_set_operands (rtx_insn *producer, rtx_insn *consumer,
 		      rtx *set_source, rtx *set_destination)
 {
   rtx set_producer = arm_find_sub_rtx_with_code (PATTERN (producer),
@@ -224,7 +224,7 @@ aarch_mm_needs_release (rtx const_int)
 /* Return nonzero if the CONSUMER instruction (a load) does need
    PRODUCER's value to calculate the address.  */
 int
-arm_early_load_addr_dep (rtx producer, rtx consumer)
+arm_early_load_addr_dep (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx value, addr;
 
@@ -238,7 +238,7 @@ arm_early_load_addr_dep (rtx producer, rtx consumer)
    a Pmode PRODUCER's value to calculate the address.  */
 
 int
-arm_early_load_addr_dep_ptr (rtx producer, rtx consumer)
+arm_early_load_addr_dep_ptr (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx value = arm_find_sub_rtx_with_code (PATTERN (producer), SET, false);
   rtx addr = arm_find_sub_rtx_with_code (PATTERN (consumer), SET, false);
@@ -256,7 +256,7 @@ arm_early_load_addr_dep_ptr (rtx producer, rtx consumer)
    have an early register shift value or amount dependency on the
    result of PRODUCER.  */
 int
-arm_no_early_alu_shift_dep (rtx producer, rtx consumer)
+arm_no_early_alu_shift_dep (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx value, op;
   rtx early_op;
@@ -274,7 +274,7 @@ arm_no_early_alu_shift_dep (rtx producer, rtx consumer)
    have an early register shift value dependency on the result of
    PRODUCER.  */
 int
-arm_no_early_alu_shift_value_dep (rtx producer, rtx consumer)
+arm_no_early_alu_shift_value_dep (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx value, op;
   rtx early_op;
@@ -294,7 +294,7 @@ arm_no_early_alu_shift_value_dep (rtx producer, rtx consumer)
    have an early register mult dependency on the result of
    PRODUCER.  */
 int
-arm_no_early_mul_dep (rtx producer, rtx consumer)
+arm_no_early_mul_dep (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx value, op;
 
@@ -316,7 +316,7 @@ arm_no_early_mul_dep (rtx producer, rtx consumer)
    PRODUCER's value to calculate the address.  */
 
 int
-arm_no_early_store_addr_dep (rtx producer, rtx consumer)
+arm_no_early_store_addr_dep (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx value = arm_find_sub_rtx_with_code (PATTERN (producer), SET, false);
   rtx addr = arm_find_sub_rtx_with_code (PATTERN (consumer), SET, false);
@@ -337,7 +337,7 @@ arm_no_early_store_addr_dep (rtx producer, rtx consumer)
    PRODUCER's value to calculate the address.  */
 
 int
-arm_early_store_addr_dep (rtx producer, rtx consumer)
+arm_early_store_addr_dep (rtx_insn *producer, rtx_insn *consumer)
 {
   return !arm_no_early_store_addr_dep (producer, consumer);
 }
@@ -346,7 +346,7 @@ arm_early_store_addr_dep (rtx producer, rtx consumer)
    a Pmode PRODUCER's value to calculate the address.  */
 
 int
-arm_early_store_addr_dep_ptr (rtx producer, rtx consumer)
+arm_early_store_addr_dep_ptr (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx value = arm_find_sub_rtx_with_code (PATTERN (producer), SET, false);
   rtx addr = arm_find_sub_rtx_with_code (PATTERN (consumer), SET, false);
@@ -365,48 +365,48 @@ arm_early_store_addr_dep_ptr (rtx producer, rtx consumer)
    result of the producer and no other dependency on that result.  It
    does not check if the producer is multiply-accumulate instruction.  */
 int
-arm_mac_accumulator_is_result (rtx producer, rtx consumer)
+arm_mac_accumulator_is_result (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx result;
   rtx op0, op1, acc;
 
-  producer = PATTERN (producer);
-  consumer = PATTERN (consumer);
+  rtx producer_pat = PATTERN (producer);
+  rtx consumer_pat = PATTERN (consumer);
 
-  if (GET_CODE (producer) == COND_EXEC)
-    producer = COND_EXEC_CODE (producer);
-  if (GET_CODE (consumer) == COND_EXEC)
-    consumer = COND_EXEC_CODE (consumer);
+  if (GET_CODE (producer_pat) == COND_EXEC)
+    producer_pat = COND_EXEC_CODE (producer_pat);
+  if (GET_CODE (consumer_pat) == COND_EXEC)
+    consumer_pat = COND_EXEC_CODE (consumer_pat);
 
-  if (GET_CODE (producer) != SET)
+  if (GET_CODE (producer_pat) != SET)
     return 0;
 
-  result = XEXP (producer, 0);
+  result = XEXP (producer_pat, 0);
 
-  if (GET_CODE (consumer) != SET)
+  if (GET_CODE (consumer_pat) != SET)
     return 0;
 
   /* Check that the consumer is of the form
      (set (...) (plus (mult ...) (...)))
      or
      (set (...) (minus (...) (mult ...))).  */
-  if (GET_CODE (XEXP (consumer, 1)) == PLUS)
+  if (GET_CODE (XEXP (consumer_pat, 1)) == PLUS)
     {
-      if (GET_CODE (XEXP (XEXP (consumer, 1), 0)) != MULT)
+      if (GET_CODE (XEXP (XEXP (consumer_pat, 1), 0)) != MULT)
         return 0;
 
-      op0 = XEXP (XEXP (XEXP (consumer, 1), 0), 0);
-      op1 = XEXP (XEXP (XEXP (consumer, 1), 0), 1);
-      acc = XEXP (XEXP (consumer, 1), 1);
+      op0 = XEXP (XEXP (XEXP (consumer_pat, 1), 0), 0);
+      op1 = XEXP (XEXP (XEXP (consumer_pat, 1), 0), 1);
+      acc = XEXP (XEXP (consumer_pat, 1), 1);
     }
-  else if (GET_CODE (XEXP (consumer, 1)) == MINUS)
+  else if (GET_CODE (XEXP (consumer_pat, 1)) == MINUS)
     {
-      if (GET_CODE (XEXP (XEXP (consumer, 1), 1)) != MULT)
+      if (GET_CODE (XEXP (XEXP (consumer_pat, 1), 1)) != MULT)
         return 0;
 
-      op0 = XEXP (XEXP (XEXP (consumer, 1), 1), 0);
-      op1 = XEXP (XEXP (XEXP (consumer, 1), 1), 1);
-      acc = XEXP (XEXP (consumer, 1), 0);
+      op0 = XEXP (XEXP (XEXP (consumer_pat, 1), 1), 0);
+      op1 = XEXP (XEXP (XEXP (consumer_pat, 1), 1), 1);
+      acc = XEXP (XEXP (consumer_pat, 1), 0);
     }
   else
     return 0;
@@ -500,7 +500,7 @@ aarch_accumulator_forwarding (rtx_insn *producer, rtx_insn *consumer)
    has an accumulator dependency on the result of the producer (a
    multiplication instruction) and no other dependency on that result.  */
 int
-arm_mac_accumulator_is_mul_result (rtx producer, rtx consumer)
+arm_mac_accumulator_is_mul_result (rtx_insn *producer, rtx_insn *consumer)
 {
   rtx mul = PATTERN (producer);
   rtx mac = PATTERN (consumer);

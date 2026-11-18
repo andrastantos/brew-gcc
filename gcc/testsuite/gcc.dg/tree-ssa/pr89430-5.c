@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -ftree-cselim -fdump-tree-cselim-details" } */
+/* { dg-options "-O2 -ftree-cselim -fdump-tree-cselim-details -fno-ssa-phiopt" } */
 
 int test(int b, int k) {
     struct {

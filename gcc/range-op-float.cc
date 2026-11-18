@@ -62,9 +62,49 @@ range_operator::fold_range (frange &r, tree type,
       return true;
     }
 
-  rv_fold (r, type,
-	   op1.lower_bound (), op1.upper_bound (),
-	   op2.lower_bound (), op2.upper_bound (), trio.op1_op2 ());
+  relation_kind rel = trio.op1_op2 ();
+  r.set_undefined ();
+  frange tmp;
+  if (relation_equiv_p (rel) && op1 == op2)
+    {
+      // The operands are known equal (x op x).  Fold each sub-range against
+      // itself, the diagonal of the cross product, so a relation-aware rv_fold
+      // like operator_mult's is_square stays valid.
+      //
+      // For x * x with x in [-3, -2] U [2, 3] the diagonal is
+      //
+      //     [-3, -2] * [-3, -2] = [4, 9]
+      //     [ 2,  3] * [ 2,  3] = [4, 9]
+      //
+      // giving the exact [4, 9].  The full cross product would form:
+      //
+      //     [-3, -2] * [-3, -2] = [4, 9]
+      //     [-3, -2] * [ 2,  3] = [-9, -4]
+      //     [ 2,  3] * [-3, -2] = [-9, -4]
+      //     [ 2,  3] * [ 2,  3] = [4, 9]
+      //
+      // whose union [-9, -4] U [4, 9] contains negative products that x * x
+      // can never produce: the off-diagonal terms pair a value from one
+      // sub-range with a value from the other, which x (a single value) can
+      // never do.
+      for (unsigned i = 0; i < op1.num_pairs (); ++i)
+	{
+	  rv_fold (tmp, type,
+		   op1.lower_bound (i), op1.upper_bound (i),
+		   op1.lower_bound (i), op1.upper_bound (i), rel);
+	  r.union_ (tmp);
+	}
+    }
+  else
+    // Otherwise do the straight cross product.
+    for (unsigned i = 0; i < op1.num_pairs (); ++i)
+      for (unsigned j = 0; j < op2.num_pairs (); ++j)
+	{
+	  rv_fold (tmp, type,
+		   op1.lower_bound (i), op1.upper_bound (i),
+		   op2.lower_bound (j), op2.upper_bound (j), rel);
+	  r.union_ (tmp);
+	}
 
   if (r.known_isnan ())
     return true;
@@ -476,8 +516,7 @@ frange_add_zeros (frange &r, tree type)
   if (r.undefined_p () || r.known_isnan ())
     return;
 
-  if (HONOR_SIGNED_ZEROS (type)
-      && (real_iszero (&r.lower_bound ()) || real_iszero (&r.upper_bound ())))
+  if (HONOR_SIGNED_ZEROS (type) && r.contains_zero_p ())
     {
       frange zero;
       zero.set_zero (type);
@@ -656,13 +695,9 @@ operator_equal::fold_range (irange &r, tree type,
       tmp.intersect (op2);
       if (tmp.undefined_p ())
 	{
-	  // If one range is [whatever, -0.0] and another
-	  // [0.0, whatever2], we don't know anything either,
-	  // because -0.0 == 0.0.
-	  if ((real_iszero (&op1.upper_bound ())
-	       && real_iszero (&op2.lower_bound ()))
-	      || (real_iszero (&op1.lower_bound ())
-		  && real_iszero (&op2.upper_bound ())))
+	  // If one range contains -0.0 and another +0.0, we don't know
+	  // anything either, because -0.0 == 0.0.
+	  if (op1.contains_zero_p () && op2.contains_zero_p ())
 	    r = range_true_and_false (type);
 	  else
 	    r = range_false (type);
@@ -736,7 +771,7 @@ operator_equal::op1_op2_relation (const irange &lhs, const frange &,
     return VREL_NE;
 
   // TRUE = op1 == op2 indicates EQ_EXPR.
-  if (!contains_zero_p (lhs))
+  if (!lhs.contains_zero_p ())
     return VREL_EQ;
   return VREL_VARYING;
 }
@@ -759,6 +794,9 @@ operator_not_equal::fold_range (irange &r, tree type,
       // Avoid frelop_early_resolve() below as it could fold to FALSE
       // without regards to NANs.  This would be incorrect if trying
       // to fold x_5 != x_5 without prior knowledge of NANs.
+      // Still, if either operand is undefined, return VARYING.
+      if (empty_range_varying (r, type, op1, op2))
+	return true;
     }
   else if (frelop_early_resolve (r, type, op1, op2, trio, VREL_NE))
     return true;
@@ -794,13 +832,9 @@ operator_not_equal::fold_range (irange &r, tree type,
       tmp.intersect (op2);
       if (tmp.undefined_p ())
 	{
-	  // If one range is [whatever, -0.0] and another
-	  // [0.0, whatever2], we don't know anything either,
-	  // because -0.0 == 0.0.
-	  if ((real_iszero (&op1.upper_bound ())
-	       && real_iszero (&op2.lower_bound ()))
-	      || (real_iszero (&op1.lower_bound ())
-		  && real_iszero (&op2.upper_bound ())))
+	  // If one range contains -0.0 and another +0.0, we don't know
+	  // anything either, because -0.0 == 0.0.
+	  if (op1.contains_zero_p () && op2.contains_zero_p ())
 	    r = range_true_and_false (type);
 	  else
 	    r = range_true (type);
@@ -882,7 +916,7 @@ operator_not_equal::op1_op2_relation (const irange &lhs, const frange &,
     return VREL_EQ;
 
   // TRUE = op1 != op2  indicates NE_EXPR.
-  if (!contains_zero_p (lhs))
+  if (!lhs.contains_zero_p ())
     return VREL_NE;
   return VREL_VARYING;
 }
@@ -996,7 +1030,7 @@ operator_lt::op1_op2_relation (const irange &lhs, const frange &,
     return VREL_GE;
 
   // TRUE = op1 < op2 indicates LT_EXPR.
-  if (!contains_zero_p (lhs))
+  if (!lhs.contains_zero_p ())
     return VREL_LT;
   return VREL_VARYING;
 }
@@ -1103,7 +1137,7 @@ operator_le::op1_op2_relation (const irange &lhs, const frange &,
     return VREL_GT;
 
   // TRUE = op1 <= op2 indicates LE_EXPR.
-  if (!contains_zero_p (lhs))
+  if (!lhs.contains_zero_p ())
     return VREL_LE;
   return VREL_VARYING;
 }
@@ -1220,7 +1254,7 @@ operator_gt::op1_op2_relation (const irange &lhs, const frange &,
     return VREL_LE;
 
   // TRUE = op1 > op2 indicates GT_EXPR.
-  if (!contains_zero_p (lhs))
+  if (!lhs.contains_zero_p ())
     return VREL_GT;
   return VREL_VARYING;
 }
@@ -1328,7 +1362,7 @@ operator_ge::op1_op2_relation (const irange &lhs, const frange &,
     return VREL_LT;
 
   // TRUE = op1 >= op2 indicates GE_EXPR.
-  if (!contains_zero_p (lhs))
+  if (!lhs.contains_zero_p ())
     return VREL_GE;
   return VREL_VARYING;
 }
@@ -1353,7 +1387,8 @@ public:
   {
     return op1_range (r, type, lhs, op1, rel.swap_op1_op2 ());
   }
-} fop_unordered;
+};
+static const foperator_unordered fop_unordered;
 
 bool
 foperator_unordered::fold_range (irange &r, tree type,
@@ -1427,7 +1462,8 @@ public:
   {
     return op1_range (r, type, lhs, op1, rel.swap_op1_op2 ());
   }
-} fop_ordered;
+};
+static const foperator_ordered fop_ordered;
 
 bool
 foperator_ordered::fold_range (irange &r, tree type,
@@ -1495,11 +1531,16 @@ operator_negate::fold_range (frange &r, tree type,
       return true;
     }
 
-  REAL_VALUE_TYPE lh_lb = op1.lower_bound ();
-  REAL_VALUE_TYPE lh_ub = op1.upper_bound ();
-  lh_lb = real_value_negate (&lh_lb);
-  lh_ub = real_value_negate (&lh_ub);
-  r.set (type, lh_ub, lh_lb);
+  r.set_undefined ();
+  for (unsigned i = 0; i < op1.num_pairs (); ++i)
+    {
+      REAL_VALUE_TYPE lb = op1.lower_bound (i);
+      REAL_VALUE_TYPE ub = op1.upper_bound (i);
+      lb = real_value_negate (&lb);
+      ub = real_value_negate (&ub);
+      frange tmp (type, ub, lb);
+      r.union_ (tmp);
+    }
   if (op1.maybe_isnan ())
     {
       bool sign;
@@ -1535,7 +1576,6 @@ operator_abs::fold_range (frange &r, tree type,
     }
 
   const REAL_VALUE_TYPE lh_lb = op1.lower_bound ();
-  const REAL_VALUE_TYPE lh_ub = op1.upper_bound ();
   // Handle the easy case where everything is positive.
   if (real_compare (GE_EXPR, &lh_lb, &dconst0)
       && !real_iszero (&lh_lb, /*sign=*/true)
@@ -1545,25 +1585,32 @@ operator_abs::fold_range (frange &r, tree type,
       return true;
     }
 
-  REAL_VALUE_TYPE min = real_value_abs (&lh_lb);
-  REAL_VALUE_TYPE max = real_value_abs (&lh_ub);
-  // If the range contains zero then we know that the minimum value in the
-  // range will be zero.
-  if (real_compare (LE_EXPR, &lh_lb, &dconst0)
-      && real_compare (GE_EXPR, &lh_ub, &dconst0))
+  // Take the absolute value of each sub-range and union the results.
+  r.set_undefined ();
+  for (unsigned i = 0; i < op1.num_pairs (); ++i)
     {
-      if (real_compare (GT_EXPR, &min, &max))
-	max = min;
-      min = dconst0;
+      const REAL_VALUE_TYPE lb = op1.lower_bound (i);
+      const REAL_VALUE_TYPE ub = op1.upper_bound (i);
+      REAL_VALUE_TYPE min = real_value_abs (&lb);
+      REAL_VALUE_TYPE max = real_value_abs (&ub);
+      // If the range contains zero then we know that the minimum value in the
+      // range will be zero.
+      if (real_compare (LE_EXPR, &lb, &dconst0)
+	  && real_compare (GE_EXPR, &ub, &dconst0))
+	{
+	  if (real_compare (GT_EXPR, &min, &max))
+	    max = min;
+	  min = dconst0;
+	}
+      else
+	{
+	  // If the range was reversed, swap MIN and MAX.
+	  if (real_compare (GT_EXPR, &min, &max))
+	    std::swap (min, max);
+	}
+      frange tmp (type, min, max);
+      r.union_ (tmp);
     }
-  else
-    {
-      // If the range was reversed, swap MIN and MAX.
-      if (real_compare (GT_EXPR, &min, &max))
-	std::swap (min, max);
-    }
-
-  r.set (type, min, max);
   if (op1.maybe_isnan ())
     r.update_nan (/*sign=*/false);
   else
@@ -1649,7 +1696,8 @@ public:
 		  const irange &lhs,
 		  const frange &op1,
 		  relation_trio trio) const final override;
-} fop_unordered_lt;
+};
+static const foperator_unordered_lt fop_unordered_lt;
 
 bool
 foperator_unordered_lt::op1_range (frange &r, tree type,
@@ -1759,7 +1807,8 @@ public:
   bool op2_range (frange &r, tree type,
 		  const irange &lhs, const frange &op1,
 		  relation_trio = TRIO_VARYING) const final override;
-} fop_unordered_le;
+};
+static const foperator_unordered_le fop_unordered_le;
 
 bool
 foperator_unordered_le::op1_range (frange &r, tree type,
@@ -1867,7 +1916,8 @@ public:
   bool op2_range (frange &r, tree type,
 		  const irange &lhs, const frange &op1,
 		  relation_trio = TRIO_VARYING) const final override;
-} fop_unordered_gt;
+};
+static const foperator_unordered_gt fop_unordered_gt;
 
 bool
 foperator_unordered_gt::op1_range (frange &r,
@@ -1979,7 +2029,8 @@ public:
   bool op2_range (frange &r, tree type,
 		  const irange &lhs, const frange &op1,
 		  relation_trio = TRIO_VARYING) const final override;
-} fop_unordered_ge;
+};
+static const foperator_unordered_ge fop_unordered_ge;
 
 bool
 foperator_unordered_ge::op1_range (frange &r,
@@ -2093,7 +2144,8 @@ public:
   {
     return op1_range (r, type, lhs, op1, rel.swap_op1_op2 ());
   }
-} fop_unordered_equal;
+};
+static const foperator_unordered_equal fop_unordered_equal;
 
 bool
 foperator_unordered_equal::op1_range (frange &r, tree type,
@@ -2175,7 +2227,8 @@ public:
   {
     return op1_range (r, type, lhs, op1, rel.swap_op1_op2 ());
   }
-} fop_ltgt;
+};
+static const foperator_ltgt fop_ltgt;
 
 bool
 foperator_ltgt::op1_range (frange &r, tree type,
@@ -2243,8 +2296,7 @@ float_binary_op_range_finish (bool ret, frange &r, tree type,
     {
       r.clear_nan ();
       if (div_op2
-	  ? !(real_compare (LE_EXPR, &lhs.lower_bound (), &dconst0)
-	      && real_compare (GE_EXPR, &lhs.upper_bound (), &dconst0))
+	  ? !lhs.contains_zero_p ()
 	  : !(real_isinf (&lhs.lower_bound ())
 	      || real_isinf (&lhs.upper_bound ())))
 	// For reverse + or - or * or op1 of /, if result is finite, then
@@ -2353,74 +2405,6 @@ zero_to_inf_range (REAL_VALUE_TYPE &lb, REAL_VALUE_TYPE &ub, int signbit_known)
     }
 }
 
-/* Extend the LHS range by 1ulp in each direction.  For op1_range
-   or op2_range of binary operations just computing the inverse
-   operation on ranges isn't sufficient.  Consider e.g.
-   [1., 1.] = op1 + [1., 1.].  op1's range is not [0., 0.], but
-   [-0x1.0p-54, 0x1.0p-53] (when not -frounding-math), any value for
-   which adding 1. to it results in 1. after rounding to nearest.
-   So, for op1_range/op2_range extend the lhs range by 1ulp (or 0.5ulp)
-   in each direction.  See PR109008 for more details.  */
-
-static frange
-float_widen_lhs_range (tree type, const frange &lhs)
-{
-  frange ret = lhs;
-  if (lhs.known_isnan ())
-    return ret;
-  REAL_VALUE_TYPE lb = lhs.lower_bound ();
-  REAL_VALUE_TYPE ub = lhs.upper_bound ();
-  if (real_isfinite (&lb))
-    {
-      frange_nextafter (TYPE_MODE (type), lb, dconstninf);
-      if (real_isinf (&lb))
-	{
-	  /* For -DBL_MAX, instead of -Inf use
-	     nexttoward (-DBL_MAX, -LDBL_MAX) in a hypothetical
-	     wider type with the same mantissa precision but larger
-	     exponent range; it is outside of range of double values,
-	     but makes it clear it is just one ulp larger rather than
-	     infinite amount larger.  */
-	  lb = dconstm1;
-	  SET_REAL_EXP (&lb, FLOAT_MODE_FORMAT (TYPE_MODE (type))->emax + 1);
-	}
-      if (!flag_rounding_math && !MODE_COMPOSITE_P (TYPE_MODE (type)))
-	{
-	  /* If not -frounding-math nor IBM double double, actually widen
-	     just by 0.5ulp rather than 1ulp.  */
-	  REAL_VALUE_TYPE tem;
-	  real_arithmetic (&tem, PLUS_EXPR, &lhs.lower_bound (), &lb);
-	  real_arithmetic (&lb, RDIV_EXPR, &tem, &dconst2);
-	}
-    }
-  if (real_isfinite (&ub))
-    {
-      frange_nextafter (TYPE_MODE (type), ub, dconstinf);
-      if (real_isinf (&ub))
-	{
-	  /* For DBL_MAX similarly.  */
-	  ub = dconst1;
-	  SET_REAL_EXP (&ub, FLOAT_MODE_FORMAT (TYPE_MODE (type))->emax + 1);
-	}
-      if (!flag_rounding_math && !MODE_COMPOSITE_P (TYPE_MODE (type)))
-	{
-	  /* If not -frounding-math nor IBM double double, actually widen
-	     just by 0.5ulp rather than 1ulp.  */
-	  REAL_VALUE_TYPE tem;
-	  real_arithmetic (&tem, PLUS_EXPR, &lhs.upper_bound (), &ub);
-	  real_arithmetic (&ub, RDIV_EXPR, &tem, &dconst2);
-	}
-    }
-  /* Temporarily disable -ffinite-math-only, so that frange::set doesn't
-     reduce the range back to real_min_representable (type) as lower bound
-     or real_max_representable (type) as upper bound.  */
-  bool save_flag_finite_math_only = flag_finite_math_only;
-  flag_finite_math_only = false;
-  ret.set (type, lb, ub, lhs.get_nan_state ());
-  flag_finite_math_only = save_flag_finite_math_only;
-  return ret;
-}
-
 bool
 operator_plus::op1_range (frange &r, tree type, const frange &lhs,
 			  const frange &op2, relation_trio) const
@@ -2430,7 +2414,8 @@ operator_plus::op1_range (frange &r, tree type, const frange &lhs,
   range_op_handler minus (MINUS_EXPR);
   if (!minus)
     return false;
-  frange wlhs = float_widen_lhs_range (type, lhs);
+  frange wlhs = lhs;
+  wlhs.widen (type);
   return float_binary_op_range_finish (minus.fold_range (r, type, wlhs, op2),
 				       r, type, wlhs);
 }
@@ -2488,7 +2473,8 @@ operator_minus::op1_range (frange &r, tree type,
 {
   if (lhs.undefined_p ())
     return false;
-  frange wlhs = float_widen_lhs_range (type, lhs);
+  frange wlhs = lhs;
+  wlhs.widen (type);
   return float_binary_op_range_finish (
 	      range_op_handler (PLUS_EXPR).fold_range (r, type, wlhs, op2),
 	      r, type, wlhs);
@@ -2501,7 +2487,8 @@ operator_minus::op2_range (frange &r, tree type,
 {
   if (lhs.undefined_p ())
     return false;
-  frange wlhs = float_widen_lhs_range (type, lhs);
+  frange wlhs = lhs;
+  wlhs.widen (type);
   return float_binary_op_range_finish (fold_range (r, type, op1, wlhs),
 				       r, type, wlhs);
 }
@@ -2577,7 +2564,8 @@ operator_mult::op1_range (frange &r, tree type,
   range_op_handler rdiv (RDIV_EXPR);
   if (!rdiv)
     return false;
-  frange wlhs = float_widen_lhs_range (type, lhs);
+  frange wlhs = lhs;
+  wlhs.widen (type);
   bool ret = rdiv.fold_range (r, type, wlhs, op2);
   if (ret == false)
     return false;
@@ -2742,7 +2730,8 @@ public:
   {
     if (lhs.undefined_p ())
       return false;
-    frange wlhs = float_widen_lhs_range (type, lhs);
+    frange wlhs = lhs;
+    wlhs.widen (type);
     bool ret = range_op_handler (MULT_EXPR).fold_range (r, type, wlhs, op2);
     if (!ret)
       return ret;
@@ -2774,7 +2763,8 @@ public:
   {
     if (lhs.undefined_p ())
       return false;
-    frange wlhs = float_widen_lhs_range (type, lhs);
+    frange wlhs = lhs;
+    wlhs.widen (type);
     bool ret = fold_range (r, type, op1, wlhs);
     if (!ret)
       return ret;
@@ -2897,13 +2887,13 @@ private:
     gcc_checking_assert (!real_isnan (&ub));
     r.set (type, lb, ub, nan_state (maybe_nan));
   }
-} fop_div;
+};
+static const foperator_div fop_div;
 
 bool
 operator_cast::fold_range (frange &r, tree type, const frange &op1,
 			   const frange &, relation_trio) const
 {
-  REAL_VALUE_TYPE lb, ub;
   enum machine_mode mode = TYPE_MODE (type);
   bool mode_composite = MODE_COMPOSITE_P (mode);
 
@@ -2920,46 +2910,53 @@ operator_cast::fold_range (frange &r, tree type, const frange &op1,
       return true;
     }
 
-  const REAL_VALUE_TYPE &lh_lb = op1.lower_bound ();
-  const REAL_VALUE_TYPE &lh_ub = op1.upper_bound ();
-  real_convert (&lb, mode, &lh_lb);
-  real_convert (&ub, mode, &lh_ub);
-
-  if (flag_rounding_math)
+  r.set_undefined ();
+  for (unsigned i = 0; i < op1.num_pairs (); ++i)
     {
-      if (real_less (&lh_lb, &lb))
-	{
-	  if (mode_composite
-	      && (real_isdenormal (&lb, mode) || real_iszero (&lb)))
-	    {
-	      // IBM extended denormals only have DFmode precision.
-	      REAL_VALUE_TYPE tmp, tmp2;
-	      real_convert (&tmp2, DFmode, &lh_lb);
-	      real_nextafter (&tmp, REAL_MODE_FORMAT (DFmode), &tmp2,
-			      &dconstninf);
-	      real_convert (&lb, mode, &tmp);
-	    }
-	  else
-	    frange_nextafter (mode, lb, dconstninf);
-	}
-      if (real_less (&ub, &lh_ub))
-	{
-	  if (mode_composite
-	      && (real_isdenormal (&ub, mode) || real_iszero (&ub)))
-	    {
-	      // IBM extended denormals only have DFmode precision.
-	      REAL_VALUE_TYPE tmp, tmp2;
-	      real_convert (&tmp2, DFmode, &lh_ub);
-	      real_nextafter (&tmp, REAL_MODE_FORMAT (DFmode), &tmp2,
-			      &dconstinf);
-	      real_convert (&ub, mode, &tmp);
-	    }
-	  else
-	    frange_nextafter (mode, ub, dconstinf);
-	}
-    }
+      REAL_VALUE_TYPE lb, ub;
+      const REAL_VALUE_TYPE &lh_lb = op1.lower_bound (i);
+      const REAL_VALUE_TYPE &lh_ub = op1.upper_bound (i);
+      real_convert (&lb, mode, &lh_lb);
+      real_convert (&ub, mode, &lh_ub);
 
-  r.set (type, lb, ub, op1.get_nan_state ());
+      if (flag_rounding_math)
+	{
+	  if (real_less (&lh_lb, &lb))
+	    {
+	      if (mode_composite
+		  && (real_isdenormal (&lb, mode) || real_iszero (&lb)))
+		{
+		  // IBM extended denormals only have DFmode precision.
+		  REAL_VALUE_TYPE tmp, tmp2;
+		  real_convert (&tmp2, DFmode, &lh_lb);
+		  real_nextafter (&tmp, REAL_MODE_FORMAT (DFmode), &tmp2,
+				  &dconstninf);
+		  real_convert (&lb, mode, &tmp);
+		}
+	      else
+		frange_nextafter (mode, lb, dconstninf);
+	    }
+	  if (real_less (&ub, &lh_ub))
+	    {
+	      if (mode_composite
+		  && (real_isdenormal (&ub, mode) || real_iszero (&ub)))
+		{
+		  // IBM extended denormals only have DFmode precision.
+		  REAL_VALUE_TYPE tmp, tmp2;
+		  real_convert (&tmp2, DFmode, &lh_ub);
+		  real_nextafter (&tmp, REAL_MODE_FORMAT (DFmode), &tmp2,
+				  &dconstinf);
+		  real_convert (&ub, mode, &tmp);
+		}
+	      else
+		frange_nextafter (mode, ub, dconstinf);
+	    }
+	}
+
+      frange tmp;
+      tmp.set (type, lb, ub, op1.get_nan_state ());
+      r.union_ (tmp);
+    }
 
   if (flag_trapping_math
       && MODE_HAS_INFINITIES (TYPE_MODE (type))
@@ -3010,7 +3007,8 @@ operator_cast::op1_range (frange &r, tree type, const frange &lhs,
   else
     {
       rm = true;
-      wlhs = float_widen_lhs_range (lhs_type, lhs);
+      wlhs = lhs;
+      wlhs.widen (lhs_type);
     }
   auto save_flag_rounding_math = flag_rounding_math;
   flag_rounding_math = rm;
@@ -3032,31 +3030,37 @@ operator_cast::fold_range (irange &r, tree type, const frange &op1,
       r.set_varying (type);
       return true;
     }
-  REAL_VALUE_TYPE lb, ub;
-  real_trunc (&lb, VOIDmode, &op1.lower_bound ());
-  real_trunc (&ub, VOIDmode, &op1.upper_bound ());
   REAL_VALUE_TYPE l, u;
   l = real_value_from_int_cst (NULL_TREE, TYPE_MIN_VALUE (type));
-  if (real_less (&lb, &l))
-    {
-      r.set_varying (type);
-      return true;
-    }
   u = real_value_from_int_cst (NULL_TREE, TYPE_MAX_VALUE (type));
-  if (real_less (&u, &ub))
+
+  r.set_undefined ();
+  for (unsigned i = 0; i < op1.num_pairs (); ++i)
     {
-      r.set_varying (type);
-      return true;
+      REAL_VALUE_TYPE lb, ub;
+      real_trunc (&lb, VOIDmode, &op1.lower_bound (i));
+      real_trunc (&ub, VOIDmode, &op1.upper_bound (i));
+      if (real_less (&lb, &l))
+	{
+	  r.set_varying (type);
+	  return true;
+	}
+      if (real_less (&u, &ub))
+	{
+	  r.set_varying (type);
+	  return true;
+	}
+      bool fail = false;
+      wide_int wlb = real_to_integer (&lb, &fail, TYPE_PRECISION (type));
+      wide_int wub = real_to_integer (&ub, &fail, TYPE_PRECISION (type));
+      if (fail)
+	{
+	  r.set_varying (type);
+	  return true;
+	}
+      int_range<2> tmp (type, wlb, wub);
+      r.union_ (tmp);
     }
-  bool fail = false;
-  wide_int wlb = real_to_integer (&lb, &fail, TYPE_PRECISION (type));
-  wide_int wub = real_to_integer (&ub, &fail, TYPE_PRECISION (type));
-  if (fail)
-    {
-      r.set_varying (type);
-      return true;
-    }
-  r.set (type, wlb, wub);
   return true;
 }
 
@@ -3113,26 +3117,31 @@ operator_cast::fold_range (frange &r, tree type, const irange &op1,
 {
   if (empty_range_varying (r, type, op1, op1))
     return true;
-  REAL_VALUE_TYPE lb, ub;
-  wide_int op1_lb = op1.lower_bound ();
-  wide_int op1_ub = op1.upper_bound ();
   tree op1_type = op1.type ();
-  enum machine_mode mode = flag_rounding_math ? VOIDmode : TYPE_MODE (type);
-  real_from_integer (&lb, mode, op1_lb, TYPE_SIGN (op1_type));
-  real_from_integer (&ub, mode, op1_ub, TYPE_SIGN (op1_type));
-  if (flag_rounding_math)
+  r.set_undefined ();
+  for (unsigned i = 0; i < op1.num_pairs (); ++i)
     {
-      REAL_VALUE_TYPE lbo = lb, ubo = ub;
-      mode = TYPE_MODE (type);
-      real_convert (&lb, mode, &lb);
-      real_convert (&ub, mode, &ub);
-      if (real_less (&lbo, &lb))
-	frange_nextafter (mode, lb, dconstninf);
-      if (real_less (&ub, &ubo))
-	frange_nextafter (mode, ub, dconstinf);
+      REAL_VALUE_TYPE lb, ub;
+      wide_int op1_lb = op1.lower_bound (i);
+      wide_int op1_ub = op1.upper_bound (i);
+      enum machine_mode mode = flag_rounding_math ? VOIDmode : TYPE_MODE (type);
+      real_from_integer (&lb, mode, op1_lb, TYPE_SIGN (op1_type));
+      real_from_integer (&ub, mode, op1_ub, TYPE_SIGN (op1_type));
+      if (flag_rounding_math)
+	{
+	  REAL_VALUE_TYPE lbo = lb, ubo = ub;
+	  mode = TYPE_MODE (type);
+	  real_convert (&lb, mode, &lb);
+	  real_convert (&ub, mode, &ub);
+	  if (real_less (&lbo, &lb))
+	    frange_nextafter (mode, lb, dconstninf);
+	  if (real_less (&ub, &ubo))
+	    frange_nextafter (mode, ub, dconstinf);
+	}
+      frange tmp;
+      tmp.set (type, lb, ub, nan_state (false));
+      r.union_ (tmp);
     }
-  r.set (type, lb, ub, nan_state (false));
-  frange_drop_infs (r, type);
   if (r.undefined_p ())
     r.set_varying (type);
   return true;
@@ -3252,6 +3261,110 @@ range_op_float_tests ()
   plus.fold_range (r, float_type_node, r0, r1);
   if (HONOR_NANS (float_type_node))
     ASSERT_TRUE (r.maybe_isnan ());
+
+  // r.widen widens each sub-range and keeps the gap between
+  // them.
+  r0 = frange_float ("1.0", "2.0");
+  r1 = frange_float ("10.0", "11.0");
+  r0.union_ (r1);
+  r0.clear_nan ();
+  ASSERT_EQ (r0.num_pairs (), 2);
+  r = r0;
+  r.widen (float_type_node);
+  ASSERT_EQ (r.num_pairs (), 2);
+  REAL_VALUE_TYPE five;
+  real_from_string (&five, "5.0");
+  ASSERT_FALSE (r.contains_p (five));
+
+  // op1_range for "op1 == op2" where op2 = [-1.0,-0.0][1.0,1.0] holds -0.0 but
+  // not +0.0 must still admit +0.0 for op1, since -0.0 == +0.0.
+  if (HONOR_SIGNED_ZEROS (float_type_node))
+    {
+      r0 = frange_float ("-1.0", "-0.0");
+      r1 = frange_float ("1.0", "1.0");
+      r0.union_ (r1);
+      r0.clear_nan ();
+      ASSERT_FALSE (r0.contains_p (dconst0));
+      ASSERT_TRUE (r0.contains_p (dconstm0));
+      int_range<2> bool_true = range_true ();
+      range_op_handler (EQ_EXPR).op1_range (r, float_type_node, bool_true, r0);
+      ASSERT_TRUE (r.contains_p (dconst0));
+    }
+
+  // negate([1, 2] U [10, 11]) => [-11, -10] U [-2, -1], keeping the gap.
+  r0 = frange_float ("1.0", "2.0");
+  r1 = frange_float ("10.0", "11.0");
+  r0.union_ (r1);
+  r0.clear_nan ();
+  range_op_handler (NEGATE_EXPR).fold_range (r, float_type_node, r0, trange);
+  ASSERT_EQ (r.num_pairs (), 2);
+
+  // abs([-6, -5] U [1, 2]) => [1, 2] U [5, 6], keeping the gap rather than
+  // collapsing to [0, 6].
+  r0 = frange_float ("-6.0", "-5.0");
+  r1 = frange_float ("1.0", "2.0");
+  r0.union_ (r1);
+  r0.clear_nan ();
+  range_op_handler (ABS_EXPR).fold_range (r, float_type_node, r0, trange);
+  ASSERT_EQ (r.num_pairs (), 2);
+
+  // (float)([1, 4] U [6, 10]) keeps the gap.
+  unsigned iprec = TYPE_PRECISION (integer_type_node);
+  int_range<2> i0 (integer_type_node,
+		   wi::shwi (1, iprec), wi::shwi (4, iprec));
+  int_range<2> i1 (integer_type_node,
+		   wi::shwi (6, iprec), wi::shwi (10, iprec));
+  i0.union_ (i1);
+  range_op_handler (FLOAT_EXPR).fold_range (r, float_type_node, i0, trange);
+  ASSERT_EQ (r.num_pairs (), 2);
+
+  // Casting the double range [1,2] U [10,11] to float stays two pieces rather
+  // than collapsing to the hull [1, 11].
+  r0 = frange_float ("1.0", "2.0", double_type_node);
+  r1 = frange_float ("10.0", "11.0", double_type_node);
+  r0.union_ (r1);
+  r0.clear_nan ();
+  range_op_handler (CONVERT_EXPR).fold_range (r, float_type_node, r0, r0);
+  ASSERT_EQ (r.num_pairs (), 2);
+
+  // Cast conversion of (int)([1.0,2.0] U [10.0,11.0]) stays two pieces.
+  r0 = frange_float ("1.0", "2.0");
+  r1 = frange_float ("10.0", "11.0");
+  r0.union_ (r1);
+  r0.clear_nan ();
+  int_range<2> ir, ir_op2;
+  range_op_handler (FIX_TRUNC_EXPR).fold_range (ir, integer_type_node,
+						r0, ir_op2);
+  ASSERT_EQ (ir.num_pairs (), 2);
+
+  // ([1, 2] U [10, 11]) + 0 stays two pieces.
+  r0 = frange_float ("1.0", "2.0");
+  r1 = frange_float ("10.0", "11.0");
+  r0.union_ (r1);
+  r0.clear_nan ();
+  r1 = frange_float ("0.0", "0.0");
+  r1.clear_nan ();
+  range_op_handler (PLUS_EXPR).fold_range (r, float_type_node, r0, r1);
+  ASSERT_EQ (r.num_pairs (), 2);
+
+  // x * x (VREL_EQ) with a two-piece x: the diagonal fold gives the exact
+  // [4, 9], not the full cross product's [-9, -4] U [4, 9], nor the hull's
+  // looser [0, 9].
+  r0 = frange_float ("-3.0", "-2.0");
+  r1 = frange_float ("2.0", "3.0");
+  r0.union_ (r1);
+  r0.clear_nan ();
+  range_op_handler (MULT_EXPR).fold_range (r, float_type_node, r0, r0,
+					   relation_trio (VREL_VARYING,
+							  VREL_VARYING,
+							  VREL_EQ));
+  REAL_VALUE_TYPE val;
+  real_from_string (&val, "5.0");
+  ASSERT_TRUE (r.contains_p (val));	// the result is [4, 9]
+  real_from_string (&val, "-5.0");
+  ASSERT_FALSE (r.contains_p (val));	// not the cross product's negatives
+  real_from_string (&val, "3.0");
+  ASSERT_FALSE (r.contains_p (val));	// tighter than the hull [0, 9]
 }
 
 } // namespace selftest

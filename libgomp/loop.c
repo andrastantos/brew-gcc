@@ -1186,3 +1186,48 @@ GOMP_loop_ordered_guided_next (long *istart, long *iend)
   return gomp_loop_ordered_guided_next (istart, iend);
 }
 #endif
+
+/* For a worksharing-loop construct with static schedule, return the thread ID
+   and number of threads packed into a single complex value. NITER is the total
+   number of iterations.  */
+
+_Complex int
+GOMP_loop_static_worksharing (unsigned long long niter
+			      __attribute__ ((unused)))
+{
+  struct gomp_team *team = gomp_thread ()->ts.team;
+  unsigned tid = gomp_thread ()->ts.team_id;
+  unsigned nthreads = team ? team->nthreads : 1;
+  return nthreads + tid * 1I;
+}
+
+/* OMPT variant enabled by -fopenmp-ompt and when GOMP_loop_end is called
+   (e.g. with the inscan modifier).  */
+
+_Complex int
+GOMP_loop_static_worksharing_start (unsigned long long niter
+				    __attribute__ ((unused)))
+{
+  struct gomp_team *team = gomp_thread ()->ts.team;
+  unsigned tid = gomp_thread ()->ts.team_id;
+  unsigned nthreads = team ? team->nthreads : 1;
+  return nthreads + tid * 1I;
+}
+
+/* Stub for OMPT callback enabled by -fopenmp-ompt=extended. START is the
+   starting index of the chunk in the logical iteration space. ITERATIONS is the
+   number of iterations in the chunk.  */
+
+void
+GOMP_loop_static_worksharing_dispatch (unsigned long long start
+				       __attribute__ ((unused)),
+				       unsigned long long iterations
+				       __attribute__ ((unused)))
+{}
+
+/* Stub for OMPT callback enabled by -fopenmp-ompt, except when GOMP_loop_end is
+   already called (e.g. with the inscan modifier).  */
+
+void
+GOMP_loop_static_worksharing_end (void)
+{}

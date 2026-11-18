@@ -1,3 +1,4 @@
+      *> Do not edit this generated file.  See README.txt
       *> { dg-do compile }
 
        IDENTIFICATION   DIVISION.

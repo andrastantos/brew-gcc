@@ -4566,7 +4566,7 @@ package body Ch3 is
             | Tok_Procedure
          =>
             Check_Bad_Layout;
-            Append (P_Subprogram (Pf_Decl_Gins_Pbod_Rnam_Stub_Pexp), Decls);
+            Append (P_Subprogram (Pf_Decl_Gins_Pbod_Rnam_Stub_Expf), Decls);
 
          when Tok_For =>
             Check_Bad_Layout;
@@ -4613,7 +4613,7 @@ package body Ch3 is
             Append (P_Generic, Decls);
 
          when Tok_Identifier =>
-            Check_Bad_Layout;
+            Save_Scan_State (Scan_State);
 
             --  Special check for misuse of overriding not in Ada 2005 mode
 
@@ -4624,7 +4624,7 @@ package body Ch3 is
                Error_Msg_SC ("\unit must be compiled with -gnat05 switch");
 
                Token := Tok_Overriding;
-               Append (P_Subprogram (Pf_Decl_Gins_Pbod_Rnam_Stub_Pexp), Decls);
+               Append (P_Subprogram (Pf_Decl_Gins_Pbod_Rnam_Stub_Expf), Decls);
 
             --  Normal case, no overriding, or overriding followed by colon
 
@@ -4632,9 +4632,13 @@ package body Ch3 is
                P_Identifier_Declarations (Decls, Done, In_Spec, In_Statements);
             end if;
 
+            if not Done then
+               Check_Bad_Layout_At (Scan_State);
+            end if;
+
          when Tok_Package =>
             Check_Bad_Layout;
-            Append (P_Package (Pf_Decl_Gins_Pbod_Rnam_Stub_Pexp), Decls);
+            Append (P_Package (Pf_Decl_Gins_Pbod_Rnam_Stub_Expf), Decls);
 
          when Tok_Pragma =>
             --  If we see a pragma and In_Statements is true, we want to let

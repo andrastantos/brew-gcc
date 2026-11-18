@@ -20,6 +20,7 @@
 #include "fold-const.h"
 #include "rust-tyty-util.h"
 #include "rust-tyty.h"
+#include "rust-type-util.h"
 
 namespace Rust {
 namespace Resolver {
@@ -37,10 +38,13 @@ UnifyRules::UnifyRules (TyTy::TyWithLocation lhs, TyTy::TyWithLocation rhs,
 			location_t locus, bool commit_flag, bool emit_error,
 			bool check_bounds, bool infer,
 			std::vector<CommitSite> &commits,
-			std::vector<InferenceSite> &infers)
+			std::vector<InferenceSite> &infers,
+			ActiveADTs &active_adts, bool allow_never_coercion)
   : lhs (lhs), rhs (rhs), locus (locus), commit_flag (commit_flag),
     emit_error (emit_error), infer_flag (infer),
-    check_bounds_flag (check_bounds), commits (commits), infers (infers),
+    check_bounds_flag (check_bounds),
+    allow_never_coercion (allow_never_coercion), commits (commits),
+    infers (infers), active_adts (active_adts),
     mappings (Analysis::Mappings::get ()), context (*TypeCheckContext::get ())
 {}
 
@@ -49,10 +53,15 @@ UnifyRules::Resolve (TyTy::TyWithLocation lhs, TyTy::TyWithLocation rhs,
 		     location_t locus, bool commit_flag, bool emit_error,
 		     bool check_bounds, bool infer,
 		     std::vector<CommitSite> &commits,
-		     std::vector<InferenceSite> &infers)
+		     std::vector<InferenceSite> &infers,
+		     ActiveADTs *active_adts, bool allow_never_coercion)
 {
-  UnifyRules r (lhs, rhs, locus, commit_flag, emit_error, infer, check_bounds,
-		commits, infers);
+  ActiveADTs root_active_adts;
+  if (active_adts == nullptr)
+    active_adts = &root_active_adts;
+
+  UnifyRules r (lhs, rhs, locus, commit_flag, emit_error, check_bounds, infer,
+		commits, infers, *active_adts, allow_never_coercion);
 
   TyTy::BaseType *result = r.go ();
   bool failed = result->get_kind () == TyTy::TypeKind::ERROR;
@@ -74,8 +83,9 @@ TyTy::BaseType *
 UnifyRules::resolve_subtype (TyTy::TyWithLocation lhs, TyTy::TyWithLocation rhs)
 {
   TyTy::BaseType *result
-    = UnifyRules::Resolve (lhs, rhs, locus, commit_flag, emit_error, infer_flag,
-			   check_bounds_flag, commits, infers);
+    = UnifyRules::Resolve (lhs, rhs, locus, commit_flag, emit_error,
+			   check_bounds_flag, infer_flag, commits, infers,
+			   &active_adts, allow_never_coercion);
 
   // If the recursive call resulted in an error and would have emitted an error
   // message, disable error emission for the current level to avoid duplicate
@@ -242,18 +252,20 @@ UnifyRules::go ()
 	    }
 	}
     }
-
   if (infer_flag)
     {
+      // an impl parameter can infer to Split<T, P> without requiring T and P to
+      // be concrete
       bool rgot_param = rtype->get_kind () == TyTy::TypeKind::PARAM;
       bool lhs_is_infer_var = ltype->get_kind () == TyTy::TypeKind::INFER;
       bool lhs_is_general_infer_var
 	= lhs_is_infer_var
 	  && static_cast<TyTy::InferType *> (ltype)->get_infer_kind ()
 	       == TyTy::InferType::GENERAL;
-      bool expected_is_concrete
-	= ltype->is_concrete () && !lhs_is_general_infer_var;
-      bool rneeds_infer = expected_is_concrete && (rgot_param);
+      bool expected_can_infer_param
+	= (ltype->is_concrete () || ltype->get_kind () == TyTy::TypeKind::ADT)
+	  && !lhs_is_general_infer_var;
+      bool rneeds_infer = expected_can_infer_param && rgot_param;
 
       bool lgot_param = ltype->get_kind () == TyTy::TypeKind::PARAM;
       bool rhs_is_infer_var = rtype->get_kind () == TyTy::TypeKind::INFER;
@@ -261,9 +273,10 @@ UnifyRules::go ()
 	= rhs_is_infer_var
 	  && static_cast<TyTy::InferType *> (rtype)->get_infer_kind ()
 	       == TyTy::InferType::GENERAL;
-      bool receiver_is_concrete
-	= rtype->is_concrete () && !rhs_is_general_infer_var;
-      bool lneeds_infer = receiver_is_concrete && (lgot_param);
+      bool receiver_can_infer_param
+	= (rtype->is_concrete () || rtype->get_kind () == TyTy::TypeKind::ADT)
+	  && !rhs_is_general_infer_var;
+      bool lneeds_infer = receiver_can_infer_param && lgot_param;
 
       if (rneeds_infer)
 	{
@@ -347,6 +360,9 @@ UnifyRules::go ()
 		}
 	    }
 	}
+      // For PROJECTION vs PROJECTION, expect_projection handles the structural
+      // comparison directly. InferSubst on projections creates fresh infer vars
+      // that are not tracked in `infers` and thus leak when commit=false.
     }
 
   if (ltype->get_kind () != TyTy::TypeKind::CONST
@@ -361,6 +377,13 @@ UnifyRules::go ()
     {
       auto *lc = ltype->as_const_type ();
       ltype = lc->get_specified_type ();
+    }
+
+  if (ltype->get_kind () != TyTy::TypeKind::PROJECTION
+      && rtype->get_kind () == TyTy::TypeKind::PROJECTION)
+    {
+      auto *rtype_proj = static_cast<TyTy::ProjectionType *> (rtype);
+      rtype = normalize_projection (rtype_proj, locus, false, false);
     }
 
   switch (ltype->get_kind ())
@@ -575,7 +598,15 @@ UnifyRules::expect_adt (TyTy::ADTType *ltype, TyTy::BaseType *rtype)
     case TyTy::ADT:
       {
 	TyTy::ADTType &type = *static_cast<TyTy::ADTType *> (rtype);
+	if (ltype == &type)
+	  return ltype;
+
 	if (ltype->get_adt_kind () != type.get_adt_kind ())
+	  {
+	    return unify_error_type_node ();
+	  }
+
+	if (ltype->get_id () != type.get_id ())
 	  {
 	    return unify_error_type_node ();
 	  }
@@ -589,6 +620,10 @@ UnifyRules::expect_adt (TyTy::ADTType *ltype, TyTy::BaseType *rtype)
 	  {
 	    return unify_error_type_node ();
 	  }
+
+	ActiveADTGuard guard (active_adts, {ltype, &type});
+	if (guard.already_active ())
+	  return ltype;
 
 	for (size_t i = 0; i < type.number_of_variants (); ++i)
 	  {
@@ -972,7 +1007,10 @@ UnifyRules::expect_array (TyTy::ArrayType *ltype, TyTy::BaseType *rtype)
 	auto capacity_type_unify = capacity_unify->as_const_type ();
 	if (capacity_type_unify->const_kind ()
 	    == TyTy::BaseConstType::ConstKind::Error)
-	  return unify_error_type_node ();
+	  {
+	    emit_error = false;
+	    return unify_error_type_node ();
+	  }
 
 	return new TyTy::ArrayType (
 	  type.get_ref (), type.get_ty_ref (), type.get_ident ().locus,
@@ -1798,8 +1836,15 @@ UnifyRules::expect_never (TyTy::NeverType *ltype, TyTy::BaseType *rtype)
       }
       break;
 
+    case TyTy::NEVER:
+      return ltype;
+
     default:
-      return rtype;
+      {
+	if (allow_never_coercion)
+	  return rtype;
+      }
+      break;
     }
   return unify_error_type_node ();
 }
@@ -1869,12 +1914,82 @@ UnifyRules::expect_projection (TyTy::ProjectionType *ltype,
 	  = r->get_infer_kind () == TyTy::InferType::InferTypeKind::GENERAL;
 	if (is_valid)
 	  return ltype;
+	// For non-GENERAL infers (INTEGRAL/FLOAT), try normalizing the
+	// projection first — e.g. unifying `<Bar<i32> as Foo<i32>>::A`
+	// (still trait-position) with an integer literal needs the
+	// projection to collapse to `i32` via the impl's `type A = T`.
+	if (ltype->is_trait_position ())
+	  {
+	    TyTy::BaseType *ln
+	      = normalize_projection (ltype, locus, false, false);
+	    if (ln != nullptr && ln != ltype)
+	      return resolve_subtype (TyTy::TyWithLocation (ln),
+				      TyTy::TyWithLocation (rtype));
+	  }
       }
       break;
 
-      // FIXME
     case TyTy::PROJECTION:
-      rust_unreachable ();
+      {
+	auto *rtype_proj = static_cast<TyTy::ProjectionType *> (rtype);
+
+	const auto ltype_tref = ltype->get_trait_ref ();
+	const auto rtype_tref = rtype_proj->get_trait_ref ();
+	if (!ltype_tref->is_equal (*rtype_tref))
+	  {
+	    // Trait refs differ: try normalizing ltype via the active
+	    // ImplTraitContextFrame before giving up.  This handles cases like
+	    // <[T] as Index<I>>::Output vs <I as SliceIndex<[T]>>::Output where
+	    // the frame resolves Index::Output -> I::Output
+	    // (SliceIndex::Output).
+	    if (ltype->is_trait_position ())
+	      {
+		TyTy::BaseType *ln
+		  = normalize_projection (ltype, locus, false, false);
+		if (ln != nullptr && ln != ltype)
+		  return resolve_subtype (TyTy::TyWithLocation (ln),
+					  TyTy::TyWithLocation (rtype));
+	      }
+	    return unify_error_type_node ();
+	  }
+
+	auto ltype_item = ltype->get_item_defid ();
+	auto rtype_item = rtype_proj->get_item_defid ();
+	if (ltype_item != rtype_item)
+	  return unify_error_type_node ();
+
+	auto lrecv = ltype->get_self ();
+	auto rrecv = rtype_proj->get_self ();
+	auto res = resolve_subtype (TyTy::TyWithLocation (lrecv),
+				    TyTy::TyWithLocation (rrecv));
+	if (res->get_kind () == TyTy::TypeKind::ERROR)
+	  return unify_error_type_node ();
+
+	auto base_res = unify_error_type_node ();
+	bool ltrait = ltype->is_trait_position ();
+	bool rtrait = rtype_proj->is_trait_position ();
+	if (!ltrait && !rtrait)
+	  {
+	    auto lbase = ltype->get ();
+	    auto rbase = rtype_proj->get ();
+	    base_res = resolve_subtype (TyTy::TyWithLocation (lbase),
+					TyTy::TyWithLocation (rbase));
+	    if (base_res->get_kind () == TyTy::TypeKind::ERROR)
+	      return unify_error_type_node ();
+	  }
+	else if (!ltrait)
+	  base_res = ltype->get ();
+	else if (!rtrait)
+	  base_res = rtype_proj->get ();
+	else
+	  base_res = nullptr;
+
+	auto result
+	  = new TyTy::ProjectionType (ltype->get_ref (), ltype->get_ty_ref (),
+				      base_res, ltype_tref, ltype_item,
+				      ltype->get_substs (), res);
+	return result;
+      }
       break;
 
     case TyTy::DYNAMIC:
@@ -1900,6 +2015,31 @@ UnifyRules::expect_projection (TyTy::ProjectionType *ltype,
     case TyTy::PLACEHOLDER:
     case TyTy::OPAQUE:
     case TyTy::CONST:
+      {
+	if (ltype->is_trait_position ())
+	  {
+	    // A trait-position projection whose Self is still generic cannot be
+	    // normalized against a concrete impl candidate.
+	    auto dself = ltype->get_self ()->destructure ();
+	    if (dself->is<TyTy::ParamType> ())
+	      return ltype;
+
+	    TyTy::BaseType *ln
+	      = normalize_projection (ltype, locus, false, false);
+	    if (ln != nullptr && ln != ltype)
+	      return resolve_subtype (TyTy::TyWithLocation (ln),
+				      TyTy::TyWithLocation (rtype));
+	  }
+	else
+	  {
+	    TyTy::BaseType *lb = ltype->get ();
+	    if (lb != nullptr && lb != ltype)
+	      return resolve_subtype (TyTy::TyWithLocation (lb),
+				      TyTy::TyWithLocation (rtype));
+	  }
+      }
+      break;
+
     case TyTy::ERROR:
       return unify_error_type_node ();
     }

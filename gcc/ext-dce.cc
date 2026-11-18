@@ -37,6 +37,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "dbgcnt.h"
 #include "diagnostic-core.h"
 #include "target.h"
+#include "regs.h"
 
 /* These should probably move into a C++ class.  */
 static vec<bitmap_head> livein;
@@ -44,6 +45,27 @@ static bitmap all_blocks;
 static bitmap livenow;
 static bitmap changed_pseudos;
 static bool modify;
+
+/* Chain detection for promotion: we defer promotions and only apply them
+   when they form chains (one candidate's result feeds another's operand).
+   Standalone promotions are skipped as they cause regressions on targets
+   with free sign extension (e.g., RISC-V W-suffix instructions).  */
+struct promotion_candidate_info {
+  rtx_insn *insn;
+  rtx set;
+};
+
+static vec<promotion_candidate_info> promotion_candidates;
+static bitmap promotable_dests;
+static bitmap consumed_by_candidate;
+
+/* Copy pairs seen during the reverse scan (from optimized extensions).
+   Used to propagate chain info transitively.  */
+struct copy_info {
+  unsigned int dest_regno;
+  unsigned int src_regno;
+};
+static vec<copy_info> promotion_copies;
 
 /* We consider four bit groups for liveness:
    bit 0..7   (least significant byte)
@@ -455,6 +477,43 @@ ext_dce_try_optimize_rshift (rtx_insn *insn, rtx set, rtx new_src, rtx_insn *new
     }
 }
 
+/* Return true if the extension of INNER to OUTER_MODE is already
+   guaranteed by its definition, making the SIGN_EXTEND redundant.  */
+static bool
+is_trivially_redundant_extension (rtx inner, scalar_int_mode inner_mode,
+				  scalar_int_mode outer_mode)
+{
+  rtx def_reg = inner;
+
+  if (SUBREG_P (def_reg) && subreg_lowpart_p (def_reg))
+    def_reg = SUBREG_REG (def_reg);
+
+  if (!REG_P (def_reg))
+    return false;
+
+  unsigned int regno = REGNO (def_reg);
+  if (HARD_REGISTER_NUM_P (regno) || DF_REG_DEF_COUNT (regno) != 1)
+    return false;
+
+  df_ref def = DF_REG_DEF_CHAIN (regno);
+  if (!def)
+    return false;
+
+  rtx_insn *def_insn = DF_REF_INSN (def);
+  rtx def_set = def_insn ? single_set (def_insn) : NULL_RTX;
+  if (!def_set)
+    return false;
+
+  rtx def_src = SET_SRC (def_set);
+
+  unsigned int diff = GET_MODE_PRECISION (outer_mode)
+		      - GET_MODE_PRECISION (inner_mode);
+
+  if (num_sign_bit_copies (def_src, outer_mode) > diff)
+    return true;
+
+  return false;
+}
 
 /* INSN has a sign/zero extended source inside SET that we will
    try to turn into a SUBREG.  If NEW_SRC is non-null, use that
@@ -466,11 +525,69 @@ ext_dce_try_optimize_extension (rtx_insn *insn, rtx set)
   rtx src = SET_SRC (set);
   rtx inner = XEXP (src, 0);
 
+  /* For sign-extending loads from memory, try to replace with a
+     zero-extending load when the upper bits are dead.  E.g. on RISC-V
+     this turns lh+zext.h into just lhu.  */
+  if (MEM_P (inner) && GET_CODE (src) == SIGN_EXTEND)
+    {
+      if (dump_file)
+	{
+	  fprintf (dump_file, "Processing insn:\n");
+	  dump_insn_slim (dump_file, insn);
+	  fprintf (dump_file, "Trying to narrow sign_extend to zero_extend:\n");
+	  print_rtl_single (dump_file, SET_SRC (set));
+	}
+
+      if (!dbg_cnt (::ext_dce))
+	{
+	  if (dump_file)
+	    fprintf (dump_file, "Rejected due to debug counter.\n");
+	  return;
+	}
+
+      rtx new_pattern = gen_rtx_ZERO_EXTEND (GET_MODE (src), inner);
+      int ok = validate_change (insn, &SET_SRC (set), new_pattern, false);
+
+      rtx x = SET_DEST (set);
+      while (SUBREG_P (x) || GET_CODE (x) == ZERO_EXTRACT)
+	x = XEXP (x, 0);
+
+      gcc_assert (REG_P (x));
+      if (ok)
+	{
+	  bitmap_set_bit (changed_pseudos, REGNO (x));
+	  remove_reg_equal_equiv_notes (insn, false);
+	}
+
+      if (dump_file)
+	{
+	  if (ok)
+	    fprintf (dump_file, "Successfully transformed to:\n");
+	  else
+	    fprintf (dump_file, "Failed transformation to:\n");
+	  print_rtl_single (dump_file, new_pattern);
+	  fprintf (dump_file, "\n");
+	}
+      return;
+    }
+
   /* Avoid (subreg (mem)) and other constructs which may be valid RTL, but
      not useful for this optimization.  */
   if (!(REG_P (inner) || (SUBREG_P (inner) && REG_P (SUBREG_REG (inner)))))
     return;
 
+  /* If the extension is trivially redundant, then we leave it in the IL
+     as we know combine can easily remove it.  By doing so those sign
+     bits keep a known state rather than unknown state which helps combine
+     make more improvements.  */
+  scalar_int_mode inner_mode, outer_mode;
+  if (GET_CODE (src) == SIGN_EXTEND
+      && is_a <scalar_int_mode> (GET_MODE (inner), &inner_mode)
+      && is_a <scalar_int_mode> (GET_MODE (src), &outer_mode))
+    {
+      if (is_trivially_redundant_extension (inner, inner_mode, outer_mode))
+	return;
+    }
   rtx new_pattern;
   if (dump_file)
     {
@@ -519,13 +636,295 @@ ext_dce_try_optimize_extension (rtx_insn *insn, rtx set)
       /* INSN may have a REG_EQUAL note indicating that the value was
 	 sign or zero extended.  That note is no longer valid since we've
 	 just removed the extension.  Just wipe the notes.  */
-      remove_reg_equal_equiv_notes (insn, false);
+      if (ok)
+	remove_reg_equal_equiv_notes (insn, false);
     }
   else
     {
       if (dump_file)
 	fprintf (dump_file, "Unable to generate valid SUBREG expression.\n");
     }
+}
+
+/* Try to promote a narrow-mode operation wrapped in a sign/zero extension
+   to the wider mode when the extended bits are dead.  For example,
+   (sign_extend:DI (plus:SI (x) (y))) -> (plus:DI (x') (y'))
+   where x' and y' are the operands promoted to DI mode.
+
+   This enables the combine pass to match wider-mode target patterns
+   (e.g., sh2add on RISC-V) that cannot match the narrow-mode operation.  */
+
+static void
+ext_dce_try_promote_operation (rtx_insn *insn, rtx set)
+{
+  rtx src = SET_SRC (set);
+
+  /* If the extension was already optimized away, nothing to do.  */
+  if (GET_CODE (src) != SIGN_EXTEND && GET_CODE (src) != ZERO_EXTEND)
+    return;
+
+  machine_mode outer_mode = GET_MODE (src);
+  rtx inner = XEXP (src, 0);
+
+  /* Only handle binary and unary arithmetic/logic operations.  */
+  if (!BINARY_P (inner) && !UNARY_P (inner))
+    return;
+
+  rtx_code inner_code = GET_CODE (inner);
+
+  /* Restrict to operations whose result in the low bits is identical
+     regardless of input width (i.e., no high-bit dependencies).  */
+  switch (inner_code)
+    {
+    case PLUS:
+    case MINUS:
+    case MULT:
+    case NEG:
+    case AND:
+    case IOR:
+    case XOR:
+    case NOT:
+    case ASHIFT:
+      break;
+    default:
+      return;
+    }
+
+  /* Promote each operand to the outer mode.  */
+  int nops = BINARY_P (inner) ? 2 : 1;
+  rtx new_ops[2];
+
+  for (int i = 0; i < nops; i++)
+    {
+      rtx op = XEXP (inner, i);
+
+      if (CONST_INT_P (op))
+	new_ops[i] = op;
+      else if (REG_P (op))
+	{
+	  new_ops[i] = simplify_gen_subreg (outer_mode, op,
+					    GET_MODE (op), 0);
+	  if (!new_ops[i])
+	    return;
+	}
+      else if (SUBREG_P (op) && REG_P (SUBREG_REG (op)))
+	{
+	  /* The inner register may already be in the target mode
+	     (e.g., subreg:SI (reg:DI ...) 0).  Extract it directly
+	     rather than creating a paradoxical subreg of a subreg,
+	     which simplify_gen_subreg rejects.  */
+	  rtx inner_reg = SUBREG_REG (op);
+	  if (GET_MODE (inner_reg) == outer_mode)
+	    new_ops[i] = inner_reg;
+	  else
+	    {
+	      new_ops[i] = simplify_gen_subreg (outer_mode, inner_reg,
+						GET_MODE (inner_reg), 0);
+	      if (!new_ops[i])
+		return;
+	    }
+	}
+      else
+	return;
+    }
+
+  /* Build the promoted operation.  */
+  rtx new_src;
+  if (BINARY_P (inner))
+    new_src = gen_rtx_fmt_ee (inner_code, outer_mode,
+			      new_ops[0], new_ops[1]);
+  else
+    new_src = gen_rtx_fmt_e (inner_code, outer_mode, new_ops[0]);
+
+  if (dump_file)
+    {
+      fprintf (dump_file, "Processing insn:\n");
+      dump_insn_slim (dump_file, insn);
+      fprintf (dump_file, "Trying to promote to wider mode:\n");
+      print_rtl_single (dump_file, new_src);
+    }
+
+  /* We decided to try the promotion but allow it to be rejected for
+     bisection purposes.  */
+  if (!dbg_cnt (::ext_dce))
+    {
+      if (dump_file)
+	fprintf (dump_file, "Rejected due to debug counter.\n");
+      return;
+    }
+
+  int ok = validate_change (insn, &SET_SRC (set), new_src, false);
+
+  rtx x = SET_DEST (set);
+  while (SUBREG_P (x) || GET_CODE (x) == ZERO_EXTRACT)
+    x = XEXP (x, 0);
+
+  gcc_assert (REG_P (x));
+  if (ok)
+    bitmap_set_bit (changed_pseudos, REGNO (x));
+
+  if (dump_file)
+    {
+      if (ok)
+	fprintf (dump_file, "Successfully promoted to:\n");
+      else
+	fprintf (dump_file, "Failed promotion to:\n");
+      print_rtl_single (dump_file, new_src);
+      fprintf (dump_file, "\n");
+    }
+
+  if (ok)
+    remove_reg_equal_equiv_notes (insn, false);
+}
+
+/* Record INSN as a promotion candidate if it passes the same validity
+   checks as ext_dce_try_promote_operation.  We defer actual promotion
+   until we can determine whether the candidate is part of a chain.  */
+
+static void
+ext_dce_record_promotion_candidate (rtx_insn *insn, rtx set)
+{
+  rtx src = SET_SRC (set);
+
+  if (GET_CODE (src) != SIGN_EXTEND && GET_CODE (src) != ZERO_EXTEND)
+    return;
+
+  machine_mode outer_mode = GET_MODE (src);
+  rtx inner = XEXP (src, 0);
+
+  if (!BINARY_P (inner) && !UNARY_P (inner))
+    return;
+
+  rtx_code inner_code = GET_CODE (inner);
+
+  switch (inner_code)
+    {
+    case PLUS:
+    case MINUS:
+    case MULT:
+    case NEG:
+    case AND:
+    case IOR:
+    case XOR:
+    case NOT:
+    case ASHIFT:
+      break;
+    default:
+      return;
+    }
+
+  /* Dry-run: check that all operands can be promoted.  */
+  int nops = BINARY_P (inner) ? 2 : 1;
+  for (int i = 0; i < nops; i++)
+    {
+      rtx op = XEXP (inner, i);
+      if (CONST_INT_P (op))
+	continue;
+      else if (REG_P (op))
+	{
+	  if (!simplify_gen_subreg (outer_mode, op, GET_MODE (op), 0))
+	    return;
+	}
+      else if (SUBREG_P (op) && REG_P (SUBREG_REG (op)))
+	{
+	  rtx inner_reg = SUBREG_REG (op);
+	  if (GET_MODE (inner_reg) != outer_mode
+	      && !simplify_gen_subreg (outer_mode, inner_reg,
+				       GET_MODE (inner_reg), 0))
+	    return;
+	}
+      else
+	return;
+    }
+
+  /* Find the destination register.  */
+  rtx dest = SET_DEST (set);
+  while (SUBREG_P (dest) || GET_CODE (dest) == ZERO_EXTRACT)
+    dest = XEXP (dest, 0);
+  if (!REG_P (dest))
+    return;
+  unsigned int dest_regno = REGNO (dest);
+
+  /* Record the candidate.  */
+  promotion_candidates.safe_push ({insn, set});
+  bitmap_set_bit (promotable_dests, dest_regno);
+
+  /* Mark register operands as consumed by a candidate.  */
+  for (int i = 0; i < nops; i++)
+    {
+      rtx op = XEXP (inner, i);
+      if (REG_P (op))
+	bitmap_set_bit (consumed_by_candidate, REGNO (op));
+      else if (SUBREG_P (op) && REG_P (SUBREG_REG (op)))
+	bitmap_set_bit (consumed_by_candidate, REGNO (SUBREG_REG (op)));
+    }
+}
+
+/* Promote candidates that form chains: a candidate whose result feeds
+   into another candidate's operand, or whose operand comes from another
+   candidate's result.  Skip standalone (isolated) promotions.  */
+
+static void
+ext_dce_promote_chained_candidates (void)
+{
+  /* Propagate chain info through copies recorded during the reverse scan.
+     Since copies are recorded in reverse order, iterate forward to propagate
+     promotable_dests (which was set late in the scan) through copies that
+     were seen earlier.  */
+  unsigned cix;
+  copy_info *cp;
+  FOR_EACH_VEC_ELT (promotion_copies, cix, cp)
+    {
+      if (bitmap_bit_p (promotable_dests, cp->src_regno))
+	bitmap_set_bit (promotable_dests, cp->dest_regno);
+      if (bitmap_bit_p (consumed_by_candidate, cp->dest_regno))
+	bitmap_set_bit (consumed_by_candidate, cp->src_regno);
+    }
+
+  unsigned ix;
+  promotion_candidate_info *cand;
+
+  FOR_EACH_VEC_ELT (promotion_candidates, ix, cand)
+    {
+      /* Find destination register.  */
+      rtx dest = SET_DEST (cand->set);
+      while (SUBREG_P (dest) || GET_CODE (dest) == ZERO_EXTRACT)
+	dest = XEXP (dest, 0);
+      unsigned int dest_regno = REGNO (dest);
+
+      /* Check if this candidate's result feeds into another candidate.  */
+      bool is_chained = bitmap_bit_p (consumed_by_candidate, dest_regno);
+
+      /* Check if any operand comes from another candidate's result.  */
+      if (!is_chained)
+	{
+	  rtx inner = XEXP (SET_SRC (cand->set), 0);
+	  int nops = BINARY_P (inner) ? 2 : 1;
+	  for (int i = 0; i < nops && !is_chained; i++)
+	    {
+	      rtx op = XEXP (inner, i);
+	      if (REG_P (op))
+		is_chained = bitmap_bit_p (promotable_dests, REGNO (op));
+	      else if (SUBREG_P (op) && REG_P (SUBREG_REG (op)))
+		is_chained = bitmap_bit_p (promotable_dests,
+					   REGNO (SUBREG_REG (op)));
+	    }
+	}
+
+      if (is_chained)
+	ext_dce_try_promote_operation (cand->insn, cand->set);
+      else if (dump_file)
+	{
+	  fprintf (dump_file, "Skipping standalone promotion for insn:\n");
+	  dump_insn_slim (dump_file, cand->insn);
+	  fprintf (dump_file, "\n");
+	}
+    }
+
+  promotion_candidates.truncate (0);
+  promotion_copies.truncate (0);
+  bitmap_clear (promotable_dests);
+  bitmap_clear (consumed_by_candidate);
 }
 
 /* Some operators imply that their second operand is fully live,
@@ -571,7 +970,23 @@ carry_backpropagate (unsigned HOST_WIDE_INT mask, enum rtx_code code, rtx x)
   if (mask == 0)
     return 0;
 
-  enum machine_mode mode = GET_MODE_INNER (GET_MODE (x));
+  /* Consider a vector operation, the bits live are the element bits live
+     broadcasted across the vector.  So there can be holes (consider a
+     logical shift).
+
+     Vector modes aren't likely to represent cases we can optimize with
+     any regularity.  It seems sensible to just punt that case in a
+     conservatively correct way.
+
+     The conservatively corect choice here would be to return the mode
+     mask for the outer mode.  We're already doing that for modes larger
+     than HOST_BITS_PER_WIDE_INT, so it should be safe for larger vectors
+     as well as something like V2HI.  */
+  if (VECTOR_MODE_P (GET_MODE (x)) || COMPLEX_MODE_P (GET_MODE (x)))
+    return GET_MODE_MASK (GET_MODE (x));
+    
+
+  enum machine_mode mode = GET_MODE (x);
   unsigned HOST_WIDE_INT mmask = GET_MODE_MASK (mode);
 
   /* While we don't try to optimize operations on types larger
@@ -645,6 +1060,11 @@ carry_backpropagate (unsigned HOST_WIDE_INT mask, enum rtx_code code, rtx x)
 	  || !GET_MODE_BITSIZE (GET_MODE (XEXP (x, 0))).is_constant ())
 	return -1;
 
+      /* See note about vector modes near the start of this function.  */
+      if (VECTOR_MODE_P (GET_MODE (XEXP (x, 0)))
+	  || COMPLEX_MODE_P (GET_MODE (XEXP (x, 0))))
+	return GET_MODE_MASK (GET_MODE (XEXP (x, 0)));
+
       /* We want the mode of the inner object.  We need to ensure its
 	 sign bit is on in MASK.  */
       mode = GET_MODE_INNER (GET_MODE (XEXP (x, 0)));
@@ -662,6 +1082,19 @@ carry_backpropagate (unsigned HOST_WIDE_INT mask, enum rtx_code code, rtx x)
 
       /* Recurse into the operand.  */
       return carry_backpropagate (mask, GET_CODE (XEXP (x, 0)), XEXP (x, 0));
+
+    /* If an AND/IOR unconditionally clears/sets bits in the output, then
+       we do not care about the liveness of those bits in the inputs.
+
+       So AND MASK with the constant for AND and with the complemented constant
+       for IOR.  */
+    case AND:
+    case IOR:
+      if (CONST_INT_P (XEXP (x, 1)))
+	mask &= (code == AND
+		 ? UINTVAL (XEXP (x, 1))
+		 : ~UINTVAL (XEXP (x, 1)));
+      return mask;
 
     /* We propagate for the shifted operand, but not the shift
        count.  The count is handled specially.  */
@@ -780,12 +1213,48 @@ ext_dce_process_uses (rtx_insn *insn, rtx obj,
 		{
 		  rtx inner = XEXP (src, 0);
 		  unsigned HOST_WIDE_INT src_mask
-		    = GET_MODE_MASK (GET_MODE_INNER (GET_MODE (inner)));
+		    = GET_MODE_MASK (GET_MODE (inner));
 
 		  /* DST_MASK could be zero if we had something in the SET
 		     that we couldn't handle.  */
 		  if (modify && !skipped_dest && (dst_mask & ~src_mask) == 0)
-		    ext_dce_try_optimize_extension (insn, x);
+		    {
+		      ext_dce_try_optimize_extension (insn, x);
+
+		      /* If the extension was optimized to a copy, propagate
+			 chain info through it: if the dest is consumed by a
+			 promotion candidate (seen later in reverse scan),
+			 the source register is transitively consumed too.  */
+		      rtx opt_src = SET_SRC (x);
+		      if (GET_CODE (opt_src) != SIGN_EXTEND
+			  && GET_CODE (opt_src) != ZERO_EXTEND)
+			{
+			  rtx copy_dest = SET_DEST (x);
+			  while (SUBREG_P (copy_dest)
+				 || GET_CODE (copy_dest) == ZERO_EXTRACT)
+			    copy_dest = XEXP (copy_dest, 0);
+
+			  rtx copy_src = opt_src;
+			  if (SUBREG_P (copy_src))
+			    copy_src = SUBREG_REG (copy_src);
+
+			  if (REG_P (copy_dest) && REG_P (copy_src))
+			    {
+			      if (bitmap_bit_p (consumed_by_candidate,
+						REGNO (copy_dest)))
+				bitmap_set_bit (consumed_by_candidate,
+						REGNO (copy_src));
+			      if (bitmap_bit_p (promotable_dests,
+						REGNO (copy_src)))
+				bitmap_set_bit (promotable_dests,
+						REGNO (copy_dest));
+			      promotion_copies.safe_push (
+				{REGNO (copy_dest), REGNO (copy_src)});
+			    }
+			}
+		      else
+			ext_dce_record_promotion_candidate (insn, x);
+		    }
 
 		  /* Stripping the extension here just seems wrong on multiple
 		     levels.  It's source side handling, so it seems like it
@@ -814,7 +1283,7 @@ ext_dce_process_uses (rtx_insn *insn, rtx obj,
 		  && GET_MODE_BITSIZE (outer_mode) <= HOST_BITS_PER_WIDE_INT)
 		{
 		  /* So we have a right shift that could correspond to
-		     the second in a pair impementing QI, HI or SI -> DI
+		     the second in a pair implementing QI, HI or SI -> DI
 		     extension.  See if we can find the left shift.  For
 		     now, just look one real instruction back.  */
 		  rtx_insn *prev_insn = prev_nonnote_nondebug_insn_bb (insn);
@@ -937,8 +1406,7 @@ ext_dce_process_uses (rtx_insn *insn, rtx obj,
 			 propagate destination liveness through, then just
 			 set the mask to the mode's mask.  */
 		      if (!safe_for_live_propagation (code))
-			tmp_mask
-			  = GET_MODE_MASK (GET_MODE_INNER (GET_MODE (y)));
+			tmp_mask = GET_MODE_MASK (GET_MODE (y));
 
 		      if (tmp_mask & 0xff)
 			bitmap_set_bit (livenow, rn);
@@ -1001,14 +1469,23 @@ ext_dce_process_uses (rtx_insn *insn, rtx obj,
 	    bitmap_set_bit (livenow, rn + 1);
 	  if (size > 16)
 	    bitmap_set_bit (livenow, rn + 2);
-	  if (size >= 32)
+	  if (size > 32)
 	    bitmap_set_bit (livenow, rn + 3);
 	  iter.skip_subrtxes ();
 	}
       /* If we have a register reference that is not otherwise handled,
 	 just assume all the chunks are live.  */
       else if (REG_P (x))
-	bitmap_set_range (livenow, REGNO (x) * 4, group_limit (x));
+	{
+	  if (HARD_REGISTER_P (x))
+	    {
+	      unsigned int end = end_hard_regno (GET_MODE (x), REGNO (x));
+	      for (unsigned int r = REGNO (x); r < end; r++)
+		bitmap_set_range (livenow, r * 4, 4);
+	    }
+	  else
+	    bitmap_set_range (livenow, REGNO (x) * 4, group_limit (x));
+	}
     }
 }
 
@@ -1038,9 +1515,9 @@ ext_dce_process_bb (basic_block bb)
       bool skipped_dest = ext_dce_process_sets (insn, PATTERN (insn), live_tmp);
 
       /* CALL_INSNs need processing their fusage data.  */
-      if (CALL_P (insn))
-	skipped_dest |= ext_dce_process_sets (insn,
-					      CALL_INSN_FUNCTION_USAGE (insn),
+      if (auto call = dyn_cast<rtx_call_insn *> (insn))
+	skipped_dest |= ext_dce_process_sets (call,
+					      CALL_INSN_FUNCTION_USAGE (call),
 					      live_tmp);
 
       /* And now uses, optimizing away SIGN/ZERO extensions as we go.  */
@@ -1055,23 +1532,27 @@ ext_dce_process_bb (basic_block bb)
 	}
 
       /* And process fusage data for the use as well.  */
-      if (CALL_P (insn))
+      if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	{
-	  if (!FAKE_CALL_P (insn))
+	  if (!FAKE_CALL_P (call))
 	    bitmap_set_range (livenow, STACK_POINTER_REGNUM * 4, 4);
 
-	  /* If this is not a call to a const fucntion, then assume it
+	  /* If this is not a call to a const function, then assume it
 	     can read any global register.  */
-	  if (!RTL_CONST_CALL_P (insn))
+	  if (!RTL_CONST_CALL_P (call))
 	    for (unsigned i = 0; i < FIRST_PSEUDO_REGISTER; i++)
 	      if (global_regs[i])
 		bitmap_set_range (livenow, i * 4, 4);
 
-	  ext_dce_process_uses (insn, CALL_INSN_FUNCTION_USAGE (insn), live_tmp, false);
+	  ext_dce_process_uses (call, CALL_INSN_FUNCTION_USAGE (call),
+			       live_tmp, false);
 	}
 
       BITMAP_FREE (live_tmp);
     }
+
+  if (modify)
+    ext_dce_promote_chained_candidates ();
 }
 
 /* SUBREG_PROMOTED_VAR_P is set by the gimple->rtl optimizers and
@@ -1262,6 +1743,8 @@ ext_dce_init (void)
   livenow = BITMAP_ALLOC (NULL);
   all_blocks = BITMAP_ALLOC (NULL);
   changed_pseudos = BITMAP_ALLOC (NULL);
+  promotable_dests = BITMAP_ALLOC (NULL);
+  consumed_by_candidate = BITMAP_ALLOC (NULL);
 
   for (int i = 0; i < last_basic_block_for_fn (cfun); i++)
     if (i != ENTRY_BLOCK && i != EXIT_BLOCK)
@@ -1283,6 +1766,10 @@ ext_dce_finish (void)
   BITMAP_FREE (livenow);
   BITMAP_FREE (changed_pseudos);
   BITMAP_FREE (all_blocks);
+  BITMAP_FREE (promotable_dests);
+  BITMAP_FREE (consumed_by_candidate);
+  promotion_candidates.release ();
+  promotion_copies.release ();
 }
 
 /* Process block number BB_INDEX as part of the backward
@@ -1316,7 +1803,7 @@ ext_dce_rd_transfer_n (int bb_index)
 /* Dummy function for the df_simple_dataflow API.  */
 static bool ext_dce_rd_confluence_n (edge) { return true; }
 
-/* Use lifetime analyis to identify extensions that set bits that
+/* Use lifetime analysis to identify extensions that set bits that
    are never read.  Turn such extensions into SUBREGs instead which
    can often be propagated away.  */
 

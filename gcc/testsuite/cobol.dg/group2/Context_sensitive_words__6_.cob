@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/Context_sensitive_words__6_.out" }
 
        IDENTIFICATION   DIVISION.

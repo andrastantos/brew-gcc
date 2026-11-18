@@ -25,8 +25,10 @@
 #include "rust-hir-map.h"
 #include "rust-hir-path.h"
 #include "rust-name-resolver.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
+#include "rust-rib.h"
 #include "rust-system.h"
+#include "rust-tyty.h"
 
 namespace Rust {
 namespace Analysis {
@@ -89,7 +91,7 @@ MarkLive::go (HIR::Crate &)
       worklist.pop_back ();
       scannedSymbols.emplace (hirId);
       liveSymbols.emplace (hirId);
-      if (auto item = mappings.lookup_hir_item (hirId))
+      if (auto item = mappings.hir.items.lookup (hirId))
 	item.value ()->accept_vis (*this);
       else if (auto implItem = mappings.lookup_hir_implitem (hirId))
 	implItem->first->accept_vis (*this);
@@ -115,7 +117,7 @@ MarkLive::visit (HIR::PathInExpression &expr)
     ref_node_id
       = Analysis::Mappings::get ().get_lang_item_node (expr.get_lang_item ());
   else
-    find_ref_node_id (ast_node_id, ref_node_id);
+    find_value_definition (ast_node_id, ref_node_id);
 
   // node back to HIR
   tl::optional<HirId> hid = mappings.lookup_node_to_hir (ref_node_id);
@@ -123,7 +125,7 @@ MarkLive::visit (HIR::PathInExpression &expr)
   auto ref = hid.value ();
 
   // it must resolve to some kind of HIR::Item or HIR::InheritImplItem
-  if (auto resolved_item = mappings.lookup_hir_item (ref))
+  if (auto resolved_item = mappings.hir.items.lookup (ref))
     mark_hir_id (resolved_item.value ()->get_mappings ().get_hirid ());
   else if (auto resolved_item = mappings.lookup_hir_implitem (ref))
     mark_hir_id (resolved_item->first->get_impl_mappings ().get_hirid ());
@@ -140,7 +142,7 @@ MarkLive::visit (HIR::MethodCallExpr &expr)
   // Trying to find the method definition and mark it alive.
   NodeId ast_node_id = expr.get_mappings ().get_nodeid ();
   NodeId ref_node_id = UNKNOWN_NODEID;
-  find_ref_node_id (ast_node_id, ref_node_id);
+  find_value_definition (ast_node_id, ref_node_id);
 
   // node back to HIR
   if (auto hid = mappings.lookup_node_to_hir (ref_node_id))
@@ -152,6 +154,21 @@ MarkLive::visit (HIR::MethodCallExpr &expr)
 bool
 MarkLive::visit_path_segment (HIR::PathExprSegment seg)
 {
+  if (seg.has_generic_args ())
+    {
+      for (auto &type : seg.get_generic_args ().get_type_args ())
+	{
+	  NodeId node_id = type->get_mappings ().get_nodeid ();
+
+	  if (auto resolved
+	      = resolver.lookup (node_id, Resolver2_0::Namespace::Types))
+	    {
+	      if (auto hid = mappings.lookup_node_to_hir (*resolved))
+		mark_hir_id (*hid);
+	    }
+	}
+    }
+
   NodeId ast_node_id = seg.get_mappings ().get_nodeid ();
   NodeId ref_node_id = UNKNOWN_NODEID;
 
@@ -163,8 +180,12 @@ MarkLive::visit_path_segment (HIR::PathExprSegment seg)
   //
   // We should mark them alive all and ignoring other kind of segments.
   // If the segment we dont care then just return false is fine
-  if (auto id = resolver.lookup (ast_node_id))
-    ref_node_id = *id;
+  // TODO: Should we look that up in all namespaces?
+
+  if (auto nslookup
+      = resolver.lookup (ast_node_id, Resolver2_0::Namespace::Values,
+			 Resolver2_0::Namespace::Types))
+    ref_node_id = nslookup->id;
   else
     return false;
   if (auto hid = mappings.lookup_node_to_hir (ref_node_id))
@@ -194,6 +215,12 @@ MarkLive::visit (HIR::FieldAccessExpr &expr)
   if (receiver->get_kind () == TyTy::TypeKind::ADT)
     {
       adt = static_cast<TyTy::ADTType *> (receiver);
+
+      if (auto inner_ty = TyTy::try_get_box_inner_type (receiver))
+	{
+	  rust_assert ((*inner_ty)->get_kind () == TyTy::TypeKind::ADT);
+	  adt = static_cast<TyTy::ADTType *> (*inner_ty);
+	}
     }
   else if (receiver->get_kind () == TyTy::TypeKind::REF)
     {
@@ -242,7 +269,8 @@ MarkLive::visit (HIR::TypeAlias &alias)
   NodeId ast_node_id;
 
   if (auto id = resolver.lookup (
-	alias.get_type_aliased ().get_mappings ().get_nodeid ()))
+	alias.get_type_aliased ().get_mappings ().get_nodeid (),
+	Resolver2_0::Namespace::Types))
     ast_node_id = *id;
   else
     rust_unreachable ();
@@ -264,11 +292,13 @@ MarkLive::mark_hir_id (HirId id)
 }
 
 void
-MarkLive::find_ref_node_id (NodeId ast_node_id, NodeId &ref_node_id)
+MarkLive::find_value_definition (NodeId ast_node_id, NodeId &ref_node_id)
 {
-  auto resolved = resolver.lookup (ast_node_id);
+  auto resolved = resolver.lookup (ast_node_id, Resolver2_0::Namespace::Values,
+				   Resolver2_0::Namespace::Types);
   rust_assert (resolved.has_value ());
-  ref_node_id = resolved.value ();
+
+  ref_node_id = resolved->id;
 }
 
 } // namespace Analysis

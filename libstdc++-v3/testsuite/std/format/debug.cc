@@ -1,5 +1,5 @@
-// { dg-options "-fexec-charset=UTF-8 -fwide-exec-charset=UTF-32LE -DUNICODE_ENC" { target le } }
-// { dg-options "-fexec-charset=UTF-8 -fwide-exec-charset=UTF-32BE -DUNICODE_ENC" { target be } }
+// { dg-options "-fexec-charset=UTF-8 -fwide-exec-charset=UTF-32LE -DUNICODE_ENC -fconstexpr-ops-limit=500000000" { target le } }
+// { dg-options "-fexec-charset=UTF-8 -fwide-exec-charset=UTF-32BE -DUNICODE_ENC -fconstexpr-ops-limit=500000000" { target be } }
 // { dg-do run { target c++23 } }
 // { dg-require-effective-target 4byte_wchar_t }
 // { dg-add-options no_pch }
@@ -8,19 +8,25 @@
 #include <format>
 #include <testsuite_hooks.h>
 
-std::string
+#ifdef __glibcxx_constexpr_format
+# define CONSTEXPR constexpr
+#else
+# define CONSTEXPR
+#endif
+
+CONSTEXPR std::string
 fdebug(char t)
 { return std::format("{:?}", t); }
 
-std::wstring
+CONSTEXPR std::wstring
 fdebug(wchar_t t)
 { return std::format(L"{:?}", t); }
 
-std::string
+CONSTEXPR std::string
 fdebug(std::string_view t)
 { return std::format("{:?}", t); }
 
-std::wstring
+CONSTEXPR std::wstring
 fdebug(std::wstring_view t)
 { return std::format(L"{:?}", t); }
 
@@ -29,7 +35,7 @@ fdebug(std::wstring_view t)
 #define WIDEN(S) WIDEN_(CharT, S)
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_basic_escapes()
 {
   std::basic_string<CharT> res;
@@ -69,10 +75,17 @@ test_basic_escapes()
   VERIFY( res == WIDEN(R"("'")") );
   res = fdebug(apos[0]);
   VERIFY( res == WIDEN(R"('\'')") );
+
+  // This is not standard escape, but still supported at compile time.
+  const std::basic_string<CharT> null(WIDEN("\0"), 1);
+  res = fdebug(null);
+  VERIFY( res == WIDEN(R"("\u{0}")") );
+  res = fdebug(null[0]);
+  VERIFY( res == WIDEN(R"('\u{0}')") );
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_ascii_escapes()
 {
   std::basic_string<CharT> res;
@@ -89,7 +102,7 @@ test_ascii_escapes()
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_extended_ascii()
 {
   std::basic_string<CharT> res;
@@ -117,7 +130,7 @@ test_extended_ascii()
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_unicode_escapes()
 {
 #if UNICODE_ENC
@@ -166,7 +179,7 @@ test_unicode_escapes()
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_grapheme_extend()
 {
 #if UNICODE_ENC
@@ -192,7 +205,7 @@ test_grapheme_extend()
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_replacement_char()
 {
 #if UNICODE_ENC
@@ -206,7 +219,7 @@ test_replacement_char()
 #endif // UNICODE_ENC
 }
 
-void
+CONSTEXPR void
 test_ill_formed_utf8_seq()
 {
 #if UNICODE_ENC
@@ -244,7 +257,7 @@ test_ill_formed_utf8_seq()
 #endif // UNICODE_ENC
 }
 
-void
+CONSTEXPR void
 test_ill_formed_utf32()
 {
 #if UNICODE_ENC
@@ -269,7 +282,7 @@ test_ill_formed_utf32()
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_fill()
 {
   std::basic_string<CharT> res;
@@ -315,7 +328,7 @@ test_fill()
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_prec()
 {
   std::basic_string<CharT> res;
@@ -341,7 +354,8 @@ test_prec()
 #endif // UNICODE_ENC
 }
 
-bool strip_quote(std::string_view& v)
+CONSTEXPR bool
+strip_quote(std::string_view& v)
 {
   if (!v.starts_with('"'))
     return false;
@@ -349,7 +363,8 @@ bool strip_quote(std::string_view& v)
   return true;
 }
 
-bool strip_quotes(std::string_view& v)
+CONSTEXPR bool
+strip_quotes(std::string_view& v)
 {
   if (!v.starts_with('"') || !v.ends_with('"'))
     return false;
@@ -358,7 +373,8 @@ bool strip_quotes(std::string_view& v)
   return true;
 }
 
-bool strip_prefix(std::string_view& v, size_t n, char c)
+CONSTEXPR bool
+strip_prefix(std::string_view& v, size_t n, char c)
 {
   size_t pos = v.find_first_not_of(c);
   if (pos == std::string_view::npos)
@@ -369,7 +385,8 @@ bool strip_prefix(std::string_view& v, size_t n, char c)
   return true;
 }
 
-void test_padding()
+CONSTEXPR void
+test_padding()
 {
   std::string res;
   std::string_view resv;
@@ -719,7 +736,8 @@ void test_padding()
 #endif // UNICODE_ENC
 }
 
-void test_char_as_wchar()
+CONSTEXPR void
+test_char_as_wchar()
 {
   std::wstring res;
 
@@ -751,8 +769,9 @@ struct std::formatter<DebugWrapper<T>, CharT>
   }
 
   template<typename Out>
-  Out format(DebugWrapper<T> const& t,
-	     std::basic_format_context<Out, CharT>& fc) const
+  CONSTEXPR Out
+  format(DebugWrapper<T> const& t,
+	 std::basic_format_context<Out, CharT>& fc) const
   { return under.format(t.val, fc); }
 
 private:
@@ -760,7 +779,7 @@ private:
 };
 
 template<typename CharT, typename StrT>
-void
+CONSTEXPR void
 test_formatter_str()
 {
   CharT buf[]{ 'a', 'b', 'c', 0 };
@@ -770,7 +789,7 @@ test_formatter_str()
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_formatter_arr()
 {
   std::basic_string<CharT> res;
@@ -786,7 +805,7 @@ test_formatter_arr()
 }
 
 template<typename CharT, typename SrcT>
-void
+CONSTEXPR void
 test_formatter_char()
 {
   DebugWrapper<SrcT> in{ 'a' };
@@ -795,7 +814,7 @@ test_formatter_char()
 }
 
 template<typename CharT>
-void
+CONSTEXPR void
 test_formatters()
 {
   test_formatter_char<CharT, CharT>();
@@ -806,7 +825,7 @@ test_formatters()
   test_formatter_arr<CharT>();
 }
 
-void
+CONSTEXPR void
 test_formatters_c()
 {
   test_formatters<char>();
@@ -814,10 +833,19 @@ test_formatters_c()
   test_formatter_char<wchar_t, char>();
 }
 
-int main()
+CONSTEXPR bool
+test_all()
 {
   test_basic_escapes<char>();
   test_basic_escapes<wchar_t>();
+
+#ifndef UNICODE_ENC
+  // For non-unicode literal encoding debug output only supports
+  // printable ASCII and standard escapes at compile time
+  if (std::is_constant_evaluated())
+    return true;
+#endif
+
   test_ascii_escapes<char>();
   test_ascii_escapes<wchar_t>();
   test_extended_ascii<char>();
@@ -840,4 +868,15 @@ int main()
   test_padding();
 
   test_formatters_c();
+
+  return true;
+}
+
+#ifdef __glibcxx_constexpr_format
+static_assert(test_all());
+#endif
+
+int main()
+{
+  test_all();
 }

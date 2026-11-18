@@ -133,7 +133,7 @@ call_arg (tree expr, unsigned argno)
    with an argument that is a character array with no terminating
    NUL.  SIZE is the EXACT size of the array, and BNDRNG the number
    of characters in which the NUL is expected.  Either EXPR or FNAME
-   may be null but noth both.  SIZE may be null when BNDRNG is null.  */
+   may be null but not both.  SIZE may be null when BNDRNG is null.  */
 
 template <class GimpleOrTree>
 static void
@@ -898,7 +898,7 @@ maybe_warn_for_bound (opt_code opt, location_t loc, GimpleOrTree exp, tree func,
 			    func, bndrng[0], bndrng[1], size)
 	      : warning_at (&richloc, opt,
 			    (maybe
-			     ? G_("specified bound [%E, %E] exceeds "
+			     ? G_("specified bound [%E, %E] may exceed "
 				  "destination size %E")
 			     : G_("specified bound [%E, %E] exceeds "
 				  "destination size %E")),
@@ -3992,7 +3992,7 @@ pass_waccess::warn_invalid_pointer (tree ref, gimple *use_stmt,
       if (!var)
 	ref = NULL_TREE;
       /* Don't warn for cases like when a cdtor returns 'this' on ARM.  */
-      else if (warning_suppressed_p (var, OPT_Wuse_after_free))
+      else if (warning_suppressed_p (var, OPT_Wuse_after_free_))
 	return;
       else if (DECL_ARTIFICIAL (var))
 	ref = NULL_TREE;
@@ -4014,18 +4014,18 @@ pass_waccess::warn_invalid_pointer (tree ref, gimple *use_stmt,
       if (!m_early_checks_p
 	  || (equality && warn_use_after_free < 3)
 	  || (maybe && warn_use_after_free < 2)
-	  || warning_suppressed_p (use_stmt, OPT_Wuse_after_free))
+	  || warning_suppressed_p (use_stmt, OPT_Wuse_after_free_))
 	return;
 
       const tree inval_decl = gimple_call_fndecl (inval_stmt);
 
       auto_diagnostic_group d;
-      if ((ref && warning_at (use_loc, OPT_Wuse_after_free,
+      if ((ref && warning_at (use_loc, OPT_Wuse_after_free_,
 			      (maybe
 			       ? G_("pointer %qE may be used after %qD")
 			       : G_("pointer %qE used after %qD")),
 			      ref, inval_decl))
-	  || (!ref && warning_at (use_loc, OPT_Wuse_after_free,
+	  || (!ref && warning_at (use_loc, OPT_Wuse_after_free_,
 			      (maybe
 			       ? G_("pointer may be used after %qD")
 			       : G_("pointer used after %qD")),
@@ -4033,7 +4033,7 @@ pass_waccess::warn_invalid_pointer (tree ref, gimple *use_stmt,
 	{
 	  location_t loc = gimple_location (inval_stmt);
 	  inform (loc, "call to %qD here", inval_decl);
-	  suppress_warning (use_stmt, OPT_Wuse_after_free);
+	  suppress_warning (use_stmt, OPT_Wuse_after_free_);
 	}
       return;
     }

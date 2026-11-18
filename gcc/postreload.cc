@@ -249,18 +249,22 @@ reload_cse_regs_1 (void)
 	      if (!condjump || ! any_condjump_p (condjump))
 		break;
 
+	      /* get_condition reverses the condition only when the else arm
+		 is a LABEL_REF, so a jump that returns in one arm would give
+		 the condition of the other edge.  */
+	      if (!JUMP_LABEL (condjump) || !LABEL_P (JUMP_LABEL (condjump)))
+		break;
+
 	      /* This predecessor ends with a possible equivalence
 		 producing conditional branch.  Extract the condition
 		 and try to use it to create an equivalence.  */
-	      rtx pat = pc_set (condjump);
-	      rtx i_t_e = SET_SRC (pat);
-	      gcc_assert (GET_CODE (i_t_e) == IF_THEN_ELSE);
-	      rtx cond = XEXP (i_t_e, 0);
+	      rtx cond = get_condition (condjump, NULL, false, true);
+	      if (!cond)
+		break;
 
-	      if ((((e->flags & EDGE_FALLTHRU) != 0)
-		   == (XEXP (i_t_e, 1) == pc_rtx))
-		  ? GET_CODE (cond) == EQ
-		  : GET_CODE (cond) == NE)
+	      if ((e->flags & EDGE_FALLTHRU) != 0
+		  ? GET_CODE (cond) == NE
+		  : GET_CODE (cond) == EQ)
 		{
 		  /* If this is the first time through record
 		     the source and destination.  */
@@ -300,7 +304,27 @@ reload_cse_regs_1 (void)
 	     It will be entered into the cselib tables before
 	     we process the first real insn in this block.  */
 	  if (dest && ei_end_p (ei))
-	    implicit_set = make_insn_raw (gen_rtx_SET (dest, src));
+	    {
+	      rtx_insn *i;
+	      bool useful = false;
+	      FOR_BB_INSNS (bb, i)
+		{
+		  if (!NONDEBUG_INSN_P (i))
+		    continue;
+		  rtx s = single_set (i);
+		  if (s
+		      && rtx_equal_p (SET_DEST (s), dest)
+		      && rtx_equal_p (SET_SRC (s), src))
+		    {
+		      useful = true;
+		      break;
+		    }
+		  if (reg_set_p (dest, i))
+		    break;
+		}
+	      if (useful)
+		implicit_set = make_insn_raw (gen_rtx_SET (dest, src));
+	    }
 	}
 
       FOR_BB_INSNS (bb, insn)
@@ -387,7 +411,7 @@ reload_cse_simplify_set (rtx set, rtx_insn *insn)
       rtx this_rtx = l->loc;
       int this_cost;
 
-      if (CONSTANT_P (this_rtx) && ! references_value_p (this_rtx, 0))
+      if (CONSTANT_P (this_rtx) && ! references_value_p (this_rtx))
 	{
 	  if (extend_op != UNKNOWN)
 	    {
@@ -1338,14 +1362,15 @@ reload_combine (void)
     last_index_reg = -1;
   else if (first_index_reg == -1 && last_index_reg == 0)
     {
-      for (r = 0; r < FIRST_PSEUDO_REGISTER; r++)
-	if (TEST_HARD_REG_BIT (reg_class_contents[INDEX_REG_CLASS], r))
-	  {
-	    if (first_index_reg == -1)
-	      first_index_reg = r;
+      hard_reg_set_iterator hrsi1;
+      EXECUTE_IF_SET_IN_HARD_REG_SET
+	(reg_class_contents[INDEX_REG_CLASS], 0, r, hrsi1)
+	{
+	  if (first_index_reg == -1)
+	    first_index_reg = r;
 
-	    last_index_reg = r;
-	  }
+	  last_index_reg = r;
+	}
 
       /* If no index register is available, we can quit now.  Set LAST_INDEX_REG
 	 to -1 so we'll know to quit early the next time we get here.  */
@@ -1435,19 +1460,19 @@ reload_combine (void)
 
       note_stores (insn, reload_combine_note_store, NULL);
 
-      if (CALL_P (insn))
+      if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	{
 	  rtx link;
-	  HARD_REG_SET used_regs = insn_callee_abi (insn).full_reg_clobbers ();
+	  HARD_REG_SET used_regs = insn_callee_abi (call).full_reg_clobbers ();
 
-	  for (r = 0; r < FIRST_PSEUDO_REGISTER; r++)
-	    if (TEST_HARD_REG_BIT (used_regs, r))
-	      {
-		reg_state[r].use_index = RELOAD_COMBINE_MAX_USES;
-		reg_state[r].store_ruid = reload_combine_ruid;
-	      }
+	  hard_reg_set_iterator hrsi2;
+	  EXECUTE_IF_SET_IN_HARD_REG_SET (used_regs, 0, r, hrsi2)
+	    {
+	      reg_state[r].use_index = RELOAD_COMBINE_MAX_USES;
+	      reg_state[r].store_ruid = reload_combine_ruid;
+	    }
 
-	  for (link = CALL_INSN_FUNCTION_USAGE (insn); link;
+	  for (link = CALL_INSN_FUNCTION_USAGE (call); link;
 	       link = XEXP (link, 1))
 	    {
 	      rtx setuse = XEXP (link, 0);
@@ -1480,9 +1505,11 @@ reload_combine (void)
 	    live = &ever_live_at_start;
 
 	  if (live)
-	    for (r = 0; r < FIRST_PSEUDO_REGISTER; r++)
-	      if (TEST_HARD_REG_BIT (*live, r))
+	    {
+	      hard_reg_set_iterator hrsi3;
+	      EXECUTE_IF_SET_IN_HARD_REG_SET (*live, 0, r, hrsi3)
 		reg_state[r].use_index = -1;
+	    }
 	}
 
       reload_combine_note_use (&PATTERN (insn), insn, reload_combine_ruid,
@@ -2055,9 +2082,9 @@ reload_cse_move2add_invalidate (rtx_insn *insn)
 
   /* If this is a CALL_INSN, all call used registers are stored with
      unknown values.  */
-  if (CALL_P (insn))
+  if (auto call = dyn_cast<rtx_call_insn *> (insn))
     {
-      function_abi callee_abi = insn_callee_abi (insn);
+      function_abi callee_abi = insn_callee_abi (call);
       for (int i = FIRST_PSEUDO_REGISTER - 1; i >= 0; i--)
 	if (reg_mode[i] != VOIDmode
 	    && reg_mode[i] != BLKmode

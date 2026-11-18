@@ -33,6 +33,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "trans-array.h"
 #include "trans-types.h"
 #include "trans-const.h"
+#include "trans-descriptor.h"
 
 /* Naming convention for backend interface code:
 
@@ -388,6 +389,27 @@ gfc_build_addr_expr (tree type, tree t)
 }
 
 
+/* Return the descriptor that carries the span of DECL, which is marked as a
+   pointer array.  Such a decl usually is a descriptor.  The local decl of a
+   descriptorless dummy array is not, so its span comes from the descriptor it
+   was built from, which is the saved one.  */
+
+tree
+gfc_get_span_descriptor (tree decl)
+{
+  if (DECL_P (decl)
+      && GFC_ARRAY_TYPE_P (TREE_TYPE (decl))
+      && DECL_LANG_SPECIFIC (decl)
+      && GFC_DECL_SAVED_DESCRIPTOR (decl))
+    decl = GFC_DECL_SAVED_DESCRIPTOR (decl);
+
+  if (POINTER_TYPE_P (TREE_TYPE (decl)))
+    decl = build_fold_indirect_ref_loc (input_location, decl);
+
+  return decl;
+}
+
+
 static tree
 get_array_span (tree type, tree decl)
 {
@@ -408,7 +430,9 @@ get_array_span (tree type, tree decl)
       && (TREE_CODE (type) == ARRAY_TYPE || TREE_CODE (type) == INTEGER_TYPE)
       && TYPE_STRING_FLAG (type))
     {
-      if (TREE_CODE (decl) == PARM_DECL)
+      if (DECL_P (decl) && GFC_DECL_PTR_ARRAY_P (decl))
+	decl = gfc_get_span_descriptor (decl);
+      else if (TREE_CODE (decl) == PARM_DECL)
 	decl = build_fold_indirect_ref_loc (input_location, decl);
       if (GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (decl)))
 	span = gfc_conv_descriptor_span_get (decl);
@@ -447,12 +471,11 @@ get_array_span (tree type, tree decl)
 	     to be multiplied with the size.  */
 	  span = gfc_resize_class_size_with_len (NULL, decl, span);
 	}
+      else if (tree cached = GFC_DECL_GET_SPAN (decl))
+	/* A span addressed dummy loaded its span on entry.  */
+	span = cached;
       else if (GFC_DECL_PTR_ARRAY_P (decl))
-	{
-	  if (TREE_CODE (decl) == PARM_DECL)
-	    decl = build_fold_indirect_ref_loc (input_location, decl);
-	  span = gfc_conv_descriptor_span_get (decl);
-	}
+	span = gfc_conv_descriptor_span_get (gfc_get_span_descriptor (decl));
       else
 	span = NULL_TREE;
     }
@@ -475,9 +498,7 @@ gfc_build_spanned_array_ref (tree base, tree offset, tree span)
   tmp = gfc_build_addr_expr (pvoid_type_node, base);
   tmp = fold_build_pointer_plus_loc (input_location, tmp, offset);
   tmp = fold_convert (build_pointer_type (type), tmp);
-  if ((TREE_CODE (type) != INTEGER_TYPE && TREE_CODE (type) != ARRAY_TYPE)
-      || !TYPE_STRING_FLAG (type))
-    tmp = build_fold_indirect_ref_loc (input_location, tmp);
+  tmp = build_fold_indirect_ref_loc (input_location, tmp);
   return tmp;
 }
 
@@ -960,7 +981,8 @@ void
 gfc_allocate_allocatable (stmtblock_t * block, tree mem, tree size,
 			  tree token, tree status, tree errmsg, tree errlen,
 			  tree label_finish, gfc_expr* expr, int corank,
-			  tree cond, tree alt_alloc, tree extra_success_expr)
+			  tree cond, tree alt_alloc, tree extra_success_expr,
+			  tree var_overflow)
 {
   stmtblock_t alloc_block;
   tree tmp, null_mem, alloc, error;
@@ -1089,6 +1111,23 @@ gfc_allocate_allocatable (stmtblock_t * block, tree mem, tree size,
 
       error = fold_build2_loc (input_location, MODIFY_EXPR, status_type,
 	      status, build_int_cst (status_type, LIBERROR_ALLOCATION));
+    }
+
+  /* When STATUS and a size overflow check are present, we give precedence to
+     "already allocated variable" error over overflow error.  */
+  if (status != NULL_TREE && var_overflow != NULL_TREE)
+    {
+      tree status_type = TREE_TYPE (status);
+      tree cond = gfc_unlikely (fold_build2_loc (input_location, NE_EXPR,
+						 logical_type_node,
+						 var_overflow,
+						 integer_zero_node),
+				PRED_FORTRAN_OVERFLOW);
+      tmp = fold_build2_loc (input_location, MODIFY_EXPR, status_type,
+			     status, build_int_cst (status_type,
+						    LIBERROR_NO_MEMORY));
+      alloc = fold_build3_loc (input_location, COND_EXPR, void_type_node,
+			       cond, tmp, alloc);
     }
 
   tmp = fold_build3_loc (input_location, COND_EXPR, void_type_node, null_mem,
@@ -1323,6 +1362,8 @@ gfc_add_comp_finalizer_call (stmtblock_t *block, tree decl, gfc_component *comp,
       cond = fold_build2_loc (input_location, NE_EXPR, logical_type_node,
 			    tmp, fold_convert (TREE_TYPE (tmp),
 						 null_pointer_node));
+      /* The component is deallocated after it is finalized.  */
+      fini_coarray = true;
     }
   else
     cond = logical_true_node;
@@ -1368,11 +1409,12 @@ gfc_add_comp_finalizer_call (stmtblock_t *block, tree decl, gfc_component *comp,
 
 
 /* Add a call to the finalizer, using the passed *expr. Returns
-   true when a finalizer call has been inserted.  */
+   true when a finalizer call has been inserted.  FINI_COARRAY is true
+   when EXPR is about to be deallocated.  */
 
 bool
 gfc_add_finalizer_call (stmtblock_t *block, gfc_expr *expr2,
-			tree class_container)
+			tree class_container, bool fini_coarray)
 {
   tree tmp;
   gfc_ref *ref;
@@ -1443,7 +1485,8 @@ gfc_add_finalizer_call (stmtblock_t *block, gfc_expr *expr2,
 
   tmp = build_call_expr_loc (input_location, final_se.expr, 3,
 			     desc_se.expr, size_se.expr,
-			     boolean_false_node);
+			     fini_coarray ? boolean_true_node
+					  : boolean_false_node);
 
   gfc_add_expr_to_block (&tmp_block, tmp);
 
@@ -1570,7 +1613,10 @@ gfc_assignment_finalizer_call (gfc_se *lse, gfc_expr *expr1, bool init_flag)
 	  gfc_init_se (&se, NULL);
 	  if (expr1->rank)
 	    {
-	      gfc_conv_expr_descriptor (&se, expr1);
+	      /* Avoid calling trans-array.cc(set_factored_descriptor_value) by
+		 not using gfc_conv_expr_descriptor.  */
+	      se.descriptor_only = 1;
+	      gfc_conv_expr (&se, expr1);
 	      ptr = gfc_conv_descriptor_data_get (se.expr);
 	    }
 	  else
@@ -1621,7 +1667,7 @@ gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
     return;
 
   /* Derived type function results with components that have defined
-     assignements are handled in resolve.cc(generate_component_assignments),
+     assignments are handled in resolve.cc(generate_component_assignments),
      unless the assignment was replaced by a subroutine call to the
      subroutine associated with the assignment operator. */
   if ( ! is_assign_call
@@ -1916,7 +1962,7 @@ gfc_deallocate_with_status (tree pointer, tree status, tree errmsg, tree errlen,
   gfc_start_block (&non_null);
   if (add_when_allocated)
     gfc_add_expr_to_block (&non_null, add_when_allocated);
-  gfc_add_finalizer_call (&non_null, expr, class_container);
+  gfc_add_finalizer_call (&non_null, expr, class_container, true);
   if (coarray_dealloc_mode == GFC_CAF_COARRAY_NOCOARRAY
       || flag_coarray != GFC_FCOARRAY_LIB)
     {
@@ -1928,7 +1974,7 @@ gfc_deallocate_with_status (tree pointer, tree status, tree errmsg, tree errlen,
 	  tree cond, omp_tmp;
 	  if (descr)
 	    cond = fold_build2_loc (input_location, EQ_EXPR, boolean_type_node,
-				    gfc_conv_descriptor_version (descr),
+				    gfc_conv_descriptor_version_get (descr),
 				    integer_one_node);
 	  else
 	    cond = gfc_omp_call_is_alloc (pointer);
@@ -1942,8 +1988,7 @@ gfc_deallocate_with_status (tree pointer, tree status, tree errmsg, tree errlen,
       gfc_add_modify (&non_null, pointer, build_int_cst (TREE_TYPE (pointer),
 							 0));
       if (flag_openmp_allocators && descr)
-	gfc_add_modify (&non_null, gfc_conv_descriptor_version (descr),
-			integer_zero_node);
+	gfc_conv_descriptor_version_set (&non_null, descr, integer_zero_node);
 
       if (status != NULL_TREE && !integer_zerop (status))
 	{
@@ -2094,7 +2139,8 @@ gfc_deallocate_scalar_with_status (tree pointer, tree status, tree label_finish,
   gfc_start_block (&non_null);
 
   /* Free allocatable components.  */
-  finalizable = gfc_add_finalizer_call (&non_null, expr, class_container);
+  finalizable = gfc_add_finalizer_call (&non_null, expr, class_container,
+					true);
   if (!finalizable && ts.type == BT_DERIVED && ts.u.derived->attr.alloc_comp)
     {
       int caf_mode = coarray
@@ -2682,6 +2728,9 @@ trans_code (gfc_code * code, tree cond)
 	case EXEC_OACC_EXIT_DATA:
 	case EXEC_OACC_ATOMIC:
 	case EXEC_OACC_DECLARE:
+	case EXEC_OACC_INIT:
+	case EXEC_OACC_SHUTDOWN:
+	case EXEC_OACC_SET:
 	  res = gfc_trans_oacc_directive (code);
 	  break;
 
@@ -2693,7 +2742,9 @@ trans_code (gfc_code * code, tree cond)
 
       if (res != NULL_TREE && ! IS_EMPTY_STMT (res))
 	{
-	  if (TREE_CODE (res) != STATEMENT_LIST)
+	  /* Don't try to set location for trees that don't have one,
+	     e.g. STATEMENT_LIST or error_mark_node.  */
+	  if (EXPR_P (res))
 	    SET_EXPR_LOCATION (res, input_location);
 
 	  /* Add the new statement to the block.  */

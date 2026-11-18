@@ -2,7 +2,7 @@
 # aclocal && autoconf && autoheader && automake
 
 AC_INIT([GNU Fortran Runtime Library], 0.3,,[libgfortran])
-AC_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS([config.h])
 GCC_TOPLEV_SUBDIRS
 
 # -------
@@ -33,16 +33,12 @@ AC_MSG_RESULT($version_specific_libs)
 #
 # Also, if this library is being configured as part of a cross compiler, the
 # top-level configure script will pass the "real" host as $with_cross_host.
-#
-# Do not delete or change the following two lines.  For why, see
-# http://gcc.gnu.org/ml/libstdc++/2003-07/msg00451.html
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_TARGET
 ACX_NONCANONICAL_TARGET
 
 target_alias=${target_alias-$host_alias}
-AC_SUBST(target_alias)
 
-# Sets up automake.  Must come after AC_CANONICAL_SYSTEM.  Each of the
+# Sets up automake.  Must come after AC_CANONICAL_TARGET.  Each of the
 # following is magically included in AUTOMAKE_OPTIONS in each Makefile.am.
 #  1.9.6:  minimum required version
 #  no-define:  PACKAGE and VERSION will not be #define'd in config.h (a bunch
@@ -115,7 +111,7 @@ AC_SUBST(toolexeclibdir)
 # Create a spec file, so that compile/link tests don't fail
 test -f libgfortran.spec || touch libgfortran.spec
 
-AC_LANG_C
+AC_LANG([C])
 # Check the compiler.
 # The same as in boehm-gc and libstdc++. Have to borrow it from there.
 # We must force CC to /not/ be precious variables; otherwise
@@ -258,8 +254,7 @@ AC_PROG_INSTALL
 
 # Configure libtool
 #AC_MSG_NOTICE([====== Starting libtool configuration])
-AC_LIBTOOL_DLOPEN
-AM_PROG_LIBTOOL
+LT_INIT([dlopen])
 LT_LIB_M
 ACX_LT_HOST_FLAGS
 AC_SUBST(enable_shared)
@@ -287,6 +282,7 @@ AC_SUBST(extra_ldflags_libgfortran)
 LIBGFOR_WORKING_GFORTRAN
 
 AC_SYS_LARGEFILE
+LIBGFOR_CHECK_TIME_BITS64
 
 # Types
 AC_TYPE_OFF_T
@@ -375,6 +371,15 @@ if test x$enable_caf_shmem = xtrue; then
      enable_caf_shmem=false])
   CFLAGS="$save_CFLAGS"
 fi
+case ${host} in
+  *-*-darwin[[89]]* | *-*-darwin10*)
+    # These versions define PTHREAD_PROCESS_SHARED but the functionality
+    # is not available at runtime, so the configure check misleads.
+    enable_caf_shmem=false;;
+  *-*-cygwin* | *-*-mingw*)
+    # The specific implementation for these platforms does not use pthread.
+    enable_caf_shmem=true;;
+esac
 AM_CONDITIONAL([ENABLE_CAF_SHMEM], [test x$enable_caf_shmem = xtrue])
 
 # Check strerror_r, cannot be above as versions with two and three arguments exist
@@ -470,6 +475,7 @@ GCC_CHECK_MATH_FUNC([nextafter])
 GCC_CHECK_MATH_FUNC([nextafterl])
 GCC_CHECK_MATH_FUNC([powf])
 GCC_CHECK_MATH_FUNC([pow])
+GCC_CHECK_MATH_FUNC([powl])
 GCC_CHECK_MATH_FUNC([cpowf])
 GCC_CHECK_MATH_FUNC([cpow])
 GCC_CHECK_MATH_FUNC([cpowl])
@@ -520,6 +526,7 @@ GCC_CHECK_MATH_FUNC([trunc])
 GCC_CHECK_MATH_FUNC([truncl])
 GCC_CHECK_MATH_FUNC([erff])
 GCC_CHECK_MATH_FUNC([erf])
+GCC_CHECK_MATH_FUNC([erfl])
 GCC_CHECK_MATH_FUNC([erfcf])
 GCC_CHECK_MATH_FUNC([erfc])
 GCC_CHECK_MATH_FUNC([erfcl])
@@ -787,7 +794,7 @@ fi
 
 
 # Check out attribute support.
-LIBGFOR_CHECK_ATTRIBUTE_VISIBILITY
+GCC_CHECK_ATTRIBUTE_VISIBILITY
 LIBGFOR_CHECK_ATTRIBUTE_ALIAS
 
 # Check out atomic builtins support.

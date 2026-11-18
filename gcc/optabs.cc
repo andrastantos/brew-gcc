@@ -320,7 +320,8 @@ expand_widen_pattern_expr (const_sepops ops, rtx op0, rtx op1, rtx wide_op,
       = optab_for_tree_code (ops->code, TREE_TYPE (oprnd0), optab_default);
   if (ops->code == WIDEN_MULT_PLUS_EXPR
       || ops->code == WIDEN_MULT_MINUS_EXPR
-      || ops->code == DOT_PROD_EXPR)
+      || ops->code == DOT_PROD_EXPR
+      || ops->code == SAD_EXPR)
     icode = find_widening_optab_handler (widen_pattern_optab,
 					 TYPE_MODE (TREE_TYPE (ops->op2)),
 					 tmode0);
@@ -907,8 +908,16 @@ expand_doubleword_mult (machine_mode mode, rtx op0, rtx op1, rtx target,
 	return NULL_RTX;
     }
 
-  adjust = expand_binop (word_mode, smul_optab, op0_high, op1_low,
-			 NULL_RTX, 0, OPTAB_DIRECT);
+  if (op1_low == const1_rtx)
+    adjust = op0_high;
+  else if (op1_low == const0_rtx)
+    adjust = const0_rtx;
+  else if (op1_low == const2_rtx)
+    adjust = expand_binop (word_mode, add_optab, op0_high, op0_high,
+			   NULL_RTX, 0, OPTAB_DIRECT);
+  else
+    adjust = expand_binop (word_mode, smul_optab, op0_high, op1_low,
+			   NULL_RTX, 0, OPTAB_DIRECT);
   if (!adjust)
     return NULL_RTX;
 
@@ -936,8 +945,16 @@ expand_doubleword_mult (machine_mode mode, rtx op0, rtx op1, rtx target,
 	return NULL_RTX;
     }
 
-  temp = expand_binop (word_mode, smul_optab, op1_high, op0_low,
-		       NULL_RTX, 0, OPTAB_DIRECT);
+  if (op1_high == const1_rtx)
+    temp = op0_low;
+  else if (op1_high == const0_rtx)
+    temp = const0_rtx;
+  else if (op1_high == const2_rtx)
+    temp = expand_binop (word_mode, add_optab, op0_low, op0_low,
+			 NULL_RTX, 0, OPTAB_DIRECT);
+  else
+    temp = expand_binop (word_mode, smul_optab, op0_low, op1_high,
+			 NULL_RTX, 0, OPTAB_DIRECT);
   if (!temp)
     return NULL_RTX;
 
@@ -954,7 +971,9 @@ expand_doubleword_mult (machine_mode mode, rtx op0, rtx op1, rtx target,
   if (GET_MODE (op0_low) == VOIDmode && GET_MODE (op1_low) == VOIDmode)
     op0_low = force_reg (word_mode, op0_low);
 
-  if (umulp)
+  if (op1_low == const1_rtx)
+    product = convert_modes (mode, word_mode, op0_low, umulp);
+  else if (umulp)
     product = expand_binop (mode, umul_widen_optab, op0_low, op1_low,
 			    target, 1, OPTAB_DIRECT);
   else
@@ -1614,6 +1633,16 @@ expand_binop (machine_mode mode, optab binoptab, rtx op0, rtx op1,
 	}
     }
 
+  /* If backend's machine description doesn't specify an any_or_plus
+     (AOP) preference, choose for it.  */
+  if (binoptab == aop_optab)
+    {
+      binoptab = (mode == word_mode || mode == SImode) ? add_optab
+						       : ior_optab;
+      return expand_binop (mode, binoptab, op0, op1,
+			   target, unsignedp, methods);
+    }
+
   /* If this is a vector shift by a scalar, see if we can do a vector
      shift by a vector.  If so, broadcast the scalar into a vector.  */
   if (mclass == MODE_VECTOR_INT)
@@ -1957,7 +1986,7 @@ expand_binop (machine_mode mode, optab binoptab, rtx op0, rtx op1,
 				     NULL_RTX, unsignedp, next_methods);
 
 	  if (into_temp1 != 0 && into_temp2 != 0)
-	    inter = expand_binop (word_mode, add_optab, into_temp1, into_temp2,
+	    inter = expand_binop (word_mode, aop_optab, into_temp1, into_temp2,
 				  into_target, unsignedp, next_methods);
 	  else
 	    inter = 0;
@@ -1973,7 +2002,7 @@ expand_binop (machine_mode mode, optab binoptab, rtx op0, rtx op1,
 				      NULL_RTX, unsignedp, next_methods);
 
 	  if (inter != 0 && outof_temp1 != 0 && outof_temp2 != 0)
-	    inter = expand_binop (word_mode, add_optab,
+	    inter = expand_binop (word_mode, aop_optab,
 				  outof_temp1, outof_temp2,
 				  outof_target, unsignedp, next_methods);
 
@@ -2160,7 +2189,7 @@ expand_binop (machine_mode mode, optab binoptab, rtx op0, rtx op1,
 	}
     }
 
-  /* Attempt to synthetize double word modulo by constant divisor.  */
+  /* Attempt to synthesize double word modulo by constant divisor.  */
   if ((binoptab == umod_optab
        || binoptab == smod_optab
        || binoptab == udiv_optab
@@ -2877,16 +2906,18 @@ expand_doubleword_parity (scalar_int_mode mode, rtx op0, rtx target)
 /* Try calculating
 	(bswap:narrow x)
    as
-	(lshiftrt:wide (bswap:wide x) ((width wide) - (width narrow))).  */
+	(lshiftrt:wide (bswap:wide x) ((width wide) - (width narrow)))
+   or similarly for bitreverse.  */
 static rtx
-widen_bswap (scalar_int_mode mode, rtx op0, rtx target)
+widen_bswap_or_bitreverse (scalar_int_mode mode, rtx op0, rtx target,
+			   optab unoptab)
 {
   rtx x;
   rtx_insn *last;
   opt_scalar_int_mode wider_mode_iter;
 
   FOR_EACH_WIDER_MODE (wider_mode_iter, mode)
-    if (optab_handler (bswap_optab, wider_mode_iter.require ())
+    if (optab_handler (unoptab, wider_mode_iter.require ())
 	!= CODE_FOR_nothing)
       break;
 
@@ -2897,7 +2928,7 @@ widen_bswap (scalar_int_mode mode, rtx op0, rtx target)
   last = get_last_insn ();
 
   x = widen_operand (op0, wider_mode, mode, true, true);
-  x = expand_unop (wider_mode, bswap_optab, x, NULL_RTX, true);
+  x = expand_unop (wider_mode, unoptab, x, NULL_RTX, true);
 
   gcc_assert (GET_MODE_PRECISION (wider_mode) == GET_MODE_BITSIZE (wider_mode)
 	      && GET_MODE_PRECISION (mode) == GET_MODE_BITSIZE (mode));
@@ -2919,16 +2950,18 @@ widen_bswap (scalar_int_mode mode, rtx op0, rtx target)
   return target;
 }
 
-/* Try calculating bswap as two bswaps of two word-sized operands.  */
+/* Try calculating bswap as two bswaps of two word-sized operands.
+   Similarly for bitreverse.  */
 
 static rtx
-expand_doubleword_bswap (machine_mode mode, rtx op, rtx target)
+expand_doubleword_bswap_or_bitreverse (machine_mode mode, rtx op, rtx target,
+				       optab unoptab)
 {
   rtx t0, t1;
 
-  t1 = expand_unop (word_mode, bswap_optab,
+  t1 = expand_unop (word_mode, unoptab,
 		    operand_subword_force (op, 0, mode), NULL_RTX, true);
-  t0 = expand_unop (word_mode, bswap_optab,
+  t0 = expand_unop (word_mode, unoptab,
 		    operand_subword_force (op, 1, mode), NULL_RTX, true);
 
   if (target == 0 || !valid_multiword_target_p (target))
@@ -2939,6 +2972,142 @@ expand_doubleword_bswap (machine_mode mode, rtx op, rtx target)
   emit_move_insn (operand_subword (target, 1, 1, mode), t1);
 
   return target;
+}
+
+/* Try calculating (bitreverse x) using masks and shifts.  */
+
+static rtx
+expand_bitreverse (scalar_int_mode mode, rtx op0, rtx target)
+{
+  unsigned int precision = GET_MODE_BITSIZE (mode);
+  rtx_insn *last;
+
+  /* Operation requires at least 4 bits (one nibble swap makes no sense below
+     that).  */
+  if (precision < 4)
+    return NULL_RTX;
+
+  if (rtx temp = widen_bswap_or_bitreverse (mode, op0, target,
+					    bitreverse_optab))
+    return temp;
+
+  if (GET_MODE_SIZE (mode) == 2 * UNITS_PER_WORD
+      && optab_handler (bitreverse_optab, word_mode) != CODE_FOR_nothing)
+    if (rtx temp = expand_doubleword_bswap_or_bitreverse (mode, op0, target,
+							  bitreverse_optab))
+      return temp;
+
+  if (target == NULL_RTX
+      || target == op0
+      || reg_overlap_mentioned_p (target, op0))
+    target = gen_reg_rtx (mode);
+
+  last = get_last_insn ();
+
+  rtx x, lo, hi;
+
+  /* Step 1: byte-swap (only meaningful for >= 16 bits).  */
+  if (precision >= 16)
+    {
+      x = expand_unop (mode, bswap_optab, op0, NULL_RTX, true);
+      if (x == NULL_RTX)
+	goto fail;
+    }
+  else
+    x = op0;
+
+  /* Step 2: swap nibbles within each byte (shift=4, only for >= 8 bits).  */
+  if (precision >= 8)
+    {
+      wide_int mask = wi::zero (precision);
+      for (unsigned int start = 0; start < precision; start += 8)
+	mask = wi::bit_or (mask, wi::shifted_mask (start, 4, false,
+						   precision));
+
+      rtx mask_rtx = immed_wide_int_const (mask, mode);
+
+      hi = expand_simple_binop (mode, LSHIFTRT, x, GEN_INT (4),
+				NULL_RTX, true, OPTAB_LIB_WIDEN);
+      if (hi == NULL_RTX) goto fail;
+      hi = expand_binop (mode, and_optab, hi, mask_rtx,
+			 NULL_RTX, true, OPTAB_LIB_WIDEN);
+      if (hi == NULL_RTX) goto fail;
+
+      lo = expand_binop (mode, and_optab, x, mask_rtx,
+			 NULL_RTX, true, OPTAB_LIB_WIDEN);
+      if (lo == NULL_RTX) goto fail;
+      lo = expand_simple_binop (mode, ASHIFT, lo, GEN_INT (4),
+				NULL_RTX, true, OPTAB_LIB_WIDEN);
+      if (lo == NULL_RTX) goto fail;
+
+      x = expand_binop (mode, aop_optab, hi, lo,
+			NULL_RTX, true, OPTAB_LIB_WIDEN);
+      if (x == NULL_RTX) goto fail;
+    }
+
+  /* Step 3: swap pairs of bits within each nibble (shift=2).  */
+  {
+    wide_int mask = wi::zero (precision);
+    for (unsigned int start = 0; start < precision; start += 4)
+      mask = wi::bit_or (mask, wi::shifted_mask (start, 2, false, precision));
+
+    rtx mask_rtx = immed_wide_int_const (mask, mode);
+
+    hi = expand_simple_binop (mode, LSHIFTRT, x, GEN_INT (2),
+			      NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (hi == NULL_RTX) goto fail;
+    hi = expand_binop (mode, and_optab, hi, mask_rtx,
+		       NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (hi == NULL_RTX) goto fail;
+
+    lo = expand_binop (mode, and_optab, x, mask_rtx,
+		       NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (lo == NULL_RTX) goto fail;
+    lo = expand_simple_binop (mode, ASHIFT, lo, GEN_INT (2),
+			      NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (lo == NULL_RTX) goto fail;
+
+    x = expand_binop (mode, aop_optab, hi, lo,
+		      NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (x == NULL_RTX) goto fail;
+  }
+
+  /* Step 4: swap adjacent bits (shift=1).  */
+  {
+    wide_int mask = wi::zero (precision);
+    for (unsigned int start = 0; start < precision; start += 2)
+      mask = wi::bit_or (mask, wi::shifted_mask (start, 1, false,
+						 precision));
+
+    rtx mask_rtx = immed_wide_int_const (mask, mode);
+
+    hi = expand_simple_binop (mode, LSHIFTRT, x, GEN_INT (1),
+			      NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (hi == NULL_RTX) goto fail;
+    hi = expand_binop (mode, and_optab, hi, mask_rtx,
+		       NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (hi == NULL_RTX) goto fail;
+
+    lo = expand_binop (mode, and_optab, x, mask_rtx,
+		       NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (lo == NULL_RTX) goto fail;
+    lo = expand_simple_binop (mode, ASHIFT, lo, GEN_INT (1),
+			      NULL_RTX, true, OPTAB_LIB_WIDEN);
+    if (lo == NULL_RTX) goto fail;
+
+    x = expand_binop (mode, aop_optab, hi, lo,
+		      target, true, OPTAB_LIB_WIDEN);
+    if (x == NULL_RTX) goto fail;
+  }
+
+  if (x != target)
+    emit_move_insn (target, x);
+
+  return target;
+
+ fail:
+  delete_insns_since (last);
+  return NULL_RTX;
 }
 
 /* Try calculating (parity x) as (and (popcount x) 1), where
@@ -3372,7 +3541,7 @@ expand_unop (machine_mode mode, optab unoptab, rtx op0, rtx target,
 
       if (is_a <scalar_int_mode> (mode, &int_mode))
 	{
-	  temp = widen_bswap (int_mode, op0, target);
+	  temp = widen_bswap_or_bitreverse (int_mode, op0, target, unoptab);
 	  if (temp)
 	    return temp;
 
@@ -3382,7 +3551,8 @@ expand_unop (machine_mode mode, optab unoptab, rtx op0, rtx target,
 	      && (UNITS_PER_WORD == 8
 		  || optab_handler (unoptab, word_mode) != CODE_FOR_nothing))
 	    {
-	      temp = expand_doubleword_bswap (mode, op0, target);
+	      temp = expand_doubleword_bswap_or_bitreverse (mode, op0, target,
+							    unoptab);
 	      if (temp)
 		return temp;
 	    }
@@ -3390,6 +3560,10 @@ expand_unop (machine_mode mode, optab unoptab, rtx op0, rtx target,
 
       goto try_libcall;
     }
+
+  if (unoptab == bitreverse_optab && is_a <scalar_int_mode> (mode, &int_mode))
+    if (rtx tem = expand_bitreverse (int_mode, op0, target))
+      return tem;
 
   /* Neg should be tried via expand_absneg_bit before widening.  */
   if (optab_to_code (unoptab) == NEG)
@@ -4481,17 +4655,13 @@ prepare_cmp_insn (rtx x, rtx y, rtx *mask, enum rtx_code comparison, rtx size,
 
       gcc_assert (size);
 
-      /* Try to use a memory block compare insn - either cmpstr
-	 or cmpmem will do.  */
+      /* Try to use a memory block compare insn.  Only cmpmem compares
+	 the whole block.  cmpstr and cmpstrn stop at a null byte.  */
       opt_scalar_int_mode cmp_mode_iter;
       FOR_EACH_MODE_IN_CLASS (cmp_mode_iter, MODE_INT)
 	{
 	  scalar_int_mode cmp_mode = cmp_mode_iter.require ();
 	  cmp_code = direct_optab_handler (cmpmem_optab, cmp_mode);
-	  if (cmp_code == CODE_FOR_nothing)
-	    cmp_code = direct_optab_handler (cmpstr_optab, cmp_mode);
-	  if (cmp_code == CODE_FOR_nothing)
-	    cmp_code = direct_optab_handler (cmpstrn_optab, cmp_mode);
 	  if (cmp_code == CODE_FOR_nothing)
 	    continue;
 
@@ -4505,7 +4675,10 @@ prepare_cmp_insn (rtx x, rtx y, rtx *mask, enum rtx_code comparison, rtx size,
 	  result_mode = insn_data[cmp_code].operand[0].mode;
 	  result = gen_reg_rtx (result_mode);
 	  size = convert_to_mode (cmp_mode, size, 1);
-	  emit_insn (GEN_FCN (cmp_code) (result, x, y, size, opalign));
+	  rtx_insn *insn = GEN_FCN (cmp_code) (result, x, y, size, opalign);
+	  if (!insn)
+	    continue;
+	  emit_insn (insn);
 
           *ptest = gen_rtx_fmt_ee (comparison, VOIDmode, result, const0_rtx);
           *pmode = result_mode;
@@ -4934,8 +5107,8 @@ emit_cmp_and_jump_insns (rtx x, rtx y, enum rtx_code comparison, rtx size,
 	      create_input_operand (&ops[offset + 1], op1c, mode2);
 	      if (masked_op)
 		{
+		  auto mask_mode = TYPE_MODE (TREE_TYPE (masked_op));
 		  rtx mask_op = expand_normal (masked_op);
-		  auto mask_mode = GET_MODE (mask_op);
 		  create_input_operand (&ops[0], mask_op, mask_mode);
 		}
 	      else if (len_op)
@@ -6639,9 +6812,10 @@ vec_perm_and_mask (machine_mode mode, const vec_perm_indices &sel,
    vector in SEL and return the result.  Use TARGET to hold the result
    if nonnull and convenient.
 
-   MODE is the mode of the vectors being permuted (V0 and V1).  SEL_MODE
-   is the TYPE_MODE associated with SEL, or BLKmode if SEL isn't known
-   to have a particular mode.  */
+   MODE is the mode of the result.  V0 and V1 have the same mode, which
+   has the same element mode as MODE but may have a different number of
+   elements.  SEL_MODE is the TYPE_MODE associated with SEL, or BLKmode
+   if SEL isn't known to have a particular mode.  */
 
 rtx
 expand_vec_perm_const (machine_mode mode, rtx v0, rtx v1,
@@ -6660,11 +6834,15 @@ expand_vec_perm_const (machine_mode mode, rtx v0, rtx v1,
   rtx_insn *last = get_last_insn ();
 
   bool single_arg_p = rtx_equal_p (v0, v1);
+  /* The selector indexes the concatenation of the inputs, which may have
+     a different number of elements than the result.  */
+  machine_mode op_mode = GET_MODE (v0);
+  gcc_checking_assert (op_mode == GET_MODE (v1));
   /* Always specify two input vectors here and leave the target to handle
      cases in which the inputs are equal.  Not all backends can cope with
      the single-input representation when testing for a double-input
      target instruction.  */
-  vec_perm_indices indices (sel, 2, GET_MODE_NUNITS (mode));
+  vec_perm_indices indices (sel, 2, GET_MODE_NUNITS (op_mode));
 
   /* See if this can be handled with a vec_shr or vec_shl.  We only do this
      if the second (for vec_shr) or first (for vec_shl) vector is all
@@ -6673,14 +6851,16 @@ expand_vec_perm_const (machine_mode mode, rtx v0, rtx v1,
   insn_code shift_code_qi = CODE_FOR_nothing;
   optab shift_optab = unknown_optab;
   rtx v2 = v0;
-  if (v1 == CONST0_RTX (GET_MODE (v1)))
+  if (v1 == CONST0_RTX (op_mode))
     shift_optab = vec_shr_optab;
-  else if (v0 == CONST0_RTX (GET_MODE (v0)))
+  else if (v0 == CONST0_RTX (op_mode))
     {
       shift_optab = vec_shl_optab;
       v2 = v1;
     }
-  if (shift_optab != unknown_optab)
+  if (mode == op_mode
+      && GET_MODE_NUNITS (mode).is_constant ()
+      && shift_optab != unknown_optab)
     {
       shift_code = optab_handler (shift_optab, mode);
       shift_code_qi = ((qimode != VOIDmode && qimode != mode)
@@ -6720,11 +6900,16 @@ expand_vec_perm_const (machine_mode mode, rtx v0, rtx v1,
       if (single_arg_p)
 	v1 = v0;
 
-      gcc_checking_assert (GET_MODE (v0) == GET_MODE (v1));
-      machine_mode op_mode = GET_MODE (v0);
       if (targetm.vectorize.vec_perm_const (mode, op_mode, target, v0, v1,
 					    indices))
 	return target;
+    }
+
+  /* The fallbacks below need the inputs to have the result mode.  */
+  if (mode != op_mode)
+    {
+      delete_insns_since (last);
+      return NULL_RTX;
     }
 
   /* Fall back to a constant byte-based permutation.  */
@@ -6859,7 +7044,7 @@ expand_vec_perm_var (machine_mode mode, rtx v0, rtx v1, rtx sel, rtx target)
   gcc_assert (sel != NULL);
 
   /* Add the byte offset to each byte element.  */
-  /* Note that the definition of the indicies here is memory ordering,
+  /* Note that the definition of the indices here is memory ordering,
      so there should be no difference between big and little endian.  */
   rtx_vector_builder byte_indices (qimode, u, 1);
   for (i = 0; i < u; ++i)
@@ -7040,7 +7225,7 @@ find_cc_set (rtx x, const_rtx pat, void *data)
    loop was generated successfully.  */
 
 static bool
-expand_compare_and_swap_loop (rtx mem, rtx old_reg, rtx new_reg, rtx seq)
+expand_compare_and_swap_loop (rtx mem, rtx old_reg, rtx new_reg, rtx_insn *seq)
 {
   machine_mode mode = GET_MODE (mem);
   rtx_code_label *label;
@@ -7086,7 +7271,7 @@ expand_compare_and_swap_loop (rtx mem, rtx old_reg, rtx new_reg, rtx seq)
 }
 
 
-/* This function tries to emit an atomic_exchange intruction.  VAL is written
+/* This function tries to emit an atomic_exchange instruction.  VAL is written
    to *MEM using memory model MODEL. The previous contents of *MEM are returned,
    using TARGET if possible.  */
 
@@ -7181,10 +7366,17 @@ maybe_emit_compare_and_swap_exchange_loop (rtx target, rtx mem, rtx val)
 
   if (can_compare_and_swap_p (mode, true))
     {
+      rtx_insn *start = get_last_insn ();
+      /* Force val into a register if it could change value when the
+	 atomic insn updates mem.  */
+      if (reg_overlap_mentioned_p (mem, val))
+	val = force_reg (mode, val);
       if (!target || !register_operand (target, mode))
 	target = gen_reg_rtx (mode);
-      if (expand_compare_and_swap_loop (mem, target, val, NULL_RTX))
+      if (expand_compare_and_swap_loop (mem, target, val, nullptr))
 	return target;
+      else
+	delete_insns_since (start);
     }
 
   return NULL_RTX;
@@ -7523,9 +7715,9 @@ expand_asm_reg_clobber_mem_blockage (HARD_REG_SET regs)
   rtx asm_op, clob_mem;
 
   unsigned int num_of_regs = 0;
-  for (unsigned int i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-    if (TEST_HARD_REG_BIT (regs, i))
-      num_of_regs++;
+  unsigned int i;
+
+  num_of_regs = hard_reg_set_popcount (regs);
 
   asm_op = gen_rtx_ASM_OPERANDS (VOIDmode, "", "", 0,
 				 rtvec_alloc (0), rtvec_alloc (0),
@@ -7544,12 +7736,13 @@ expand_asm_reg_clobber_mem_blockage (HARD_REG_SET regs)
   if (num_of_regs > 0)
     {
       unsigned int j = 2;
-      for (unsigned int i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-	if (TEST_HARD_REG_BIT (regs, i))
-	  {
-	    RTVEC_ELT (v, j) = gen_rtx_CLOBBER (VOIDmode, regno_reg_rtx[i]);
- 	    j++;
-	  }
+      hard_reg_set_iterator hrsi2;
+      i = 0;
+      EXECUTE_IF_SET_IN_HARD_REG_SET (regs, 0, i, hrsi2)
+	{
+	  RTVEC_ELT (v, j) = gen_rtx_CLOBBER (VOIDmode, regno_reg_rtx[i]);
+	  j++;
+	}
       gcc_assert (j == (num_of_regs + 2));
     }
 
@@ -7625,7 +7818,7 @@ expand_atomic_load (rtx target, rtx mem, enum memmodel model)
      then we assume that a load will not be atomic.  We could try to
      emulate a load with a compare-and-swap operation, but the store that
      doing this could result in would be incorrect if this is a volatile
-     atomic load or targetting read-only-mapped memory.  */
+     atomic load or targeting read-only-mapped memory.  */
   if (maybe_gt (GET_MODE_PRECISION (mode), BITS_PER_WORD))
     /* If there is no atomic load, leave the library call.  */
     return NULL_RTX;
@@ -7853,7 +8046,7 @@ maybe_optimize_fetch_op (rtx target, rtx mem, rtx val, enum rtx_code code,
   return NULL_RTX;
 }
 
-/* Try to emit an instruction for a specific operation varaition.
+/* Try to emit an instruction for a specific operation variation.
    OPTAB contains the OP functions.
    TARGET is an optional place to return the result. const0_rtx means unused.
    MEM is the memory location to operate on.
@@ -7979,6 +8172,12 @@ expand_atomic_fetch_op_no_fallback (rtx target, rtx mem, rtx val,
      try that operation.  */
   if (after || unused_result || optab.reverse_code != UNKNOWN)
     {
+      rtx_insn *start = get_last_insn ();
+      /* Force val into a register if it could change value when the
+	 atomic insn updates mem.  */
+      if (!unused_result && reg_overlap_mentioned_p (mem, val))
+	val = force_reg (mode, val);
+
       /* Try the __atomic version, then the older __sync version.  */
       result = maybe_emit_op (&optab, target, mem, val, true, model, !after);
       if (!result)
@@ -8005,6 +8204,8 @@ expand_atomic_fetch_op_no_fallback (rtx target, rtx mem, rtx val,
 					  true, OPTAB_LIB_WIDEN);
 	  return result;
 	}
+      else
+	delete_insns_since (start);
     }
 
   /* No direct opcode can be generated.  */
@@ -8104,6 +8305,11 @@ expand_atomic_fetch_op (rtx target, rtx mem, rtx val, enum rtx_code code,
     {
       rtx_insn *insn;
       rtx t0 = gen_reg_rtx (mode), t1;
+      rtx_insn *start = get_last_insn ();
+      /* Force val into a register if it could change value when the
+	 atomic insn updates mem.  */
+      if (reg_overlap_mentioned_p (mem, val))
+	val = force_reg (mode, val);
 
       start_sequence ();
 
@@ -8137,6 +8343,8 @@ expand_atomic_fetch_op (rtx target, rtx mem, rtx val, enum rtx_code code,
 
       if (t1 != NULL && expand_compare_and_swap_loop (mem, t0, t1, insn))
         return target;
+      else
+	delete_insns_since (start);
     }
 
   return NULL_RTX;
@@ -8361,7 +8569,7 @@ can_reuse_operands_p (enum insn_code icode,
     {
     case EXPAND_OUTPUT:
     case EXPAND_UNDEFINED_INPUT:
-      /* Outputs and undefined intputs must remain distinct.  */
+      /* Outputs and undefined inputs must remain distinct.  */
       return false;
 
     case EXPAND_FIXED:

@@ -47,6 +47,51 @@ along with GCC; see the file COPYING3.  If not see
    so that we can free them all at once.  */
 static bitmap_obstack loop_renamer_obstack;
 
+/* Reset debug binds outside LOOP that use values defined in the NUM_NODES
+   basic blocks in BBS.  */
+
+void
+reset_debug_uses_outside_loop (class loop *loop, basic_block *bbs,
+			       unsigned num_nodes)
+{
+  for (unsigned i = 0; i < num_nodes; ++i)
+    {
+      basic_block bb = bbs[i];
+      imm_use_iterator ui;
+      gimple *use_stmt;
+      for (gphi_iterator gpi = gsi_start_phis (bb); !gsi_end_p (gpi);
+	   gsi_next (&gpi))
+	{
+	  FOR_EACH_IMM_USE_STMT (use_stmt, ui,
+				 gimple_phi_result (gpi.phi ()))
+	    if (gimple_debug_bind_p (use_stmt)
+		&& loop != gimple_bb (use_stmt)->loop_father
+		&& !flow_loop_nested_p (loop,
+					gimple_bb (use_stmt)->loop_father))
+	      {
+		gimple_debug_bind_reset_value (use_stmt);
+		update_stmt (use_stmt);
+	      }
+	}
+      for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
+	   gsi_next (&gsi))
+	{
+	  ssa_op_iter op_iter;
+	  def_operand_p def_p;
+	  FOR_EACH_SSA_DEF_OPERAND (def_p, gsi_stmt (gsi), op_iter, SSA_OP_DEF)
+	    FOR_EACH_IMM_USE_STMT (use_stmt, ui, DEF_FROM_PTR (def_p))
+	      if (gimple_debug_bind_p (use_stmt)
+		  && loop != gimple_bb (use_stmt)->loop_father
+		  && !flow_loop_nested_p (loop,
+					  gimple_bb (use_stmt)->loop_father))
+		{
+		  gimple_debug_bind_reset_value (use_stmt);
+		  update_stmt (use_stmt);
+		}
+	}
+    }
+}
+
 /* Insert IV increment statements STMTS before or after INCR_POS;
    AFTER selects which.  INCR_POS and AFTER can be computed using
    standard_iv_increment_position.  */
@@ -89,12 +134,14 @@ insert_iv_increment (gimple_stmt_iterator *incr_pos, bool after,
    INCR_POS (after it if AFTER is true, before it otherwise).  INCR_POS and
    AFTER can be computed using standard_iv_increment_position.  The ssa versions
    of the variable before and after increment will be stored in VAR_BEFORE and
-   VAR_AFTER (unless they are NULL).  */
+   VAR_AFTER (unless they are NULL).  If LOOP_INVARIANT is true then the
+   calculation step will be added to the pre-header.  Otherwise, the step
+   calculation is added to incr_pos.  */
 
 void
 create_iv (tree base, tree_code incr_op, tree step, tree var, class loop *loop,
 	   gimple_stmt_iterator *incr_pos, bool after, tree *var_before,
-	   tree *var_after)
+	   tree *var_after, bool loop_invariant)
 {
   gphi *phi;
   tree initial, step1;
@@ -133,9 +180,7 @@ create_iv (tree base, tree_code incr_op, tree step, tree var, class loop *loop,
 	}
       else
 	{
-	  bool ovf;
-
-	  if (!tree_expr_nonnegative_warnv_p (step, &ovf)
+	  if (!tree_expr_nonnegative_p (step)
 	      && may_negate_without_overflow_p (step))
 	    {
 	      incr_op = (incr_op == PLUS_EXPR ? MINUS_EXPR : PLUS_EXPR);
@@ -152,13 +197,18 @@ create_iv (tree base, tree_code incr_op, tree step, tree var, class loop *loop,
 	step = fold_build1 (NEGATE_EXPR, TREE_TYPE (step), step);
       incr_op = POINTER_PLUS_EXPR;
     }
-  /* Gimplify the step if necessary.  We put the computations in front of the
-     loop (i.e. the step should be loop invariant).  */
-  step = force_gimple_operand (step, &stmts, true, NULL_TREE);
-  if (stmts)
-    gsi_insert_seq_on_edge_immediate (pe, stmts);
 
   gimple_seq incr_stmts = nullptr;
+  /* Gimplify the step if necessary.  */
+  if (loop_invariant)
+    {
+      step = force_gimple_operand (step, &stmts, true, NULL_TREE);
+      if (stmts)
+	gsi_insert_seq_on_edge_immediate (pe, stmts);
+    }
+  else
+    step = force_gimple_operand (step, &incr_stmts, true, NULL_TREE);
+
   gimple_seq_add_stmt (&incr_stmts,
 		       gimple_build_assign (va, incr_op, vb, step));
   insert_iv_increment (incr_pos, after, incr_stmts);
@@ -1018,10 +1068,10 @@ determine_exit_conditions (class loop *loop, class tree_niter_desc *desc,
   if (integer_nonzerop (cond)
       && integer_zerop (desc->may_be_zero))
     {
-      /* Convert the latch count to an iteration count.  */
-      tree niter = fold_build2 (PLUS_EXPR, type, desc->niter,
-				build_one_cst (type));
-      if (multiple_of_p (type, niter, build_int_cst (type, factor)))
+      /* When the iteration count is an exact multiple of factor we're done.  */
+      if (TREE_CODE (desc->niter) == INTEGER_CST
+	  && wi::multiple_of_p (wi::to_widest (desc->niter) + 1,
+				factor, UNSIGNED))
 	return;
     }
 
@@ -1238,16 +1288,29 @@ tree_transform_and_unroll_loop (class loop *loop, unsigned factor,
 
       /* The epilog loop latch executes at most factor - 1 times.
 	 Since the epilog is entered unconditionally it will need to handle
-	 up to factor executions of its body.  */
-      new_loop->any_upper_bound = true;
-      new_loop->nb_iterations_upper_bound = factor - 1;
-      /* We do not really know estimate on number of iterations, since we do not
-	 track any estimates modulo unroll factor.
-	 Drop estimate from loop_info and scale loop profile.
-	 It may be more realistic to scale loop profile to factor / 2 - 1,
-	 but vectorizer also uses factor - 1.  */
+	 up to factor executions of its body.
+
+	 That however relies on ENTER_MAIN_COND being false implying that
+	 less than factor iterations are left.  determine_exit_conditions
+	 derives ENTER_MAIN_COND from a LT_EXPR/GT_EXPR comparison of the
+	 control IV, which for a NE_EXPR exit test is only valid if that IV
+	 does not wrap.  When it may wrap the main loop can be skipped (the
+	 condition may even be constant false) while the epilog still runs
+	 all iterations of the original loop, so keep the bound we inherited
+	 from it.  */
+      if (desc->cmp != NE_EXPR || desc->control.no_overflow)
+	{
+	  new_loop->any_upper_bound = true;
+	  new_loop->nb_iterations_upper_bound = factor - 1;
+	  /* We do not really know estimate on number of iterations, since we
+	     do not track any estimates modulo unroll factor.
+	     Scale loop profile.  It may be more realistic to scale loop
+	     profile to factor / 2 - 1, but vectorizer also uses factor - 1.  */
+	  scale_loop_profile (new_loop, profile_probability::always (),
+			      factor - 1);
+	}
+      /* Drop estimate from loop_info, see above.  */
       new_loop->any_estimate = false;
-      scale_loop_profile (new_loop, profile_probability::always (), factor - 1);
     }
   else
     new_exit = single_dom_exit (loop);

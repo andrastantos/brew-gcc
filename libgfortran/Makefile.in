@@ -171,9 +171,11 @@ am__aclocal_m4_deps = $(top_srcdir)/../config/ax_pthread.m4 \
 	$(top_srcdir)/../config/override.m4 \
 	$(top_srcdir)/../config/stdint.m4 \
 	$(top_srcdir)/../config/toolexeclibdir.m4 \
+	$(top_srcdir)/../config/visibility.m4 \
 	$(top_srcdir)/../ltoptions.m4 $(top_srcdir)/../ltsugar.m4 \
 	$(top_srcdir)/../ltversion.m4 $(top_srcdir)/../lt~obsolete.m4 \
 	$(top_srcdir)/acinclude.m4 $(top_srcdir)/../config/acx.m4 \
+	$(top_srcdir)/../config/mmap.m4 \
 	$(top_srcdir)/../config/no-executables.m4 \
 	$(top_srcdir)/../config/math.m4 \
 	$(top_srcdir)/../config/ax_check_define.m4 \
@@ -700,7 +702,7 @@ am__objects_17 = generated/_abs_c4.lo generated/_abs_c8.lo \
 	generated/_mod_r10.lo generated/_mod_r16.lo \
 	generated/_mod_r17.lo generated/misc_specifics.lo \
 	intrinsics/dprod_r8.lo intrinsics/f2c_specifics.lo \
-	intrinsics/random_init.lo
+	intrinsics/random_init.lo intrinsics/trigd_specific.lo
 am_libgfortran_la_OBJECTS = $(am__objects_5) $(am__objects_9) \
 	$(am__objects_11) $(am__objects_14) $(am__objects_15) \
 	$(am__objects_16) $(am__objects_17)
@@ -1864,7 +1866,8 @@ generated/_mod_r17.F90 \
 generated/misc_specifics.F90 \
 intrinsics/dprod_r8.f90 \
 intrinsics/f2c_specifics.F90 \
-intrinsics/random_init.f90
+intrinsics/random_init.f90 \
+intrinsics/trigd_specific.F90
 
 BUILT_SOURCES = $(gfor_built_src)
 libgfortran_la_SOURCES = $(gfor_src) $(gfor_built_src) $(gfor_io_src) \
@@ -3843,6 +3846,8 @@ intrinsics/dprod_r8.lo: intrinsics/$(am__dirstamp) \
 intrinsics/f2c_specifics.lo: intrinsics/$(am__dirstamp) \
 	intrinsics/$(DEPDIR)/$(am__dirstamp)
 intrinsics/random_init.lo: intrinsics/$(am__dirstamp) \
+	intrinsics/$(DEPDIR)/$(am__dirstamp)
+intrinsics/trigd_specific.lo: intrinsics/$(am__dirstamp) \
 	intrinsics/$(DEPDIR)/$(am__dirstamp)
 
 libgfortran.la: $(libgfortran_la_OBJECTS) $(libgfortran_la_DEPENDENCIES) $(EXTRA_libgfortran_la_DEPENDENCIES) 

@@ -525,73 +525,26 @@ std::unique_ptr<AST::SlicePattern>
 Parser<ManagedTokenSource>::parse_slice_pattern ()
 {
   location_t square_locus = lexer.peek_token ()->get_locus ();
-  std::vector<std::unique_ptr<AST::Pattern>> patterns;
-  tl::optional<std::vector<std::unique_ptr<AST::Pattern>>> upper_patterns
-    = tl::nullopt;
-
-  // lambda function to determine which vector to push new patterns into
-  auto get_pattern_ref
-    = [&] () -> std::vector<std::unique_ptr<AST::Pattern>> & {
-    return upper_patterns.has_value () ? upper_patterns.value () : patterns;
-  };
+  std::vector<std::unique_ptr<AST::Pattern>> sub_patterns;
 
   skip_token (LEFT_SQUARE);
 
-  if (lexer.peek_token ()->get_id () == RIGHT_SQUARE)
-    {
-      skip_token (RIGHT_SQUARE);
-      std::unique_ptr<AST::SlicePatternItemsNoRest> items (
-	new AST::SlicePatternItemsNoRest (std::move (patterns)));
-      return std::unique_ptr<AST::SlicePattern> (
-	new AST::SlicePattern (std::move (items), square_locus));
-    }
+  bool is_first = true;
 
-  // parse initial pattern (required)
-  if (lexer.peek_token ()->get_id () == DOT_DOT)
+  while (true)
     {
-      lexer.skip_token ();
-      upper_patterns = std::vector<std::unique_ptr<AST::Pattern>> ();
-    }
-  else
-    {
-      // Not a rest pattern `..`, parse normally
-      std::unique_ptr<AST::Pattern> initial_pattern = parse_pattern ();
-      if (initial_pattern == nullptr)
+      const_TokenPtr t = lexer.peek_token ();
+
+      if (!is_first && t->get_id () == COMMA)
 	{
-	  Error error (lexer.peek_token ()->get_locus (),
-		       "failed to parse initial pattern in slice pattern");
-	  add_error (std::move (error));
-
-	  return nullptr;
+	  skip_token (COMMA);
+	  t = lexer.peek_token ();
 	}
 
-      patterns.push_back (std::move (initial_pattern));
-    }
-
-  const_TokenPtr t = lexer.peek_token ();
-  while (t->get_id () == COMMA)
-    {
-      lexer.skip_token ();
-
-      // break if end bracket
-      if (lexer.peek_token ()->get_id () == RIGHT_SQUARE)
-	break;
-
-      if (lexer.peek_token ()->get_id () == DOT_DOT)
+      if (t->get_id () == RIGHT_SQUARE)
 	{
-	  if (upper_patterns.has_value ())
-	    {
-	      // DOT_DOT has been parsed before
-	      Error error (lexer.peek_token ()->get_locus (), "%s",
-			   "`..` can only be used once per slice pattern");
-	      add_error (std::move (error));
-
-	      return nullptr;
-	    }
-	  upper_patterns = std::vector<std::unique_ptr<AST::Pattern>> ();
-	  lexer.skip_token ();
-	  t = lexer.peek_token ();
-	  continue;
+	  skip_token (RIGHT_SQUARE);
+	  break;
 	}
 
       // parse pattern (required)
@@ -601,34 +554,17 @@ Parser<ManagedTokenSource>::parse_slice_pattern ()
 	  Error error (lexer.peek_token ()->get_locus (),
 		       "failed to parse pattern in slice pattern");
 	  add_error (std::move (error));
+	  // TODO: skip until closing square bracket
 
 	  return nullptr;
 	}
-      get_pattern_ref ().push_back (std::move (pattern));
 
-      t = lexer.peek_token ();
+      sub_patterns.push_back (std::move (pattern));
+      is_first = false;
     }
 
-  if (!skip_token (RIGHT_SQUARE))
-    {
-      return nullptr;
-    }
-
-  if (upper_patterns.has_value ())
-    {
-      // Slice pattern with rest
-      std::unique_ptr<AST::SlicePatternItemsHasRest> items (
-	new AST::SlicePatternItemsHasRest (
-	  std::move (patterns), std::move (upper_patterns.value ())));
-      return std::unique_ptr<AST::SlicePattern> (
-	new AST::SlicePattern (std::move (items), square_locus));
-    }
-
-  // Rest-less slice pattern
-  std::unique_ptr<AST::SlicePatternItemsNoRest> items (
-    new AST::SlicePatternItemsNoRest (std::move (patterns)));
-  return std::unique_ptr<AST::SlicePattern> (
-    new AST::SlicePattern (std::move (items), square_locus));
+  return std::make_unique<AST::SlicePattern> (std::move (sub_patterns),
+					      square_locus);
 }
 
 /* Parses an identifier pattern (pattern that binds a value matched to a
@@ -1094,6 +1030,14 @@ Parser<ManagedTokenSource>::parse_literal_or_range_pattern ()
       return nullptr;
     }
 
+  std::string literal_value;
+  if (range_lower->get_id () == INT_LITERAL)
+    literal_value = LiteralResolve::evaluate_integer_literal (range_lower);
+  else if (range_lower->get_id () == FLOAT_LITERAL)
+    literal_value = LiteralResolve::evaluate_float_literal (range_lower);
+  else
+    literal_value = range_lower->get_str ();
+
   const_TokenPtr next = lexer.peek_token ();
   if (next->get_id () == DOT_DOT_EQ || next->get_id () == ELLIPSIS
       || next->get_id () == DOT_DOT)
@@ -1103,7 +1047,7 @@ Parser<ManagedTokenSource>::parse_literal_or_range_pattern ()
       lexer.skip_token ();
       std::unique_ptr<AST::RangePatternBound> lower (
 	new AST::RangePatternBoundLiteral (
-	  AST::Literal (range_lower->get_str (), type,
+	  AST::Literal (std::move (literal_value), type,
 			PrimitiveCoreType::CORETYPE_UNKNOWN),
 	  range_lower->get_locus (), has_minus));
 
@@ -1125,10 +1069,16 @@ Parser<ManagedTokenSource>::parse_literal_or_range_pattern ()
   else
     {
       // literal pattern
+
+      auto type_hint = (range_lower->get_id () == INT_LITERAL
+			|| range_lower->get_id () == FLOAT_LITERAL)
+			 ? LiteralResolve::resolve_literal_suffix (range_lower)
+			 : range_lower->get_type_hint ();
+
       return std::unique_ptr<AST::LiteralPattern> (
-	new AST::LiteralPattern (range_lower->get_str (), type,
-				 range_lower->get_locus (),
-				 range_lower->get_type_hint (), has_minus));
+	new AST::LiteralPattern (std::move (literal_value), type,
+				 range_lower->get_locus (), type_hint,
+				 has_minus));
     }
 }
 
@@ -1161,16 +1111,18 @@ Parser<ManagedTokenSource>::parse_range_pattern_bound ()
       lexer.skip_token ();
       return std::unique_ptr<AST::RangePatternBoundLiteral> (
 	new AST::RangePatternBoundLiteral (
-	  AST::Literal (range_lower->get_str (), AST::Literal::INT,
-			range_lower->get_type_hint ()),
+	  AST::Literal (LiteralResolve::evaluate_integer_literal (range_lower),
+			AST::Literal::INT,
+			LiteralResolve::resolve_literal_suffix (range_lower)),
 	  range_lower_locus));
     case FLOAT_LITERAL:
       lexer.skip_token ();
       rust_debug ("warning: used deprecated float range pattern bound");
       return std::unique_ptr<AST::RangePatternBoundLiteral> (
 	new AST::RangePatternBoundLiteral (
-	  AST::Literal (range_lower->get_str (), AST::Literal::FLOAT,
-			range_lower->get_type_hint ()),
+	  AST::Literal (LiteralResolve::evaluate_float_literal (range_lower),
+			AST::Literal::FLOAT,
+			LiteralResolve::resolve_literal_suffix (range_lower)),
 	  range_lower_locus));
     case MINUS:
       // branch on next token
@@ -1181,16 +1133,20 @@ Parser<ManagedTokenSource>::parse_range_pattern_bound ()
 	  lexer.skip_token (1);
 	  return std::unique_ptr<AST::RangePatternBoundLiteral> (
 	    new AST::RangePatternBoundLiteral (
-	      AST::Literal (range_lower->get_str (), AST::Literal::INT,
-			    range_lower->get_type_hint ()),
+	      AST::Literal (
+		LiteralResolve::evaluate_integer_literal (range_lower),
+		AST::Literal::INT,
+		LiteralResolve::resolve_literal_suffix (range_lower)),
 	      range_lower_locus, true));
 	case FLOAT_LITERAL:
 	  lexer.skip_token (1);
 	  rust_debug ("warning: used deprecated float range pattern bound");
 	  return std::unique_ptr<AST::RangePatternBoundLiteral> (
 	    new AST::RangePatternBoundLiteral (
-	      AST::Literal (range_lower->get_str (), AST::Literal::FLOAT,
-			    range_lower->get_type_hint ()),
+	      AST::Literal (
+		LiteralResolve::evaluate_float_literal (range_lower),
+		AST::Literal::FLOAT,
+		LiteralResolve::resolve_literal_suffix (range_lower)),
 	      range_lower_locus, true));
 	default:
 	  add_error (Error (range_lower->get_locus (),

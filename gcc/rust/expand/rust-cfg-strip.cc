@@ -828,9 +828,13 @@ CfgStrip::visit (AST::ArrayIndexExpr &expr)
 
   const auto &array_expr = expr.get_array_expr ();
   if (array_expr.is_marked_for_strip ())
-    rust_error_at (array_expr.get_locus (),
-		   "cannot strip expression in this position - outer "
-		   "attributes not allowed");
+    {
+      rust_error_at (array_expr.get_locus (),
+		     "cannot strip expression in this position - outer "
+		     "attributes not allowed");
+      expr.mark_for_strip ();
+      return;
+    }
 
   const auto &index_expr = expr.get_index_expr ();
   if (index_expr.is_marked_for_strip ())
@@ -1044,9 +1048,13 @@ CfgStrip::visit (AST::CallExpr &expr)
 
   auto &function = expr.get_function_expr ();
   if (function.is_marked_for_strip ())
-    rust_error_at (function.get_locus (),
-		   "cannot strip expression in this position - outer "
-		   "attributes not allowed");
+    {
+      rust_error_at (function.get_locus (),
+		     "cannot strip expression in this position - outer "
+		     "attributes not allowed");
+      expr.mark_for_strip ();
+      return;
+    }
 
   /* spec says outer attributes are specifically allowed for elements
    * of call expressions, so full stripping possible */
@@ -1785,13 +1793,6 @@ CfgStrip::visit (AST::ExternCrate &extern_crate)
       extern_crate.mark_for_strip ();
       return;
     }
-
-  if (!extern_crate.references_self ())
-    {
-      Session &session = Session::get_instance ();
-      session.load_extern_crate (extern_crate.get_referenced_crate (),
-				 extern_crate.get_locus ());
-    }
 }
 
 void
@@ -2439,41 +2440,16 @@ CfgStrip::visit (AST::GroupedPattern &pattern)
 }
 
 void
-CfgStrip::visit (AST::SlicePatternItemsNoRest &items)
-{
-  AST::DefaultASTVisitor::visit (items);
-  // can't strip individual patterns, only sub-patterns
-  for (auto &pattern : items.get_patterns ())
-    {
-      if (pattern->is_marked_for_strip ())
-	rust_error_at (pattern->get_locus (),
-		       "cannot strip pattern in this position");
-    }
-}
-
-void
-CfgStrip::visit (AST::SlicePatternItemsHasRest &items)
-{
-  AST::DefaultASTVisitor::visit (items);
-  // can't strip individual patterns, only sub-patterns
-  for (auto &pattern : items.get_lower_patterns ())
-    {
-      if (pattern->is_marked_for_strip ())
-	rust_error_at (pattern->get_locus (),
-		       "cannot strip pattern in this position");
-    }
-  for (auto &pattern : items.get_upper_patterns ())
-    {
-      if (pattern->is_marked_for_strip ())
-	rust_error_at (pattern->get_locus (),
-		       "cannot strip pattern in this position");
-    }
-}
-
-void
 CfgStrip::visit (AST::SlicePattern &pattern)
 {
   AST::DefaultASTVisitor::visit (pattern);
+  // can't strip individual patterns, only sub-patterns
+  for (auto &sub_pat : pattern.get_patterns ())
+    {
+      if (sub_pat->is_marked_for_strip ())
+	rust_error_at (sub_pat->get_locus (),
+		       "cannot strip pattern in this position");
+    }
 }
 
 void

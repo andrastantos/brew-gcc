@@ -88,7 +88,7 @@ enum ifn_goacc_loop_kind {
    LEVEL corresponds to the GOMP_DIM of the reduction
    OP is the tree code of the reduction operation
    OFFSET may be used as an offset into a reduction array for the
-          reductions occuring at this level.
+          reductions occurring at this level.
    In general the return value is LOCAL_VAR, which creates a data
    dependency between calls operating on the same reduction.  */
 
@@ -157,9 +157,13 @@ struct direct_internal_fn_info
      same number of elements.  E.g. we can vectorize an IFN_SQRT on
      floats as an IFN_SQRT on vectors of N floats.
 
-     This only needs 1 bit, but occupies the full 16 to ensure a nice
+     This only needs 1 bit, but occupies the full 8 to ensure a nice
      layout.  */
-  unsigned int vectorizable : 16;
+  unsigned int vectorizable : 8;
+  /* The minimum and maximum number of arguments of a call to the
+     function.  */
+  unsigned int nargs_min : 4;
+  unsigned int nargs_max : 4;
 };
 
 extern const direct_internal_fn_info direct_internal_fn_array[IFN_LAST + 1];
@@ -193,6 +197,16 @@ direct_internal_fn (internal_fn fn)
   return direct_internal_fn_array[fn];
 }
 
+/* Return true if a call to FN can have NARGS arguments.  FN must satisfy
+   direct_internal_fn_p.  */
+
+inline bool
+direct_internal_fn_nargs_ok_p (internal_fn fn, unsigned int nargs)
+{
+  const direct_internal_fn_info &info = direct_internal_fn (fn);
+  return nargs >= info.nargs_min && nargs <= info.nargs_max;
+}
+
 extern tree_pair direct_internal_fn_types (internal_fn, tree, tree *);
 extern tree_pair direct_internal_fn_types (internal_fn, gcall *);
 extern bool direct_internal_fn_supported_p (internal_fn, tree_pair,
@@ -222,6 +236,8 @@ extern bool widening_fn_p (code_helper);
 extern bool widening_evenodd_fn_p (code_helper);
 
 extern bool set_edom_supported_p (void);
+extern bool check_internal_fn_args (location_t, internal_fn, unsigned int,
+				    const tree *);
 
 extern internal_fn get_conditional_internal_fn (tree_code);
 extern internal_fn get_conditional_internal_fn (internal_fn);
@@ -275,6 +291,7 @@ extern void expand_SPACESHIP (internal_fn, gcall *);
 extern void expand_TRAP (internal_fn, gcall *);
 extern void expand_ASSUME (internal_fn, gcall *);
 extern void expand_MASK_CALL (internal_fn, gcall *);
+extern void expand_VARYING (internal_fn, gcall *);
 extern void expand_MULBITINT (internal_fn, gcall *);
 extern void expand_DIVMODBITINT (internal_fn, gcall *);
 extern void expand_FLOATTOBITINT (internal_fn, gcall *);
@@ -285,6 +302,10 @@ extern void expand_CTZ (internal_fn, gcall *);
 extern void expand_FFS (internal_fn, gcall *);
 extern void expand_PARITY (internal_fn, gcall *);
 extern void expand_POPCOUNT (internal_fn, gcall *);
+extern void expand_BSWAP (internal_fn, gcall *);
+extern void expand_BITREVERSE (internal_fn, gcall *);
+extern void expand_CLMUL (internal_fn, gcall *);
+extern void expand_CLMUL_WIDEN (internal_fn, gcall *);
 
 extern bool vectorized_internal_fn_supported_p (internal_fn, tree);
 

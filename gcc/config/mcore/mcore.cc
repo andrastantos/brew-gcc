@@ -102,7 +102,7 @@ static void       layout_mcore_frame            (struct mcore_frame *);
 static void       mcore_setup_incoming_varargs	(cumulative_args_t,
 						 const function_arg_info &,
 						 int *, int);
-static cond_type  is_cond_candidate             (rtx);
+static cond_type  is_cond_candidate (rtx_insn *);
 static rtx_insn  *emit_new_cond_insn            (rtx_insn *, int);
 static rtx_insn  *conditionalize_block          (rtx_insn *);
 static void       conditionalize_optimization   (void);
@@ -2234,7 +2234,7 @@ mcore_expand_epilog (void)
 typedef struct
 {
   rtx value;			/* Value in table.  */
-  rtx label;			/* Label of value.  */
+  rtx_insn *label;			/* Label of value.  */
 } pool_node;
 
 /* The maximum number of constants that can fit into one pool, since
@@ -2277,7 +2277,7 @@ mcore_output_jump_label_table (void)
 /* Check whether insn is a candidate for a conditional.  */
 
 static cond_type
-is_cond_candidate (rtx insn)
+is_cond_candidate (rtx_insn *insn)
 {
   /* The only things we conditionalize are those that can be directly
      changed into a conditional.  Only bother with SImode items.  If
@@ -2494,14 +2494,16 @@ conditionalize_block (rtx_insn *first)
   if (GET_CODE (XEXP (XEXP (br_pat, 1), 1)) == LABEL_REF)
     {
       /* A normal branch, so extract label out of first arm.  */
-      br_lab_num = CODE_LABEL_NUMBER (XEXP (XEXP (XEXP (br_pat, 1), 1), 0));
+      br_lab_num = CODE_LABEL_NUMBER
+	(label_ref_label (XEXP (XEXP (br_pat, 1), 1)));
     }
   else
     {
       /* An inverse branch, so extract the label out of the 2nd arm
 	 and complement the condition.  */
       cond = (cond == 0);
-      br_lab_num = CODE_LABEL_NUMBER (XEXP (XEXP (XEXP (br_pat, 1), 2), 0));
+      br_lab_num = CODE_LABEL_NUMBER
+	(label_ref_label (XEXP (XEXP (br_pat, 1), 2)));
     }
 
   /* Scan forward for the start of block 2: it must start with a

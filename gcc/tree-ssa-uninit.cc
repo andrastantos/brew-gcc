@@ -81,6 +81,7 @@ static bool
 has_undefined_value_p (tree t)
 {
   return (ssa_undefined_value_p (t)
+	  || gimple_call_internal_p (SSA_NAME_DEF_STMT (t), IFN_DEFERRED_INIT)
 	  || (possibly_undefined_names
 	      && possibly_undefined_names->contains (t)));
 }
@@ -193,7 +194,7 @@ warn_uninit (opt_code opt, tree t, tree var, gimple *context,
      Or
 
      2. A call to .DEFERRED_INIT internal function. Since the original variable
-     has been eliminated by optimziation, we need to get the variable name,
+     has been eliminated by optimization, we need to get the variable name,
      and variable declaration location from this call.  We recorded variable
      name into VAR_NAME_STR, and will get location info and record warning
      suppressed info to VAR_DEF_STMT, which is the .DEFERRED_INIT call.  */
@@ -757,6 +758,33 @@ maybe_warn_operand (ao_ref &ref, gimple *stmt, tree lhs, tree rhs,
     rhstype = TREE_TYPE (rhstype);
   if (is_empty_type (rhstype))
     return NULL_TREE;
+
+  /* Avoid diagnosing read-modify-write cycles that in the end only
+     sets a subset of bits to zero or one.
+     ???  Note that further reads will then appear (partly) initialized
+     and will not be diagnosed.  */
+  gimple *use_stmt;
+  if (gimple_assign_load_p (stmt)
+      && TREE_CODE (lhs) == SSA_NAME
+      && single_imm_use (lhs, &luse_p, &use_stmt))
+    {
+      gassign *use_ass = dyn_cast <gassign *> (use_stmt);
+      for (int i = 0; i < 4; ++i)
+	if (use_ass
+	    && (gimple_assign_rhs_code (use_ass) == BIT_AND_EXPR
+		|| gimple_assign_rhs_code (use_ass) == BIT_IOR_EXPR
+		|| gimple_assign_rhs_code (use_ass) == VIEW_CONVERT_EXPR)
+	    && single_imm_use (gimple_assign_lhs (use_ass), &luse_p,
+			       &use_stmt))
+	  use_ass = dyn_cast <gassign *> (use_stmt);
+	else
+	  break;
+      if (use_ass
+	  && gimple_vdef (use_ass)
+	  && operand_equal_p (gimple_assign_rhs1 (stmt),
+			      gimple_assign_lhs (use_ass)))
+	return NULL_TREE;
+    }
 
   bool warned = false;
   /* We didn't find any may-defs so on all paths either
@@ -1454,7 +1482,7 @@ execute_late_warn_uninitialized (function *fun)
 
   timevar_push (TV_TREE_UNINIT);
 
-  /* Avoid quadratic beahvior when looking up case labels for edges.  */
+  /* Avoid quadratic behavior when looking up case labels for edges.  */
   start_recording_case_labels ();
 
   possibly_undefined_names = new hash_set<tree>;

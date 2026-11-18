@@ -13,7 +13,7 @@ foo (int *a0, int *aN, int *b0, int *bN)
     *a += *b;
 }
 
-/* { dg-final { scan-tree-dump "Loop being analyzed as uncounted." "vect" } } */
+/* { dg-final { scan-tree-dump "Loop being analyzed as uncounted." "vect" { target { ! "s390x-*-*" } } } } */
 /* { dg-final { scan-tree-dump "vectorized 1 loops in function" "vect" } } */
 /* Make sure the values used in peeled epilog loop effectively reset the last vectorized iteration.  */
 /* { dg-final { scan-tree-dump {<bb ([0-9]+)>[^\n\r]*:.+# (a_[0-9]+) = PHI <a_[0-9]+\([0-9]+\).+<bb [0-9]+>[^\n\r]*:.+# a_[0-9]+ = PHI <\2\(\1\)>} "vect" } } */

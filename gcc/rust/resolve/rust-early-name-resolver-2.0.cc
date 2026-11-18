@@ -23,11 +23,15 @@
 #include "rust-diagnostics.h"
 #include "rust-hir-map.h"
 #include "rust-item.h"
+#include "rust-name-resolution-context.h"
+#include "rust-rib.h"
 #include "rust-toplevel-name-resolver-2.0.h"
 #include "rust-attributes.h"
 #include "rust-finalize-imports-2.0.h"
 #include "rust-attribute-values.h"
 #include "rust-identifier-path.h"
+#include "rust-session-manager.h"
+#include "rust-edition.h"
 
 namespace Rust {
 namespace Resolver2_0 {
@@ -37,10 +41,17 @@ Early::Early (NameResolutionContext &ctx)
 {}
 
 void
-Early::insert_once (AST::MacroInvocation &invocation, NodeId resolved)
+Early::try_insert_once (AST::MacroInvocation &invocation, NodeId resolved)
 {
-  // TODO: Should we use `ctx.mark_resolved()`?
-  auto definition = ctx.mappings.lookup_macro_def (resolved);
+  auto leaf_macro = ctx.macros.find_leaf_definition (resolved);
+
+  // Sometimes the import itself isn't resolved yet this turn of the fixed-point
+  if (!leaf_macro)
+    return;
+
+  // TODO: Should we use `ctx.map_usage()`?
+
+  auto definition = ctx.mappings.lookup_macro_def (leaf_macro->id);
 
   if (!ctx.mappings.lookup_macro_invocation (invocation))
     ctx.mappings.insert_macro_invocation (invocation, definition.value ());
@@ -49,7 +60,6 @@ Early::insert_once (AST::MacroInvocation &invocation, NodeId resolved)
 void
 Early::insert_once (AST::MacroRulesDefinition &def)
 {
-  // TODO: Should we use `ctx.mark_resolved()`?
   if (!ctx.mappings.lookup_macro_def (def.get_node_id ()))
     ctx.mappings.insert_macro_def (&def);
 }
@@ -64,6 +74,7 @@ Early::go (AST::Crate &crate)
   // us
 
   dirty = toplevel.is_dirty ();
+
   // We now proceed with resolving macros, which can be nested in almost any
   // items
   textual_scope.push ();
@@ -76,26 +87,51 @@ Early::go (AST::Crate &crate)
   IdentifierPathPass::go (crate, ctx, std::move (ident_path_to_convert));
 }
 
+ResolutionMode
+Early::import_resolution_mode (const AST::SimplePath &path)
+{
+  bool is_2015 = get_rust_edition () == Edition::E2015;
+
+  if (path.has_opening_scope_resolution ())
+    return is_2015 ? ResolutionMode::FromRoot : ResolutionMode::FromExtern;
+
+  if (!is_2015)
+    return ResolutionMode::Normal;
+
+  // `use *;` has no segments, and imports from the crate root as well
+  auto &segments = path.get_segments ();
+  if (!segments.empty ()
+      && (segments.front ().is_lower_self_seg ()
+	  || segments.front ().is_super_path_seg ()))
+    return ResolutionMode::Normal;
+
+  return ResolutionMode::FromRoot;
+}
+
 bool
 Early::resolve_glob_import (NodeId use_dec_id, TopLevel::ImportKind &&glob)
 {
-  auto resolved = ctx.resolve_path (glob.to_resolve, Namespace::Types);
+  auto resolved = ctx.resolve_path (glob.to_resolve,
+				    import_resolution_mode (glob.to_resolve),
+				    Namespace::Types);
   if (!resolved.has_value ())
     return false;
 
   auto result = Analysis::Mappings::get ().lookup_glob_container (
-    resolved->get_node_id ());
+    resolved->definition.get_node_id ());
 
   if (!result)
     return false;
 
+  auto &imports = import_mappings.new_or_access (use_dec_id);
+
   // here, we insert the module's NodeId into the import_mappings and will look
   // up the module proper in `FinalizeImports`
   // The namespace does not matter here since we are dealing with a glob
+  // FIXME: Does the namespace not matter? Is that valid?
   // TODO: Ugly
-  import_mappings.insert (use_dec_id,
-			  ImportPair (std::move (glob),
-				      ImportData::Glob (*resolved)));
+  imports.emplace_back (
+    ImportPair (std::move (glob), ImportData::Glob (resolved->definition)));
 
   return true;
 }
@@ -122,6 +158,26 @@ bool
 Early::resolve_rebind_import (NodeId use_dec_id,
 			      TopLevel::ImportKind &&rebind_import)
 {
+  NodeId import_id = UNKNOWN_NODEID;
+  auto &path = rebind_import.to_resolve;
+  auto &rebind = rebind_import.rebind.value ();
+
+  switch (rebind.get_new_bind_type ())
+    {
+    case AST::UseTreeRebind::NewBindType::IDENTIFIER:
+      import_id = rebind.get_node_id ();
+      break;
+    case AST::UseTreeRebind::NewBindType::NONE:
+      import_id = path.get_final_segment ().get_node_id ();
+      break;
+    case AST::UseTreeRebind::NewBindType::WILDCARD:
+      // nothing
+      break;
+    }
+
+  if (ctx.lookup (import_id, Namespace::Types))
+    return true;
+
   auto definitions = resolve_path_in_all_ns (rebind_import.to_resolve);
 
   // if we've found at least one definition, then we're good
@@ -129,7 +185,7 @@ Early::resolve_rebind_import (NodeId use_dec_id,
     return false;
   for (const auto &def : definitions)
     {
-      if (def.first.is_ambiguous ())
+      if (def.definition.is_ambiguous ())
 	{
 	  rich_location rich_locus (line_table,
 				    rebind_import.to_resolve.get_locus ());
@@ -268,14 +324,35 @@ Early::visit (AST::Module &module)
 }
 
 void
+Early::maybe_prelude_import ()
+{
+  // handle prelude import
+  if (ctx.prelude)
+    {
+      auto container = Analysis::Mappings::get ().lookup_glob_container (
+	ctx.prelude.value ());
+      rust_assert (container);
+
+      GlobbingVisitor glob_visit (ctx);
+      glob_visit.go (container.value ());
+      dirty |= glob_visit.is_dirty ();
+    }
+}
+
+void
 Early::visit (AST::MacroInvocation &invoc)
 {
   auto &path = invoc.get_invoc_data ().get_path ();
 
   // We special case the `offset_of!()` macro if the flag is here, otherwise
   // we accept whatever `offset_of!()` definition we resolved to.
-  auto resolve_offset_of
-    = flag_assume_builtin_offset_of && (path.as_string () == "offset_of");
+  auto resolve_offset_of = Session::get_instance ().should_support_offset_of ()
+			   && (path.as_string () == "offset_of");
+
+  // Ditto, but for `cfg_select!()`.
+  auto resolve_cfg_select
+    = Session::get_instance ().should_support_cfg_select ()
+      && (path.as_string () == "cfg_select");
 
   if (invoc.get_kind () == AST::MacroInvocation::InvocKind::Builtin)
     for (auto &pending_invoc : invoc.get_pending_eager_invocations ())
@@ -289,34 +366,38 @@ Early::visit (AST::MacroInvocation &invoc)
 
   // https://doc.rust-lang.org/reference/macros-by-example.html#path-based-scope
 
-  tl::optional<Rib::Definition> definition = tl::nullopt;
+  tl::optional<NameResolutionContext::NamespacedDefinition> ns_def
+    = tl::nullopt;
   if (path.get_segments ().size () == 1)
-    definition
-      = textual_scope.get (path.get_final_segment ().as_string ())
-	  .map ([] (NodeId id) { return Rib::Definition::NonShadowable (id); });
+    ns_def = textual_scope.get (path.get_final_segment ().as_string ())
+	       .map ([] (NodeId id) {
+		 return NameResolutionContext::NamespacedDefinition (
+		   Rib::Definition::NonShadowable (id), Namespace::Macros);
+	       });
 
   // we won't have changed `definition` from `nullopt` if there are more
   // than one segments in our path
-  if (!definition.has_value ())
-    definition = ctx.resolve_path (path, Namespace::Macros);
+  if (!ns_def.has_value ())
+    ns_def = ctx.resolve_path (path, Namespace::Macros);
 
   // if the definition still does not have a value, then it's an error - unless
-  // we should automatically resolve offset_of!() calls
-  if (!definition.has_value ())
+  // we should automatically resolve offset_of!() or cfg_select!() calls
+  if (!ns_def.has_value ())
     {
-      if (!resolve_offset_of)
+      if (!resolve_offset_of && !resolve_cfg_select)
 	collect_error (Error (invoc.get_locus (), ErrorCode::E0433,
 			      "could not resolve macro invocation %qs",
 			      path.as_string ().c_str ()));
       return;
     }
 
-  insert_once (invoc, definition->get_node_id ());
+  try_insert_once (invoc, ns_def->definition.get_node_id ());
 
   // now do we need to keep mappings or something? or insert "uses" into our
   // ForeverStack? can we do that? are mappings simpler?
   auto &mappings = Analysis::Mappings::get ();
-  auto rules_def = mappings.lookup_macro_def (definition->get_node_id ());
+  auto rules_def
+    = mappings.lookup_macro_def (ns_def->definition.get_node_id ());
 
   // Macro definition not found, maybe it is not expanded yet.
   if (!rules_def)
@@ -335,8 +416,14 @@ Early::visit_derive_attribute (AST::Attribute &attr,
   auto traits = attr.get_traits_to_derive ();
   for (auto &trait : traits)
     {
-      auto definition = ctx.resolve_path (trait.get (), Namespace::Macros);
-      if (!definition.has_value ())
+      // Special case CoercePointee if we're in a proper compatibility mode.
+      // Count it as a builtin derive macro and keep going.
+      if (trait.get ().as_string () == "CoercePointee"
+	  && Session::get_instance ().should_support_coerce_pointee ())
+	continue;
+
+      auto ns_def = ctx.resolve_path (trait.get (), Namespace::Macros);
+      if (!ns_def.has_value ())
 	{
 	  // FIXME: Change to proper error message
 	  collect_error (Error (trait.get ().get_locus (),
@@ -345,11 +432,12 @@ Early::visit_derive_attribute (AST::Attribute &attr,
 	  continue;
 	}
 
-      auto pm_def
-	= mappings.lookup_derive_proc_macro_def (definition->get_node_id ());
+      auto pm_def = mappings.pmacro.definitions.derives.lookup (
+	ns_def->definition.get_node_id ());
 
       if (pm_def.has_value ())
-	mappings.insert_derive_proc_macro_invocation (trait, pm_def.value ());
+	mappings.pmacro.invocations.derives.insert (trait.get ().get_node_id (),
+						    pm_def.value ());
     }
 }
 
@@ -358,8 +446,8 @@ Early::visit_non_builtin_attribute (AST::Attribute &attr,
 				    Analysis::Mappings &mappings,
 				    std::string &name)
 {
-  auto definition = ctx.resolve_path (attr.get_path (), Namespace::Macros);
-  if (!definition.has_value ())
+  auto ns_def = ctx.resolve_path (attr.get_path (), Namespace::Macros);
+  if (!ns_def.has_value ())
     {
       // FIXME: Change to proper error message
       collect_error (Error (attr.get_locus (),
@@ -367,14 +455,14 @@ Early::visit_non_builtin_attribute (AST::Attribute &attr,
 			    name.c_str ()));
       return;
     }
-  auto pm_def
-    = mappings.lookup_attribute_proc_macro_def (definition->get_node_id ());
+  auto pm_def = mappings.pmacro.definitions.attributes.lookup (
+    ns_def->definition.get_node_id ());
 
   if (!pm_def.has_value ())
     return;
 
-  mappings.insert_attribute_proc_macro_invocation (attr.get_path (),
-						   pm_def.value ());
+  mappings.pmacro.invocations.attributes.insert (
+    attr.get_path ().get_node_id (), pm_def.value ());
 }
 
 void
@@ -383,17 +471,21 @@ Early::visit (AST::Attribute &attr)
   auto &mappings = Analysis::Mappings::get ();
 
   auto name = attr.get_path ().get_segments ().at (0).get_segment_name ();
-  auto is_not_builtin = [&name] (AST::Attribute &attr) {
-    return Analysis::BuiltinAttributeMappings::get ()
-      ->lookup_builtin (name)
-      .is_error ();
-  };
+  auto known_check = Analysis::Attributes::is_known (name);
+
+  // If it is a tool attribute, the compiler can ignore it and let the tool
+  // handle it
+  if (known_check == Analysis::Attributes::AttributeKnowledge::Tool)
+    return;
+
+  auto is_builtin
+    = known_check == Analysis::Attributes::AttributeKnowledge::Known;
 
   if (attr.is_derive ())
     {
       visit_derive_attribute (attr, mappings);
     }
-  else if (is_not_builtin (attr)) // Do not resolve builtins
+  else if (!is_builtin) // Do not resolve builtins
     {
       visit_non_builtin_attribute (attr, mappings, name);
     }
@@ -406,15 +498,23 @@ Early::finalize_simple_import (const Early::ImportPair &mapping)
 {
   // FIXME: We probably need to store namespace information
 
-  auto locus = mapping.import_kind.to_resolve.get_locus ();
+  auto import = mapping.import_kind.to_resolve;
+  auto import_id = import.get_final_segment ().get_node_id ();
   auto data = mapping.data;
-  auto identifier
-    = mapping.import_kind.to_resolve.get_final_segment ().get_segment_name ();
+  auto identifier = import.get_final_segment ().get_segment_name ();
 
   for (auto &&definition : data.definitions ())
-    toplevel
-      .insert_or_error_out (
-	identifier, locus, definition.first.get_node_id (), definition.second /* TODO: This isn't clear - it would be better if it was called .ns or something */);
+    {
+      ctx.map_usage (Usage (import_id),
+		     Definition (definition.definition.get_node_id ()),
+		     definition.ns);
+
+      toplevel.insert_or_error_out (identifier, import.get_locus (),
+				    definition.definition.get_node_id (),
+				    definition.ns);
+
+      dirty = dirty || toplevel.is_dirty ();
+    }
 }
 
 void
@@ -431,10 +531,16 @@ Early::finalize_glob_import (NameResolutionContext &ctx,
       rust_assert (container.value ()->get_glob_container_kind ()
 		   == AST::GlobContainer::Kind::Module);
 
+      // TODO: catch multiple attempted prelude imports
+      if (!ctx.prelude)
+	dirty = true;
+
       ctx.prelude = mapping.data.container ().get_node_id ();
     }
 
-  GlobbingVisitor (ctx).go (container.value ());
+  GlobbingVisitor glob_visit (ctx);
+  glob_visit.go (container.value ());
+  dirty |= glob_visit.is_dirty ();
 }
 
 void
@@ -446,7 +552,7 @@ Early::finalize_rebind_import (const Early::ImportPair &mapping)
   auto &rebind = mapping.import_kind.rebind.value ();
   auto data = mapping.data;
 
-  location_t locus = UNKNOWN_LOCATION;
+  NodeId import_id = UNKNOWN_NODEID;
   std::string declared_name;
 
   // FIXME: This needs to be done in `FinalizeImports`
@@ -454,7 +560,7 @@ Early::finalize_rebind_import (const Early::ImportPair &mapping)
     {
     case AST::UseTreeRebind::NewBindType::IDENTIFIER:
       declared_name = rebind.get_identifier ().as_string ();
-      locus = rebind.get_identifier ().get_locus ();
+      import_id = rebind.get_node_id ();
       break;
     case AST::UseTreeRebind::NewBindType::NONE:
       {
@@ -464,12 +570,18 @@ Early::finalize_rebind_import (const Early::ImportPair &mapping)
 	  {
 	    // Erroneous `self` or `{self}` use declaration
 	    if (segments.size () == 1)
-	      break;
-	    declared_name = segments[segments.size () - 2].as_string ();
+	      return;
+
+	    auto pre_self_segment = segments.rbegin () + 1;
+
+	    declared_name = pre_self_segment->as_string ();
+	    import_id = pre_self_segment->get_node_id ();
 	  }
 	else
-	  declared_name = path.get_final_segment ().as_string ();
-	locus = path.get_final_segment ().get_locus ();
+	  {
+	    declared_name = path.get_final_segment ().as_string ();
+	    import_id = path.get_final_segment ().get_node_id ();
+	  }
 	break;
       }
     case AST::UseTreeRebind::NewBindType::WILDCARD:
@@ -478,8 +590,28 @@ Early::finalize_rebind_import (const Early::ImportPair &mapping)
     }
 
   for (auto &&definition : data.definitions ())
-    toplevel.insert_or_error_out (
-      declared_name, locus, definition.first.get_node_id (), definition.second /* TODO: This isn't clear - it would be better if it was called .ns or something */);
+    {
+      ctx.map_usage (Usage (import_id),
+		     Definition (definition.definition.get_node_id ()),
+		     definition.ns);
+
+      toplevel.insert_or_error_out (declared_name, path.get_locus (),
+				    definition.definition.get_node_id (),
+				    definition.ns);
+
+      dirty = dirty || toplevel.is_dirty ();
+
+      // Map the import to the glob container if it exists - this is important
+      // for 2-stepped glob imports which refer to glob containers, e.g.
+      //
+      // enum Foo { ... }
+      // pub use Foo;
+      // use self::Foo::*;
+      auto &mappings = Analysis::Mappings::get ();
+      if (auto container = mappings.lookup_glob_container (
+	    definition.definition.get_node_id ()))
+	mappings.insert_glob_container (import_id, container.value ());
+    }
 }
 
 void
@@ -493,8 +625,12 @@ Early::visit (AST::UseDeclaration &decl)
       if (rebind.get_path ().get_final_segment ().is_lower_self_seg ())
 	{
 	  collect_error (
-	    Error (decl.get_locus (), ErrorCode::E0429,
+	    Error (rebind.get_path ().get_final_segment ().get_locus (),
+		   ErrorCode::E0429,
 		   "%<self%> imports are only allowed within a { } list"));
+	  // We must not continue, malformed use declaration must not be
+	  // finalized.
+	  return;
 	}
     }
 

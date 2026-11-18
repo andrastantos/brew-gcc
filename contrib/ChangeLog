@@ -1,3 +1,291 @@
+2026-11-10  Oleg Tolmatcev  <oleg.tolmatcev@gmail.com>
+
+	* gcc-changelog/git_commit.py: Use posixpath for repository paths.
+	* git-backport.py: Pass argument lists to subprocess.run and use
+	sys.executable.
+	* git-commit-mklog.py: Pass an argument list to subprocess.run.
+	* git-fix-changelog.py: Pass argument lists to subprocess functions
+	and use sys.executable.
+	* mklog.py: Use posixpath for repository paths.  Pass argument lists
+	to subprocess functions.  Remove unreachable code.
+
+2026-11-10  Oleg Tolmatcev  <oleg.tolmatcev@gmail.com>
+
+	* analyze_brprob.py: Use identity comparisons with None and a raw
+	string for a regular expression.
+	* check_GNU_style_lib.py: Use identity comparisons with None.
+	* regenerate-sarif-spec-index.py: Remove a semicolon.
+	* testsuite-management/validate_failures.py: Use identity
+	comparisons with None.
+	* unicode/gen_libstdcxx_unicode_data.py: Remove semicolons.
+	* unused_functions.py: Likewise.
+
+2026-10-19  Richard Earnshaw  <rearnsha@arm.com>
+
+	* gcc_update: Add a new option, --no-fetch.  If specified, run
+	git rebase rather than git pull.
+
+2026-10-08  Zhongteng Gui  <dragon-archer@outlook.com>
+
+	PR target/127137
+	* config-list.mk (LIST): Remove i686-mingw32crt.
+
+2026-10-08  Arthur Cohen  <arthur.cohen@opensrcsec.com>
+
+	* mklog.py: Add "enum class" as a type starter to the struct regex.
+
+2026-09-30  Jakub Jelinek  <jakub@redhat.com>
+
+	* gcc-changelog/git_update_version.py (ignored_commits): Add two new
+	hashes.
+
+2026-09-18  Jakub Jelinek  <jakub@redhat.com>
+
+	* unicode/README: Replace Unicode 17 version with 18.
+	* unicode/gen_libstdcxx_unicode_data.py: Use 180000 instead of
+	160000 in _GLIBCXX_GET_UNICODE_DATA test.
+	* unicode/DerivedCoreProperties.txt: Updated from Unicode 18.0.
+	* unicode/emoji-data.txt: Likewise.
+	* unicode/PropList.txt: Likewise.
+	* unicode/HangulSyllableType.txt: Likewise.
+	* unicode/DerivedNormalizationProps.txt: Likewise.
+	* unicode/NameAliases.txt: Likewise.
+	* unicode/UnicodeData.txt: Likewise.
+	* unicode/EastAsianWidth.txt: Likewise.
+
+2026-09-15  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	* filter-clang-warnings.py (skip_warning): Match numbered attribute
+	files.
+
+2026-09-11  Richard Biener  <rguenther@suse.de>
+
+	* gcc-changelog/git_update_version.py: Remove gcc-13 branch
+	from active branches.
+
+2026-09-09  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	* filter-clang-warnings.py (skip_warning): Match insn-emit rather
+	than insn-emit.cc.
+
+2026-09-04  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR middle-end/125507
+	* filter_params.py (filter_src): Remove ENUM_BITFIELD.
+	(FilteringTests): Ditto.
+
+2026-09-04  Pedro Alves  <pedro@palves.net>
+
+	* dg-extract-results.py: Handle new "-f list-file" option.
+	* dg-extract-results.sh: Ditto.
+
+2026-09-03  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* gen_autofdo_event.py: Add missed updates for passing "--inherit" and
+	"-o $perf_file" to perf.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (maintainer_schema): Set the minimum array
+	size to 1 for email, inactive_email and aliases.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (_unilower): New function.
+	(sort_users): Likewise.
+	(verify): Check the sort order of the user data.
+	(store): Sort the user data before writing it.
+	* add-write-after.py (unilower): Delete
+	(main): No need to sort the user data here now.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (maintainer_schema): Allow inactive_DCO
+	for retired DCO addresses.
+	(_check_dco): Validate inactive_DCO entries as well.
+	(validate): Check inactive_DCO data.
+	* gen-MAINTAINERS.py (format_output): Combine inactive_DCO with
+	DCO entries.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (maintainer_schema): Move the DCO data
+	to a top-level user list.  Ensure that each user entry has at
+	least one of roles and DCO.
+	(_check_dco): New function.
+	(validate): Use it.  Handle roles being absent.
+	* gen-MAINTAINERS.py (format_output):  Scan the list of DCO
+	entries if generating the DCO table.  Split the overflowing
+	field logic into ...
+	(paginate): ... here.
+	* add-write-after.py (getuserdata): Write DCO data to new field.
+	Check that DCO email address is known and add to inactive_email
+	if not.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (maintainer_schema): Fix size validation
+	checks.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py(store): New function.
+	* add-write-after.py(main): Use it.
+
+2026-09-01  Jason Merrill  <jason@redhat.com>
+
+	* gcc-changelog/git_commit.py (dr_regex): Add CWG|LWG and [DP]NNNN.
+
+2026-08-19  Richard Earnshaw  <rearnsha@arm.com>
+
+	* add-write-after.py (getuserdata): Also capture an optional
+	forge ID.
+
+2026-08-18  Richard Earnshaw  <rearnsha@arm.com>
+
+	* forge_teams.py: New file.
+
+2026-08-18  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (schema): Permit 'forgeid' on users
+	entries and 'teams' on subsystem entries.
+
+2026-08-18  Claudio Bantaloukas  <claudio.bantaloukas@arm.com>
+
+	* maintainer_utils.py: Add inactive_email property.
+
+2026-08-06  Jakub Jelinek  <jakub@redhat.com>
+
+	* unicode/README: Add another argument to makeucnid
+	invocation.
+
+2026-08-05  Andrew Burgess  <aburgess@redhat.com>
+
+	* texi2pod.pl: Handle @option as indicating command to @table.
+
+2026-08-04  Даниил Гусев  <d.gusev2007@gmail.com>
+
+	* download_prerequisites (base_url): Allow overriding via the
+	GCC_PREREQUISITES_BASE_URL environment variable.  Document it
+	in --help output.
+
+2026-07-29  Torbjörn SVENSSON  <torbjorn.svensson@foss.st.com>
+
+	* check_GNU_style_lib.py: Use visual tab size rather than
+	blindly using 8 spaces as replacement.
+
+2026-07-22  Andrea Pinski  <andrew.pinski@oss.qualcomm.com>
+	    Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	PR testsuite/126162
+	* maintainer_utils.py: Move to the older scheme which
+	is valid for MAINTAINERS.yml.
+
+2026-07-17  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* test_installed (--with-auto-host-h): New option.
+	(--with-et-static): Likewise.
+	(--with-objc): Likewise.
+	Generate et-static.def if --with-auto-host-h is specified.
+	(GCC_UNDER_TEST): Only emit to site.def if enabled.
+	(GXX_UNDER_TEST): Likewise.
+	(GFORTRAN_UNDER_TEST): Likewise.
+	(OBJC_UNDER_TEST): Likewise.
+	(et_static): Emit to site.exp if specified.
+
+2026-07-16  Jonathan Wakely  <jwakely@redhat.com>
+
+	PR libstdc++/125956
+	* relpath.sh: For invalid arguments write to stderr and exit
+	with non-zero status.
+
+2026-07-09  Stefan Schulze Frielinghaus  <stefansf@gcc.gnu.org>
+
+	* compare-all-tests: Remove opts -m31 and so on.
+	* config-list.mk: Remove s390-linux-gnu.
+
+2026-07-07  Richard Earnshaw  <rearnsha@arm.com>
+
+	* add-write-after.py: New file.
+
+2026-07-07  Richard Earnshaw  <rearnsha@arm.com>
+
+	* gen-MAINTAINERS.py: New file.
+	* maintainer_utils.py: New file.
+	* check-MAINTAINERS.py: Delete.
+
+2026-07-07  Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	* download_prerequisites (gettext): Set gettext source file to
+	gettext-1.0.tar.gz.
+	* prerequisites.md5: Update gettext hash.
+	* prerequisites.sha512: Update gettext hash.
+
+2026-07-01  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* config-list.mk (sparc64-sun-solaris2.11): Remove --with-gnu-ld.
+
+2026-07-01  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* config-list.mk (sparc64-sun-solaris2.11): Remove --with-gnu-as.
+
+2026-06-09  Jakub Jelinek  <jakub@redhat.com>
+
+	* gcc-changelog/git_update_version.py (ignored_commits): Add
+	'843b49269eaca82860ab4171f9644b5c411f05fc' and
+	'5c0785d62ca44b9073e543b2b3dbb04f0aca83af', remove all older
+	hashes.
+
+2026-06-05  Jonathan Wakely  <jwakely@redhat.com>
+
+	* download_prerequisites: use 'command -v' to check for wget and
+	curl.
+
+2026-06-04  Jakub Jelinek  <jakub@redhat.com>
+
+	* gcc-changelog/git_update_version.py (ignored_commits):
+	Add 86ff0e88764bfbff1a4989414ec83c0eaa723107.
+
+2026-05-29  Kevin Buettner  <kevinb@redhat.com>
+
+	* dg-extract-results.py: Show warnings instead of erroring out
+	when encountering an unparseable file.
+
+2026-05-27  Richard Earnshaw  <rearnsha@arm.com>
+
+	* check-MAINTAINERS.py (get_surname): Rename to ...
+	(get_name_for_sort): ... this.  Add the forenames after the
+	surname.
+	(check_group): match against regexs and support additional
+	fields for secondary sorting.
+	(sections): Rework to use regexs, add rules for the other
+	sections in the MAINTAINERS file.
+
+2026-05-12  Léo Hardt  <leom.hardt@inf.ufrgs.br>
+
+	* texi2pod.pl: Remove rule to parse the defunct @gol macro.
+
+2026-05-11  Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
+
+	PR other/125275
+	* check_GNU_style_lib.py (LineLengthCheck.check): Ignore
+	filenames that end with .opt.
+	(FunctionParenthesisCheck.check): Likewise.
+
+2026-05-04  Iain Buclaw  <ibuclaw@gdcproject.org>
+
+	* compare-all-tests: Remove references to m32c.
+	* config-list.mk: Likewise.
+
+2026-04-30  Jakub Jelinek  <jakub@redhat.com>
+
+	* gennews (files): Add files for GCC 16.
+
+2026-04-22  Jakub Jelinek  <jakub@redhat.com>
+
+	* gcc-changelog/git_update_version.py (active_refs): Add
+	releases/gcc-16.
+
 2026-04-15  Jakub Jelinek  <jakub@redhat.com>
 
 	* gcc-changelog/git_update_version.py: Add

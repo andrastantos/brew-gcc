@@ -36,10 +36,12 @@ extern tree follow_all_ssa_edges (tree);
 extern bool fold_stmt (gimple_stmt_iterator *, bitmap = nullptr);
 extern bool fold_stmt (gimple_stmt_iterator *, tree (*) (tree), bitmap = nullptr);
 extern bool fold_stmt_inplace (gimple_stmt_iterator *, tree (*) (tree) = no_follow_ssa_edges);
-extern tree maybe_fold_and_comparisons (tree, enum tree_code, tree, tree,
+extern tree maybe_fold_and_comparisons (tree, enum tree_code,
+					enum tree_code, tree, tree,
 					enum tree_code, tree, tree,
 					basic_block = nullptr);
-extern tree maybe_fold_or_comparisons (tree, enum tree_code, tree, tree,
+extern tree maybe_fold_or_comparisons (tree, enum tree_code,
+				       enum tree_code, tree, tree,
 				       enum tree_code, tree, tree,
 				       basic_block = nullptr);
 extern bool optimize_atomic_compare_exchange_p (gimple *);
@@ -61,7 +63,7 @@ extern tree gimple_fold_indirect_ref (tree);
 extern bool gimple_fold_builtin_sprintf (gimple_stmt_iterator *);
 extern bool gimple_fold_builtin_snprintf (gimple_stmt_iterator *);
 extern bool arith_code_with_undefined_signed_overflow (tree_code);
-extern bool gimple_needing_rewrite_undefined (gimple *);
+extern bool gimple_needing_rewrite_undefined (gimple *, bool = false);
 extern void rewrite_to_defined_unconditional (gimple_stmt_iterator *);
 extern gimple_seq rewrite_to_defined_unconditional (gimple *);
 extern void replace_call_with_value (gimple_stmt_iterator *, tree);
@@ -264,11 +266,11 @@ gimple_build_round_up (gimple_seq *seq, tree type, tree old_size,
 				UNKNOWN_LOCATION, type, old_size, align);
 }
 
-extern bool gimple_stmt_nonnegative_warnv_p (gimple *, bool *, int = 0);
+extern bool gimple_stmt_nonnegative_p (gimple *, int = 0);
 extern bool gimple_stmt_integer_valued_real_p (gimple *, int = 0);
 extern void mark_lhs_in_seq_for_dce (bitmap, gimple_seq);
 
-/* In gimple-match.cc.  */
+/* In gimple-match-exports.cc.  */
 extern tree gimple_simplify (enum tree_code, tree, tree,
 			     gimple_seq *, tree (*)(tree));
 extern tree gimple_simplify (enum tree_code, tree, tree, tree,

@@ -157,7 +157,7 @@ struct priority_map_traits
   {
     entry.m_key = 0;
   }
-  // Entries are not deleteable
+  // Entries are not deletable
   template <typename T> static bool is_deleted (const T &)
   {
     return false;
@@ -1634,6 +1634,12 @@ grokbitfield (const cp_declarator *declarator,
       return NULL_TREE;
     }
 
+  /* [class.bit]/2 "An unnamed bit-field shall not be declared with
+     a cv-qualified type."  */
+  if (!DECL_NAME (value) && TYPE_QUALS (type) != TYPE_UNQUALIFIED)
+    pedwarn (DECL_SOURCE_LOCATION (value), 0,
+	     "unnamed bit-field cannot be cv-qualified");
+
   int flags = LOOKUP_IMPLICIT;
   if (init && DIRECT_LIST_INIT_P (init))
     flags = LOOKUP_NORMAL;
@@ -1745,21 +1751,16 @@ is_late_template_attribute (tree attr, tree decl)
       if (!type)
 	return true;
 
-      /* We can't apply any attributes to a completely unknown type until
-	 instantiation time.  */
-      enum tree_code code = TREE_CODE (type);
-      if (code == TEMPLATE_TYPE_PARM
-	  || code == BOUND_TEMPLATE_TEMPLATE_PARM
-	  || code == TYPENAME_TYPE)
-	return true;
-      /* Also defer most attributes on dependent types.  This is not
+      /* Some attributes specifically apply to templates.  */
+      if (is_attribute_p ("abi_tag", name)
+	  || is_attribute_p ("deprecated", name)
+	  || is_attribute_p ("unavailable", name)
+	  || is_attribute_p ("visibility", name)
+	  || is_attribute_p ("no_specializations", name))
+	return false;
+      /* Defer most attributes on dependent types.  This is not
 	 necessary in all cases, but is the better default.  */
-      else if (dependent_type_p (type)
-	       /* But some attributes specifically apply to templates.  */
-	       && !is_attribute_p ("abi_tag", name)
-	       && !is_attribute_p ("deprecated", name)
-	       && !is_attribute_p ("unavailable", name)
-	       && !is_attribute_p ("visibility", name))
+      else if (dependent_type_p (type))
 	return true;
       else
 	return false;
@@ -2144,6 +2145,12 @@ cplus_decl_attributes (tree *decl, tree attributes, int flags)
     {
       if (check_for_bare_parameter_packs (attributes))
 	return;
+
+      /* Ask the target now rather than leaving it to decl_attributes below:
+	 a target that adds an attribute of its own in reaction to one of
+	 these would never see the ones we are about to splice out.  */
+      targetm.insert_attributes (STRIP_TEMPLATE (*decl), &attributes);
+
       late_attrs = splice_template_attributes (&attributes, *decl);
     }
 
@@ -2661,9 +2668,7 @@ maybe_make_one_only (tree decl)
   if (! flag_weak)
     return;
 
-  /* These are not to be output.  */
-  if (consteval_only_p (decl))
-    return;
+  gcc_checking_assert (!consteval_only_p (decl));
 
   /* We can't set DECL_COMDAT on functions, or cp_finish_file will think
      we can get away with not emitting them if they aren't used.  We need
@@ -2821,9 +2826,7 @@ var_finalized_p (tree var)
 void
 mark_needed (tree decl)
 {
-  /* These are not to be output.  */
-  if (consteval_only_p (decl))
-    return;
+  gcc_checking_assert (!consteval_only_p (decl));
 
   TREE_USED (decl) = 1;
   if (TREE_CODE (decl) == FUNCTION_DECL)
@@ -3298,7 +3301,7 @@ determine_visibility (tree decl)
   enum symbol_visibility orig_visibility = DECL_VISIBILITY (decl);
 
   /* The decl may be a template instantiation, which could influence
-     visibilty.  */
+     visibility.  */
   tree template_decl = NULL_TREE;
   if (TREE_CODE (decl) == TYPE_DECL)
     {
@@ -3601,6 +3604,7 @@ constrain_class_visibility (tree type)
 			       type, t, nlt);
 		  }
 		else if (cxx_dialect > cxx98
+			 && OVERLOAD_TYPE_P (ftype)
 			 && !decl_anon_ns_mem_p (ftype))
 		  warning (OPT_Wsubobject_linkage, "\
 %qT has a field %q#D whose type has internal linkage",
@@ -3664,7 +3668,7 @@ constrain_class_visibility (tree type)
    types and declarations when it gets a name for linkage purposes from a
    typedef.  */
 // FIXME: It is now a DR for such a class type to contain anything
-// other than C.  So at minium most of this can probably be deleted.
+// other than C.  So at minimum most of this can probably be deleted.
 
 /* First reset the visibility of all the types.  */
 
@@ -4856,7 +4860,7 @@ one_static_initialization_or_destruction (bool initp, tree decl, tree init,
 
 /* Helper function for emit_partial_init_fini_fn and handle_tls_init.
    For structured bindings, disable stmts_are_full_exprs_p ()
-   on STATIC_INIT_DECOMP_BASE_P nodes, reenable it on the
+   on STATIC_INIT_DECOMP_BASE_P nodes, re-enable it on the
    first STATIC_INIT_DECOMP_NONBASE_P node and emit all the
    STATIC_INIT_DECOMP_BASE_P and STATIC_INIT_DECOMP_NONBASE_P
    consecutive nodes in a single STATEMENT_LIST wrapped with
@@ -5044,14 +5048,6 @@ prune_vars_needing_no_initialization (tree *vars)
 	 out now.  */
       if (init && TREE_CODE (init) == TREE_LIST
 	  && value_member (error_mark_node, init))
-	{
-	  var = &TREE_CHAIN (t);
-	  continue;
-	}
-
-      /* Reflections are consteval-only types and we don't want them
-	 to survive until gimplification.  */
-      if (consteval_only_p (decl))
 	{
 	  var = &TREE_CHAIN (t);
 	  continue;
@@ -5318,7 +5314,13 @@ decl_defined_p (tree decl)
   else
     {
       gcc_assert (VAR_P (decl));
-      return !DECL_EXTERNAL (decl);
+      return (!DECL_EXTERNAL (decl)
+	      /* An initialized variable is defined even if we've decided not
+		 to emit it, unless it's initialized within the class and not
+		 inline.  Note that finish_static_member_decl doesn't set
+		 DECL_IN_AGGR_P for inline variables, so we don't need to check
+		 DECL_INLINE_VAR_P here.  */
+	      || (DECL_INITIAL (decl) && !DECL_IN_AGGR_P (decl)));
     }
 }
 
@@ -6091,6 +6093,10 @@ c_parse_final_cleanups (void)
       /* Static data members are just like namespace-scope globals.  */
       FOR_EACH_VEC_SAFE_ELT (pending_statics, i, decl)
 	{
+	  /* Rewrite the REFLECT_EXPR with 0 so that the ME can process it.  */
+	  if (flag_reflection && DECL_INITIAL (decl))
+	    rewrite_null_reflection (DECL_INITIAL (decl));
+
 	  if (consteval_only_p (decl)
 	      || var_finalized_p (decl)
 	      || DECL_REALLY_EXTERN (decl)
@@ -6110,16 +6116,17 @@ c_parse_final_cleanups (void)
 	reconsider = true;
     }
 
-  if (flag_contracts)
-    {
-      emit_contract_wrapper_func (/*done*/true);
-      maybe_emit_violation_handler_wrappers ();
-    }
-
   /* All templates have been instantiated.  */
   at_eof = 2;
 
   void *module_cookie = finish_module_processing (parse_in);
+
+  if (flag_contracts)
+    {
+      /* Keep these out of the module to avoid duplicate definitions.  */
+      emit_contract_wrapper_func (/*done*/true);
+      maybe_emit_violation_handler_wrappers ();
+    }
 
   lower_var_init ();
 
@@ -6806,8 +6813,9 @@ mark_used (tree decl, tsubst_flags_t complain /* = tf_warning_or_error */)
 
   if (builtin_pack_fn_p (decl))
     {
-      error ("use of built-in parameter pack %qD outside of a template",
-	     DECL_NAME (decl));
+      if (complain & tf_error)
+	error ("use of built-in parameter pack %qD outside of a template",
+	       DECL_NAME (decl));
       return false;
     }
 

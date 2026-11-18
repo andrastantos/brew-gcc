@@ -69,7 +69,8 @@ tree gfc_copy_only_alloc_comp (gfc_symbol *, tree, tree, int);
 
 tree gfc_allocate_pdt_comp (gfc_symbol *, tree, int, gfc_actual_arglist *);
 tree gfc_deallocate_pdt_comp (gfc_symbol *, tree, int);
-tree gfc_check_pdt_dummy (gfc_symbol *, tree, int, gfc_actual_arglist *);
+tree gfc_check_pdt_dummy (gfc_symbol *, tree, int, gfc_actual_arglist *,
+			  bool intent_out = false);
 
 tree gfc_alloc_allocatable_for_assignment (gfc_loopinfo*, gfc_expr*, gfc_expr*);
 
@@ -138,8 +139,6 @@ void gfc_conv_loop_setup (gfc_loopinfo *, locus *);
 void gfc_set_delta (gfc_loopinfo *);
 /* Resolve array assignment dependencies.  */
 void gfc_conv_resolve_dependencies (gfc_loopinfo *, gfc_ss *, gfc_ss *);
-/* Build a null array descriptor constructor.  */
-tree gfc_build_null_descriptor (tree);
 
 /* Get a single array element.  */
 void gfc_conv_array_ref (gfc_se *, gfc_array_ref *, gfc_expr *, locus *);
@@ -150,6 +149,11 @@ void gfc_conv_tmp_array_ref (gfc_se * se);
 void gfc_get_dataptr_offset (stmtblock_t*, tree, tree, tree, bool, gfc_expr*);
 /* Obtain the span of an array.  */
 tree gfc_get_array_span (tree, gfc_expr *);
+/* Whether the element spacing of a span addressed dummy can be folded into
+   the strides of its descriptor.  */
+bool gfc_span_folds_into_stride (gfc_symbol *);
+/* Test that the elements of an array are not subobjects of larger ones.  */
+void gfc_conv_span_is_elem_len (gfc_se *, gfc_expr *);
 /* Evaluate an array expression.  */
 void gfc_conv_expr_descriptor (gfc_se *, gfc_expr *);
 /* Convert an array for passing as an actual function parameter.  */
@@ -169,32 +173,6 @@ tree gfc_conv_array_ubound (tree, int);
 tree gfc_trans_array_bounds (tree, gfc_symbol *, tree *, stmtblock_t *);
 void gfc_trans_array_cobounds (tree, stmtblock_t *, const gfc_symbol *);
 
-/* Build expressions for accessing components of an array descriptor.  */
-void gfc_get_descriptor_offsets_for_info (const_tree, tree *, tree *, tree *, tree *,
-					  tree *, tree *, tree *, tree *);
-
-tree gfc_conv_descriptor_data_get (tree);
-tree gfc_conv_descriptor_offset_get (tree);
-tree gfc_conv_descriptor_span_get (tree);
-tree gfc_conv_descriptor_dtype (tree);
-tree gfc_conv_descriptor_rank (tree);
-tree gfc_conv_descriptor_elem_len (tree);
-tree gfc_conv_descriptor_version (tree);
-tree gfc_conv_descriptor_attribute (tree);
-tree gfc_conv_descriptor_type (tree);
-tree gfc_get_descriptor_dimension (tree);
-tree gfc_conv_descriptor_stride_get (tree, tree);
-tree gfc_conv_descriptor_lbound_get (tree, tree);
-tree gfc_conv_descriptor_ubound_get (tree, tree);
-tree gfc_conv_descriptor_token (tree);
-
-void gfc_conv_descriptor_data_set (stmtblock_t *, tree, tree);
-void gfc_conv_descriptor_offset_set (stmtblock_t *, tree, tree);
-void gfc_conv_descriptor_span_set (stmtblock_t *, tree, tree);
-void gfc_conv_descriptor_stride_set (stmtblock_t *, tree, tree, tree);
-void gfc_conv_descriptor_lbound_set (stmtblock_t *, tree, tree, tree);
-void gfc_conv_descriptor_ubound_set (stmtblock_t *, tree, tree, tree);
-
 /* CFI descriptor.  */
 tree gfc_get_cfi_desc_base_addr (tree);
 tree gfc_get_cfi_desc_elem_len (tree);
@@ -206,9 +184,6 @@ tree gfc_get_cfi_dim_lbound (tree, tree);
 tree gfc_get_cfi_dim_extent (tree, tree);
 tree gfc_get_cfi_dim_sm (tree, tree);
 
-
-/* Shift lower bound of descriptor, updating ubound and offset.  */
-void gfc_conv_shift_descriptor_lbound (stmtblock_t*, tree, int, tree);
 
 /* Add pre-loop scalarization code for intrinsic functions which require
    special handling.  */
@@ -223,5 +198,3 @@ void gfc_trans_string_copy (stmtblock_t *, tree, tree, int, tree, tree, int);
 
 /* Calculate extent / size of an array.  */
 tree gfc_conv_array_extent_dim (tree, tree, tree*);
-tree gfc_conv_descriptor_size (tree, int);
-tree gfc_conv_descriptor_cosize (tree, int, int);

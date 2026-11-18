@@ -45,6 +45,7 @@
 #pragma GCC diagnostic ignored "-Wpedantic" // Q suffix
 #pragma GCC diagnostic ignored "-Wlong-long"
 #pragma GCC diagnostic ignored "-Wc++23-extensions"
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations" // denorm enums
 
 #include <bits/c++config.h>
 
@@ -81,10 +82,15 @@
 // The default values are appropriate for many 32-bit targets.
 
 // GCC only intrinsically supports modulo integral types.  The only remaining
-// integral exceptional values is division by zero.  Only targets that do not
-// signal division by zero in some "hard to ignore" way should use false.
+// integral exceptional values is division by zero, but that's an operation,
+// not a value, and traps is about values that trap (Issue554), so there aren't
+// any for integral types.  The standard has numeric_limits<bool>::traps
+// explicitly set to false.  However, we used to set them all to true based on
+// the division-by-zero misinterpretation, so we retain this macro, and those
+// who relied on the misinterpretation can restore it with a command-line
+// define and revert the ABI-changing effects of this fix.
 #ifndef __glibcxx_integral_traps
-# define __glibcxx_integral_traps true
+# define __glibcxx_integral_traps false
 #endif
 
 // float
@@ -186,14 +192,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  These values represent the presence or absence of a variable number
    *  of exponent bits.  This type is used in the std::numeric_limits class.
   */
-  enum float_denorm_style
+  enum _GLIBCXX23_DEPRECATED float_denorm_style
   {
     /// Indeterminate at compile time whether denormalized values are allowed.
-    denorm_indeterminate = -1,
+    denorm_indeterminate _GLIBCXX23_DEPRECATED = -1,
     /// The type does not allow denormalized values.
-    denorm_absent        = 0,
+    denorm_absent        _GLIBCXX23_DEPRECATED = 0,
     /// The type allows denormalized values.
-    denorm_present       = 1
+    denorm_present       _GLIBCXX23_DEPRECATED = 1
   };
 
   /**
@@ -270,10 +276,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
 
     /** See std::float_denorm_style for more information.  */
+    _GLIBCXX23_DEPRECATED
     static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm = denorm_absent;
 
     /** True if loss of accuracy is detected as a denormalization loss,
 	rather than as an inexact result. */
+    _GLIBCXX23_DEPRECATED
     static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
     /** True if-and-only-if the type adheres to the IEC 559 standard, also
@@ -426,8 +434,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR bool
@@ -446,9 +456,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool is_bounded = true;
       static _GLIBCXX_USE_CONSTEXPR bool is_modulo = false;
 
-      // It is not clear what it means for a boolean type to trap.
-      // This is a DR on the LWG issue list.  Here, I use integer
-      // promotion semantics.
       static _GLIBCXX_USE_CONSTEXPR bool traps = __glibcxx_integral_traps;
       static _GLIBCXX_USE_CONSTEXPR bool tinyness_before = false;
       static _GLIBCXX_USE_CONSTEXPR float_round_style round_style
@@ -496,8 +503,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR
@@ -564,8 +573,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR signed char
@@ -635,8 +646,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR unsigned char
@@ -707,8 +720,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR wchar_t
@@ -771,8 +786,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
 	= denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR char8_t
@@ -836,7 +853,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static constexpr bool has_infinity = false;
       static constexpr bool has_quiet_NaN = false;
       static constexpr bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static constexpr float_denorm_style has_denorm = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static constexpr bool has_denorm_loss = false;
 
       static constexpr char16_t
@@ -897,7 +916,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static constexpr bool has_infinity = false;
       static constexpr bool has_quiet_NaN = false;
       static constexpr bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static constexpr float_denorm_style has_denorm = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static constexpr bool has_denorm_loss = false;
 
       static constexpr char32_t
@@ -963,8 +984,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR short
@@ -1032,8 +1055,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR unsigned short
@@ -1103,8 +1128,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR int
@@ -1172,8 +1199,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR unsigned int
@@ -1242,8 +1271,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR long
@@ -1311,8 +1342,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR unsigned long
@@ -1384,8 +1417,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR long long
@@ -1454,8 +1489,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
        = denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR unsigned long long
@@ -1523,8 +1560,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;		\
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;		\
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;	\
+      _GLIBCXX23_DEPRECATED						\
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm	\
 	= denorm_absent;						\
+      _GLIBCXX23_DEPRECATED						\
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;	\
 									\
       static _GLIBCXX_CONSTEXPR TYPE					\
@@ -1592,8 +1631,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = false;		\
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = false;		\
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;	\
+      _GLIBCXX23_DEPRECATED						\
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm	\
        = denorm_absent; 						\
+      _GLIBCXX23_DEPRECATED						\
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;	\
 									\
       static _GLIBCXX_CONSTEXPR unsigned TYPE 				\
@@ -1713,8 +1754,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = __FLT_HAS_INFINITY__;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = __FLT_HAS_QUIET_NAN__;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = has_quiet_NaN;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
 	= bool(__FLT_HAS_DENORM__) ? denorm_present : denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss
        = __glibcxx_float_has_denorm_loss;
 
@@ -1788,8 +1831,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = __DBL_HAS_INFINITY__;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = __DBL_HAS_QUIET_NAN__;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = has_quiet_NaN;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
 	= bool(__DBL_HAS_DENORM__) ? denorm_present : denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss
         = __glibcxx_double_has_denorm_loss;
 
@@ -1863,8 +1908,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static _GLIBCXX_USE_CONSTEXPR bool has_infinity = __LDBL_HAS_INFINITY__;
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN = __LDBL_HAS_QUIET_NAN__;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = has_quiet_NaN;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
 	= bool(__LDBL_HAS_DENORM__) ? denorm_present : denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss
 	= __glibcxx_long_double_has_denorm_loss;
 
@@ -1956,9 +2003,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	= __glibcxx_concat3 (__FLT, BITSIZE, _HAS_QUIET_NAN__);		\
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN		\
 	= has_quiet_NaN;						\
+      _GLIBCXX23_DEPRECATED						\
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm	\
 	= bool(__glibcxx_concat3 (__FLT, BITSIZE, _HAS_DENORM__))	\
 	  ? denorm_present : denorm_absent;				\
+      _GLIBCXX23_DEPRECATED						\
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;	\
 									\
       static _GLIBCXX_CONSTEXPR _Float##BITSIZE				\
@@ -2055,8 +2104,10 @@ __glibcxx_float_n(128)
       static _GLIBCXX_USE_CONSTEXPR bool has_quiet_NaN
 	= __BFLT16_HAS_QUIET_NAN__;
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = has_quiet_NaN;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
 	= bool(__BFLT16_HAS_DENORM__) ? denorm_present : denorm_absent;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR __gnu_cxx::__bfloat16_t
@@ -2155,8 +2206,10 @@ __glibcxx_float_n(128)
 #else
       static _GLIBCXX_USE_CONSTEXPR bool has_signaling_NaN = false;
 #endif
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR float_denorm_style has_denorm
 	= denorm_present;
+      _GLIBCXX23_DEPRECATED
       static _GLIBCXX_USE_CONSTEXPR bool has_denorm_loss = false;
 
       static _GLIBCXX_CONSTEXPR __float128

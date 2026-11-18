@@ -936,6 +936,8 @@ accessible_p (tree type, tree decl, bool consider_local_p)
   /* Anonymous unions don't have their own access.  */
   if (ANON_AGGR_TYPE_P (type))
     type = type_context_for_name_lookup (type);
+  if (ANON_AGGR_TYPE_P (otype))
+    otype = type_context_for_name_lookup (otype);
 
   /* [class.access.base]
 
@@ -1142,6 +1144,7 @@ build_baselink (tree binfo, tree access_binfo, tree functions, tree optype)
 {
   tree baselink;
 
+  gcc_checking_assert (binfo && access_binfo);
   gcc_assert (OVL_P (functions) || TREE_CODE (functions) == TEMPLATE_ID_EXPR);
   gcc_assert (!optype || TYPE_P (optype));
   gcc_assert (TREE_TYPE (functions));
@@ -1277,9 +1280,10 @@ lookup_member (tree xbasetype, tree name, int protect, bool want_type,
     {
       tree decl = is_overloaded_fn (rval) ? get_first_fn (rval) : rval;
       decl = strip_using_decl (decl);
-      /* A dependent USING_DECL will be checked after tsubsting.  */
-      if (TREE_CODE (decl) != USING_DECL
-	  && !DECL_IOBJ_MEMBER_FUNCTION_P (decl)
+      /* A dependent declaration will be checked after tsubsting.  */
+      if (!dependent_scope_p (DECL_CONTEXT (decl))
+	  && !(DECL_DECLARES_FUNCTION_P (decl)
+	       && DECL_IOBJ_MEMBER_FUNCTION_P (decl))
 	  && !perform_or_defer_access_check (basetype_path, decl, decl,
 					     complain, afi))
 	return error_mark_node;
@@ -2127,15 +2131,13 @@ check_final_overrider (tree overrider, tree basefn)
       return 0;
     }
 
-  /* A class with a consteval virtual function that overrides a virtual
-     function that is not consteval shall have consteval-only type (CWG 3117).
-     A consteval virtual function shall not be overridden by a virtual
-     function that is not consteval.  */
+  /* [class.virtual]/18: A non-immediate virtual function shall not be
+     overridden by an immediate virtual function.  An immediate virtual
+     function shall not be overridden by a non-immediate virtual function.  */
   if ((DECL_IMMEDIATE_FUNCTION_P (basefn)
        && !DECL_IMMEDIATE_FUNCTION_P (overrider))
       || (!DECL_IMMEDIATE_FUNCTION_P (basefn)
-	  && DECL_IMMEDIATE_FUNCTION_P (overrider)
-	  && !consteval_only_p (overrider)))
+	  && DECL_IMMEDIATE_FUNCTION_P (overrider)))
     {
       auto_diagnostic_group d;
       if (DECL_IMMEDIATE_FUNCTION_P (overrider))

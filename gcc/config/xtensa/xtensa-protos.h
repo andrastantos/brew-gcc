@@ -29,18 +29,18 @@ extern bool xtensa_b4const_or_zero (HOST_WIDE_INT);
 extern bool xtensa_b4constu (HOST_WIDE_INT);
 extern bool xtensa_m1_or_1_thru_15 (HOST_WIDE_INT);
 extern bool xtensa_mask_immediate (HOST_WIDE_INT);
+extern int xtensa_fp_const (const REAL_VALUE_TYPE *);
 extern bool xtensa_mem_offset (unsigned, machine_mode);
 
 /* Functions within xtensa.cc that we reference.  */
 #ifdef RTX_CODE
-extern int xt_true_regnum (rtx);
 extern int xtensa_valid_move (machine_mode, rtx *);
 extern bool smalloffset_address_p (const_rtx);
 extern bool constantpool_address_p (const_rtx);
 extern int constantpool_mem_p (rtx);
 extern void xtensa_extend_reg (rtx, rtx);
 extern void xtensa_expand_conditional_branch (rtx *, machine_mode);
-extern int xtensa_expand_conditional_move (rtx *, int);
+extern int xtensa_expand_conditional_move (rtx *, machine_mode);
 extern int xtensa_expand_scc (rtx *, machine_mode);
 extern int xtensa_expand_block_move (rtx *);
 extern int xtensa_expand_block_set (rtx *);
@@ -60,6 +60,9 @@ extern bool xtensa_tls_referenced_p (rtx);
 extern enum rtx_code xtensa_shlrd_which_direction (rtx, rtx);
 extern bool xtensa_postreload_completed_p (void);
 extern char *xtensa_bswapsi2_output (rtx_insn *, const char *);
+extern bool xtensa_expand_load_force_l32 (rtx *, machine_mode, machine_mode,
+					  int);
+extern bool xtensa_rtl_combine_reached_p (void);
 
 #ifdef TREE_CODE
 extern void init_cumulative_args (CUMULATIVE_ARGS *, int);
@@ -78,10 +81,10 @@ extern long compute_frame_size (poly_int64);
 extern void xtensa_expand_prologue (void);
 extern void xtensa_expand_epilogue (void);
 extern void xtensa_adjust_reg_alloc_order (void);
-extern enum reg_class xtensa_regno_to_class (int regno);
 extern HOST_WIDE_INT xtensa_initial_elimination_offset (int from, int to);
 extern const char **xtensa_get_config_strings (void);
 extern rtl_opt_pass *make_pass_xtensa_largeconst1 (gcc::context *);
 extern rtl_opt_pass *make_pass_xtensa_largeconst2 (gcc::context *);
+extern rtl_opt_pass *make_pass_xtensa_before_combine (gcc::context *);
 
 #endif /* !__XTENSA_PROTOS_H__ */

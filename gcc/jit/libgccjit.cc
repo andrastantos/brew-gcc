@@ -640,6 +640,23 @@ gcc_jit_type_is_integral (gcc_jit_type *type)
 /* Public entrypoint.  See description in libgccjit.h.
 
    After error-checking, the real work is done by the
+   gcc::jit::recording::type::is_float method, in
+   jit-recording.cc.  */
+
+int
+gcc_jit_type_is_floating_point (gcc_jit_type *type)
+{
+  RETURN_VAL_IF_FAIL (type, FALSE, NULL, NULL, "NULL type");
+
+  if (type->is_vector ())
+    return false;
+
+  return type->is_float ();
+}
+
+/* Public entrypoint.  See description in libgccjit.h.
+
+   After error-checking, the real work is done by the
    gcc::jit::recording::type::is_vector method, in
    jit-recording.cc.  */
 
@@ -1502,7 +1519,7 @@ gcc_jit_context_new_struct_constructor (gcc_jit_context *ctxt,
 			       type->get_debug_string (),
 			       n_fields);
 
-  /* It is OK if fields are null here, indicating definiton order,
+  /* It is OK if fields are null here, indicating definition order,
      but there has to be a values array.  */
   RETURN_NULL_IF_FAIL (values,
 		       ctxt, loc,
@@ -2306,7 +2323,8 @@ gcc_jit_context_new_comparison (gcc_jit_context *ctxt,
   RETURN_NULL_IF_FAIL (a, ctxt, loc, "NULL a");
   RETURN_NULL_IF_FAIL (b, ctxt, loc, "NULL b");
   RETURN_NULL_IF_FAIL_PRINTF4 (
-    a->get_type ()->unqualified () == b->get_type ()->unqualified (),
+    compatible_types (a->get_type ()->unqualified (),
+		      b->get_type ()->unqualified ()),
     ctxt, loc,
     "mismatching types for comparison:"
     " a: %s (type: %s) b: %s (type: %s)",
@@ -2513,10 +2531,10 @@ is_valid_cast (gcc::jit::recording::type *src_type,
     if (dst_is_int || dst_is_bool)
       return true;
 
-  /* Permit casts between pointer types.  */
+  /* Permit casts between pointer types and integers and pointers.  */
   gcc::jit::recording::type *deref_src_type = src_type->is_pointer ();
   gcc::jit::recording::type *deref_dst_type = dst_type->is_pointer ();
-  if (deref_src_type && deref_dst_type)
+  if ((deref_src_type || src_is_int) && (deref_dst_type || dst_is_int))
     return true;
 
   return false;

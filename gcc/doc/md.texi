@@ -117,7 +117,7 @@ A @code{define_insn} is an RTL expression containing four or five operands:
 @enumerate
 @item
 An optional name @var{n}.  When a name is present, the compiler
-automically generates a C++ function @samp{gen_@var{n}} that takes
+automatically generates a C++ function @samp{gen_@var{n}} that takes
 the operands of the instruction as arguments and returns the instruction's
 rtx pattern.  The compiler also assigns the instruction a unique code
 @samp{CODE_FOR_@var{n}}, with all such codes belonging to an enum
@@ -523,6 +523,39 @@ operand @var{n} at that point in the string.
 alternate fashion.  Four letters have standard, built-in meanings described
 below.  The machine description macro @code{PRINT_OPERAND} can define
 additional letters with nonstandard meanings.
+
+@samp{%[@var{n}]} is another way of writing operand @var{n}.  The brackets
+separate the operand number from any literal digits that follow it.
+
+@samp{%[@var{name}:@var{n}]} is the same idea as
+@samp{%@var{letter}@var{n}}, but with a multi-character target-specific
+modifier named @var{name}.  GCC parses the bracketed name and passes it to
+@code{PRINT_OPERAND} as an opaque integer code supplied by the target's
+@code{TARGET_PRINT_OPERAND_MODIFIER} hook.  This form is
+useful when a single-letter modifier would be too cryptic, or when a target
+has used most of its single-letter namespace.  The modifier name can include
+text substituted by the machine description reader, such as mode attributes.
+It can also contain comma-separated nonempty components; GCC records the
+full text before the colon and leaves any further interpretation to the
+target.
+
+The operand part can list more than one operand, as in
+@samp{%[@var{name}:@var{n},@var{m}]}.  @code{PRINT_OPERAND} receives
+@var{n}; the target can use @code{output_operand_modifier_operand} to
+access either operand.  Operands in a list must be numbered.
+
+For example, a target could write:
+
+@example
+(define_insn "example_extract"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+        (match_operand:SI 1 "register_operand" "r"))]
+  ""
+  "extract\t%[lowpart:0], %1")
+@end example
+
+@noindent
+and then define @samp{lowpart} in its @code{PRINT_OPERAND} hook.
 
 @samp{%c@var{digit}} can be used to substitute an operand that is a
 constant value without the syntax that normally indicates an immediate
@@ -1950,6 +1983,14 @@ the meanings of that architecture's constraints.
 @item k
 The stack pointer register (@code{SP})
 
+@item Uci
+Like @code{r}, but restricted to registers 8 through 11 inclusive.  Can be used
+to index ZA.
+
+@item Ucj
+Like @code{r}, but restricted to registers 12 through 15 inclusive.  Can be
+used to index ZA.
+
 @item w
 Floating point register, Advanced SIMD vector register or SVE vector register
 
@@ -2128,7 +2169,7 @@ A signed 12-bit integer constant.
 
 @item Cal
 constant for arithmetic/logical operations.  This might be any constant
-that can be put into a long immediate by the assmbler or linker without
+that can be put into a long immediate by the assembler or linker without
 involving a PIC relocation.
 
 @item K
@@ -2174,7 +2215,7 @@ VFP floating-point registers @code{s0}-@code{s31}.  Used for 32 bit values.
 
 @item w
 VFP floating-point registers @code{d0}-@code{d31} and the appropriate
-subset @code{d0}-@code{d15} based on command line options.
+subset @code{d0}-@code{d15} based on command-line options.
 Used for 64 bit values only.  Not valid for Thumb1.
 
 @item G
@@ -2782,135 +2823,6 @@ now roughly the same as @samp{m} when not used together with @samp{<}
 or @samp{>}.
 @end table
 
-@item M32C---@file{config/m32c/m32c.cc}
-@table @code
-@item Rsp
-@itemx Rfb
-@itemx Rsb
-@samp{$sp}, @samp{$fb}, @samp{$sb}.
-
-@item Rcr
-Any control register, when they're 16 bits wide (nothing if control
-registers are 24 bits wide)
-
-@item Rcl
-Any control register, when they're 24 bits wide.
-
-@item R0w
-@itemx R1w
-@itemx R2w
-@itemx R3w
-$r0, $r1, $r2, $r3.
-
-@item R02
-$r0 or $r2, or $r2r0 for 32 bit values.
-
-@item R13
-$r1 or $r3, or $r3r1 for 32 bit values.
-
-@item Rdi
-A register that can hold a 64 bit value.
-
-@item Rhl
-$r0 or $r1 (registers with addressable high/low bytes)
-
-@item R23
-$r2 or $r3
-
-@item Raa
-Address registers
-
-@item Raw
-Address registers when they're 16 bits wide.
-
-@item Ral
-Address registers when they're 24 bits wide.
-
-@item Rqi
-Registers that can hold QI values.
-
-@item Rad
-Registers that can be used with displacements ($a0, $a1, $sb).
-
-@item Rsi
-Registers that can hold 32 bit values.
-
-@item Rhi
-Registers that can hold 16 bit values.
-
-@item Rhc
-Registers chat can hold 16 bit values, including all control
-registers.
-
-@item Rra
-$r0 through R1, plus $a0 and $a1.
-
-@item Rfl
-The flags register.
-
-@item Rmm
-The memory-based pseudo-registers $mem0 through $mem15.
-
-@item Rpi
-Registers that can hold pointers (16 bit registers for r8c, m16c; 24
-bit registers for m32cm, m32c).
-
-@item Rpa
-Matches multiple registers in a PARALLEL to form a larger register.
-Used to match function return values.
-
-@item Is3
-@minus{}8 @dots{} 7
-
-@item IS1
-@minus{}128 @dots{} 127
-
-@item IS2
-@minus{}32768 @dots{} 32767
-
-@item IU2
-0 @dots{} 65535
-
-@item In4
-@minus{}8 @dots{} @minus{}1 or 1 @dots{} 8
-
-@item In5
-@minus{}16 @dots{} @minus{}1 or 1 @dots{} 16
-
-@item In6
-@minus{}32 @dots{} @minus{}1 or 1 @dots{} 32
-
-@item IM2
-@minus{}65536 @dots{} @minus{}1
-
-@item Ilb
-An 8 bit value with exactly one bit set.
-
-@item Ilw
-A 16 bit value with exactly one bit set.
-
-@item Sd
-The common src/dest memory addressing modes.
-
-@item Sa
-Memory addressed using $a0 or $a1.
-
-@item Si
-Memory addressed with immediate addresses.
-
-@item Ss
-Memory addressed using the stack pointer ($sp).
-
-@item Sf
-Memory addressed using the frame base register ($fb).
-
-@item Ss
-Memory addressed using the small base register ($sb).
-
-@item S1
-$r1h
-@end table
-
 @item LoongArch---@file{config/loongarch/constraints.md}
 @table @code
 @item f
@@ -3418,6 +3330,10 @@ Like @code{b}, if @option{-mpowerpc64} is used; otherwise, @code{NO_REGS}.
 @item wB
 Signed 5-bit constant integer that can be loaded into an Altivec register.
 
+@item wD
+Dense math register if @option{-mdense-math} is used; floating point register if
+@option{-mmma} with @option{-mno-dense-math}; otherwise, @code{NO_REGS}.
+
 @item wE
 Vector constant that can be loaded with the XXSPLTIB instruction.
 
@@ -3483,6 +3399,12 @@ loaded to a VSX register with one prefixed instruction.
 @item eQ
 An IEEE 128-bit constant that can be loaded into a VSX register with
 the @code{lxvkq} instruction.
+
+@item eU
+A signed integer constant that can be used with the paddis instruction.
+
+@item eV
+A signed integer constant that paddis and paddi instructions generate.
 
 @ifset INTERNALS
 @item G
@@ -4418,9 +4340,9 @@ like code motion can lead to cases where code optimized for size uses
 alternatives that are not preferred for size, and similarly for speed.
 
 Although @code{define_insn}s can in principle specify the @code{enabled}
-attribute directly, it is often clearer to have subsiduary attributes
+attribute directly, it is often clearer to have subsidiary attributes
 for each architectural feature of interest.  The @code{define_insn}s
-can then use these subsiduary attributes to say which alternatives
+can then use these subsidiary attributes to say which alternatives
 require which features.  The example below does this for @code{cpu_facility}.
 
 E.g. the following two patterns could easily be merged using the @code{enabled}
@@ -4505,7 +4427,7 @@ Register constraints correspond directly to register classes.
 @xref{Register Classes}.  There is thus not much flexibility in their
 definitions.
 
-@deffn {MD Expression} define_register_constraint name regclass docstring [filter]
+@deffn {MD Expression} define_register_constraint name regclass docstring [filter] [opno]
 All arguments are string constants.
 @var{name} is the name of the constraint, as it will appear in
 @code{match_operand} expressions.  If @var{name} is a multi-letter
@@ -4554,6 +4476,54 @@ calculate an offset relative to the start of the class.  If it is
 sometimes necessary for a register of class @var{c} to be aligned
 to @var{n}, the first register in @var{c} should itself by divisible
 by @var{n}.
+
+If even more fine-grained control is needed, the optional @var{opno}
+can be specified.  It indicates that the constraint is dependent on
+another operand (a ``referenced'' operand) indicated by @var{opno}.
+When it is specified, a @var{filter} must be specified as well.
+The filter function will then be called with the current regno and mode
+of the operand the constraint refers to, as well as ref_regno and ref_mode
+of the operand @var{opno} the filter depends on additionally.
+
+Note that either of the regnos can be INVALID_REGNUM to indicate that the
+register allocator hasn't yet allocated a hard reg.  For certain kinds
+of filters it is still possible to reject regnos, even if the ref_regno is
+unknown.
+
+As such dependent filters are dynamic and cannot be precomputed, it is
+advisable to use them very sparingly.  Register allocation is a very
+compile-time sensitive part of GCC, and too many, or too complicated
+dynamic filters may increase the compile time significantly.
+
+An example for dependent filter usage is the riscv port.  It must ensure
+that for widening vector instructions, the destination register group either
+does not overlap the source or only overlaps specific parts it.  A dynamic
+register constraint would then be:
+
+@smallexample
+(define_register_constraint "Wtt" "V_REGS" "..." "riscv_widen_overlap_ok (regno, mode, ref_regno, ref_mode)" "0")
+@end smallexample
+
+and the accompanying target-code function @var{riscv_widen_overlap_ok} might
+do:
+@smallexample
+unsigned int wide_nregs = riscv_hard_regno_nregs (wide_regno, wide_mode);
+unsigned int nregs = riscv_hard_regno_nregs (regno, mode);
+
+/* Overlap is only allowed in the highest-numbered part of the wider
+   destination.  */
+if (regno == wide_regno)
+  return false;
+
+if (regno >= wide_regno + (wide_nregs - nregs))
+  return true;
+
+/* No overlap is OK.  */
+if (regno < wide_regno)
+  return true;
+
+return false;
+@end smallexample
 
 @var{docstring} is a sentence documenting the meaning of the
 constraint.  Docstrings are explained further below.
@@ -5023,7 +4993,7 @@ Similar, for other arithmetic operations.
 @mdindex ustrunc@var{m}@var{n}2
 @item @samp{ustrunc@var{m}@var{n}2}
 Truncate the operand 1, and storing the result in operand 0.  There will
-be saturation during the trunction.  The result will be saturated to the
+be saturation during the truncation.  The result will be saturated to the
 maximal value of operand 0 type if there is overflow when truncation.  The
 operand 1 must have mode @var{n},  and the operand 0 must have mode @var{m}.
 Both scalar and vector integer modes are allowed.
@@ -5149,26 +5119,46 @@ raised and a quiet @code{NaN} is returned.
 All operands have mode @var{m}, which is a scalar or vector
 floating-point mode.  These patterns are not allowed to @code{FAIL}.
 
-@mdindex ssad@var{m}
-@mdindex usad@var{m}
-@item @samp{ssad@var{m}}
-@item @samp{usad@var{m}}
+@mdindex ssad@var{m}@var{n}
+@mdindex usad@var{m}@var{n}
+@item @samp{ssad@var{m}@var{n}}
+@itemx @samp{usad@var{m}@var{n}}
 Compute the sum of absolute differences of two signed/unsigned elements.
 Operand 1 and operand 2 are of the same mode. Their absolute difference, which
 is of a wider mode, is computed and added to operand 3. Operand 3 is of a mode
 equal or wider than the mode of the absolute difference. The result is placed
 in operand 0, which is of the same mode as operand 3.
-@var{m} is the mode of operand 1 and operand 2.
+@var{m} is the mode of operand 0 and @var{n} the mode of operand 1 and
+operand 2.
 
-@mdindex widen_ssum@var{n}@var{m}3
-@mdindex widen_usum@var{n}@var{m}3
-@item @samp{widen_ssum@var{n}@var{m}3}
-@itemx @samp{widen_usum@var{n}@var{m}3}
+@mdindex reduc_widen_ssum@var{n}@var{m}3
+@mdindex reduc_widen_usum@var{n}@var{m}3
+@item @samp{reduc_widen_ssum@var{n}@var{m}3}
+@itemx @samp{reduc_widen_usum@var{n}@var{m}3}
 Operands 0 and 2 are of the same mode, which is wider than the mode of
 operand 1. Add operand 1 to operand 2 and place the widened result in
-operand 0. (This is used express accumulation of elements into an accumulator
-of a wider mode.)
+operand 0. (This is used to express accumulation of elements into an
+accumulator of a wider mode.)
 @var{m} is the mode of operand 1 and @var{n} is the mode of operand 0.
+
+These patterns are only used for a reduction whose summation the vectorizer
+has already established may be reassociated.  Operand 0 is the accumulator
+of that reduction and is itself reduced to a scalar by a horizontal sum once
+the loop is done, so which element of the accumulator a given input element
+ends up in is not observable.  An implementation is therefore free to choose
+which elements of operand 1 it accumulates into which element of operand 0,
+provided that every element of operand 1 is accumulated exactly once.  In
+particular it may add adjacent elements of operand 1 to each other before
+accumulating them, which is what a pairwise widening add instruction does.
+
+The intermediate sums must not overflow.  An implementation that combines
+elements of operand 1 with each other before they reach the element width of
+operand 0 therefore has to widen them first.
+
+The names @samp{widen_ssum@var{n}@var{m}3} and
+@samp{widen_usum@var{n}@var{m}3} are deliberately left free for a future
+lane preserving pattern, which would have to add element @var{i} of
+operand 1 to element @var{i} of operand 2 for every @var{i}.
 
 @mdindex smulhs@var{m}3
 @mdindex umulhs@var{m}3
@@ -5401,6 +5391,51 @@ op0 = (narrow) (((wide) op1 + (wide) op2 + 1) >> 1);
 @mdindex bswap@var{m}2
 @item @samp{bswap@var{m}2}
 Reverse the order of bytes of operand 1 and store the result in operand 0.
+
+@mdindex bitreverse@var{m}2
+@item @samp{bitreverse@var{m}2}
+Reverse the order of bits of operand 1 and store the result in operand 0.
+
+@mdindex clmul@var{m}3
+@item @samp{clmul@var{m}3}
+Perform carry-less multiplication of operands 1 and 2 and store the
+least significant bits of the result, which have the same width as
+the operands, in operand 0.  All three operands have the same scalar
+integer mode @var{m}, and the operands are treated as unsigned.
+This is equivalent to the C code:
+@smallexample
+unsigned_type r = 0;
+for (int i = 0; i < width; i++)
+  if ((op2 >> i) & 1)
+    r ^= op1 << i;
+op0 = r;
+@end smallexample
+where @code{width} is the bit size of mode @var{m}.  A pattern in
+mode @var{m} is also used for narrower operations, by zero extending
+the operands to mode @var{m}.
+
+@mdindex clmul_widen@var{m}3
+@item @samp{clmul_widen@var{m}3}
+Perform carry-less multiplication of operands 2 and 3, which have
+mode @var{m}, and store the least significant half of the full
+product in operand 0 and the most significant half in operand 1.
+All four operands have the same scalar integer mode @var{m}, and the
+inputs are treated as unsigned.  This is equivalent to the C code:
+@smallexample
+wide_type r = 0;
+for (int i = 0; i < width; i++)
+  if ((op3 >> i) & 1)
+    r ^= (wide_type) op2 << i;
+op0 = (narrow_type) r;
+op1 = (narrow_type) (r >> width);
+@end smallexample
+where @code{wide_type} has twice the precision of @code{narrow_type}
+and @code{width} is the bit size of mode @var{m}.  This is used to
+expand the three argument form of @code{__builtin_clmulg}.
+
+Neither @samp{clmul@var{m}3} nor @samp{clmul_widen@var{m}3} has to
+handle all operand values.  They may @code{FAIL}, in which case the
+compiler falls back to another expansion.
 
 @mdindex neg@var{m}2
 @mdindex ssneg@var{m}2
@@ -5975,10 +6010,11 @@ String compare instruction, with five operands.  Operand 0 is the output;
 it has mode @var{m}.  The remaining four operands are like the operands
 of @samp{cpymem@var{m}}.  The two memory blocks specified are compared
 byte by byte in lexicographic order starting at the beginning of each
-string.  The instruction is not allowed to prefetch more than one byte
-at a time since either string may end in the first byte and reading past
-that may access an invalid page or segment and cause a fault.  The
-comparison terminates early if the fetched bytes are different or if
+string.  Since either string may end in the first byte, the instruction
+is not allowed to read more than one byte at a time unless the target
+knows that the wider reads cannot fault, for example because they stay
+within an aligned block that contains a byte the comparison has to read.
+The comparison terminates early if the fetched bytes are different or if
 they are equal to zero.  The effect of the instruction is to store a
 value in operand 0 whose sign indicates the result of the comparison.
 
@@ -5995,11 +6031,11 @@ compiler knows that both source and destination are word-aligned,
 it may provide the value 4 for this operand.
 
 The two memory blocks specified are compared byte by byte in lexicographic
-order starting at the beginning of each string.  The instruction is not allowed
-to prefetch more than one byte at a time since either string may end in the
-first byte and reading past that may access an invalid page or segment and
-cause a fault.  The comparison will terminate when the fetched bytes
-are different or if they are equal to zero.  The effect of the
+order starting at the beginning of each string.  As for
+@samp{cmpstrn@var{m}}, the instruction is not allowed to read more than one
+byte at a time unless the target knows that the wider reads cannot fault.
+The comparison will terminate when the fetched bytes are different or if
+they are equal to zero.  The effect of the
 instruction is to store a value in operand 0 whose sign indicates the
 result of the comparison.
 
@@ -6483,10 +6519,15 @@ operand is an offset which counts from the address of the table; otherwise,
 it is an absolute address to jump to.  In either case, the first operand has
 mode @code{Pmode}.
 
-The @samp{tablejump} insn is always the last insn before the jump
-table it uses.  Its assembler code normally has no need to use the
-second operand, but you should incorporate it in the RTL pattern so
-that the jump optimizer will not delete the table as unreachable code.
+The @samp{tablejump} insn is normally the last insn before the jump
+table it uses.  A late RTL pass can make several such insns share one table,
+which is then marked with @code{JUMP_TABLE_SHARED_P} and follows only one of
+them.  A port whose dispatch needs the table right after the jump must refuse
+to share it through @code{TARGET_CAN_SHARE_JUMP_TABLE_P}.  The assembler code
+normally has no need to use the second operand, but the RTL pattern must
+incorporate it.  Copies rely on @code{mark_jump_label} finding this operand,
+and it also prevents the jump optimizer from deleting the table as
+unreachable code.
 
 
 @mdindex doloop_end
@@ -6877,7 +6918,7 @@ target can initialize all of the optabs at once with
 @code{init_sync_libfuncs}.
 For the purposes of C++11 @code{std::atomic::is_lock_free}, it is
 assumed that these library calls do @emph{not} use any kind of
-interruptable locking.
+interruptible locking.
 
 @mdindex sync_add@var{mode}
 @mdindex sync_sub@var{mode}
@@ -7318,6 +7359,22 @@ mode; for example, if @var{n} is @code{HImode}, a CRC16 is calculated.
 @item @samp{crc_rev@var{m}@var{n}4}
 Similar to @samp{crc@var{m}@var{n}4}, but calculates a bit-reversed CRC.
 
+@mdindex aop@var{m}3
+@item @samp{aop@var{m}3}
+Like @samp{add@var{m}3} or @samp{ior@var{m}3}, perform a bit-wise
+addition between operand 1 and operand 2, which are known to have
+no set bits in common, and store the result in operand 0.  Because
+the input operands are bit-wise disjoint, the same result is obtained
+for @code{IOR}, @code{XOR} and @code{PLUS}, so this @code{aop} (``any or
+plus'') pattern allows the target to select the most suitable representation.
+For modes wider than a word, on targets without add with carry,
+@code{IOR} may be more efficient than @code{PLUS}.  On targets with
+shift-and-add (such as x86's @code{lea}) or multiply-add (@code{fma@var{m}4})
+instructions, @code{PLUS} may produce more efficent code than @code{IOR}.
+If the machine description doesn't specify this pattern, the middle-end
+will by default use @code{PLUS} for @code{SImode} and @code{word_mode},
+and @code{IOR} otherwise.
+
 @end table
 
 @node Standard Pattern Names for Vectorization
@@ -7387,7 +7444,7 @@ The operation is equivalent to:
 
 @smallexample
 int c = GET_MODE_SIZE (@var{m}) / GET_MODE_SIZE (@var{n});
-for (j = 0; j < operand4 + operand5; j++)
+for (j = 0; j < operand4 - operand5; j++)
   for (i = 0; i < c; i++)
     if (operand2[j])
       operand0[i][j] = operand1[j * c + i];
@@ -7439,7 +7496,7 @@ The operation is equivalent to:
 
 @smallexample
 int c = GET_MODE_SIZE (@var{m}) / GET_MODE_SIZE (@var{n});
-for (j = 0; j < operand3 + operand4; j++)
+for (j = 0; j < operand3 - operand4; j++)
   if (operand2[j])
     for (i = 0; i < c; i++)
       operand0[j * c + i] = operand1[i][j];
@@ -7486,11 +7543,11 @@ Like @samp{gather_load@var{m}@var{n}}, but takes an extra mask operand
 (operand 7) and a bias operand (operand 8).
 
 Similar to mask_len_load the instruction loads at
-most (operand 7 + operand 8) elements from memory.
+most (operand 7 - operand 8) elements from memory.
 Bit @var{i} of the mask is set if element @var{i} of the result should
 be loaded from memory and clear if element @var{i} of the result should
 be set to element @var{i} of operand 6.
-Mask elements @var{i} with @var{i} > (operand 7 + operand 8) are ignored.
+Mask elements @var{i} with @var{i} > (operand 7 - operand 8) are ignored.
 
 @mdindex mask_len_strided_load@var{m}
 @item @samp{mask_len_strided_load@var{m}}
@@ -7501,18 +7558,18 @@ operand 3 is mask operand, operand 4 is length operand and operand 5 is bias ope
 The instruction can be seen as a special case of @code{mask_len_gather_load@var{m}@var{n}}
 with an offset vector that is a @code{vec_series} with zero as base and operand 2 as step.
 For each element the load address is operand 1 + @var{i} * operand 2.
-Similar to mask_len_load, the instruction loads at most (operand 4 + operand 5) elements from memory.
+Similar to mask_len_load, the instruction loads at most (operand 4 - operand 5) elements from memory.
 Element @var{i} of the mask (operand 3) is set if element @var{i} of the result should
 be loaded from memory and clear if element @var{i} of the result should be zero.
-Mask elements @var{i} with @var{i} > (operand 4 + operand 5) are ignored.
+Mask elements @var{i} with @var{i} > (operand 4 - operand 5) are ignored.
 
 @mdindex scatter_store@var{m}@var{n}
 @item @samp{scatter_store@var{m}@var{n}}
-Store a vector of mode @var{m} into several distinct memory locations.
-Operand 0 is a scalar base address and operand 1 is a vector of mode
-@var{n} containing offsets from that base.  Operand 4 is the vector of
-values that should be stored, which has the same number of elements as
-@var{n}.  For each element index @var{i}:
+Store a vector of mode @var{m} into several, not necessarily distinct,
+memory locations.  Operand 0 is a scalar base address and operand 1 is
+a vector of mode @var{n} containing offsets from that base.  Operand 4
+is the vector of values that should be stored, which has the same number
+of elements as @var{n}.  For each element index @var{i}:
 
 @itemize @bullet
 @item
@@ -7529,6 +7586,10 @@ store element @var{i} of operand 4 to that address.
 The value of operand 2 does not matter if the offsets are already
 address width.
 
+If two or more offset elements point to the same location, it is expected that
+the one with the highest element index is being written last.  This implies a
+left-to-right ordering of the store.
+
 @mdindex mask_scatter_store@var{m}@var{n}
 @item @samp{mask_scatter_store@var{m}@var{n}}
 Like @samp{scatter_store@var{m}@var{n}}, but takes an extra mask operand as
@@ -7539,22 +7600,22 @@ of the result should be stored to memory.
 @item @samp{mask_len_scatter_store@var{m}@var{n}}
 Like @samp{scatter_store@var{m}@var{n}}, but takes an extra mask operand (operand 5),
 a len operand (operand 6) as well as a bias operand (operand 7).  The instruction stores
-at most (operand 6 + operand 7) elements of (operand 4) to memory.
+at most (operand 6 - operand 7) elements of (operand 4) to memory.
 Bit @var{i} of the mask is set if element @var{i} of (operand 4) should be stored.
-Mask elements @var{i} with @var{i} > (operand 6 + operand 7) are ignored.
+Mask elements @var{i} with @var{i} > (operand 6 - operand 7) are ignored.
 
 @mdindex mask_len_strided_store@var{m}
 @item @samp{mask_len_strided_store@var{m}}
-Store a vector of mode m into several distinct memory locations.
+Store a vector of mode m into several, not necessarily distinct, memory locations.
 Operand 0 is a scalar base address and operand 1 is scalar stride of Pmode.
 Operand 2 is the vector of values that should be stored, which is of mode @var{m}.
 operand 3 is mask operand, operand 4 is length operand and operand 5 is bias operand.
 The instruction can be seen as a special case of @code{mask_len_scatter_store@var{m}@var{n}}
 with an offset vector that is a @code{vec_series} with zero as base and operand 1 as step.
 For each element the store address is operand 0 + @var{i} * operand 1.
-Similar to mask_len_store, the instruction stores at most (operand 4 + operand 5) elements of
+Similar to mask_len_store, the instruction stores at most (operand 4 - operand 5) elements of
 mask (operand 3) to memory.  Element @var{i} of the mask is set if element @var{i} of (operand 3)
-should be stored.  Mask elements @var{i} with @var{i} > (operand 4 + operand 5) are ignored.
+should be stored.  Mask elements @var{i} with @var{i} > (operand 4 - operand 5) are ignored.
 
 @mdindex while_ult@var{m}@var{n}
 @item @code{while_ult@var{m}@var{n}}
@@ -7626,7 +7687,9 @@ Initialize the vector to given values.  Operand 0 is the vector to initialize
 and operand 1 is parallel containing values for individual fields.  The
 @var{n} mode is the mode of the elements, should be either element mode of
 the vector mode @var{m}, or a vector mode with the same element mode and
-smaller number of elements.
+smaller number of elements.  If @var{m} specifies a scalable vector mode,
+then operand 1 only specifies the minimum number of elements implied
+by @var{m} and elements beyond are zero initialized.
 
 @mdindex vec_duplicate@var{m}
 @item @samp{vec_duplicate@var{m}}
@@ -7742,6 +7805,7 @@ Operands 0, 2 and 3 have mode @var{m}.  Operand 1 has mode @var{n}.
 Operands 4 and 5 have a target-dependent scalar integer mode.
 
 @mdindex maskload@var{m}@var{n}
+@anchor{maskload@var{m}@var{n}}
 @item @samp{maskload@var{m}@var{n}}
 Perform a masked load of vector from memory operand 1 of mode @var{m}
 into register operand 0.  The mask is provided in register operand 2 of
@@ -7764,7 +7828,7 @@ This pattern is not allowed to @code{FAIL}.
 
 @mdindex len_load_@var{m}
 @item @samp{len_load_@var{m}}
-Load (operand 3 + operand 4) elements from memory operand 1
+Load (operand 3 - operand 4) elements from memory operand 1
 into vector register operand 0.  Operands 0 and 1 have mode @var{m},
 which must be a vector mode.  Operand 3 has whichever integer mode the
 target prefers.  Operand 2 (the ``else value'') is of mode @var{m} and
@@ -7777,7 +7841,7 @@ constant bias: it is either a constant 0 or a constant -1.  The predicate on
 operand 4 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 3 + operand 4) exceeds the number of elements in mode
+If (operand 3 - operand 4) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes rather than
@@ -7788,7 +7852,7 @@ This pattern is not allowed to @code{FAIL}.
 
 @mdindex len_store_@var{m}
 @item @samp{len_store_@var{m}}
-Store (operand 2 + operand 3) vector elements from vector register operand 1
+Store (operand 2 - operand 3) vector elements from vector register operand 1
 into memory operand 0, leaving the other elements of
 operand 0 unchanged.  Operands 0 and 1 have mode @var{m}, which must be
 a vector mode.  Operand 2 has whichever integer mode the target prefers.
@@ -7799,7 +7863,7 @@ constant bias: it is either a constant 0 or a constant -1.  The predicate on
 operand 3 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 2 + operand 3) exceeds the number of elements in mode
+If (operand 2 - operand 3) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes
@@ -7811,23 +7875,23 @@ This pattern is not allowed to @code{FAIL}.
 @mdindex mask_len_load@var{m}@var{n}
 @item @samp{mask_len_load@var{m}@var{n}}
 Perform a masked load from the memory location pointed to by operand 1
-into register operand 0.  (operand 3 + operand 4) elements are loaded from
+into register operand 0.  (operand 4 - operand 5) elements are loaded from
 memory and other elements in operand 0 are set to undefined values.
 This is a combination of len_load and maskload.
 Operands 0 and 1 have mode @var{m}, which must be a vector mode.  Operand 3
 has whichever integer mode the target prefers.  A mask is specified in
 operand 2 which must be of type @var{n}.  The mask has lower precedence than
 the length and is itself subject to length masking,
-i.e. only mask indices < (operand 4 + operand 5) are used.
+i.e. only mask indices < (operand 4 - operand 5) are used.
 Operand 3 is an else operand similar to the one in @code{maskload}.
-Operand 4 conceptually has mode @code{QI}.
+Operand 5 conceptually has mode @code{QI}.
 
 Operand 4 can be a variable or a constant amount.  Operand 5 specifies a
 constant bias: it is either a constant 0 or a constant -1.  The predicate on
 operand 5 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 4 + operand 5) exceeds the number of elements in mode
+If (operand 4 - operand 5) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes
@@ -7839,13 +7903,13 @@ This pattern is not allowed to @code{FAIL}.
 @mdindex mask_len_store@var{m}@var{n}
 @item @samp{mask_len_store@var{m}@var{n}}
 Perform a masked store from vector register operand 1 into memory operand 0.
-(operand 3 + operand 4) elements are stored to memory
+(operand 3 - operand 4) elements are stored to memory
 and leave the other elements of operand 0 unchanged.
 This is a combination of len_store and maskstore.
 Operands 0 and 1 have mode @var{m}, which must be a vector mode.  Operand 3 has whichever
 integer mode the target prefers.  A mask is specified in operand 2 which must be
 of type @var{n}.  The mask has lower precedence than the length and is itself subject to
-length masking, i.e. only mask indices < (operand 3 + operand 4) are used.
+length masking, i.e. only mask indices < (operand 3 - operand 4) are used.
 Operand 4 conceptually has mode @code{QI}.
 
 Operand 2 can be a variable or a constant amount.  Operand 3 specifies a
@@ -7853,7 +7917,7 @@ constant bias: it is either a constant 0 or a constant -1.  The predicate on
 operand 4 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 2 + operand 4) exceeds the number of elements in mode
+If (operand 3 - operand 4) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes
@@ -7936,8 +8000,8 @@ with its value either zero or one.  If mode @var{m} is a scalar integer mode
 then operand 2 is the number of elements in the input vector to provide
 disambiguation for the case @var{m} is ambiguous.
 
-@mdindex extract_last_@var{m}
-@item @code{extract_last_@var{m}}
+@mdindex extract_last_active_@var{m}
+@item @code{extract_last_active_@var{m}}
 Find the last set bit in mask operand 1 and extract the associated element
 of vector operand 2.  Store the result in scalar operand 0.  Operand 2
 has vector mode @var{m} while operand 0 has the mode appropriate for one
@@ -7988,13 +8052,20 @@ for (i = 0; i < LEN + BIAS; i++)
 @mdindex sdot_prod@var{m}@var{n}
 @item @samp{sdot_prod@var{m}@var{n}}
 
-Multiply operand 1 by operand 2 without loss of precision, given that
-both operands contain signed elements.  Add each product to the overlapping
-element of operand 3 and store the result in operand 0.  Operands 0 and 3
-have mode @var{m} and operands 1 and 2 have mode @var{n}, with @var{n}
-having narrower elements than @var{m}.
+Multiply operand 1 by operand 2.  Both operands contain signed integer or
+floating-point elements.  Add each product to the overlapping element of
+operand 3 and store the result in operand 0.
+Operands 0 and 3 have mode @var{m} and operands 1 and 2 have mode @var{n},
+with the elements of @var{m} at least twice as wide as those of @var{n}.
+Both modes must have the same mode class.
 
-Semantically the expressions perform the multiplication in the following signs
+For floating-point operands, convert each input element to the element type
+of mode @var{m} before multiplication.  Round each product to that type
+before summation.  The additions may be reassociated, so the order of
+summation is unspecified.
+
+For integer operands, multiplication is performed without loss of precision,
+and the expressions have the following semantics:
 
 @smallexample
 sdot<signed op0, signed op1, signed op2, signed op3> ==
@@ -8246,21 +8317,21 @@ result of a vector boolean can be represented as 0 or -1.
 @mdindex vec_addsub@var{m}3
 @item @samp{vec_addsub@var{m}3}
 Alternating subtract, add with even lanes doing subtract and odd
-lanes doing addition.  Operands 1 and 2 and the outout operand are vectors
+lanes doing addition.  Operands 1 and 2 and the output operand are vectors
 with mode @var{m}.
 
 @mdindex vec_fmaddsub@var{m}4
 @item @samp{vec_fmaddsub@var{m}4}
 Alternating multiply subtract, add with even lanes doing subtract and odd
 lanes doing addition of the third operand to the multiplication result
-of the first two operands.  Operands 1, 2 and 3 and the outout operand are vectors
+of the first two operands.  Operands 1, 2 and 3 and the output operand are vectors
 with mode @var{m}.
 
 @mdindex vec_fmsubadd@var{m}4
 @item @samp{vec_fmsubadd@var{m}4}
 Alternating multiply add, subtract with even lanes doing addition and odd
 lanes doing subtraction of the third operand to the multiplication result
-of the first two operands.  Operands 1, 2 and 3 and the outout operand are vectors
+of the first two operands.  Operands 1, 2 and 3 and the output operand are vectors
 with mode @var{m}.
 
 These instructions are not allowed to @code{FAIL}.
@@ -8600,13 +8671,13 @@ for (i = 0; i < GET_MODE_NUNITS (@var{m}); i++)
 @itemx @samp{cond_len_floor@var{mode}}
 @itemx @samp{cond_len_round@var{mode}}
 @itemx @samp{cond_len_rint@var{mode}}
-When operand 1 is true and element index < operand 4 + operand 5, perform an operation on operands 1 and
+When operand 1 is true and element index < operand 4 - operand 5, perform an operation on operands 1 and
 store the result in operand 0, otherwise store operand 2 in operand 0.
 The operation only works for the operands are vectors.
 
 @smallexample
 for (i = 0; i < GET_MODE_NUNITS (@var{m}); i++)
-  op0[i] = (i < ops[4] + ops[5] && op1[i]
+  op0[i] = (i < ops[4] - ops[5] && op1[i]
             ? @var{op} op2[i]
             : op3[i]);
 @end smallexample
@@ -8666,13 +8737,13 @@ form of @samp{@var{op}@var{mode}2}.
 @itemx @samp{cond_len_ashl@var{mode}}
 @itemx @samp{cond_len_ashr@var{mode}}
 @itemx @samp{cond_len_lshr@var{mode}}
-When operand 1 is true and element index < operand 5 + operand 6, perform an operation on operands 2 and 3 and
+When operand 1 is true and element index < operand 5 - operand 6, perform an operation on operands 2 and 3 and
 store the result in operand 0, otherwise store operand 4 in operand 0.
 The operation only works for the operands are vectors.
 
 @smallexample
 for (i = 0; i < GET_MODE_NUNITS (@var{m}); i++)
-  op0[i] = (i < ops[5] + ops[6] && op1[i]
+  op0[i] = (i < ops[5] - ops[6] && op1[i]
             ? op2[i] @var{op} op3[i]
             : op4[i]);
 @end smallexample
@@ -8709,7 +8780,7 @@ takes 3 operands rather than two.  For example, the vector form of
 
 @smallexample
 for (i = 0; i < GET_MODE_NUNITS (@var{m}); i++)
-  op0[i] = (i < ops[6] + ops[7] && op1[i]
+  op0[i] = (i < ops[6] - ops[7] && op1[i]
             ? fma (op2[i], op3[i], op4[i])
             : op5[i]);
 @end smallexample
@@ -8741,6 +8812,9 @@ Operand 0 is a comparison operator.  Operand 1 and operand 2 are the
 first and second operands of the comparison, respectively.  Operand 3
 is the @code{code_label} to jump to.
 
+Note: In practice, the middle-end invokes the pattern when comparing a vector
+boolean against @{0,@dots{}@}, after dojump.cc has already swapped the branch labels.
+
 @mdindex cond_vec_cbranch_any@var{mode}
 @item @samp{cond_vec_cbranch_any@var{mode}}
 Masked conditional branch instruction based on a vector compare that branches
@@ -8759,6 +8833,9 @@ Operand 0 is a comparison operator.  Operand 1 is the mask operand.
 Operand 2 and operand 3 are the first and second operands of the comparison,
 respectively.  Operand 5 is the @code{code_label} to jump to.  Inactive lanes in
 the mask operand should not influence the decision to branch.
+
+Note: In practice, the middle-end invokes the pattern when comparing a vector
+boolean against @{0,@dots{}@}, after dojump.cc has already swapped the branch labels.
 
 @mdindex cond_len_vec_cbranch_any@var{mode}
 @item @samp{cond_len_vec_cbranch_any@var{mode}}
@@ -8780,6 +8857,9 @@ and operand 3 are the first and second operands of the comparison, respectively.
 Operand 4 is the len operand and Operand 5 is the bias operand.  Operand 6 is
 the @code{code_label} to jump to. Inactive lanes in the mask operand should not
 influence the decision to branch.
+
+Note: In practice, the middle-end invokes the pattern when comparing a vector
+boolean against @{0,@dots{}@}, after dojump.cc has already swapped the branch labels.
 
 @end table
 
@@ -10904,7 +10984,7 @@ The @code{mnemonic} attribute set is not generated automatically if the
 instruction string is generated via C code.
 
 An existing @code{mnemonic} attribute set in an insn definition will not
-be overriden by the md file parser.  That way it is possible to
+be overridden by the md file parser.  That way it is possible to
 manually set the instruction mnemonics for the cases where the md file
 parser fails to determine it automatically.
 
@@ -11536,7 +11616,7 @@ can be quite tedious to describe these forms directly in the
   [@var{predicate-pattern}]
   "@var{condition}"
   "@var{output-template}"
-  "@var{optional-insn-attribues}")
+  "@var{optional-insn-attributes}")
 @end smallexample
 
 @var{predicate-pattern} is the condition that must be true for the
@@ -12353,7 +12433,7 @@ Attributes are defined using:
 (define_int_attr @var{attr_name} [(@var{int1} "@var{value1}") @dots{} (@var{intn} "@var{valuen}")])
 @end smallexample
 
-In additon to these user-defined attributes, it is possible to use
+In addition to these user-defined attributes, it is possible to use
 @samp{<@var{name}>} to refer to the current expansion of iterator
 @var{name} (such as @var{int1}, @var{int2}, and so on).
 

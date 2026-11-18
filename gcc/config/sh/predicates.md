@@ -208,8 +208,7 @@
 ;; Returns 1 if OP is a simple register address.
 (define_predicate "simple_mem_operand"
   (and (match_code "mem")
-       (match_code "reg" "0")
-       (match_test "arith_reg_operand (XEXP (op, 0), SImode)")))
+       (match_test "satisfies_constraint_Sra (op)")))
 
 ;; Returns 1 if OP is a valid displacement address.
 (define_predicate "displacement_mem_operand"
@@ -239,13 +238,13 @@
 (define_predicate "post_inc_mem"
   (and (match_code "mem")
        (match_code "post_inc" "0")
-       (match_code "reg" "00")))
+       (match_test "satisfies_constraint_Rab (XEXP (XEXP (op, 0), 0))")))
 
 ;; Returns true if OP is a pre-decrement addressing mode memory reference.
 (define_predicate "pre_dec_mem"
   (and (match_code "mem")
        (match_code "pre_dec" "0")
-       (match_code "reg" "00")))
+       (match_test "satisfies_constraint_Rab (XEXP (XEXP (op, 0), 0))")))
 
 ;; Returns 1 if the operand can be used in an SH2A movu.{b|w} insn.
 (define_predicate "zero_extend_movu_operand"
@@ -484,6 +483,12 @@
   return exact_log2 (INTVAL (XEXP (mult_rtx, 1))) > 0
 	 && sh_legitimate_index_p (mode, XEXP (plus0_rtx, 1), TARGET_SH2A, true);
 })
+
+;; Returns true if OP is a pc relative load operand.
+(define_predicate "pc_relative_load_operand"
+  (and (match_code "mem")
+       (match_test "GET_MODE (op) != QImode")
+       (match_test "IS_PC_RELATIVE_LOAD_ADDR_P (XEXP (op, 0))")))
 
 ;; Returns true if OP is a valid source operand for a logical operation.
 (define_predicate "logical_operand"
@@ -805,3 +810,36 @@
 
   return false;
 })
+
+;; Predicates for pinning operands to hard-regs.
+(define_predicate "hard_reg_r0"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == R0_REG")))
+
+(define_predicate "hard_reg_r1"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == R1_REG")))
+
+(define_predicate "hard_reg_r2"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == R2_REG")))
+
+(define_predicate "hard_reg_r3"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == R3_REG")))
+
+(define_predicate "hard_reg_r4"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == R4_REG")))
+
+(define_predicate "hard_reg_r5"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == R5_REG")))
+
+(define_predicate "hard_reg_r6"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == R6_REG")))
+
+(define_predicate "hard_reg_r7"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == R7_REG")))

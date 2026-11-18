@@ -301,7 +301,7 @@ while(<$inf>) {
 	push @icstack, $ic;
 	$endw = $1;
 	$ic = $2;
-	$ic =~ s/\@(?:samp|strong|key|gcctabopt|env)/B/;
+	$ic =~ s/\@(?:samp|strong|key|option|gcctabopt|env)/B/;
 	$ic =~ s/\@(?:code|kbd)/C/;
 	$ic =~ s/\@(?:dfn|var|emph|cite|i)/I/;
 	$ic =~ s/\@(?:file)/F/;
@@ -416,14 +416,13 @@ sub postprocess
     # Cross references are thrown away, as are @noindent and @refill.
     # (@noindent is impossible in .pod, and @refill is unnecessary.)
     # @* is also impossible in .pod; we discard it and any newline that
-    # follows it.  Similarly, our macro @gol must be discarded.
+    # follows it.
 
     s/\(?\@xref\{(?:[^\}]*)\}(?:[^.<]|(?:<[^<>]*>))*\.\)?//g;
     s/\s+\(\@pxref\{(?:[^\}]*)\}\)//g;
     s/;\s+\@pxref\{(?:[^\}]*)\}//g;
     s/\@noindent\s*//g;
     s/\@refill//g;
-    s/\@gol//g;
     s/\@\*\s*\n?//g;
 
     # Anchors are thrown away

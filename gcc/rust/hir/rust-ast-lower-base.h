@@ -180,6 +180,7 @@ public:
   virtual void visit (AST::UseDeclaration &use_decl) override;
   virtual void visit (AST::Function &function) override;
   virtual void visit (AST::TypeAlias &type_alias) override;
+  virtual void visit (AST::TraitAlias &type_alias) override;
   virtual void visit (AST::StructStruct &struct_item) override;
   virtual void visit (AST::TupleStruct &tuple_struct) override;
   virtual void visit (AST::EnumItem &item) override;
@@ -236,8 +237,6 @@ public:
   virtual void visit (AST::TuplePatternItemsHasRest &tuple_items) override;
   virtual void visit (AST::TuplePattern &pattern) override;
   virtual void visit (AST::GroupedPattern &pattern) override;
-  virtual void visit (AST::SlicePatternItemsNoRest &items) override;
-  virtual void visit (AST::SlicePatternItemsHasRest &items) override;
   virtual void visit (AST::SlicePattern &pattern) override;
   virtual void visit (AST::AltPattern &pattern) override;
 
@@ -321,12 +320,6 @@ protected:
 
   std::unique_ptr<TuplePatternItems>
   lower_tuple_pattern_ranged (AST::TuplePatternItemsHasRest &pattern);
-
-  std::unique_ptr<SlicePatternItems>
-  lower_slice_pattern_no_rest (AST::SlicePatternItemsNoRest &pattern);
-
-  std::unique_ptr<SlicePatternItems>
-  lower_slice_pattern_has_rest (AST::SlicePatternItemsHasRest &pattern);
 
   std::unique_ptr<HIR::RangePatternBound>
   lower_range_pattern_bound (AST::RangePatternBound &bound);

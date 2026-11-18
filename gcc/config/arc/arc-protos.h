@@ -75,7 +75,7 @@ extern rtx disi_highpart (rtx);
 extern int arc_adjust_insn_length (rtx_insn *, int, bool);
 extern int arc_corereg_hazard (rtx, rtx);
 extern int arc_hazard (rtx_insn *, rtx_insn *);
-extern int arc_write_ext_corereg (rtx);
+extern int arc_write_ext_corereg (rtx_insn *);
 extern rtx gen_acc1 (void);
 extern rtx gen_acc2 (void);
 extern bool arc_branch_size_unknown_p (void);
@@ -93,7 +93,8 @@ extern bool arc_text_label (rtx_insn *insn);
 extern bool arc_short_comparison_p (rtx, int);
 extern bool arc_epilogue_uses (int regno);
 extern bool arc_eh_uses (int regno);
-/* insn-attrtab.cc doesn't include reload.h, which declares regno_clobbered_p. */
+/* Generated attribute code does not include reload.h, which declares
+   regno_clobbered_p.  */
 extern int regno_clobbered_p (unsigned int, rtx_insn *, machine_mode, int);
 extern bool arc_legitimize_reload_address (rtx *, machine_mode, int, int);
 extern void arc_secondary_reload_conv (rtx, rtx, rtx, bool);

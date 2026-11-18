@@ -1,4 +1,4 @@
-/* Core data structures for the 'tree' type.
+/* Core data structures for the 'tree' type.  -*- C++ -*-
    Copyright (C) 1989-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
@@ -20,6 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_TREE_CORE_H
 #define GCC_TREE_CORE_H
 
+#include "coretypes.h"
 #include "symtab.h"
 
 /* This file contains all the data structures that define the 'tree' type.
@@ -32,8 +33,8 @@ along with GCC; see the file COPYING3.  If not see
 struct function;
 struct real_value;
 struct fixed_value;
-struct ptr_info_def;
 struct die_struct;
+class irange;
 
 
 /*---------------------------------------------------------------------------
@@ -102,7 +103,7 @@ struct die_struct;
    meant to be used for the construction of builtin functions.  They were only
    added because Fortran uses them for attributes of builtins.  */
 
-/* callback(1, 2) */
+/* callback_only (1, 2) */
 #define ECF_CB_1_2		  (1 << 17)
 
 /* Call argument flags.  */
@@ -151,7 +152,7 @@ struct die_struct;
 #define DEFTREECODE(SYM, STRING, TYPE, NARGS)   SYM,
 #define END_OF_BASE_TREE_CODES LAST_AND_UNUSED_TREE_CODE,
 
-enum tree_code {
+enum tree_code : unsigned {
 #include "all-tree.def"
 MAX_TREE_CODES
 };
@@ -176,7 +177,7 @@ enum built_in_class {
   BUILT_IN_NORMAL
 };
 
-/* Last marker used for LTO stremaing of built_in_class.  We cannot add it
+/* Last marker used for LTO streaming of built_in_class.  We cannot add it
    to the enum since we need the enumb to fit in 2 bits.  */
 #define BUILT_IN_LAST (BUILT_IN_NORMAL + 1)
 
@@ -328,6 +329,9 @@ enum omp_clause_code {
 
   /* OpenMP clause: link (variable-list).  */
   OMP_CLAUSE_LINK,
+
+  /* OpenMP clause: local (variable-list).  */
+  OMP_CLAUSE_LOCAL,
 
   /* OpenMP clause: detach (event-handle).  */
   OMP_CLAUSE_DETACH,
@@ -491,6 +495,8 @@ enum omp_clause_code {
   OMP_CLAUSE_SAFELEN,
 
   /* OpenMP clause: simdlen (constant-integer-expression).  */
+  /* OpenMP clause: simdlen ([scaled-mod:] constant-integer-expression)
+     with scaled-modifier: scaled(type [, const-integer-expression]).  */
   OMP_CLAUSE_SIMDLEN,
 
   /* OpenMP clause: device_type ({host,nohost,any}).  */
@@ -601,6 +607,15 @@ enum omp_clause_code {
 
   /* OpenMP clause: uses_allocators.  */
   OMP_CLAUSE_USES_ALLOCATORS,
+
+  /* OpenMP clause: message (string-expr).
+     If the string expr is not null terminated, the length needs to be
+     stored in OMP_CLAUSE_MESSAGE_LEN.
+     Note that the 'severity' clause is handled as flag to 'message':
+     OMP_CLAUSE_MESSAGE_SEVERITY_WARN; however, not all directives accepting the
+     message clause also accept the severity clause.  Without severity clause
+     (not permitted or not specified) the error action is error termination.  */
+  OMP_CLAUSE_MESSAGE
 };
 
 #undef DEFTREESTRUCT
@@ -688,16 +703,75 @@ enum omp_memory_order {
 };
 #define OMP_FAIL_MEMORY_ORDER_SHIFT 3
 
-/* There is a TYPE_QUAL value for each type qualifier.  They can be
-   combined by bitwise-or to form the complete set of qualifiers for a
-   type.  */
-enum cv_qualifier {
+/* The cv_qualifier enum represents a set of the CV-style qualifiers (const,
+   volatile, restrict and atomic).  These are either present or absent on a
+   given type.  This set can be manipulated using the "usual" bit operations.
+
+   Note that this type does *not* represent all possible qualifiers.  Address
+   space qualification in particular is carried by addr_space_t.  The set of
+   all qualifiers a given type may carry is represented by qualifier_set.  */
+enum cv_qualifier : unsigned char {
   TYPE_UNQUALIFIED   = 0x0,
   TYPE_QUAL_CONST    = 0x1,
   TYPE_QUAL_VOLATILE = 0x2,
   TYPE_QUAL_RESTRICT = 0x4,
-  TYPE_QUAL_ATOMIC   = 0x8
+  TYPE_QUAL_ATOMIC   = 0x8,
+
+  /* Useful as a mask.  */
+  TYPE_QUAL_ALL = (TYPE_QUAL_CONST
+		   | TYPE_QUAL_VOLATILE
+		   | TYPE_QUAL_RESTRICT
+		   | TYPE_QUAL_ATOMIC)
 };
+
+/* Convenience operator, making it so that the bit-ops of two CV-qualifiers is
+   also of type cv_qualifier, rather than 'int'.  This is sound for
+   CV-qualifiers as they act like sets (unlike general qualifier sets, which
+   are slightly more complex).  */
+
+constexpr cv_qualifier
+operator| (cv_qualifier l, cv_qualifier r)
+{
+  return (cv_qualifier) ((static_cast<unsigned char> (l)
+			  | static_cast<unsigned char> (r))
+			 & TYPE_QUAL_ALL);
+}
+constexpr cv_qualifier &
+operator|= (cv_qualifier &l, cv_qualifier r)
+{
+  return l = l | r;
+}
+
+constexpr cv_qualifier
+operator& (cv_qualifier l, cv_qualifier r)
+{
+  return (cv_qualifier) (static_cast<unsigned char> (l)
+			 & static_cast<unsigned char> (r)
+			 & TYPE_QUAL_ALL);
+}
+constexpr cv_qualifier &
+operator&= (cv_qualifier &l, cv_qualifier r)
+{
+  return l = l & r;
+}
+
+constexpr cv_qualifier
+operator^ (cv_qualifier l, cv_qualifier r)
+{
+  return (cv_qualifier) ((static_cast<unsigned char> (l)
+			  ^ static_cast<unsigned char> (r))
+			 & TYPE_QUAL_ALL);
+}
+constexpr cv_qualifier &
+operator^= (cv_qualifier &l, cv_qualifier r)
+{
+  return l = l ^ r;
+}
+
+
+constexpr cv_qualifier
+operator~ (cv_qualifier x)
+{ return (cv_qualifier) (~static_cast<unsigned char> (x) & TYPE_QUAL_ALL); }
 
 /* Standard named or nameless data types of the C compiler.  */
 enum tree_index : unsigned {
@@ -1136,7 +1210,7 @@ typedef tree (*walk_tree_lh) (tree *, int *, tree (*) (tree *, int *, void *),
    accessor macros.  */
 
 struct GTY(()) tree_base {
-  ENUM_BITFIELD(tree_code) code : 16;
+  tree_code code : 16;
 
   unsigned side_effects_flag : 1;
   unsigned constant_flag : 1;
@@ -1185,7 +1259,7 @@ struct GTY(()) tree_base {
 	 For CONSTRUCTOR nodes this holds the clobber_kind enum.
 	 The C++ front-end uses this in IDENTIFIER_NODE, REFLECT_EXPR, and
 	 NAMESPACE_DECL.  */
-      unsigned address_space : 8;
+      addr_space_t address_space : 8;
     } bits;
 
     /* The following fields are present in tree_base to save space.  The
@@ -1722,14 +1796,10 @@ struct GTY(()) tree_ssa_name {
   /* Statement that defines this SSA name.  */
   gimple *def_stmt;
 
-  /* Value range information.  */
-  union ssa_name_info_type {
-    /* Range and aliasing info for pointers.  */
-    struct GTY ((tag ("0"))) ptr_info_def *ptr_info;
-    /* Range info for everything else.  */
-    struct GTY ((tag ("1"))) vrange_storage * range_info;
-  } GTY ((desc ("%1.typed.type ?" \
-		"!POINTER_TYPE_P (TREE_TYPE ((tree)&%1)) : 2"))) info;
+  /* Value range information for every type of SSA name.
+     The aliasing information for a prange is stored in prange_storage.
+     See ssa_name_pt_solution in tree-ssanames.h.  */
+  struct GTY (()) vrange_storage *range_info;
   /* Immediate uses list for this SSA_NAME.  */
   struct ssa_use_operand_t imm_uses;
 #if defined ENABLE_GIMPLE_CHECKING
@@ -1805,7 +1875,7 @@ struct GTY(()) tree_type_common {
   tree attributes;
   unsigned int uid;
 
-  ENUM_BITFIELD(machine_mode) mode : MACHINE_MODE_BITSIZE;
+  machine_mode mode : MACHINE_MODE_BITSIZE;
 
   unsigned int precision : 16;
   unsigned lang_flag_0 : 1;
@@ -1898,7 +1968,7 @@ struct GTY(()) tree_decl_common {
   struct tree_decl_minimal common;
   tree size;
 
-  ENUM_BITFIELD(machine_mode) mode : MACHINE_MODE_BITSIZE;
+  machine_mode mode : MACHINE_MODE_BITSIZE;
 
   unsigned nonlocal_flag : 1;
   unsigned virtual_flag : 1;
@@ -2023,7 +2093,7 @@ struct GTY(()) tree_decl_with_vis {
  unsigned seen_in_bind_expr : 1;
  unsigned comdat_flag : 1;
  /* Used for FUNCTION_DECL, VAR_DECL and in C++ for TYPE_DECL.  */
- ENUM_BITFIELD(symbol_visibility) visibility : 2;
+ enum symbol_visibility visibility : 2;
  unsigned visibility_specified : 1;
 
  /* Belong to FUNCTION_DECL exclusively.  */
@@ -2091,7 +2161,7 @@ struct GTY(()) tree_function_decl {
   /* In a FUNCTION_DECL this is DECL_UNCHECKED_FUNCTION_CODE.  */
   unsigned int function_code;
 
-  ENUM_BITFIELD(built_in_class) built_in_class : 2;
+  enum built_in_class built_in_class : 2;
   unsigned static_ctor_flag : 1;
   unsigned static_dtor_flag : 1;
   unsigned uninlinable : 1;
@@ -2109,7 +2179,7 @@ struct GTY(()) tree_function_decl {
   unsigned looping_const_or_pure_flag : 1;
 
   /* Align the bitfield to boundary of a byte.  */
-  ENUM_BITFIELD(function_decl_type) decl_type: 2;
+  enum function_decl_type decl_type: 2;
   unsigned has_debug_args_flag : 1;
   unsigned versioned_function : 1;
   unsigned replaceable_operator : 1;

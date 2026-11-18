@@ -76,8 +76,8 @@ protected:
 		      const Analysis::NodeMapping &mappings,
 		      location_t expr_locus, bool is_qualified_path);
 
-  tree resolve_adjustements (std::vector<Resolver::Adjustment> &adjustments,
-			     tree expression, location_t locus);
+  tree resolve_adjustments (std::vector<Resolver::Adjustment> &adjustments,
+			    tree expression, location_t locus);
 
   tree resolve_deref_adjustment (Resolver::Adjustment &adjustment,
 				 tree expression, location_t locus);
@@ -90,6 +90,9 @@ protected:
 
   tree resolve_unsized_slice_adjustment (Resolver::Adjustment &adjustment,
 					 tree expression, location_t locus);
+
+  tree resolve_unsized_adt_adjustment (Resolver::Adjustment &adjustment,
+				       tree expression, location_t locus);
 
   tree resolve_unsized_dyn_adjustment (Resolver::Adjustment &adjustment,
 				       tree expression, location_t locus);
@@ -151,6 +154,16 @@ protected:
 
   static void handle_no_mangle_attribute_on_fndecl (tree fndecl,
 						    const AST::Attribute &attr);
+
+  static void handle_rustc_std_internal_symbol_attribute_on_fndecl (
+    tree fndecl, const AST::Attribute &attr);
+
+  static void handle_rustc_allocator_on_fndecl (tree fndecl,
+						const AST::Attribute &attr);
+
+  static void
+  handle_rustc_allocator_nounwind_on_fndecl (tree fndecl,
+					     const AST::Attribute &attr);
 
   static void setup_abi_options (tree fndecl, ABI abi);
 

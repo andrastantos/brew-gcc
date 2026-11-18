@@ -40,21 +40,12 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-range.h"
 #include "tree-ssa-threadedge.h"
 #include "gimple-range-path.h"
+#include "tree-ssa-threadbackward.h"
 #include "ssa.h"
 #include "tree-cfgcleanup.h"
 #include "tree-pretty-print.h"
 #include "cfghooks.h"
 #include "dbgcnt.h"
-
-// Path registry for the backwards threader.  After all paths have been
-// registered with register_path(), thread_through_all_blocks() is called
-// to modify the CFG.
-
-class back_threader_registry : public back_jt_path_registry
-{
-public:
-  bool register_path (const vec<basic_block> &, edge taken);
-};
 
 // Class to abstract the profitability code for the backwards threader.
 
@@ -62,18 +53,40 @@ class back_threader_profitability
 {
 public:
   back_threader_profitability (bool speed_p, gimple *stmt);
+  void push_bb (const vec<basic_block> &);
+  void pop_bb ();
   bool possibly_profitable_path_p (const vec<basic_block> &, bool *);
   bool profitable_path_p (const vec<basic_block> &,
 			  edge taken, bool *irreducible_loop);
 private:
+  int account_bb (basic_block, bool);
+  // Number of insns on the path, less the branch we get to remove.
+  int net_insns () const { return m_stats.n_insns - m_exit_jump_benefit; }
   const bool m_speed_p;
   int m_exit_jump_benefit;
   bool m_threaded_multiway_branch;
-  // The following are computed by possibly_profitable_path_p
-  bool m_threaded_through_latch;
-  bool m_multiway_branch_in_path;
-  bool m_contains_hot_bb;
-  int m_n_insns;
+  // The loop the path starts in, i.e. m_path[0]->loop_father.
+  class loop *m_loop;
+  // The following are accumulated by push_bb as the path grows and
+  // restored by pop_bb as it shrinks.
+  struct path_stats
+  {
+    int n_insns;
+    bool threaded_through_latch;
+    bool multiway_branch_in_path;
+    bool contains_hot_bb;
+    bool unprofitable_bb;
+  };
+  path_stats m_stats;
+  // One entry per push.  These are the stats as they stood before that push,
+  // and the insns of the block.  Basically the entry pushed for m_path[i]
+  // accounts m_path[i - 1].
+  struct unwind_state
+  {
+    path_stats stats;
+    int bb_insns;
+  };
+  auto_vec<unwind_state, 20> m_unwind;
 };
 
 back_threader_profitability::back_threader_profitability (bool speed_p,
@@ -86,67 +99,99 @@ back_threader_profitability::back_threader_profitability (bool speed_p,
   // particular it estimates further DCE from eliminating the exit
   // control stmt.
   m_exit_jump_benefit = estimate_num_insns (last, &eni_size_weights);
+  m_loop = NULL;
+  m_stats = path_stats ();
 }
 
-// Back threader flags.
-#define BT_NONE 0
-// Generate fast code at the expense of code size.
-#define BT_SPEED 1
-// Resolve unknown SSAs on entry to a threading path.  If set, use the
-// ranger.  If not, assume all ranges on entry to a path are VARYING.
-#define BT_RESOLVE 2
+/* Account for BB in the cumulative stats for the path being threaded.
+   CHECK_MULTIWAY is true for all blocks except the block whose branch
+   we are going to eliminate.  Return the number of insns in BB, which
+   PUSH_BB records so the dump can print a per-block count.  */
 
-class back_threader
+int
+back_threader_profitability::account_bb (basic_block bb, bool check_multiway)
 {
-public:
-  back_threader (function *fun, unsigned flags, bool first);
-  ~back_threader ();
-  unsigned thread_blocks ();
-private:
-  void maybe_thread_block (basic_block bb);
-  bool debug_counter ();
-  edge maybe_register_path (back_threader_profitability &);
-  void maybe_register_path_dump (edge taken_edge);
-  void find_paths_to_names (basic_block bb, bitmap imports, unsigned,
-			    back_threader_profitability &);
-  edge find_taken_edge (const vec<basic_block> &path);
-  edge find_taken_edge_cond (const vec<basic_block> &path, gcond *);
-  edge find_taken_edge_switch (const vec<basic_block> &path, gswitch *);
-  virtual void debug ();
-  virtual void dump (FILE *out);
+  int n_insns = 0;
 
-  back_threader_registry m_registry;
+  if (!m_stats.contains_hot_bb && m_speed_p)
+    m_stats.contains_hot_bb |= optimize_bb_for_speed_p (bb);
 
-  // Current path being analyzed.
-  auto_vec<basic_block> m_path;
-  // Hash to mark visited BBs while analyzing a path.
-  hash_set<basic_block> m_visited_bbs;
-  // The set of SSA names, any of which could potentially change the
-  // value of the final conditional in a path.
-  auto_bitmap m_imports;
-  // The last statement in the path.
-  gimple *m_last_stmt;
-  // Marker to differentiate unreachable edges.
-  static const edge UNREACHABLE_EDGE;
-  // Set to TRUE if unknown SSA names along a path should be resolved
-  // with the ranger.  Otherwise, unknown SSA names are assumed to be
-  // VARYING.  Setting to true is more precise but slower.
-  function *m_fun;
-  // Ranger for the path solver.
-  gimple_ranger *m_ranger;
-  unsigned m_flags;
-  // Set to TRUE for the first of each thread[12] pass or the first of
-  // each threadfull[12] pass.  This is used to differentiate between
-  // the different threading passes so we can set up debug counters.
-  bool m_first;
-};
+  for (gimple_stmt_iterator gsi = gsi_after_labels (bb);
+       !gsi_end_p (gsi);
+       gsi_next_nondebug (&gsi))
+    {
+      /* Do not allow OpenACC loop markers and __builtin_constant_p on
+	 threading paths.  The latter is disallowed, because an
+	 expression might be constant on two threading paths, and
+	 become non-constant (i.e.: phi) when they merge.  */
+      gimple *stmt = gsi_stmt (gsi);
+      if (gimple_call_internal_p (stmt, IFN_UNIQUE)
+	  || gimple_call_builtin_p (stmt, BUILT_IN_CONSTANT_P))
+	{
+	  m_stats.unprofitable_bb = true;
+	  return n_insns;
+	}
+      /* Do not count empty statements and labels.  */
+      if (gimple_code (stmt) != GIMPLE_NOP
+	  && !is_gimple_debug (stmt))
+	n_insns += estimate_num_insns (stmt, &eni_size_weights);
+    }
+
+  /* We do not look at the block with the threaded branch in this loop.
+     So if any block with a last statement that is a GIMPLE_SWITCH or
+     GIMPLE_GOTO is seen, then we have a multiway branch on our path.  */
+  if (check_multiway)
+    {
+      gimple *last = *gsi_last_bb (bb);
+      if (last
+	  && (gimple_code (last) == GIMPLE_SWITCH
+	      || gimple_code (last) == GIMPLE_GOTO))
+	m_stats.multiway_branch_in_path = true;
+    }
+
+  return n_insns;
+}
+
+/* Update the stats after a block has been appended to PATH.  */
+
+void
+back_threader_profitability::push_bb (const vec<basic_block> &path)
+{
+  unwind_state state = { m_stats, /*bb_insns=*/0 };
+
+  unsigned n = path.length ();
+  if (n == 1)
+    m_loop = path[0]->loop_father;
+  else
+    {
+      /* Appending a block makes the previous entry block part of the copied
+	 path, so that's where to account for now.  */
+      unsigned copied = n - 2;
+      bool check_multiway = copied > 0;
+      state.bb_insns = account_bb (path[copied], check_multiway);
+      m_stats.n_insns += state.bb_insns;
+    }
+  m_unwind.safe_push (state);
+
+  /* Note if we thread through the latch, we will want to include the
+     last entry in the array when determining if we thread through the
+     loop latch.  */
+  if (m_loop->latch == path[n - 1])
+    m_stats.threaded_through_latch = true;
+}
+
+void
+back_threader_profitability::pop_bb ()
+{
+  m_stats = m_unwind.pop ().stats;
+}
 
 // Used to differentiate unreachable edges, so we may stop the search
 // in a the given direction.
 const edge back_threader::UNREACHABLE_EDGE = (edge) -1;
 
 back_threader::back_threader (function *fun, unsigned flags, bool first)
-  : m_first (first)
+  : m_visited_flag (fun), m_first (first)
 {
   if (flags & BT_SPEED)
     loop_optimizer_init (LOOPS_HAVE_PREHEADERS | LOOPS_HAVE_SIMPLE_LATCHES);
@@ -162,6 +207,7 @@ back_threader::back_threader (function *fun, unsigned flags, bool first)
     mark_dfs_back_edges ();
 
   m_ranger = new gimple_ranger;
+  m_solver = NULL;
 }
 
 back_threader::~back_threader ()
@@ -280,9 +326,41 @@ back_threader::find_taken_edge (const vec<basic_block> &path)
     case GIMPLE_SWITCH:
       return find_taken_edge_switch (path, as_a<gswitch *> (m_last_stmt));
 
+    case GIMPLE_GOTO:
+      return find_taken_edge_goto (path, as_a<ggoto *> (m_last_stmt));
+
     default:
       return NULL;
     }
+}
+
+// Same as find_taken_edge, but for paths ending in a computed goto.
+
+edge
+back_threader::find_taken_edge_goto (const vec<basic_block> &path,
+				     ggoto *stmt)
+{
+  tree dest = gimple_goto_dest (stmt);
+
+  if (TREE_CODE (dest) == SSA_NAME)
+    {
+      prange r;
+      m_solver->reset_path (path, m_imports);
+      if (!m_solver->range_of_expr (r, dest, stmt))
+	return NULL;
+
+      if (r.undefined_p ())
+	return UNREACHABLE_EDGE;
+
+      dest = r.addr_known ();
+      if (!dest)
+	return NULL;
+    }
+
+  // For a destination that did not resolve to a label,
+  // ::find_taken_edge at most returns the block's single successor,
+  // the only place it could go.
+  return ::find_taken_edge (gimple_bb (stmt), dest);
 }
 
 // Same as find_taken_edge, but for paths ending in a switch.
@@ -294,8 +372,8 @@ back_threader::find_taken_edge_switch (const vec<basic_block> &path,
   tree name = gimple_switch_index (sw);
   int_range_max r;
 
-  path_range_query solver (*m_ranger, path, m_imports, m_flags & BT_RESOLVE);
-  solver.range_of_expr (r, name, sw);
+  m_solver->reset_path (path, m_imports);
+  m_solver->range_of_expr (r, name, sw);
 
   if (r.undefined_p ())
     return UNREACHABLE_EDGE;
@@ -318,10 +396,10 @@ back_threader::find_taken_edge_cond (const vec<basic_block> &path,
 {
   int_range_max r;
 
-  path_range_query solver (*m_ranger, path, m_imports, m_flags & BT_RESOLVE);
-  solver.range_of_stmt (r, cond);
+  m_solver->reset_path (path, m_imports);
+  m_solver->range_of_stmt (r, cond);
 
-  if (solver.unreachable_path_p ())
+  if (m_solver->unreachable_path_p ())
     return UNREACHABLE_EDGE;
 
   int_range<2> true_range = range_true ();
@@ -349,7 +427,13 @@ back_threader::find_paths_to_names (basic_block bb, bitmap interesting,
 				    unsigned overall_paths,
 				    back_threader_profitability &profit)
 {
+  if (bb->flags & m_visited_flag)
+    return;
+
+  bb->flags |= m_visited_flag;
+
   m_path.safe_push (bb);
+  profit.push_bb (m_path);
 
   // Try to resolve the path without looking back.  Avoid resolving paths
   // we know are large but are not (yet) recognized as Finite State Machine.
@@ -359,6 +443,7 @@ back_threader::find_paths_to_names (basic_block bb, bitmap interesting,
   // edge might help here.  Alternatively copying divergent control flow
   // on the way to the backedge could be worthwhile.
   bool large_non_fsm;
+  edge e;
   if (m_path.length () > 1
       && (!profit.possibly_profitable_path_p (m_path, &large_non_fsm)
 	  || (!large_non_fsm
@@ -368,14 +453,16 @@ back_threader::find_paths_to_names (basic_block bb, bitmap interesting,
   // The backwards thread copier cannot copy blocks that do not belong
   // to the same loop, so when the new source of the path entry no
   // longer belongs to it we don't need to search further.
-  else if (m_path[0]->loop_father != bb->loop_father)
+  else if (m_path[0]->loop_father != bb->loop_father
+	   && (!(e = loop_exits_from_bb_p (m_path[0]->loop_father,
+					   m_path[0]))
+	       || e->dest->loop_father != bb->loop_father))
     ;
 
   // Continue looking for ways to extend the path but limit the
   // search space along a branch
   else if ((overall_paths = overall_paths * EDGE_COUNT (bb->preds))
-	   <= (unsigned)param_max_jump_thread_paths
-	   && !m_visited_bbs.add (bb))
+	   <= (unsigned)param_max_jump_thread_paths)
     {
       // For further greedy searching we want to remove interesting
       // names defined in BB but add ones on the PHI edges for the
@@ -391,6 +478,15 @@ back_threader::find_paths_to_names (basic_block bb, bitmap interesting,
       bitmap_iterator bi;
       unsigned i;
       auto_vec<tree, 16> worklist;
+      // Add NAME to the list of imports.
+      auto add_import = [&] (tree name)
+	{
+	  if (bitmap_set_bit (m_imports, SSA_NAME_VERSION (name)))
+	    {
+	      new_imports.safe_push (SSA_NAME_VERSION (name));
+	      worklist.safe_push (name);
+	    }
+	};
       EXECUTE_IF_SET_IN_BITMAP (interesting, 0, i, bi)
 	{
 	  tree name = ssa_name (i);
@@ -414,11 +510,7 @@ back_threader::find_paths_to_names (basic_block bb, bitmap interesting,
 		}
 	      /* Local PHIs participate in renaming below.  */
 	      if (gphi *phi = dyn_cast<gphi *> (def_stmt))
-		{
-		  tree res = gimple_phi_result (phi);
-		  if (!SSA_NAME_OCCURS_IN_ABNORMAL_PHI (res))
-		    interesting_phis.safe_push (phi);
-		}
+		interesting_phis.safe_push (phi);
 	      /* For other local defs process their uses, amending
 		 imports on the way.  */
 	      else
@@ -426,16 +518,8 @@ back_threader::find_paths_to_names (basic_block bb, bitmap interesting,
 		  tree ssa[3];
 		  unsigned lim = gimple_range_ssa_names (ssa, 3, def_stmt);
 		  for (unsigned j = 0; j < lim; ++j)
-		    {
-		      tree rhs = ssa[j];
-		      if (rhs
-			  && bitmap_set_bit (m_imports,
-					     SSA_NAME_VERSION (rhs)))
-			{
-			  new_imports.safe_push (SSA_NAME_VERSION (rhs));
-			  worklist.safe_push (rhs);
-			}
-		    }
+		    if (ssa[j])
+		      add_import (ssa[j]);
 		}
 	    }
 	}
@@ -449,13 +533,7 @@ back_threader::find_paths_to_names (basic_block bb, bitmap interesting,
 	  FOR_EACH_EDGE (e, iter, bb->preds)
 	    {
 	      if (e->flags & EDGE_ABNORMAL
-		  // This is like path_crosses_loops in profitable_path_p but
-		  // more restrictive to avoid peeling off loop iterations (see
-		  // tree-ssa/pr14341.c for an example).
-		  // ???  Note this restriction only applied when visiting an
-		  // interesting PHI with the former resolve_phi.
-		  || (!interesting_phis.is_empty ()
-		      && m_path[0]->loop_father != e->src->loop_father))
+		  || e->src->index == ENTRY_BLOCK)
 		continue;
 	      for (gphi *phi : interesting_phis)
 		{
@@ -487,14 +565,15 @@ back_threader::find_paths_to_names (basic_block bb, bitmap interesting,
 	 backtracking we have to restore it.  */
       for (int j : new_imports)
 	bitmap_clear_bit (m_imports, j);
-      m_visited_bbs.remove (bb);
     }
   else if (dump_file && (dump_flags & TDF_DETAILS))
     fprintf (dump_file, "  FAIL: Search space limit %d reached.\n",
 	     param_max_jump_thread_paths);
 
   // Reset things to their original state.
+  profit.pop_bb ();
   m_path.pop ();
+  bb->flags &= ~m_visited_flag;
 }
 
 // Search backwards from BB looking for paths where the final
@@ -513,11 +592,11 @@ back_threader::maybe_thread_block (basic_block bb)
 
   enum gimple_code code = gimple_code (stmt);
   if (code != GIMPLE_SWITCH
-      && code != GIMPLE_COND)
+      && code != GIMPLE_COND
+      && code != GIMPLE_GOTO)
     return;
 
   m_last_stmt = stmt;
-  m_visited_bbs.empty ();
   m_path.truncate (0);
 
   // We compute imports of the path during discovery starting
@@ -601,109 +680,36 @@ back_threader_profitability::possibly_profitable_path_p
   if (m_path.length () <= 1)
       return false;
 
-  gimple_stmt_iterator gsi;
-  loop_p loop = m_path[0]->loop_father;
+  loop_p loop = m_loop;
 
-  // We recompute the following, when we rewrite possibly_profitable_path_p
-  // to work incrementally on added BBs we have to unwind them on backtracking
-  m_n_insns = 0;
-  m_threaded_through_latch = false;
-  m_multiway_branch_in_path = false;
-  m_contains_hot_bb = false;
+  if (m_stats.unprofitable_bb)
+    return false;
 
   if (dump_file && (dump_flags & TDF_DETAILS))
-    fprintf (dump_file, "Checking profitability of path (backwards): ");
-
-  /* Count the number of instructions on the path: as these instructions
-     will have to be duplicated, we will not record the path if there
-     are too many instructions on the path.  Also check that all the
-     blocks in the path belong to a single loop.  */
-  for (unsigned j = 0; j < m_path.length (); j++)
     {
-      basic_block bb = m_path[j];
-
-      if (dump_file && (dump_flags & TDF_DETAILS))
-	fprintf (dump_file, " bb:%i", bb->index);
-      /* Remember, blocks in the path are stored in opposite order in
-	 the PATH array.  The last entry in the array represents the
-	 block with an outgoing edge that we will redirect to the jump
-	 threading path.  Thus we don't care how many statements are
-	 in that block because it will not be copied or whether or not
-	 it ends in a multiway branch.  */
-      if (j < m_path.length () - 1)
+      fprintf (dump_file, "Checking profitability of path (backwards): ");
+      for (unsigned j = 0; j < m_path.length (); j++)
 	{
-	  int orig_n_insns = m_n_insns;
-	  if (!m_contains_hot_bb && m_speed_p)
-	    m_contains_hot_bb |= optimize_bb_for_speed_p (bb);
-	  for (gsi = gsi_after_labels (bb);
-	       !gsi_end_p (gsi);
-	       gsi_next_nondebug (&gsi))
-	    {
-	      /* Do not allow OpenACC loop markers and __builtin_constant_p on
-		 threading paths.  The latter is disallowed, because an
-		 expression might be constant on two threading paths, and
-		 become non-constant (i.e.: phi) when they merge.  */
-	      gimple *stmt = gsi_stmt (gsi);
-	      if (gimple_call_internal_p (stmt, IFN_UNIQUE)
-		  || gimple_call_builtin_p (stmt, BUILT_IN_CONSTANT_P))
-		{
-		  if (dump_file && (dump_flags & TDF_DETAILS))
-		    fputc ('\n', dump_file);
-		  return false;
-		}
-	      /* Do not count empty statements and labels.  */
-	      if (gimple_code (stmt) != GIMPLE_NOP
-		  && !is_gimple_debug (stmt))
-		m_n_insns += estimate_num_insns (stmt, &eni_size_weights);
-	    }
-	  if (dump_file && (dump_flags & TDF_DETAILS))
-	    fprintf (dump_file, " (%i insns)", m_n_insns-orig_n_insns);
-
-	  /* We do not look at the block with the threaded branch
-	     in this loop.  So if any block with a last statement that
-	     is a GIMPLE_SWITCH or GIMPLE_GOTO is seen, then we have a
-	     multiway branch on our path.
-
-	     The block in PATH[0] is special, it's the block were we're
-	     going to be able to eliminate its branch.  */
-	  if (j > 0)
-	    {
-	      gimple *last = *gsi_last_bb (bb);
-	      if (last
-		  && (gimple_code (last) == GIMPLE_SWITCH
-		      || gimple_code (last) == GIMPLE_GOTO))
-		m_multiway_branch_in_path = true;
-	    }
-	}
-
-      /* Note if we thread through the latch, we will want to include
-	 the last entry in the array when determining if we thread
-	 through the loop latch.  */
-      if (loop->latch == bb)
-	{
-	  m_threaded_through_latch = true;
-	  if (dump_file && (dump_flags & TDF_DETAILS))
+	  fprintf (dump_file, " bb:%i", m_path[j]->index);
+	  /* The last block on the path is not copied, so it has no
+	     count of its own.  */
+	  if (j + 1 < m_path.length ())
+	    fprintf (dump_file, " (%i insns)", m_unwind[j + 1].bb_insns);
+	  if (loop->latch == m_path[j])
 	    fprintf (dump_file, " (latch)");
 	}
+      fprintf (dump_file, "\n  Control statement insns: %i\n"
+	       "  Overall: %i insns\n",
+	       m_exit_jump_benefit, net_insns ());
     }
-
-  /* We are going to remove the control statement at the end of the
-     last block in the threading path.  So don't count it against our
-     statement count.  */
-  m_n_insns -= m_exit_jump_benefit;
-
-  if (dump_file && (dump_flags & TDF_DETAILS))
-    fprintf (dump_file, "\n  Control statement insns: %i\n"
-	     "  Overall: %i insns\n",
-	     m_exit_jump_benefit, m_n_insns);
 
   /* Threading is profitable if the path duplicated is hot but also
      in a case we separate cold path from hot path and permit optimization
-     of the hot path later.  Be on the agressive side here. In some testcases,
+     of the hot path later.  Be on the aggressive side here. In some testcases,
      as in PR 78407 this leads to noticeable improvements.  */
   if (m_speed_p)
     {
-      if (m_n_insns >= param_max_fsm_thread_path_insns)
+      if (net_insns () >= param_max_fsm_thread_path_insns)
 	{
 	  if (dump_file && (dump_flags & TDF_DETAILS))
 	    fprintf (dump_file, "  FAIL: Jump-thread path not considered: "
@@ -721,12 +727,12 @@ back_threader_profitability::possibly_profitable_path_p
 	  return false;
 	}
     }
-  else if (m_n_insns > 1)
+  else if (net_insns () > 1)
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file, "  FAIL: Jump-thread path not considered: "
 		 "duplication of %i insns is needed and optimizing for size.\n",
-		 m_n_insns);
+		 net_insns ());
       return false;
     }
 
@@ -739,7 +745,7 @@ back_threader_profitability::possibly_profitable_path_p
   if ((!m_threaded_multiway_branch
        || !loop->latch
        || loop->latch->index == EXIT_BLOCK)
-      && (m_n_insns * param_fsm_scale_path_stmts
+      && (net_insns () * param_fsm_scale_path_stmts
 	  >= param_max_jump_thread_duplication_stmts))
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
@@ -748,8 +754,9 @@ back_threader_profitability::possibly_profitable_path_p
 		 "many statements.\n");
       return false;
     }
-  *large_non_fsm = (!(m_threaded_through_latch && m_threaded_multiway_branch)
-		    && (m_n_insns * param_fsm_scale_path_stmts
+  *large_non_fsm = (!(m_stats.threaded_through_latch
+		      && m_threaded_multiway_branch)
+		    && (net_insns () * param_fsm_scale_path_stmts
 			>= param_max_jump_thread_duplication_stmts));
 
   if (dump_file && (dump_flags & TDF_DETAILS))
@@ -784,7 +791,7 @@ back_threader_profitability::profitable_path_p (const vec<basic_block> &m_path,
      same loop and the destination does not dominate the loop
      latch, then this thread would create an irreducible loop.  */
   *creates_irreducible_loop = false;
-  if (m_threaded_through_latch
+  if (m_stats.threaded_through_latch
       && loop == taken_edge->dest->loop_father
       && (determine_bb_domination_status (loop, taken_edge->dest)
 	  == DOMST_NONDOMINATING))
@@ -792,10 +799,10 @@ back_threader_profitability::profitable_path_p (const vec<basic_block> &m_path,
 
   /* Threading is profitable if the path duplicated is hot but also
      in a case we separate cold path from hot path and permit optimization
-     of the hot path later.  Be on the agressive side here. In some testcases,
+     of the hot path later.  Be on the aggressive side here. In some testcases,
      as in PR 78407 this leads to noticeable improvements.  */
   if (m_speed_p
-      && (optimize_edge_for_speed_p (taken_edge) || m_contains_hot_bb))
+      && (optimize_edge_for_speed_p (taken_edge) || m_stats.contains_hot_bb))
     {
       if (probably_never_executed_edge_p (cfun, taken_edge))
 	{
@@ -805,12 +812,12 @@ back_threader_profitability::profitable_path_p (const vec<basic_block> &m_path,
 	  return false;
 	}
     }
-  else if (m_n_insns > 1)
+  else if (net_insns () > 1)
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file, "  FAIL: Jump-thread path not considered: "
 		 "duplication of %i insns is needed and optimizing for size.\n",
-		 m_n_insns);
+		 net_insns ());
       return false;
     }
 
@@ -823,7 +830,7 @@ back_threader_profitability::profitable_path_p (const vec<basic_block> &m_path,
   if (!m_threaded_multiway_branch
       && *creates_irreducible_loop
       && (!(cfun->curr_properties & PROP_loop_opts_done)
-	  || (m_n_insns * param_fsm_scale_path_stmts
+	  || (net_insns () * param_fsm_scale_path_stmts
 	      >= param_max_jump_thread_duplication_stmts)))
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
@@ -838,8 +845,8 @@ back_threader_profitability::profitable_path_p (const vec<basic_block> &m_path,
      existing threading path to reduce code duplication.  So for that
      case, drastically reduce the number of statements we are allowed
      to copy.  */
-  if (!(m_threaded_through_latch && m_threaded_multiway_branch)
-      && (m_n_insns * param_fsm_scale_path_stmts
+  if (!(m_stats.threaded_through_latch && m_threaded_multiway_branch)
+      && (net_insns () * param_fsm_scale_path_stmts
 	  >= param_max_jump_thread_duplication_stmts))
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
@@ -853,7 +860,7 @@ back_threader_profitability::profitable_path_p (const vec<basic_block> &m_path,
      explode the CFG due to duplicating the edges for that multi-way
      branch.  So like above, only allow a multi-way branch on the path
      if we actually thread a multi-way branch.  */
-  if (!m_threaded_multiway_branch && m_multiway_branch_in_path)
+  if (!m_threaded_multiway_branch && m_stats.multiway_branch_in_path)
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file,
@@ -866,7 +873,7 @@ back_threader_profitability::profitable_path_p (const vec<basic_block> &m_path,
      the latch.  This could alter the loop form sufficiently to cause
      loop optimizations to fail.  Disable these threads until after
      loop optimizations have run.  */
-  if ((m_threaded_through_latch || taken_edge->dest == loop->latch)
+  if ((m_stats.threaded_through_latch || taken_edge->dest == loop->latch)
       && !(cfun->curr_properties & PROP_loop_opts_done)
       && empty_block_p (loop->latch))
     {
@@ -912,6 +919,44 @@ back_threader_registry::register_path (const vec<basic_block> &m_path,
   return register_jump_thread (jump_thread_path);
 }
 
+// Return a new path solver for the search.
+
+path_range_query *
+back_threader::make_solver (gimple_ranger &ranger)
+{
+  return new path_range_query (ranger, m_flags & BT_RESOLVE);
+}
+
+// Find the paths to thread in the current function.
+
+void
+back_threader::search ()
+{
+  m_solver = make_solver (*m_ranger);
+
+  basic_block bb;
+  FOR_EACH_BB_FN (bb, m_fun)
+    if (EDGE_COUNT (bb->succs) > 1)
+      maybe_thread_block (bb);
+
+  // The solver lives as long as the search: the IL changes after it.
+  delete m_solver;
+  m_solver = NULL;
+}
+
+// Thread the paths found.  Return TODO_flags.
+
+unsigned int
+back_threader::apply ()
+{
+  bool changed = m_registry.thread_through_all_blocks (true);
+
+  if (m_flags & BT_SPEED)
+    return changed ? TODO_cleanup_cfg : 0;
+
+  return false;
+}
+
 // Thread all suitable paths in the current function.
 //
 // Return TODO_flags.
@@ -919,17 +964,8 @@ back_threader_registry::register_path (const vec<basic_block> &m_path,
 unsigned int
 back_threader::thread_blocks ()
 {
-  basic_block bb;
-  FOR_EACH_BB_FN (bb, m_fun)
-    if (EDGE_COUNT (bb->succs) > 1)
-      maybe_thread_block (bb);
-
-  bool changed = m_registry.thread_through_all_blocks (true);
-
-  if (m_flags & BT_SPEED)
-    return changed ? TODO_cleanup_cfg : 0;
-
-  return false;
+  search ();
+  return apply ();
 }
 
 namespace {

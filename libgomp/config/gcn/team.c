@@ -24,8 +24,10 @@
    <http://www.gnu.org/licenses/>.  */
 
 /* This file handles maintenance of threads on AMD GCN.  */
+#include <assert.h>
 
 #include "libgomp.h"
+#include "target-indirect.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -34,13 +36,10 @@
 
 #define UNLIKELY(x) (__builtin_expect ((x), 0))
 
-extern void *GOMP_INDIRECT_ADDR_MAP;
-
 /* Defined in basic-allocator.c via config/amdgcn/allocator.c.  */
 void __gcn_lowlat_init (void *heap, size_t size);
 
 static void gomp_thread_start (struct gomp_thread_pool *);
-extern void build_indirect_map (void);
 
 /* This externally visible function handles target region entry.  It
    sets up a per-team thread pool and transfers control by returning to
@@ -81,7 +80,7 @@ gomp_gcn_enter_kernel (void)
       struct kernargs_abi *kernargs =
 	(struct kernargs_abi*) __builtin_gcn_kernarg_ptr ();
       void *team_arena = ((void*)kernargs->arena_ptr
-			  + kernargs->arena_size_per_team * teamid);
+			  + (size_t) kernargs->arena_size_per_team * teamid);
       void * __lds *arena_start = (void * __lds *)TEAM_ARENA_START;
       void * __lds *arena_free = (void * __lds *)TEAM_ARENA_FREE;
       void * __lds *arena_end = (void * __lds *)TEAM_ARENA_END;
@@ -111,6 +110,7 @@ gomp_gcn_enter_kernel (void)
       pool->threads_used = numthreads;
       pool->threads_busy = 1;
       pool->last_team = NULL;
+      pool->prev_barrier = NULL;
       gomp_simple_barrier_init (&pool->threads_dock, numthreads);
       thrs->thread_pool = pool;
 
@@ -130,6 +130,33 @@ gomp_gcn_exit_kernel (void)
 {
   gomp_free_thread (gcn_thrs ());
   team_free (gcn_thrs ());
+}
+
+/* Populate THR from START_DATA.  Assumes THR is current thread.  Argument is
+   broken out to avoid repeated calls to gomp_thread, which may be
+   expensive.  */
+
+static inline void
+gomp_prep_our_thread (struct gomp_thread *thr,
+		      struct gomp_thread_start_data *start_data,
+		      int threadid)
+{
+  thr->ts.team = start_data->team;
+  thr->ts.work_share = &start_data->team->work_shares[0];
+  thr->ts.last_work_share = NULL;
+  thr->ts.team_id = threadid;
+  thr->ts.level = start_data->level;
+  thr->ts.active_level = start_data->active_level;
+  thr->ts.single_count = 0;
+  thr->ts.static_trip = 0;
+  thr->task = &start_data->team->implicit_task[threadid];
+  gomp_init_task (thr->task, start_data->parent_task, &start_data->prev_icvs);
+  /* TODO(arsen): This should be part of a mechanism that allows us to override
+     nthreads-var with OMP_NUM_THREADS.  But, we currently don't have access to
+     that list on the device.
+
+     thr->task->icv.nthreads_var = ...;  */
+  thr->task->taskgroup = start_data->taskgroup;
 }
 
 /* This function contains the idle loop in which a thread waits
@@ -162,11 +189,24 @@ gomp_thread_start (struct gomp_thread_pool *pool)
 	      abort();
 	    }
 	}
+
+      /* Perform rest of task initialization.  Populated from
+	 gomp_team_start.  */
+      if (thr->start_data)
+	/* If !start_data, we're probably executing cleanup helpers, so we
+	   don't really care about initializing these fields.  */
+	{
+	  /* On threads other than the main thread, the thread ID within a
+	     team is always equal to dim_pos(1).  */
+	  gomp_prep_our_thread (thr, thr->start_data, __builtin_gcn_dim_pos (1));
+	  thr->start_data = NULL;
+	}
+
       thr->fn (thr->data);
       thr->fn = NULL;
 
       struct gomp_task *task = thr->task;
-      gomp_team_barrier_wait_final (&thr->ts.team->barrier);
+      gomp_team_barrier_wait_final (&thr->ts.team->barrier, thr->ts.team_id);
       gomp_finish_task (task);
     }
   while (1);
@@ -180,61 +220,61 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
 		 struct gomp_taskgroup *taskgroup)
 {
   struct gomp_thread *thr, *nthr;
-  struct gomp_task *task;
+  struct gomp_task *prev_task;
   struct gomp_task_icv *icv;
   struct gomp_thread_pool *pool;
-  unsigned long nthreads_var;
 
   thr = gomp_thread ();
   pool = thr->thread_pool;
-  task = thr->task;
-  icv = task ? &task->icv : &gomp_global_icv;
+  prev_task = thr->task;
+  icv = prev_task ? &prev_task->icv : &gomp_global_icv;
 
   /* Always save the previous state, even if this isn't a nested team.
      In particular, we should save any work share state from an outer
      orphaned work share construct.  */
   team->prev_ts = thr->ts;
 
-  thr->ts.team = team;
-  thr->ts.team_id = 0;
-  ++thr->ts.level;
-  if (nthreads > 1)
-    ++thr->ts.active_level;
-  thr->ts.work_share = &team->work_shares[0];
-  thr->ts.last_work_share = NULL;
-  thr->ts.single_count = 0;
-  thr->ts.static_trip = 0;
-  thr->task = &team->implicit_task[0];
-  nthreads_var = icv->nthreads_var;
-  gomp_init_task (thr->task, task, icv);
-  team->implicit_task[0].icv.nthreads_var = nthreads_var;
-  team->implicit_task[0].taskgroup = taskgroup;
+  /* Populate start data.  */
+  team->thr_start_data = (struct gomp_thread_start_data) {
+    .team = team,
+    .level = thr->ts.level + 1,
+    .active_level = thr->ts.active_level + (nthreads > 1),
+    .parent_task = thr->task,
+    .prev_icvs = *icv,
+    .taskgroup = taskgroup
+  };
 
-  if (nthreads == 1)
-    return;
-
-  /* Release existing idle threads.  */
-  for (unsigned i = 1; i < nthreads; ++i)
+  if (nthreads != 1)
     {
-      nthr = pool->threads[i];
-      nthr->ts.team = team;
-      nthr->ts.work_share = &team->work_shares[0];
-      nthr->ts.last_work_share = NULL;
-      nthr->ts.team_id = i;
-      nthr->ts.level = team->prev_ts.level + 1;
-      nthr->ts.active_level = thr->ts.active_level;
-      nthr->ts.single_count = 0;
-      nthr->ts.static_trip = 0;
-      nthr->task = &team->implicit_task[i];
-      gomp_init_task (nthr->task, task, icv);
-      team->implicit_task[i].icv.nthreads_var = nthreads_var;
-      team->implicit_task[i].taskgroup = taskgroup;
-      nthr->fn = fn;
-      nthr->data = data;
-      team->ordered_release[i] = &nthr->release;
+      /* When there's more than one thread, we expect that we're operating on
+	 thread w/ dim_pos(1) == 0, and that each of the other initialized
+	 threads will operate with team_id == dim_pos(1).  */
+      assert (__builtin_gcn_dim_pos (1) == 0);
+      /* We only expect one team to have more than one active thread.  See
+	 accelerator-specific logic in gomp_resolve_num_threads.  */
+      assert (!thr->ts.active_level);
+
+      /* Prepare other threads waiting on our barrier.  Besides fn, data,
+	 taskgroup, all the fields of those threads are initialized based on
+	 the values initialized in our thread above (which is always the master
+	 thread).  */
+      for (unsigned i = 1; i < nthreads; ++i)
+	{
+	  nthr = pool->threads[i];
+
+	  nthr->start_data = &team->thr_start_data;
+	  nthr->fn = fn;
+	  nthr->data = data;
+	  team->ordered_release[i] = &nthr->release;
+	}
+
+      /* Release the other threads.  */
+      gomp_simple_barrier_wait (&pool->threads_dock);
     }
 
-  gomp_simple_barrier_wait (&pool->threads_dock);
+  /* Finish initializing our thread.  The thread ID in the team of the caller
+     is always zero, even if __builtin_gcn_dim_pos (1) != 0.  */
+  gomp_prep_our_thread (thr, &team->thr_start_data, 0);
 }
 
 #include "../../team.c"

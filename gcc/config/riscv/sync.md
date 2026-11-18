@@ -20,17 +20,20 @@
 ;; <http://www.gnu.org/licenses/>.
 
 (define_c_enum "unspec" [
-  UNSPEC_COMPARE_AND_SWAP
-  UNSPEC_COMPARE_AND_SWAP_SUBWORD
-  UNSPEC_SYNC_OLD_OP
-  UNSPEC_SYNC_OLD_OP_SUBWORD
-  UNSPEC_SYNC_OLD_OP_ZABHA
-  UNSPEC_SYNC_EXCHANGE
-  UNSPEC_SYNC_EXCHANGE_SUBWORD
-  UNSPEC_SYNC_EXCHANGE_ZABHA
-  UNSPEC_ATOMIC_LOAD
-  UNSPEC_ATOMIC_STORE
   UNSPEC_MEMORY_BARRIER
+])
+
+(define_c_enum "unspecv" [
+  UNSPECV_COMPARE_AND_SWAP
+  UNSPECV_COMPARE_AND_SWAP_SUBWORD
+  UNSPECV_SYNC_OLD_OP
+  UNSPECV_SYNC_OLD_OP_SUBWORD
+  UNSPECV_SYNC_OLD_OP_ZABHA
+  UNSPECV_SYNC_EXCHANGE
+  UNSPECV_SYNC_EXCHANGE_SUBWORD
+  UNSPECV_SYNC_EXCHANGE_ZABHA
+  UNSPECV_ATOMIC_LOAD
+  UNSPECV_ATOMIC_STORE
 ])
 
 ;; Memory barriers.
@@ -91,19 +94,19 @@
 ;; AMO ops
 
 (define_insn "atomic_<atomic_optab><mode>"
-  [(set (match_operand:SHORT 0 "memory_operand" "+A")
+  [(set (match_operand:SHORT 0 "riscv_atomic_memory_operand" "+A")
 	(unspec_volatile:SHORT
 	  [(any_atomic:SHORT (match_dup 0)
 		     (match_operand:SHORT 1 "reg_or_0_operand" "rJ"))
 	   (match_operand:SI 2 "const_int_operand")] ;; model
-	 UNSPEC_SYNC_OLD_OP_ZABHA))]
+	 UNSPECV_SYNC_OLD_OP_ZABHA))]
   "TARGET_ZABHA"
   "amo<insn>.<amobh>%A2\tzero,%z1,%0"
   [(set_attr "type" "atomic")
    (set (attr "length") (const_int 4))])
 
 (define_expand "atomic_<atomic_optab><mode>"
-  [(any_atomic:GPR (match_operand:GPR 0 "memory_operand")    ;; mem location
+  [(any_atomic:GPR (match_operand:GPR 0 "riscv_atomic_memory_operand")    ;; mem location
 		   (match_operand:GPR 1 "reg_or_0_operand")) ;; value for op
    (match_operand:SI 2 "const_int_operand")]		     ;; model
   "TARGET_ZAAMO || TARGET_ZALRSC"
@@ -118,24 +121,24 @@
 })
 
 (define_insn "amo_atomic_<atomic_optab><mode>"
-  [(set (match_operand:GPR 0 "memory_operand" "+A")
+  [(set (match_operand:GPR 0 "riscv_atomic_memory_operand" "+A")
 	(unspec_volatile:GPR
 	  [(any_atomic:GPR (match_dup 0)
 		     (match_operand:GPR 1 "reg_or_0_operand" "rJ"))
 	   (match_operand:SI 2 "const_int_operand")] ;; model
-	 UNSPEC_SYNC_OLD_OP))]
+	 UNSPECV_SYNC_OLD_OP))]
   "TARGET_ZAAMO"
   "amo<insn>.<amo>%A2\tzero,%z1,%0"
   [(set_attr "type" "atomic")
    (set (attr "length") (const_int 4))])
 
 (define_insn "lrsc_atomic_<atomic_optab><mode>"
-  [(set (match_operand:GPR 0 "memory_operand" "+A")
+  [(set (match_operand:GPR 0 "riscv_atomic_memory_operand" "+A")
 	(unspec_volatile:GPR
 	  [(any_atomic:GPR (match_dup 0)
 		     (match_operand:GPR 1 "reg_or_0_operand" "rJ"))
 	   (match_operand:SI 2 "const_int_operand")] ;; model
-	 UNSPEC_SYNC_OLD_OP))
+	 UNSPECV_SYNC_OLD_OP))
    (clobber (match_scratch:GPR 3 "=&r"))]	     ;; tmp_1
   "!TARGET_ZAAMO && TARGET_ZALRSC"
   {
@@ -152,7 +155,7 @@
 
 (define_expand "atomic_fetch_<atomic_optab><mode>"
   [(match_operand:GPR 0 "register_operand")		     ;; old value at mem
-   (any_atomic:GPR (match_operand:GPR 1 "memory_operand")    ;; mem location
+   (any_atomic:GPR (match_operand:GPR 1 "riscv_atomic_memory_operand")    ;; mem location
 		   (match_operand:GPR 2 "reg_or_0_operand")) ;; value for op
    (match_operand:SI 3 "const_int_operand")]		     ;; model
   "TARGET_ZAAMO || TARGET_ZALRSC"
@@ -168,13 +171,13 @@
 
 (define_insn "amo_atomic_fetch_<atomic_optab><mode>"
   [(set (match_operand:GPR 0 "register_operand" "=&r")
-	(match_operand:GPR 1 "memory_operand" "+A"))
+	(match_operand:GPR 1 "riscv_atomic_memory_operand" "+A"))
    (set (match_dup 1)
 	(unspec_volatile:GPR
 	  [(any_atomic:GPR (match_dup 1)
 		     (match_operand:GPR 2 "reg_or_0_operand" "rJ"))
 	   (match_operand:SI 3 "const_int_operand")] ;; model
-	 UNSPEC_SYNC_OLD_OP))]
+	 UNSPECV_SYNC_OLD_OP))]
   "TARGET_ZAAMO"
   "amo<insn>.<amo>%A3\t%0,%z2,%1"
   [(set_attr "type" "atomic")
@@ -182,13 +185,13 @@
 
 (define_insn "lrsc_atomic_fetch_<atomic_optab><mode>"
   [(set (match_operand:GPR 0 "register_operand" "=&r")
-	(match_operand:GPR 1 "memory_operand" "+A"))
+	(match_operand:GPR 1 "riscv_atomic_memory_operand" "+A"))
    (set (match_dup 1)
 	(unspec_volatile:GPR
 	  [(any_atomic:GPR (match_dup 1)
 		     (match_operand:GPR 2 "arith_operand" "rI"))
 	   (match_operand:SI 3 "const_int_operand")] ;; model
-	 UNSPEC_SYNC_OLD_OP))
+	 UNSPECV_SYNC_OLD_OP))
    (clobber (match_scratch:GPR 4 "=&r"))]	  ;; tmp_1
   "!TARGET_ZAAMO && TARGET_ZALRSC"
   {
@@ -203,13 +206,13 @@
 
 (define_insn "subword_atomic_fetch_strong_<atomic_optab>"
   [(set (match_operand:SI 0 "register_operand" "=&r")		   ;; old value at mem
-	(match_operand:SI 1 "memory_operand" "+A"))		   ;; mem location
+	(match_operand:SI 1 "riscv_atomic_memory_operand" "+A"))		   ;; mem location
    (set (match_dup 1)
 	(unspec_volatile:SI
 	  [(any_atomic:SI (match_dup 1)
 		     (match_operand:SI 2 "arith_operand" "rI")) ;; value for op
 	   (match_operand:SI 3 "const_int_operand")]		   ;; model
-	 UNSPEC_SYNC_OLD_OP_SUBWORD))
+	 UNSPECV_SYNC_OLD_OP_SUBWORD))
     (use (match_operand:SI 4 "arith_operand" "rI"))	   ;; mask
     (use (match_operand:SI 5 "arith_operand" "rI"))	   ;; not_mask
     (clobber (match_scratch:SI 6 "=&r"))			   ;; tmp_1
@@ -230,7 +233,7 @@
 
 (define_expand "atomic_fetch_nand<mode>"
   [(match_operand:SHORT 0 "register_operand")			      ;; old value at mem
-   (not:SHORT (and:SHORT (match_operand:SHORT 1 "memory_operand")     ;; mem location
+   (not:SHORT (and:SHORT (match_operand:SHORT 1 "riscv_atomic_memory_operand")     ;; mem location
 			 (match_operand:SHORT 2 "reg_or_0_operand"))) ;; value for op
    (match_operand:SI 3 "const_int_operand")]			      ;; model
   "TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC"
@@ -270,13 +273,13 @@
 
 (define_insn "subword_atomic_fetch_strong_nand"
   [(set (match_operand:SI 0 "register_operand" "=&r")			  ;; old value at mem
-	(match_operand:SI 1 "memory_operand" "+A"))			  ;; mem location
+	(match_operand:SI 1 "riscv_atomic_memory_operand" "+A"))			  ;; mem location
    (set (match_dup 1)
 	(unspec_volatile:SI
 	  [(not:SI (and:SI (match_dup 1)
 			   (match_operand:SI 2 "arith_operand" "rI")))    ;; value for op
 	   (match_operand:SI 3 "const_int_operand")]			  ;; mask
-	 UNSPEC_SYNC_OLD_OP_SUBWORD))
+	 UNSPECV_SYNC_OLD_OP_SUBWORD))
     (use (match_operand:SI 4 "arith_operand" "rI"))		  ;; mask
     (use (match_operand:SI 5 "arith_operand" "rI"))		  ;; not_mask
     (clobber (match_scratch:SI 6 "=&r"))				  ;; tmp_1
@@ -298,7 +301,7 @@
 
 (define_expand "atomic_fetch_<atomic_optab><mode>"
   [(match_operand:SHORT 0 "register_operand")			 ;; old value at mem
-   (any_atomic:SHORT (match_operand:SHORT 1 "memory_operand")	 ;; mem location
+   (any_atomic:SHORT (match_operand:SHORT 1 "riscv_atomic_memory_operand")	 ;; mem location
 		     (match_operand:SHORT 2 "reg_or_0_operand")) ;; value for op
    (match_operand:SI 3 "const_int_operand")]			 ;; model
   "(TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC) || TARGET_ZABHA"
@@ -314,13 +317,13 @@
 
 (define_insn "zabha_atomic_fetch_<atomic_optab><mode>"
   [(set (match_operand:SHORT 0 "register_operand" "=&r")
-	(match_operand:SHORT 1 "memory_operand" "+A"))
+	(match_operand:SHORT 1 "riscv_atomic_memory_operand" "+A"))
    (set (match_dup 1)
 	(unspec_volatile:SHORT
 	  [(any_atomic:SHORT (match_dup 1)
 		     (match_operand:SHORT 2 "reg_or_0_operand" "rJ"))
 	   (match_operand:SI 3 "const_int_operand")] ;; model
-	 UNSPEC_SYNC_OLD_OP_ZABHA))]
+	 UNSPECV_SYNC_OLD_OP_ZABHA))]
    "TARGET_ZABHA"
    "amo<insn>.<amobh>%A3\t%0,%z2,%1"
    [(set_attr "type" "atomic")
@@ -328,7 +331,7 @@
 
 (define_expand "lrsc_atomic_fetch_<atomic_optab><mode>"
   [(match_operand:SHORT 0 "register_operand")			 ;; old value at mem
-   (any_atomic:SHORT (match_operand:SHORT 1 "memory_operand")	 ;; mem location
+   (any_atomic:SHORT (match_operand:SHORT 1 "riscv_atomic_memory_operand")	 ;; mem location
 		     (match_operand:SHORT 2 "reg_or_0_operand")) ;; value for op
    (match_operand:SI 3 "const_int_operand")]			 ;; model
   "!TARGET_ZABHA && TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC"
@@ -371,7 +374,7 @@
 
 (define_expand "atomic_exchange<mode>"
   [(match_operand:GPR 0 "register_operand")  ;; old value at mem
-   (match_operand:GPR 1 "memory_operand")    ;; mem location
+   (match_operand:GPR 1 "riscv_atomic_memory_operand")    ;; mem location
    (match_operand:GPR 2 "register_operand")  ;; value for op
    (match_operand:SI 3 "const_int_operand")] ;; model
   "TARGET_ZAAMO || TARGET_ZALRSC"
@@ -400,9 +403,9 @@
 (define_insn "amo_atomic_exchange<mode>"
   [(set (match_operand:GPR 0 "register_operand" "=r")
 	(unspec_volatile:GPR
-	  [(match_operand:GPR 1 "memory_operand" "+A")
+	  [(match_operand:GPR 1 "riscv_atomic_memory_operand" "+A")
 	   (match_operand:SI 3 "const_int_operand")] ;; model
-	  UNSPEC_SYNC_EXCHANGE))
+	  UNSPECV_SYNC_EXCHANGE))
    (set (match_dup 1)
 	(match_operand:GPR 2 "reg_or_0_operand" "rJ"))]
   "TARGET_ZAAMO"
@@ -413,9 +416,9 @@
 (define_insn "amo_atomic_exchange_extended"
   [(set (match_operand:DI 0 "register_operand" "=r")
     (sign_extend:DI (unspec_volatile:SI
-      [(match_operand:SI 1 "memory_operand" "+A")
+      [(match_operand:SI 1 "riscv_atomic_memory_operand" "+A")
        (match_operand:SI 3 "const_int_operand")] ;; model
-      UNSPEC_SYNC_EXCHANGE)))
+      UNSPECV_SYNC_EXCHANGE)))
    (set (match_dup 1)
     (match_operand:SI 2 "reg_or_0_operand" "rJ"))]
   "TARGET_64BIT && TARGET_ZAAMO"
@@ -426,9 +429,9 @@
 (define_insn "lrsc_atomic_exchange<mode>"
   [(set (match_operand:GPR 0 "register_operand" "=&r")
 	(unspec_volatile:GPR
-	  [(match_operand:GPR 1 "memory_operand" "+A")
+	  [(match_operand:GPR 1 "riscv_atomic_memory_operand" "+A")
 	   (match_operand:SI 3 "const_int_operand")] ;; model
-	  UNSPEC_SYNC_EXCHANGE))
+	  UNSPECV_SYNC_EXCHANGE))
    (set (match_dup 1)
 	(match_operand:GPR 2 "reg_or_0_operand" "rJ"))
    (clobber (match_scratch:GPR 4 "=&r"))]	  ;; tmp_1
@@ -444,7 +447,7 @@
 
 (define_expand "atomic_exchange<mode>"
   [(match_operand:SHORT 0 "register_operand") ;; old value at mem
-   (match_operand:SHORT 1 "memory_operand")   ;; mem location
+   (match_operand:SHORT 1 "riscv_atomic_memory_operand")   ;; mem location
    (match_operand:SHORT 2 "register_operand") ;; value
    (match_operand:SI 3 "const_int_operand")]  ;; model
   "(TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC) || TARGET_ZABHA"
@@ -461,9 +464,9 @@
 (define_insn "zabha_atomic_exchange<mode>"
   [(set (match_operand:SHORT 0 "register_operand" "=r")
 	(unspec_volatile:SHORT
-	  [(match_operand:SHORT 1 "memory_operand" "+A")
+	  [(match_operand:SHORT 1 "riscv_atomic_memory_operand" "+A")
 	   (match_operand:SI 3 "const_int_operand")] ;; model
-	  UNSPEC_SYNC_EXCHANGE_ZABHA))
+	  UNSPECV_SYNC_EXCHANGE_ZABHA))
    (set (match_dup 1)
 	(match_operand:SHORT 2 "reg_or_0_operand" "rJ"))]
   "TARGET_ZABHA"
@@ -473,7 +476,7 @@
 
 (define_expand "lrsc_atomic_exchange<mode>"
   [(match_operand:SHORT 0 "register_operand") ;; old value at mem
-   (match_operand:SHORT 1 "memory_operand")   ;; mem location
+   (match_operand:SHORT 1 "riscv_atomic_memory_operand")   ;; mem location
    (match_operand:SHORT 2 "register_operand") ;; value
    (match_operand:SI 3 "const_int_operand")]  ;; model
   "!TARGET_ZABHA && TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC"
@@ -506,12 +509,12 @@
 
 (define_insn "subword_atomic_exchange_strong"
   [(set (match_operand:SI 0 "register_operand" "=&r")	 ;; old value at mem
-	(match_operand:SI 1 "memory_operand" "+A"))	 ;; mem location
+	(match_operand:SI 1 "riscv_atomic_memory_operand" "+A"))	 ;; mem location
    (set (match_dup 1)
 	(unspec_volatile:SI
 	  [(match_operand:SI 2 "arith_operand" "rI")	 ;; value
 	   (match_operand:SI 3 "const_int_operand")]	 ;; model
-      UNSPEC_SYNC_EXCHANGE_SUBWORD))
+      UNSPECV_SYNC_EXCHANGE_SUBWORD))
     (use (match_operand:SI 4 "arith_operand" "rI"))	 ;; not_mask
     (clobber (match_scratch:SI 5 "=&r"))]		 ;; tmp_1
   "TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC"
@@ -535,13 +538,13 @@
 ;; More details: https://github.com/riscv-non-isa/riscv-elf-psabi-doc/issues/444
 (define_insn "zacas_atomic_cas_value_strong<mode>"
   [(set (match_operand:GPR 0 "register_operand" "=&r")			    ;; val output
-	(match_operand:GPR 1 "memory_operand" "+A"))			    ;; memory
+	(match_operand:GPR 1 "riscv_atomic_memory_operand" "+A"))			    ;; memory
    (set (match_dup 1)
 	(unspec_volatile:GPR [(match_operand:GPR 2 "register_operand" "0")  ;; expected val
 			      (match_operand:GPR 3 "reg_or_0_operand" "rJ") ;; desired val
 			      (match_operand:SI 4 "const_int_operand")	    ;; mod_s
 			      (match_operand:SI 5 "const_int_operand")]	    ;; mod_f
-	 UNSPEC_COMPARE_AND_SWAP))]
+	 UNSPECV_COMPARE_AND_SWAP))]
   "TARGET_ZACAS"
   {
     enum memmodel model_success = (enum memmodel) INTVAL (operands[4]);
@@ -563,13 +566,13 @@
 
 (define_insn "zalrsc_atomic_cas_value_strong<mode>"
   [(set (match_operand:GPR 0 "register_operand" "=&r")
-	(match_operand:GPR 1 "memory_operand" "+A"))
+	(match_operand:GPR 1 "riscv_atomic_memory_operand" "+A"))
    (set (match_dup 1)
 	(unspec_volatile:GPR [(match_operand:GPR 2 "reg_or_0_operand" "rJ")
 			      (match_operand:GPR 3 "reg_or_0_operand" "rJ")
 			      (match_operand:SI 4 "const_int_operand")  ;; mod_s
 			      (match_operand:SI 5 "const_int_operand")] ;; mod_f
-	 UNSPEC_COMPARE_AND_SWAP))
+	 UNSPECV_COMPARE_AND_SWAP))
    (clobber (match_scratch:GPR 6 "=&r"))]
   "TARGET_ZALRSC"
   {
@@ -591,7 +594,7 @@
 (define_expand "atomic_compare_and_swap<mode>"
   [(match_operand:SI 0 "register_operand" "")   ;; bool output
    (match_operand:GPR 1 "register_operand" "")  ;; val output
-   (match_operand:GPR 2 "memory_operand" "")    ;; memory
+   (match_operand:GPR 2 "riscv_atomic_memory_operand" "")    ;; memory
    (match_operand:GPR 3 "register_operand" "")  ;; expected value
    (match_operand:GPR 4 "reg_or_0_operand" "")  ;; desired value
    (match_operand:SI 5 "const_int_operand" "")  ;; is_weak
@@ -648,13 +651,13 @@
 ;; More details: https://github.com/riscv-non-isa/riscv-elf-psabi-doc/issues/444
 (define_insn "zacas_atomic_cas_value_strong<mode>"
   [(set (match_operand:SHORT 0 "register_operand" "=&r")			;; val output
-	(match_operand:SHORT 1 "memory_operand" "+A"))				;; memory
+	(match_operand:SHORT 1 "riscv_atomic_memory_operand" "+A"))				;; memory
    (set (match_dup 1)
 	(unspec_volatile:SHORT [(match_operand:SHORT 2 "register_operand" "0")  ;; expected_val
 				(match_operand:SHORT 3 "reg_or_0_operand" "rJ") ;; desired_val
 				(match_operand:SI 4 "const_int_operand")	;; mod_s
 				(match_operand:SI 5 "const_int_operand")]	;; mod_f
-	 UNSPEC_COMPARE_AND_SWAP))]
+	 UNSPECV_COMPARE_AND_SWAP))]
   "TARGET_ZACAS && TARGET_ZABHA"
   {
     enum memmodel model_success = (enum memmodel) INTVAL (operands[4]);
@@ -677,7 +680,7 @@
 (define_expand "atomic_compare_and_swap<mode>"
   [(match_operand:SI 0 "register_operand")    ;; bool output
    (match_operand:SHORT 1 "register_operand") ;; val output
-   (match_operand:SHORT 2 "memory_operand")   ;; memory
+   (match_operand:SHORT 2 "riscv_atomic_memory_operand")   ;; memory
    (match_operand:SHORT 3 "register_operand") ;; expected value
    (match_operand:SHORT 4 "reg_or_0_operand") ;; desired value
    (match_operand:SI 5 "const_int_operand")   ;; is_weak
@@ -725,7 +728,7 @@
 
 (define_expand "zalrsc_atomic_cas_value_strong<mode>"
   [(match_operand:SHORT 0 "register_operand") ;; val output
-   (match_operand:SHORT 1 "memory_operand")   ;; memory
+   (match_operand:SHORT 1 "riscv_atomic_memory_operand")   ;; memory
    (match_operand:SHORT 2 "reg_or_0_operand") ;; expected value
    (match_operand:SHORT 3 "reg_or_0_operand") ;; desired value
    (match_operand:SI 4 "const_int_operand")   ;; mod_s
@@ -780,11 +783,11 @@
 
 (define_insn "subword_atomic_cas_strong"
   [(set (match_operand:SI 0 "register_operand" "=&r")			   ;; old value at mem
-	(match_operand:SI 1 "memory_operand" "+A"))			   ;; mem location
+	(match_operand:SI 1 "riscv_atomic_memory_operand" "+A"))			   ;; mem location
    (set (match_dup 1)
 	(unspec_volatile:SI [(match_operand:SI 2 "reg_or_0_operand" "rJ")  ;; expected value
 			     (match_operand:SI 3 "arith_operand" "rI")] ;; desired value
-	 UNSPEC_COMPARE_AND_SWAP_SUBWORD))
+	 UNSPECV_COMPARE_AND_SWAP_SUBWORD))
 	(match_operand:SI 4 "const_int_operand")		;; model
 	(use (match_operand:SI 5 "arith_operand" "rI"))		;; mask
 	(use (match_operand:SI 6 "arith_operand" "rI"))		;; not_mask
@@ -806,7 +809,7 @@
 
 (define_expand "atomic_test_and_set"
   [(match_operand:QI 0 "register_operand" "")    ;; bool output
-   (match_operand:QI 1 "memory_operand" "+A")    ;; memory
+   (match_operand:QI 1 "riscv_atomic_memory_operand" "+A")    ;; memory
    (match_operand:SI 2 "const_int_operand" "")]  ;; model
   "TARGET_ZAAMO || TARGET_ZALRSC"
 {

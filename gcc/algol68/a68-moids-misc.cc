@@ -439,11 +439,15 @@ a68_is_transput_mode (MOID_T *p, char rw)
     return true;
   else if (p == M_LONG_LONG_INT)
     return true;
+  else if (p == M_WORD_INT)
+    return true;
   else if (p == M_REAL)
     return true;
   else if (p == M_LONG_REAL)
     return true;
   else if (p == M_LONG_LONG_REAL)
+    return true;
+  else if (p == M_WORD_REAL)
     return true;
   else if (p == M_BOOL)
     return true;
@@ -459,11 +463,15 @@ a68_is_transput_mode (MOID_T *p, char rw)
     return true;
   else if (p == M_LONG_LONG_BITS)
     return true;
+  else if (p == M_WORD_BITS)
+    return true;
   else if (p == M_COMPLEX)
     return true;
   else if (p == M_LONG_COMPLEX)
     return true;
   else if (p == M_LONG_LONG_COMPLEX)
+    return true;
+  else if (p == M_WORD_COMPLEX)
     return true;
   else if (p == M_ROW_CHAR)
     return true;
@@ -710,7 +718,7 @@ a68_is_firm (MOID_T *p, MOID_T *q)
    NO_MOID if P cannot be widened to Q.
 
    This means that if P is known to widen to Q (a68_is_widenable (P,Q) return
-   true) this function can be invoked repeteadly and it will eventually return
+   true) this function can be invoked repeatedly and it will eventually return
    Q.  */
 
 MOID_T *
@@ -729,7 +737,7 @@ a68_widens_to (MOID_T *p, MOID_T *q)
     }
   else if (p == M_LONG_INT)
     {
-      if (q == M_LONG_REAL)
+      if (q == M_LONG_REAL || q == M_LONG_COMPLEX)
 	{
 	  return M_LONG_REAL;
 	}
@@ -742,6 +750,13 @@ a68_widens_to (MOID_T *p, MOID_T *q)
     {
       if (q == M_LONG_LONG_REAL || q == M_LONG_LONG_COMPLEX)
 	  return M_LONG_LONG_REAL;
+      else
+	return NO_MOID;
+    }
+  else if (p == M_WORD_INT)
+    {
+      if (q == M_WORD_REAL || q == M_WORD_COMPLEX)
+	return M_WORD_REAL;
       else
 	return NO_MOID;
     }
@@ -767,6 +782,13 @@ a68_widens_to (MOID_T *p, MOID_T *q)
     {
       if (q == M_LONG_LONG_COMPLEX)
 	return M_LONG_LONG_COMPLEX;
+      else
+	return NO_MOID;
+    }
+  else if (p == M_WORD_REAL)
+    {
+      if (q == M_WORD_COMPLEX)
+	return M_WORD_COMPLEX;
       else
 	return NO_MOID;
     }
@@ -815,13 +837,26 @@ a68_widens_to (MOID_T *p, MOID_T *q)
       else
 	return NO_MOID;
     }
+  else if (p == M_WORD_BITS)
+    {
+      if (q == M_ROW_BOOL)
+	return M_ROW_BOOL;
+      else if (q == M_FLEX_ROW_BOOL)
+	return M_FLEX_ROW_BOOL;
+      else
+	return NO_MOID;
+    }
   else if (p == M_BYTES && q == M_ROW_CHAR)
     return M_ROW_CHAR;
   else if (p == M_LONG_BYTES && q == M_ROW_CHAR)
     return M_ROW_CHAR;
+  else if (p == M_WORD_BYTES && q == M_ROW_CHAR)
+    return M_ROW_CHAR;
   else if (p == M_BYTES && q == M_FLEX_ROW_CHAR)
     return M_FLEX_ROW_CHAR;
   else if (p == M_LONG_BYTES && q == M_FLEX_ROW_CHAR)
+    return M_FLEX_ROW_CHAR;
+  else if (p == M_WORD_BYTES && q == M_FLEX_ROW_CHAR)
     return M_FLEX_ROW_CHAR;
   else
     return NO_MOID;
@@ -1012,7 +1047,7 @@ a68_is_coercible_series (MOID_T *p, MOID_T *q, int c, int deflex)
 
 /* Whether P can be coerced to Q in a C context.
 
-   If P is a STOWED modes serie (A, B, ...) and Q is a routine mode like `proc
+   If P is a STOWED modes series (A, B, ...) and Q is a routine mode like `proc
    (X, Y, ...)' then this routine determines whether A can be coerced to X, B
    to Y, etc.  */
 

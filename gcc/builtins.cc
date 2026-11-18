@@ -30,6 +30,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree.h"
 #include "memmodel.h"
 #include "gimple.h"
+#include "tree-eh.h"
 #include "predict.h"
 #include "tm_p.h"
 #include "stringpool.h"
@@ -62,7 +63,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "value-prof.h"
 #include "builtins.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "asan.h"
 #include "internal-fn.h"
@@ -454,9 +454,8 @@ get_pointer_alignment_1 (tree exp, unsigned int *alignp,
 	   && POINTER_TYPE_P (TREE_TYPE (exp)))
     {
       unsigned int ptr_align, ptr_misalign;
-      struct ptr_info_def *pi = SSA_NAME_PTR_INFO (exp);
 
-      if (pi && get_ptr_info_alignment (pi, &ptr_align, &ptr_misalign))
+      if (get_ssa_name_alignment (exp, &ptr_align, &ptr_misalign))
 	{
 	  *bitposp = ptr_misalign * BITS_PER_UNIT;
 	  *alignp = ptr_align * BITS_PER_UNIT;
@@ -569,7 +568,7 @@ string_length (const void *ptr, unsigned eltsize, unsigned maxelts)
    than what a C strlen call would return.
 
    ELTSIZE is 1 for normal single byte character strings, and 2 or
-   4 for wide characer strings.  ELTSIZE is by default 1.
+   4 for wide character strings.  ELTSIZE is by default 1.
 
    The value returned is of type `ssizetype'.  */
 
@@ -863,7 +862,7 @@ expand_builtin_return_addr (enum built_in_function fndecl_code, int count)
   /* For __builtin_frame_address, return what we've got.  But, on
      the SPARC for example, we may have to add a bias.  */
   if (fndecl_code == BUILT_IN_FRAME_ADDRESS)
-    return FRAME_ADDR_RTX (tem);
+    return FRAME_ADDR_RTX (count, tem);
 
   /* For __builtin_return_address, get the return address from that frame.  */
 #ifdef RETURN_ADDR_RTX
@@ -884,7 +883,7 @@ static alias_set_type setjmp_alias_set = -1;
    exception handling code.  */
 
 void
-expand_builtin_setjmp_setup (rtx buf_addr, rtx receiver_label)
+expand_builtin_setjmp_setup (rtx buf_addr, rtx_insn *receiver_label)
 {
   machine_mode sa_mode = STACK_SAVEAREA_MODE (SAVE_NONLOCAL);
   rtx stack_save;
@@ -928,10 +927,10 @@ expand_builtin_setjmp_setup (rtx buf_addr, rtx receiver_label)
 
 /* Construct the trailing part of a __builtin_setjmp call.  This is
    also called directly by the SJLJ exception handling code.
-   If RECEIVER_LABEL is NULL, instead contruct a nonlocal goto handler.  */
+   If RECEIVER_LABEL is NULL, instead construct a nonlocal goto handler.  */
 
 void
-expand_builtin_setjmp_receiver (rtx receiver_label)
+expand_builtin_setjmp_receiver (rtx_insn *receiver_label)
 {
   rtx chain;
 
@@ -1364,10 +1363,10 @@ expand_builtin_prefetch (tree exp)
 /* Get a MEM rtx for expression EXP which is the address of an operand
    to be used in a string instruction (cmpstrsi, cpymemsi, ..).  LEN is
    the maximum length of the block of memory that might be accessed or
-   NULL if unknown.  */
+   NULL if unknown.  STORE_P is true when EXP is the destination.  */
 
 rtx
-get_memory_rtx (tree exp, tree len)
+get_memory_rtx (tree exp, tree len, bool store_p)
 {
   tree orig_exp = exp, base;
   rtx addr, mem;
@@ -1401,7 +1400,7 @@ get_memory_rtx (tree exp, tree len)
      from the original address we got, and build an all-aliasing
      unknown-sized access to that one.  */
   if (is_gimple_mem_ref_addr (TREE_OPERAND (exp, 0)))
-    set_mem_attributes (mem, exp, 0);
+    set_mem_attributes (mem, exp, 0, store_p);
   else if (TREE_CODE (TREE_OPERAND (exp, 0)) == ADDR_EXPR
 	   && (base = get_base_address (TREE_OPERAND (TREE_OPERAND (exp, 0),
 						      0))))
@@ -1414,7 +1413,7 @@ get_memory_rtx (tree exp, tree len)
 							     size_zero_node,
 							     NULL)),
 			 exp, build_int_cst (ptr_type_node, 0));
-      set_mem_attributes (mem, exp, 0);
+      set_mem_attributes (mem, exp, 0, store_p);
       /* Since we stripped parts make sure the offset is unknown and the
 	 alignment is computed from the original address.  */
       clear_mem_offset (mem);
@@ -1976,17 +1975,22 @@ mathfn_built_in_2 (tree type, combined_fn fn)
 #define SEQ_OF_CASE_MATHFN			\
     CASE_MATHFN_FLOATN (ACOS)			\
     CASE_MATHFN_FLOATN (ACOSH)			\
+    CASE_MATHFN_FLOATN (ACOSPI)			\
     CASE_MATHFN_FLOATN (ASIN)			\
     CASE_MATHFN_FLOATN (ASINH)			\
+    CASE_MATHFN_FLOATN (ASINPI)			\
     CASE_MATHFN_FLOATN (ATAN)			\
     CASE_MATHFN_FLOATN (ATAN2)			\
+    CASE_MATHFN_FLOATN (ATAN2PI)		\
     CASE_MATHFN_FLOATN (ATANH)			\
+    CASE_MATHFN_FLOATN (ATANPI)			\
     CASE_MATHFN_FLOATN (CBRT)			\
     CASE_MATHFN_FLOATN (CEIL)			\
     CASE_MATHFN (CEXPI)				\
     CASE_MATHFN_FLOATN (COPYSIGN)		\
     CASE_MATHFN_FLOATN (COS)			\
     CASE_MATHFN_FLOATN (COSH)			\
+    CASE_MATHFN_FLOATN (COSPI)			\
     CASE_MATHFN (DREM)				\
     CASE_MATHFN_FLOATN (ERF)			\
     CASE_MATHFN_FLOATN (ERFC)			\
@@ -2054,9 +2058,11 @@ mathfn_built_in_2 (tree type, combined_fn fn)
     CASE_MATHFN_FLOATN (SIN)			\
     CASE_MATHFN (SINCOS)			\
     CASE_MATHFN_FLOATN (SINH)			\
+    CASE_MATHFN_FLOATN (SINPI)			\
     CASE_MATHFN_FLOATN (SQRT)			\
     CASE_MATHFN_FLOATN (TAN)			\
     CASE_MATHFN_FLOATN (TANH)			\
+    CASE_MATHFN_FLOATN (TANPI)			\
     CASE_MATHFN_FLOATN (TGAMMA)			\
     CASE_MATHFN_FLOATN (TRUNC)			\
     CASE_MATHFN (Y0)				\
@@ -3589,7 +3595,7 @@ builtin_memcpy_read_str (void *data, void *, HOST_WIDE_INT offset,
    set it into PROBABLE_MAX_SIZE.  */
 
 static void
-determine_block_size (tree len, rtx len_rtx,
+determine_block_size (tree len, rtx &len_rtx,
 		      unsigned HOST_WIDE_INT *min_size,
 		      unsigned HOST_WIDE_INT *max_size,
 		      unsigned HOST_WIDE_INT *probable_max_size)
@@ -3650,9 +3656,13 @@ determine_block_size (tree len, rtx len_rtx,
 	    *probable_max_size = min.to_uhwi () - 1;
 	}
     }
-  gcc_checking_assert (*max_size <=
-		       (unsigned HOST_WIDE_INT)
-			  GET_MODE_MASK (GET_MODE (len_rtx)));
+
+  if (*min_size == *max_size)
+    len_rtx = GEN_INT (*min_size);
+  else
+    gcc_checking_assert (*max_size <=
+			 (unsigned HOST_WIDE_INT)
+			 GET_MODE_MASK (GET_MODE (len_rtx)));
 }
 
 /* Expand a call EXP to the memcpy builtin.
@@ -3766,7 +3776,7 @@ expand_builtin_memory_copy_args (tree dest, tree src, tree len,
 
   if (expected_align < dest_align)
     expected_align = dest_align;
-  dest_mem = get_memory_rtx (dest, len);
+  dest_mem = get_memory_rtx (dest, len, true);
   set_mem_align (dest_mem, dest_align);
   len_rtx = expand_normal (len);
   determine_block_size (len, len_rtx, &min_size, &max_size,
@@ -3800,7 +3810,7 @@ expand_builtin_memory_copy_args (tree dest, tree src, tree len,
       return dest_mem;
     }
 
-  src_mem = get_memory_rtx (src, len);
+  src_mem = get_memory_rtx (src, len, false);
   set_mem_align (src_mem, src_align);
 
   /* Copy word part most expediently.  */
@@ -3869,8 +3879,8 @@ expand_movstr (tree dest, tree src, rtx target, memop_ret retmode)
   if (!targetm.have_movstr ())
     return NULL_RTX;
 
-  dest_mem = get_memory_rtx (dest, NULL);
-  src_mem = get_memory_rtx (src, NULL);
+  dest_mem = get_memory_rtx (dest, NULL, true);
+  src_mem = get_memory_rtx (src, NULL, false);
   if (retmode == RETURN_BEGIN)
     {
       target = force_reg (Pmode, XEXP (dest_mem, 0));
@@ -4146,7 +4156,7 @@ expand_builtin_strncpy (tree exp, rtx target)
 				   dest_align, false))
 	return NULL_RTX;
 
-      dest_mem = get_memory_rtx (dest, len);
+      dest_mem = get_memory_rtx (dest, len, true);
       store_by_pieces (dest_mem, tree_to_uhwi (len),
 		       builtin_strncpy_read_str,
 		       const_cast<char *> (p), dest_align, false,
@@ -4705,7 +4715,7 @@ expand_builtin_memset_args (tree dest, tree val, tree len,
   len_rtx = expand_normal (len);
   determine_block_size (len, len_rtx, &min_size, &max_size,
 			&probable_max_size);
-  dest_mem = get_memory_rtx (dest, len);
+  dest_mem = get_memory_rtx (dest, len, true);
   val_mode = TYPE_MODE (unsigned_char_type_node);
 
   if (TREE_CODE (val) != INTEGER_CST
@@ -4889,8 +4899,8 @@ expand_builtin_memcmp (tree exp, rtx target, bool result_eq)
   if (arg1_align == 0 || arg2_align == 0)
     return NULL_RTX;
 
-  rtx arg1_rtx = get_memory_rtx (arg1, len);
-  rtx arg2_rtx = get_memory_rtx (arg2, len);
+  rtx arg1_rtx = get_memory_rtx (arg1, len, false);
+  rtx arg2_rtx = get_memory_rtx (arg2, len, false);
   rtx len_rtx = expand_normal (fold_convert_loc (loc, sizetype, len));
 
   /* Set MEM_SIZE as appropriate.  */
@@ -4983,8 +4993,8 @@ expand_builtin_strcmp (tree exp, ATTRIBUTE_UNUSED rtx target)
   arg1 = builtin_save_expr (arg1);
   arg2 = builtin_save_expr (arg2);
 
-  rtx arg1_rtx = get_memory_rtx (arg1, NULL);
-  rtx arg2_rtx = get_memory_rtx (arg2, NULL);
+  rtx arg1_rtx = get_memory_rtx (arg1, NULL, false);
+  rtx arg2_rtx = get_memory_rtx (arg2, NULL, false);
 
   /* Try to call cmpstrsi.  */
   if (cmpstr_icode != CODE_FOR_nothing)
@@ -5140,8 +5150,8 @@ expand_builtin_strncmp (tree exp, ATTRIBUTE_UNUSED rtx target,
       len = fold_convert_loc (loc, sizetype, len);
       len = fold_build2_loc (loc, MIN_EXPR, TREE_TYPE (len), len, len3);
     }
-  rtx arg1_rtx = get_memory_rtx (arg1, len);
-  rtx arg2_rtx = get_memory_rtx (arg2, len);
+  rtx arg1_rtx = get_memory_rtx (arg1, len, false);
+  rtx arg2_rtx = get_memory_rtx (arg2, len, false);
   rtx arg3_rtx = expand_normal (len);
   result = expand_cmpstrn_or_cmpmem (cmpstrn_icode, target, arg1_rtx,
 				     arg2_rtx, TREE_TYPE (len), arg3_rtx,
@@ -5613,7 +5623,9 @@ expand_builtin_strub_update (tree exp)
 			     build_int_cst (TREE_TYPE (wmptr), 0));
   rtx wmark = expand_expr (wmtree, NULL_RTX, ptr_mode, EXPAND_MEMORY);
 
-  rtx wmarkr = force_reg (ptr_mode, wmark);
+  rtx wmark_load = shallow_copy_rtx (wmark);
+  MEM_NOTRAP_P (wmark_load) = !tree_could_trap_p (wmtree);
+  rtx wmarkr = force_reg (ptr_mode, wmark_load);
 
   rtx_code_label *lab = gen_label_rtx ();
   do_compare_rtx_and_jump (stktop, wmarkr, STACK_TOPS, STACK_UNSIGNED,
@@ -5638,7 +5650,9 @@ expand_builtin_strub_update (tree exp)
       wmtree = fold_build2 (MEM_REF, wmtype, wmptr,
 			    build_int_cst (TREE_TYPE (wmptr), 0));
       wmark = expand_expr (wmtree, NULL_RTX, ptr_mode, EXPAND_MEMORY);
-      wmarkr = force_reg (ptr_mode, wmark);
+      wmark_load = shallow_copy_rtx (wmark);
+      MEM_NOTRAP_P (wmark_load) = !tree_could_trap_p (wmtree);
+      wmarkr = force_reg (ptr_mode, wmark_load);
 
       do_compare_rtx_and_jump (stktop, wmarkr, STACK_TOPS, STACK_UNSIGNED,
 			       ptr_mode, NULL_RTX, lab, NULL,
@@ -5673,6 +5687,7 @@ expand_builtin_strub_leave (tree exp)
       tree wmtree = fold_build2 (MEM_REF, wmtype, wmptr,
 				 build_int_cst (TREE_TYPE (wmptr), 0));
       rtx wmark = expand_expr (wmtree, NULL_RTX, ptr_mode, EXPAND_MEMORY);
+      MEM_NOTRAP_P (wmark) = !tree_could_trap_p (wmtree);
       stktop = force_reg (ptr_mode, wmark);
     }
 
@@ -5684,6 +5699,7 @@ expand_builtin_strub_leave (tree exp)
   tree wmtree = fold_build2 (MEM_REF, wmtype, wmptr,
 			     build_int_cst (TREE_TYPE (wmptr), 0));
   rtx wmark = expand_expr (wmtree, NULL_RTX, ptr_mode, EXPAND_MEMORY);
+  MEM_NOTRAP_P (wmark) = !tree_could_trap_p (wmtree);
 
   rtx wmarkr = force_reg (ptr_mode, wmark);
 
@@ -6939,8 +6955,7 @@ expand_builtin_atomic_fetch_op (machine_mode mode, tree exp, rtx target,
 {
   rtx val, mem, ret;
   enum memmodel model;
-  tree fndecl;
-  tree addr;
+  tree fndecl, addr, oldval;
 
   model = get_memmodel (CALL_EXPR_ARG (exp, 2));
 
@@ -6967,6 +6982,13 @@ expand_builtin_atomic_fetch_op (machine_mode mode, tree exp, rtx target,
 
   gcc_assert (TREE_OPERAND (addr, 0) == fndecl);
   TREE_OPERAND (addr, 0) = builtin_decl_explicit (ext_call);
+  oldval = CALL_EXPR_ARG (exp, 1);
+
+  if (!ignore && reg_overlap_mentioned_p (mem, val))
+    {
+      val = force_reg (mode, val);
+      CALL_EXPR_ARG (exp, 1) = make_tree (TREE_TYPE (oldval), val);
+    }
 
   /* If we will emit code after the call, the call cannot be a tail call.
      If it is emitted as a tail call, a barrier is emitted after it, and
@@ -6983,6 +7005,7 @@ expand_builtin_atomic_fetch_op (machine_mode mode, tree exp, rtx target,
   /* Then issue the arithmetic correction to return the right result.  */
   if (!ignore)
     {
+      CALL_EXPR_ARG (exp, 1) = oldval;
       if (code == NOT)
 	{
 	  ret = expand_simple_binop (mode, AND, ret, val, NULL_RTX, true,
@@ -7061,6 +7084,9 @@ expand_ifn_atomic_bit_test_and (gcall *call)
   create_integer_operand (&ops[4], integer_onep (flag));
   if (maybe_expand_insn (icode, 5, ops))
     return;
+
+  if (reg_overlap_mentioned_p (mem, val))
+    val = force_reg (mode, val);
 
   rtx bitval = val;
   val = expand_simple_binop (mode, ASHIFT, const1_rtx,
@@ -7256,23 +7282,23 @@ expand_builtin_atomic_test_and_set (tree exp, rtx target)
 static tree
 fold_builtin_atomic_always_lock_free (tree arg0, tree arg1)
 {
-  int size;
+  HOST_WIDE_INT size;
   machine_mode mode;
   unsigned int mode_align, type_align;
 
-  if (TREE_CODE (arg0) != INTEGER_CST)
+  if (!tree_fits_shwi_p (arg0))
     return NULL_TREE;
 
   /* We need a corresponding integer mode for the access to be lock-free.  */
-  size = INTVAL (expand_normal (arg0)) * BITS_PER_UNIT;
+  size = tree_to_shwi (arg0) * BITS_PER_UNIT;
   if (!int_mode_for_size (size, 0).exists (&mode))
     return boolean_false_node;
 
   mode_align = GET_MODE_ALIGNMENT (mode);
 
-  if (TREE_CODE (arg1) == INTEGER_CST)
+  if (tree_fits_uhwi_p (arg1))
     {
-      unsigned HOST_WIDE_INT val = UINTVAL (expand_normal (arg1));
+      unsigned HOST_WIDE_INT val = tree_to_uhwi (arg1);
 
       /* Either this argument is null, or it's a fake pointer encoding
          the alignment of the object.  */
@@ -7598,7 +7624,8 @@ inline_string_cmp (rtx target, tree var_str, const char *const_str,
 {
   HOST_WIDE_INT offset = 0;
   rtx var_rtx_array
-    = get_memory_rtx (var_str, build_int_cst (unsigned_type_node,length));
+    = get_memory_rtx (var_str, build_int_cst (unsigned_type_node, length),
+		      false);
   rtx var_rtx = NULL_RTX;
   rtx const_rtx = NULL_RTX;
   rtx result = target ? target : gen_reg_rtx (mode);
@@ -7662,7 +7689,7 @@ inline_expand_builtin_bytecmp (tree exp, rtx target)
 		       || fcode == BUILT_IN_STRNCMP
 		       || fcode == BUILT_IN_MEMCMP);
 
-  /* On a target where the type of the call (int) has same or narrower presicion
+  /* On a target where the type of the call (int) has same or narrower precision
      than unsigned char, give up the inlining expansion.  */
   if (TYPE_PRECISION (unsigned_char_type_node)
       >= TYPE_PRECISION (TREE_TYPE (exp)))
@@ -7828,8 +7855,7 @@ expand_builtin_crc_table_based (internal_fn fn, scalar_mode crc_mode,
   else
     /* If it's IFN_CRC_REV generate bit-reversed CRC.  */
     expand_reversed_crc_table_based (target, op1, op2, op3,
-				     data_mode,
-				     generate_reflecting_code_standard);
+				     data_mode);
   return target;
 }
 
@@ -8093,6 +8119,18 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
 	expand_builtin_return (expand_normal (CALL_EXPR_ARG (exp, 0)));
       return const0_rtx;
 
+    case BUILT_IN_CALL_CODE_ADDRESS:
+      /* All valid uses of __builtin_call_code_address () are removed in
+	 in tree-nested.cc or gimple-fold.cc.  */
+      error ("argument to %<__builtin_call_code_address%> must be a function");
+      return const0_rtx;
+
+    case BUILT_IN_CALL_STATIC_CHAIN:
+       /* All valid uses of __builtin_call_static_chain () are removed in
+	  in tree-nested.cc or gimple-fold.cc.  */
+      error ("argument to %<__builtin_call_static_chain%> must be a function");
+      return const0_rtx;
+
     case BUILT_IN_SAVEREGS:
       return expand_builtin_saveregs ();
 
@@ -8180,6 +8218,17 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
     case BUILT_IN_BSWAP64:
     case BUILT_IN_BSWAP128:
       target = expand_builtin_bswap (target_mode, exp, target, subtarget);
+      if (target)
+	return target;
+      break;
+
+    case BUILT_IN_BITREVERSE8:
+    case BUILT_IN_BITREVERSE16:
+    case BUILT_IN_BITREVERSE32:
+    case BUILT_IN_BITREVERSE64:
+    case BUILT_IN_BITREVERSE128:
+      target = expand_builtin_unop (target_mode, exp, target, subtarget,
+				    bitreverse_optab);
       if (target)
 	return target;
       break;
@@ -9986,6 +10035,79 @@ fold_builtin_fpclassify (location_t loc, tree *args, int nargs)
   arg = args[5];
   type = TREE_TYPE (arg);
   mode = TYPE_MODE (type);
+
+  /* A target defines the classification optabs when FP comparisons are
+     unsuitable for classification, for instance because they raise
+     FE_INVALID for a signaling NaN (PR middle-end/66462).  Build on the
+     built-ins in that case rather than on comparisons.  */
+  if (optab_handler (isnan_optab, mode) != CODE_FOR_nothing
+      && optab_handler (isinf_optab, mode) != CODE_FOR_nothing
+      && optab_handler (isnormal_optab, mode) != CODE_FOR_nothing)
+    {
+      tree isnan_fn = builtin_decl_explicit (BUILT_IN_ISNAN);
+      tree isinf_fn = builtin_decl_explicit (BUILT_IN_ISINF);
+      tree isnormal_fn = builtin_decl_explicit (BUILT_IN_ISNORMAL);
+      const struct real_format *fmt = REAL_MODE_FORMAT (mode);
+      tree itype = NULL_TREE;
+      scalar_int_mode imode;
+
+      /* The remaining zero versus subnormal test must not use a comparison
+	 either.  Testing the magnitude of the encoding for zero works
+	 whenever the format is binary, has a matching integer mode and
+	 stores its sign in the high bit of it; that excludes e.g. XFmode,
+	 whose encoding is narrower than its integer mode, and the composite
+	 formats, whose sign is not a single bit that can be shifted out.  */
+      if (fmt->b == 2
+	  && int_mode_for_mode (mode).exists (&imode)
+	  && fmt->signbit_rw == fmt->signbit_ro
+	  && fmt->signbit_rw == (int) GET_MODE_PRECISION (imode) - 1)
+	{
+	  itype = lang_hooks.types.type_for_mode (imode, 1);
+	  if (itype && TYPE_PRECISION (itype) != GET_MODE_PRECISION (imode))
+	    itype = NULL_TREE;
+	}
+
+      if (isnan_fn && isinf_fn && isnormal_fn && itype)
+	{
+	  arg = builtin_save_expr (arg);
+
+	  /* Shifting the sign bit out leaves zero iff ARG is +-0.  */
+	  tmp = fold_build1_loc (loc, VIEW_CONVERT_EXPR, itype, arg);
+	  tmp = fold_build2_loc (loc, LSHIFT_EXPR, itype, tmp,
+				 build_int_cst (integer_type_node, 1));
+	  tmp = fold_build2_loc (loc, EQ_EXPR, integer_type_node, tmp,
+				 build_int_cst (itype, 0));
+	  res = fold_build3_loc (loc, COND_EXPR, integer_type_node,
+				 tmp, fp_zero, fp_subnormal);
+
+	  tmp = build_call_expr_loc (loc, isnormal_fn, 1, arg);
+	  tmp = fold_build2_loc (loc, NE_EXPR, integer_type_node, tmp,
+				 integer_zero_node);
+	  res = fold_build3_loc (loc, COND_EXPR, integer_type_node, tmp,
+				 fp_normal, res);
+
+	  if (tree_expr_maybe_infinite_p (arg))
+	    {
+	      tmp = build_call_expr_loc (loc, isinf_fn, 1, arg);
+	      tmp = fold_build2_loc (loc, NE_EXPR, integer_type_node, tmp,
+				     integer_zero_node);
+	      res = fold_build3_loc (loc, COND_EXPR, integer_type_node, tmp,
+				     fp_infinite, res);
+	    }
+
+	  if (tree_expr_maybe_nan_p (arg))
+	    {
+	      tmp = build_call_expr_loc (loc, isnan_fn, 1, arg);
+	      tmp = fold_build2_loc (loc, NE_EXPR, integer_type_node, tmp,
+				     integer_zero_node);
+	      res = fold_build3_loc (loc, COND_EXPR, integer_type_node, tmp,
+				     fp_nan, res);
+	    }
+
+	  return res;
+	}
+    }
+
   arg = builtin_save_expr (fold_build1_loc (loc, ABS_EXPR, type, arg));
 
   /* fpclassify(x) ->
@@ -10473,7 +10595,7 @@ fold_builtin_bit_query (location_t loc, enum built_in_function fcode,
       /* Only keep second argument to IFN_CLZ/IFN_CTZ if it is the
 	 value defined at zero during GIMPLE, or for large/huge _BitInt
 	 (which are then lowered during bitint lowering).  */
-      if (arg2 && TREE_CODE (TREE_TYPE (arg0)) != BITINT_TYPE)
+      if (arg2 && !BITINT_TYPE_P (TREE_TYPE (arg0)))
 	{
 	  int val;
 	  if (fcode == BUILT_IN_CLZG)
@@ -10510,6 +10632,53 @@ fold_builtin_bit_query (location_t loc, enum built_in_function fcode,
 			call, arg1);
 
   return call;
+}
+
+/* Fold or build a __builtin_bswapg (ARG) (if IFN is IFN_BSWAP) or
+   __builtin_bitreverseg (ARG (otherwise) call.  The FE should have
+   verified earlier that the argument type is unsigned INTEGER_TYPE
+   or BITINT_TYPE, for __builtin_bswapg with precision divisible by 8.  */
+
+tree
+fold_build_builtin_bswapg_bitreverseg (location_t loc, enum internal_fn ifn,
+				       tree arg)
+{
+  tree type = TYPE_MAIN_VARIANT (TREE_TYPE (arg));
+  if (ifn == IFN_BSWAP && TYPE_PRECISION (type) == 8)
+    return fold_convert_loc (loc, type, arg);
+  struct { tree type; built_in_function bswap, bitreverse; } fns[]
+    = { { unsigned_char_type_node, END_BUILTINS, BUILT_IN_BITREVERSE8 },
+	{ uint16_type_node, BUILT_IN_BSWAP16, BUILT_IN_BITREVERSE16 },
+	{ uint32_type_node, BUILT_IN_BSWAP32, BUILT_IN_BITREVERSE32 },
+	{ uint64_type_node, BUILT_IN_BSWAP64, BUILT_IN_BITREVERSE64 },
+	{ uint128_type_node, BUILT_IN_BSWAP128, BUILT_IN_BITREVERSE128 } };
+  if (TREE_CODE (arg) == INTEGER_CST)
+    {
+      wide_int res;
+      if (ifn == IFN_BSWAP)
+	res = wi::bswap (wi::to_wide (arg));
+      else
+	res = wi::bitreverse (wi::to_wide (arg));
+      return wide_int_to_tree (type, res);
+    }
+  for (unsigned i = 0; i < ARRAY_SIZE (fns); ++i)
+    if (fns[i].type
+	&& TYPE_PRECISION (fns[i].type) >= TYPE_PRECISION (type))
+      {
+	arg = fold_convert_loc (loc, fns[i].type, arg);
+	tree fndecl
+	  = builtin_decl_explicit (ifn == IFN_BSWAP
+				   ? fns[i].bswap : fns[i].bitreverse);
+	tree ret = build_call_expr_loc (loc, fndecl, 1, arg);
+	if (TYPE_PRECISION (type) != TYPE_PRECISION (fns[i].type))
+	  ret = fold_build2_loc (loc, RSHIFT_EXPR, fns[i].type, ret,
+				 build_int_cst (unsigned_type_node,
+						TYPE_PRECISION (fns[i].type)
+						- TYPE_PRECISION (type)));
+	return fold_convert_loc (loc, type, ret);
+      }
+  gcc_assert (TREE_CODE (type) == BITINT_TYPE);
+  return build_call_expr_internal_loc (loc, ifn, type, 1, arg);
 }
 
 /* Fold __builtin_{add,sub}c{,l,ll} into pair of internal functions
@@ -10558,6 +10727,52 @@ fold_builtin_addc_subc (location_t loc, enum built_in_function fcode,
   tree ovfres2 = build1_loc (loc, IMAGPART_EXPR, type, tgt);
   ovfres = build2_loc (loc, BIT_IOR_EXPR, type, ovfres, ovfres2);
   tree mem_arg3 = build_fold_indirect_ref_loc (loc, args[3]);
+  tree store
+    = fold_build2_loc (loc, MODIFY_EXPR, void_type_node, mem_arg3, ovfres);
+  return build2_loc (loc, COMPOUND_EXPR, type, store, intres);
+}
+
+/* Fold __builtin_clmulg (arg1, arg2) or __builtin_clmulg (arg1, arg2, arg3)
+   into IFN_CLMUL or IFN_CLMUL_WIDEN internal call.  */
+
+tree
+fold_build_builtin_clmulg (location_t loc, tree arg1, tree arg2, tree arg3)
+{
+  tree type = TYPE_MAIN_VARIANT (TREE_TYPE (arg1));
+  if (TREE_CODE (arg1) == INTEGER_CST
+      && !TREE_OVERFLOW (arg1)
+      && TREE_CODE (arg2) == INTEGER_CST
+      && !TREE_OVERFLOW (arg2))
+    {
+      unsigned prec = TYPE_PRECISION (type);
+      wide_int res = wi::clmul (wi::to_wide (arg1), wi::to_wide (arg2),
+				prec * (arg3 == NULL_TREE ? 1 : 2));
+      if (arg3 == NULL_TREE)
+	return wide_int_to_tree (type, res);
+      wide_int lo = wide_int::from (res, prec, UNSIGNED);
+      wide_int hi = wide_int::from (wi::rshift (res, prec, UNSIGNED),
+				    prec, UNSIGNED);
+      tree mem_arg3 = build_fold_indirect_ref_loc (loc, arg3);
+      tree store
+	= fold_build2_loc (loc, MODIFY_EXPR, void_type_node, mem_arg3,
+			   wide_int_to_tree (type, hi));
+      return build2_loc (loc, COMPOUND_EXPR, type, store,
+			 wide_int_to_tree (type, lo));
+    }
+  if (arg3 == NULL_TREE)
+    return build_call_expr_internal_loc (loc, IFN_CLMUL, type, 2, arg1, arg2);
+  tree ctype = build_complex_type (type);
+  tree call = build_call_expr_internal_loc (loc, IFN_CLMUL_WIDEN, ctype, 2,
+					    arg1, arg2);
+  /* Force SAVE_EXPR even for calls which satisfy tree_invariant_p_1,
+     as while the call itself is const, the REALPART_EXPR store is
+     certainly not.  And in any case, we want just one call,
+     not multiple and trying to CSE them later.  */
+  TREE_SIDE_EFFECTS (call) = 1;
+  tree tgt = save_expr (call);
+  tree intres = build1_loc (loc, REALPART_EXPR, type, tgt);
+  tree ovfres = build1_loc (loc, IMAGPART_EXPR, type, tgt);
+  tree mem_arg3 = build_fold_indirect_ref_loc (loc, arg3);
   tree store
     = fold_build2_loc (loc, MODIFY_EXPR, void_type_node, mem_arg3, ovfres);
   return build2_loc (loc, COMPOUND_EXPR, type, store, intres);
@@ -12311,6 +12526,8 @@ is_simple_builtin (tree decl)
       case BUILT_IN_STACK_SAVE:
       case BUILT_IN_STACK_RESTORE:
       case BUILT_IN_DWARF_CFA:
+      case BUILT_IN_CALL_CODE_ADDRESS:
+      case BUILT_IN_CALL_STATIC_CHAIN:
 	/* Exception state returns or moves registers around.  */
       case BUILT_IN_EH_FILTER:
       case BUILT_IN_EH_POINTER:
@@ -12343,6 +12560,11 @@ is_inexpensive_builtin (tree decl)
       case BUILT_IN_BSWAP32:
       case BUILT_IN_BSWAP64:
       case BUILT_IN_BSWAP128:
+      case BUILT_IN_BITREVERSE8:
+      case BUILT_IN_BITREVERSE16:
+      case BUILT_IN_BITREVERSE32:
+      case BUILT_IN_BITREVERSE64:
+      case BUILT_IN_BITREVERSE128:
       case BUILT_IN_CLZ:
       case BUILT_IN_CLZIMAX:
       case BUILT_IN_CLZL:
@@ -12440,16 +12662,24 @@ builtin_with_linkage_p (tree decl)
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_ACOS):
       CASE_FLT_FN (BUILT_IN_ACOSH):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_ACOSH):
+      CASE_FLT_FN (BUILT_IN_ACOSPI):
+      CASE_FLT_FN_FLOATN_NX (BUILT_IN_ACOSPI):
       CASE_FLT_FN (BUILT_IN_ASIN):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_ASIN):
       CASE_FLT_FN (BUILT_IN_ASINH):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_ASINH):
+      CASE_FLT_FN (BUILT_IN_ASINPI):
+      CASE_FLT_FN_FLOATN_NX (BUILT_IN_ASINPI):
       CASE_FLT_FN (BUILT_IN_ATAN):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_ATAN):
-      CASE_FLT_FN (BUILT_IN_ATANH):
-      CASE_FLT_FN_FLOATN_NX (BUILT_IN_ATANH):
       CASE_FLT_FN (BUILT_IN_ATAN2):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_ATAN2):
+      CASE_FLT_FN (BUILT_IN_ATAN2PI):
+      CASE_FLT_FN_FLOATN_NX (BUILT_IN_ATAN2PI):
+      CASE_FLT_FN (BUILT_IN_ATANH):
+      CASE_FLT_FN_FLOATN_NX (BUILT_IN_ATANH):
+      CASE_FLT_FN (BUILT_IN_ATANPI):
+      CASE_FLT_FN_FLOATN_NX (BUILT_IN_ATANPI):
       CASE_FLT_FN (BUILT_IN_CBRT):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_CBRT):
       CASE_FLT_FN (BUILT_IN_CEIL):
@@ -12460,6 +12690,8 @@ builtin_with_linkage_p (tree decl)
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_COS):
       CASE_FLT_FN (BUILT_IN_COSH):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_COSH):
+      CASE_FLT_FN (BUILT_IN_COSPI):
+      CASE_FLT_FN_FLOATN_NX (BUILT_IN_COSPI):
       CASE_FLT_FN (BUILT_IN_ERF):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_ERF):
       CASE_FLT_FN (BUILT_IN_ERFC):
@@ -12537,15 +12769,19 @@ builtin_with_linkage_p (tree decl)
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_SCALBN):
       CASE_FLT_FN (BUILT_IN_SIN):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_SIN):
+      CASE_FLT_FN (BUILT_IN_SINCOS):
       CASE_FLT_FN (BUILT_IN_SINH):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_SINH):
-      CASE_FLT_FN (BUILT_IN_SINCOS):
+      CASE_FLT_FN (BUILT_IN_SINPI):
+      CASE_FLT_FN_FLOATN_NX (BUILT_IN_SINPI):
       CASE_FLT_FN (BUILT_IN_SQRT):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_SQRT):
       CASE_FLT_FN (BUILT_IN_TAN):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_TAN):
       CASE_FLT_FN (BUILT_IN_TANH):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_TANH):
+      CASE_FLT_FN (BUILT_IN_TANPI):
+      CASE_FLT_FN_FLOATN_NX (BUILT_IN_TANPI):
       CASE_FLT_FN (BUILT_IN_TGAMMA):
       CASE_FLT_FN_FLOATN_NX (BUILT_IN_TGAMMA):
       CASE_FLT_FN (BUILT_IN_TRUNC):

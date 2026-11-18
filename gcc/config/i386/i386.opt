@@ -584,6 +584,9 @@ Enum(ix86_veclibabi) String(acml) Value(ix86_veclibabi_type_acml)
 EnumValue
 Enum(ix86_veclibabi) String(aocl) Value(ix86_veclibabi_type_aocl)
 
+EnumValue
+Enum(ix86_veclibabi) String(hvml) Value(ix86_veclibabi_type_hvml)
+
 mvect8-ret-in-mem
 Target Mask(VECT8_RETURNS) Save
 Return 8-byte vectors in memory.
@@ -1043,6 +1046,10 @@ mgeneral-regs-only
 Target RejectNegative Mask(GENERAL_REGS_ONLY) Var(ix86_target_flags) Save
 Generate code which uses only the general registers.
 
+m128bit-atomic
+Target Mask(128BIT_ATOMIC) Var(ix86_target_flags) Save
+Generate cmpxchg16b, 128-bit atomic vector loads and stores for the x86-64 architecture.
+
 mshstk
 Target Mask(ISA_SHSTK) Var(ix86_isa_flags) Save
 Enable shadow stack built-in functions from Control-flow Enforcement
@@ -1258,7 +1265,7 @@ Target Joined UInteger Var(ix86_vect_unroll_limit) Init(4) Param
 Limit how much the autovectorizer may unroll a loop.
 
 -param=ix86-vect-compare-costs=
-Target Joined UInteger Var(ix86_vect_compare_costs) Init(0) IntegerRange(0, 1) Param Optimization
+Target Joined UInteger Var(ix86_vect_compare_costs) Init(1) IntegerRange(0, 1) Param Optimization
 Whether x86 vectorizer cost modeling compares costs of different vector sizes.
 
 mlam=
@@ -1368,11 +1375,7 @@ AVX10.1 and AVX10.2 built-in functions and code generation.
 mamx-avx512
 Target Mask(ISA2_AMX_AVX512) Var(ix86_isa_flags2) Save
 Support MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AVX, AVX2,
-AVX10.1, AVX10.2 and AMX-AVX512 built-in functions and code generation.
-
-mamx-tf32
-Target Mask(ISA2_AMX_TF32) Var(ix86_isa_flags2) Save
-Support AMX-TF32 built-in functions and code generation.
+AVX512F and AMX-AVX512 built-in functions and code generation.
 
 mamx-fp8
 Target Mask(ISA2_AMX_FP8) Var(ix86_isa_flags2) Save
@@ -1389,3 +1392,18 @@ Support AMX-MOVRS built-in functions and code generation.
 mavx512bmm
 Target Mask(ISA2_AVX512BMM) Var(ix86_isa_flags2) Save
 Support AVX512BMM built-in functions and code generation.
+
+mavx10v2aux
+Target Mask(ISA2_AVX10V2AUX) Var(ix86_isa_flags2) Save
+Support MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AVX, AVX2,
+AVX10.1 and AVX10V2AUX built-in functions and code generation.
+
+macev1
+Target Mask(ISA2_ACEV1) Var(ix86_isa_flags2) Save
+Support MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AVX, AVX2,
+AVX10.1 and ACEV1 built-in functions and code generation.
+
+mavx10v1aux
+Target Mask(ISA2_AVX10V1AUX) Var(ix86_isa_flags2) Save
+Support MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AVX, AVX2,
+AVX10.1 and AVX10V1AUX built-in functions and code generation.

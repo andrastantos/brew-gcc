@@ -1508,8 +1508,13 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 			  __base_ref>;
 #endif
 
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 4125. move_iterator's default constructor should be constrained
       _GLIBCXX17_CONSTEXPR
       move_iterator()
+#ifdef __glibcxx_concepts
+	requires default_initializable<_Iterator>
+#endif
       : _M_current() { }
 
       explicit _GLIBCXX17_CONSTEXPR
@@ -1744,7 +1749,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline _GLIBCXX17_CONSTEXPR bool
     operator==(const move_iterator<_Iterator>& __x,
 	       const move_iterator<_Iterator>& __y)
-    // N.B. No contraints, x.base() == y.base() is always well-formed.
+    // N.B. No constraints, x.base() == y.base() is always well-formed.
     { return __x.base() == __y.base(); }
 
 #ifdef __cpp_lib_three_way_comparison
@@ -2131,6 +2136,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return *this;
     }
 
+    // _GLIBCXX_RESOLVE_LIB_DEFECTS
+    // 3953. iter_move for common_iterator and ... should return decltype(auto)
     constexpr decltype(auto)
     operator++(int)
     {
@@ -2219,8 +2226,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  }
       }
 
+    // _GLIBCXX_RESOLVE_LIB_DEFECTS
+    // 3953. iter_move for common_iterator [...] should return decltype(auto)
     [[nodiscard]]
-    friend constexpr iter_rvalue_reference_t<_It>
+    friend constexpr decltype(auto)
     iter_move(const common_iterator& __i)
     noexcept(noexcept(ranges::iter_move(std::declval<const _It&>())))
     requires input_iterator<_It>
@@ -2295,8 +2304,33 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       using difference_type = iter_difference_t<_It>;
     };
 
+  namespace __detail
+  {
+    template<typename _It, typename _Sent>
+      struct __common_iterator_iter_cat
+      { };
+
+    template<typename _It, typename _Sent>
+      requires integral<iter_difference_t<_It>>
+      struct __common_iterator_iter_cat<_It, _Sent>
+      {
+	static auto
+	_S_iter_cat()
+	{
+	  if constexpr (requires { requires derived_from<__iter_category_t<_It>,
+							 forward_iterator_tag>; })
+	    return forward_iterator_tag{};
+	  else
+	    return input_iterator_tag{};
+	}
+
+	using iterator_category = decltype(_S_iter_cat());
+      };
+  } // namespace __detail
+
   template<input_iterator _It, typename _Sent>
     struct iterator_traits<common_iterator<_It, _Sent>>
+    : __detail::__common_iterator_iter_cat<_It, _Sent>
     {
     private:
       template<typename _Iter>
@@ -2313,21 +2347,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  using type = decltype(std::declval<const _CIter&>().operator->());
 	};
 
-      static auto
-      _S_iter_cat()
-      {
-	if constexpr (requires { requires derived_from<__iter_category_t<_It>,
-						       forward_iterator_tag>; })
-	  return forward_iterator_tag{};
-	else
-	  return input_iterator_tag{};
-      }
-
     public:
       using iterator_concept = __conditional_t<forward_iterator<_It>,
 					       forward_iterator_tag,
 					       input_iterator_tag>;
-      using iterator_category = decltype(_S_iter_cat());
+      // iterator_category defined in base __common_iterator_iter_cat
       using value_type = iter_value_t<_It>;
       using difference_type = iter_difference_t<_It>;
       using pointer = typename __ptr<_It>::type;
@@ -2454,6 +2478,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	return *this;
       }
 
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 3953. iter_move for ... and counted_iterator should return decltype(auto)
       constexpr decltype(auto)
       operator++(int)
       {
@@ -2576,8 +2602,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 		    const counted_iterator<_It2>& __y) noexcept
 	{ return __y._M_length <=> __x._M_length; }
 
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 3953. iter_move for [...] counted_iterator should return decltype(auto)
       [[nodiscard]]
-      friend constexpr iter_rvalue_reference_t<_It>
+      friend constexpr decltype(auto)
       iter_move(const counted_iterator& __i)
       noexcept(noexcept(ranges::iter_move(__i._M_current)))
       requires input_iterator<_It>
@@ -2619,6 +2647,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   template<input_iterator _It> class basic_const_iterator;
 
+  /// @cond undocumented
   namespace __detail
   {
     template<typename _It>
@@ -2646,11 +2675,13 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       struct __basic_const_iterator_iter_cat<_It>
       { using iterator_category = __iter_category_t<_It>; };
   } // namespace detail
+  /// @endcond
 
   template<input_iterator _It>
     using const_iterator
       = __conditional_t<__detail::__constant_iterator<_It>, _It, basic_const_iterator<_It>>;
 
+  /// @cond undocumented
   namespace __detail
   {
     template<typename _Sent>
@@ -2661,6 +2692,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       struct __const_sentinel<_Sent>
       { using type = const_iterator<_Sent>; };
   } // namespace __detail
+  /// @endcond
 
   template<semiregular _Sent>
     using const_sentinel = typename __detail::__const_sentinel<_Sent>::type;
@@ -2691,6 +2723,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     template<input_iterator _It2> friend class basic_const_iterator;
 
   public:
+    // _GLIBCXX_RESOLVE_LIB_DEFECTS
+    // 4253. basic_const_iterator should provide iterator_type
+    using iterator_type = _It;
     using iterator_concept = decltype(_S_iter_concept());
     using value_type = iter_value_t<_It>;
     using difference_type = iter_difference_t<_It>;

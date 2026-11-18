@@ -20,6 +20,24 @@
 /* Code organization: See block comment at the top of
    aarch64-sve-builtins.def.  */
 
+/* Define an SVE function group.
+   See the fields in `function_group_info` for the meaning of each argument.  */
+#ifndef DEF_SVE_FUNCTION_GS_FPM
+#define DEF_SVE_FUNCTION_GS_FPM(NAME, SHAPE, TYPES, GROUPS, PREDS, FPM_MODE)
+#endif
+
+/* Same as `DEF_SVE_FUNCTION_GS_FPM` above, but with FPM = unused.  */
+#ifndef DEF_SVE_FUNCTION_GS
+#define DEF_SVE_FUNCTION_GS(NAME, SHAPE, TYPES, GROUPS, PREDS) \
+   DEF_SVE_FUNCTION_GS_FPM (NAME, SHAPE, TYPES, GROUPS, PREDS, unused)
+#endif
+
+/* Same as `DEF_SVE_FUNCTION_GS` above, but with GROUPS = none.  */
+#ifndef DEF_SVE_FUNCTION
+#define DEF_SVE_FUNCTION(NAME, SHAPE, TYPES,       PREDS) \
+    DEF_SVE_FUNCTION_GS (NAME, SHAPE, TYPES, none, PREDS)
+#endif
+
 #define REQUIRED_EXTENSIONS ssve (0)
 DEF_SVE_FUNCTION (svabd, binary_opt_n, all_arith, mxz)
 DEF_SVE_FUNCTION (svabs, unary, all_float_and_signed, mxz)
@@ -274,8 +292,6 @@ DEF_SVE_FUNCTION (svadrb, adr_offset, none, none)
 DEF_SVE_FUNCTION (svadrd, adr_index, none, none)
 DEF_SVE_FUNCTION (svadrh, adr_index, none, none)
 DEF_SVE_FUNCTION (svadrw, adr_index, none, none)
-DEF_SVE_FUNCTION (svcompact, unary, sd_data, implicit)
-DEF_SVE_FUNCTION (svexpa, unary_uint, all_float, none)
 DEF_SVE_FUNCTION (svld1_gather, load_gather_sv, sd_data, implicit)
 DEF_SVE_FUNCTION (svld1_gather, load_gather_vs, sd_data, implicit)
 DEF_SVE_FUNCTION (svld1sb_gather, load_ext_gather_offset, sd_integer, implicit)
@@ -373,4 +389,12 @@ DEF_SVE_FUNCTION (svuzp1q, binary, all_data, none)
 DEF_SVE_FUNCTION (svuzp2q, binary, all_data, none)
 DEF_SVE_FUNCTION (svzip1q, binary, all_data, none)
 DEF_SVE_FUNCTION (svzip2q, binary, all_data, none)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS sve_and_sme (0, AARCH64_FL_SME2p2)
+DEF_SVE_FUNCTION (svcompact, unary, sd_data, implicit)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS streaming_compatible (0, AARCH64_FL_SSVE_FEXPA)
+DEF_SVE_FUNCTION (svexpa, unary_uint, all_float, none)
 #undef REQUIRED_EXTENSIONS

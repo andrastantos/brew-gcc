@@ -40,6 +40,7 @@
 
 #define __glibcxx_want_mdspan
 #define __glibcxx_want_aligned_accessor
+#define __glibcxx_want_hardened_mdspan
 #define __glibcxx_want_submdspan
 #include <bits/version.h>
 
@@ -838,7 +839,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
     template<typename _Mapping>
       constexpr bool __is_padded_mapping = __is_left_padded_mapping<_Mapping>
-        || __is_right_padded_mapping<_Mapping>;
+	|| __is_right_padded_mapping<_Mapping>;
 #endif
 
     template<typename _PaddedMapping>
@@ -904,13 +905,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    && std::cmp_less_equal(__value, __max);
       }
 
-    template<typename _Tp>
-      constexpr bool __is_constant_wrapper = false;
-
-    template<_CwFixedValue _Xv, typename _Tp>
-      constexpr bool __is_constant_wrapper<constant_wrapper<_Xv, _Tp>>
-	= true;
-
     template<size_t _Index, typename _Extents>
       constexpr auto
       __extract_extent(const _Extents& __exts)
@@ -922,7 +916,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
     template<typename _Slice, typename _IndexType>
       concept __acceptable_slice_type = same_as<_Slice, full_extent_t>
-	  || same_as<_Slice, _IndexType> || __is_constant_wrapper<_Slice>
+	  || same_as<_Slice, _IndexType> || __is_constant_wrapper_v<_Slice>
 	  || __is_extent_slice<_Slice>;
 
     template<typename _IndexType, typename... _Slices>
@@ -1003,7 +997,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  return _Extent;
 	else if constexpr (same_as<_Slice, constant_wrapper<_IndexType(0)>>)
 	  return 0;
-	else if constexpr (__is_constant_wrapper<typename _Slice::extent_type>)
+	else if constexpr (__is_constant_wrapper_v<typename _Slice::extent_type>)
 	  return _Slice::extent_type::value;
 	else
 	  return dynamic_extent;
@@ -1204,7 +1198,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
     template<typename _Slice>
       concept __is_unit_stride_slice = (__mdspan::__is_extent_slice<_Slice>
-	  && __mdspan::__is_constant_wrapper<typename _Slice::stride_type>
+	  && __is_constant_wrapper_v<typename _Slice::stride_type>
 	  && _Slice::stride_type::value == 1)
 	|| std::same_as<_Slice, full_extent_t>;
 
@@ -1534,7 +1528,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       template<typename _OExtents>
 	requires is_constructible_v<extents_type, _OExtents>
 	constexpr explicit(!(extents_type::rank() == 0
-	                     && is_convertible_v<_OExtents, extents_type>))
+			     && is_convertible_v<_OExtents, extents_type>))
 	mapping(const layout_stride::mapping<_OExtents>& __other) noexcept
 	: mapping(__other.extents(), __mdspan::__internal_ctor{})
 	{ __glibcxx_assert(*this == __other); }
@@ -1710,7 +1704,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       template<typename _OExtents>
 	requires is_constructible_v<extents_type, _OExtents>
 	constexpr explicit(!(extents_type::rank() == 0
-	                     && is_convertible_v<_OExtents, extents_type>))
+			     && is_convertible_v<_OExtents, extents_type>))
 	mapping(const layout_stride::mapping<_OExtents>& __other) noexcept
 	: mapping(__other.extents(), __mdspan::__internal_ctor{})
 	{ __glibcxx_assert(*this == __other); }
@@ -1897,7 +1891,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	: _M_extents(__exts)
 	{
 	  for (size_t __i = 0; __i < extents_type::rank(); ++__i)
-	    _M_strides[__i] = index_type(as_const(__strides[__i]));
+	    _M_strides[__i] =
+	      __mdspan::__index_type_cast<index_type>(as_const(__strides[__i]));
+
+	  if constexpr (extents_type::rank() > 0)
+	    __glibcxx_assert(_M_check_unique());
 	}
 
       template<typename _OIndexType>
@@ -2032,6 +2030,97 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	}
 
     private:
+      using _Strides = typename __array_traits<index_type,
+					       extents_type::rank()>::_Type;
+
+      constexpr bool
+      _M_check_unique() const
+      {
+	constexpr size_t __rank = extents_type::rank();
+	// _GLIBCXX_RESOLVE_LIB_DEFECTS
+	// 4603. `layout_stride` should accept zero strides for empty `extents`
+	// 4606. Bullet (4.3) preconditions are too strict to implement submdspan
+
+	if (__mdspan::__empty(_M_extents))
+	  return true;
+
+	auto __stride_nonzero = [&](size_t __idx)
+	{ return (_M_strides[__idx] > 0) || (_M_extents.extent(__idx) == 1); };
+
+	if constexpr (__rank == 1)
+	  return __stride_nonzero(0);
+	else if constexpr (__rank == 2)
+	  {
+	    if (_M_extents.extent(0) == 1)
+	      return __stride_nonzero(1);
+	    if (_M_extents.extent(1) == 1)
+	      return __stride_nonzero(0);
+	    if (!_M_strides[0] || !_M_strides[1])
+	      return false;
+	    return (_M_strides[1] > _M_strides[0] * (_M_extents.extent(0) - 1))
+		|| (_M_strides[0] > _M_strides[1] * (_M_extents.extent(1) - 1));
+	  }
+	else
+	  {
+	    // This is necessary, but not sufficient condition for uniqueness.
+	    // It requires computation in range of call of operator(), so check
+	    // if first, also in non-debug mode.
+	    if (required_span_size() < __mdspan::__size(_M_extents))
+	      return false;
+
+	    // Checking for a valid permutation of strides is O(rank^2) so
+	    // so enabled only in debug mode.
+#ifdef _GLIBCXX_DEBUG
+	    size_t __perm[__rank];
+	    for (size_t __i = 0; __i < __rank; ++__i)
+	      __perm[__i] = __i;
+
+	    auto __getstride = [&](size_t __idx) { return _M_strides[__idx]; };
+	    auto __getextent = [&](size_t __idx) { return _M_extents.extent(__idx); };
+	    auto __popmin = [&](size_t __from, auto __getter)
+	    {
+	      size_t __min = __perm[__rank - 1];
+	      for (size_t __i = __rank - 1; __i > __from; --__i)
+		{
+		  const size_t __cur = __perm[__i - 1];
+		  if (__getter(__cur) < __getter(__min))
+		    {
+		      __perm[__i] = __min;
+		      __min = __cur;
+		    }
+		  else
+		    __perm[__i] = __cur;
+		}
+	      __perm[__from] = __min;
+	      return __getter(__min);
+	    };
+
+	    // We use eager insertion-sort based algorithm to permute the __perm.
+	    size_t __idx = 0;
+
+	    // Stride values are not relevant for dimension with single element
+	    while (__popmin(__idx, __getextent) == 1)
+	      if (++__idx == __rank)
+		return true;
+
+	    size_t __prev_span = 1;
+	    for (; __idx < __rank; ++__idx)
+	      {
+		const size_t __stride = __popmin(__idx, __getstride);
+		if (__stride < __prev_span)
+		  return false;
+		__prev_span += __stride * (__getextent(__perm[__idx]) - 1);
+	      }
+#else
+	    // Otherwise check obvious cases where stride is zero.
+	    for (size_t __idx = 0; __idx < __rank; ++__idx)
+	      if (!__stride_nonzero(__idx))
+		return false;
+#endif
+	    return true;
+	  }
+      }
+
 #if __glibcxx_submdspan
       template<typename... _Slices>
 	requires (extents_type::rank() == sizeof...(_Slices))
@@ -2052,8 +2141,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	}
 #endif
 
-      using _Strides = typename __array_traits<index_type,
-					       extents_type::rank()>::_Type;
       [[no_unique_address]] extents_type _M_extents;
       [[no_unique_address]] _Strides _M_strides;
     };
@@ -2628,7 +2715,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	{ return _PaddedStorage::_M_is_always_exhaustive(); }
 
 	constexpr bool
-	is_exhaustive() noexcept
+	is_exhaustive() const noexcept
 	{ return _M_storage._M_is_exhaustive(); }
 
 	static constexpr bool
@@ -2801,7 +2888,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	{ return _PaddedStorage::_M_is_always_exhaustive(); }
 
 	constexpr bool
-	is_exhaustive() noexcept
+	is_exhaustive() const noexcept
 	{ return _M_storage._M_is_exhaustive(); }
 
 	static constexpr bool
@@ -3069,17 +3156,24 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	{
 	  if constexpr (rank() == 0)
 	    return _M_accessor.access(_M_handle, _M_mapping());
-	  else if constexpr (!(is_same_v<_OIndexTypes, index_type> && ...))
-	    return operator[](
-	      __mdspan::__index_type_cast<index_type>(std::move(__indices))...);
+	  else if constexpr (!(is_integral_v<_OIndexTypes> && ...))
+	    return operator[](__index_int_t<_OIndexTypes>(std::move(__indices))...);
 	  else
 	   {
+	     auto __is_valid_index = [&]<typename _OIntType>(size_t __dim, _OIntType __index)
+	     {
+	       if constexpr (is_signed_v<_OIntType>)
+		 if (__index < 0)
+		   return false;
+	       return std::cmp_less(__index, extents().extent(__dim));
+	     };
 	     auto __is_multi_index = [&]<size_t... _Counts>(index_sequence<_Counts...>)
-	     { return ((__indices < extents().extent(_Counts)) && ...); };
+	     { return (__is_valid_index(_Counts, __indices) && ...); };
 
 	     __glibcxx_assert(__is_multi_index(make_index_sequence<rank()>()));
-	     return _M_accessor.access(_M_handle, _M_mapping(__indices...));
-	   }
+	     auto __index = _M_mapping(static_cast<index_type>(__indices)...);
+	     return _M_accessor.access(_M_handle, __index);
+    	   }
 	}
 
       template<typename _OIndexType>
@@ -3091,7 +3185,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    -> reference
 	    {
 	       return operator[](
-		 __mdspan::__index_type_cast<index_type>(as_const(__indices[_Counts]))...);
+		 __index_int_t<_OIndexType>(as_const(__indices[_Counts]))...);
 	    };
 	  return __call(make_index_sequence<rank()>());
 	}
@@ -3295,7 +3389,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  return __mdspan::__index_type_cast<_IndexType>(std::move(__slice));
       }
 
-    template<typename _IndexType, 
+    template<typename _IndexType,
 	    typename _OffsetType, typename _SpanType, typename _StrideType>
     constexpr auto
     __canonical_range_slice(_OffsetType __offset, _SpanType __span,
@@ -3308,10 +3402,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  .extent = __span,
 	  .stride = cw<_IndexType(1)>
 	};
-      else if constexpr (__is_constant_wrapper<_StrideType>)
-        {
+      else if constexpr (__is_constant_wrapper_v<_StrideType>)
+	{
 	  static_assert(_StrideType::value > 0);
-	  if constexpr (__is_constant_wrapper<_SpanType>)
+	  if constexpr (__is_constant_wrapper_v<_SpanType>)
 	    return extent_slice{
 	      .offset = __offset,
 	      .extent = cw<_IndexType(1 + (_SpanType::value - 1) / _StrideType::value)>,
@@ -3323,7 +3417,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	      .extent = _IndexType(__span > 0 ? 1 + (__span - 1) / _StrideType::value : 0),
 	      .stride = __stride
 	    };
-        }
+	}
       else if (__span == 0 || __stride == 1)
 	return extent_slice{
 	  .offset = __offset,
@@ -3331,7 +3425,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  .stride = _IndexType(1)
 	};
       else
-        {
+	{
 	  __glibcxx_assert(__stride > 0);
 	  return extent_slice{
 	    .offset = __offset,
@@ -3386,7 +3480,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       __check_inrange_index(const extents<_IndexType, _Extent>& __ext,
 			   const _OIndexType& __idx)
       {
-	if constexpr (__is_constant_wrapper<_OIndexType>
+	if constexpr (__is_constant_wrapper_v<_OIndexType>
 		      && _Extent != dynamic_extent)
 	  {
 	    static_assert(_OIndexType::value >= 0);
@@ -3401,7 +3495,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       __check_valid_index(const extents<_IndexType, _Extent>& __ext,
 			   const _OIndexType& __idx)
       {
-	if constexpr (__is_constant_wrapper<_OIndexType>
+	if constexpr (__is_constant_wrapper_v<_OIndexType>
 		      && _Extent != dynamic_extent)
 	  {
 	    static_assert(_OIndexType::value >= 0);
@@ -3427,31 +3521,31 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 				    constant_wrapper<_IndexType(0)>>)
 	      __mdspan::__check_valid_index(__ext, __slice.offset);
 	    else if constexpr (is_same_v<typename _Slice::extent_type,
-				         constant_wrapper<_IndexType(1)>>)
-              __mdspan::__check_inrange_index(__ext, __slice.offset);
-	    else if constexpr (__is_constant_wrapper<typename _Slice::extent_type>)
+					 constant_wrapper<_IndexType(1)>>)
+	      __mdspan::__check_inrange_index(__ext, __slice.offset);
+	    else if constexpr (__is_constant_wrapper_v<typename _Slice::extent_type>)
 	      { 
-              	__mdspan::__check_inrange_index(__ext, __slice.offset);
-		if constexpr (__is_constant_wrapper<typename _Slice::stride_type>)
+	      	__mdspan::__check_inrange_index(__ext, __slice.offset);
+		if constexpr (__is_constant_wrapper_v<typename _Slice::stride_type>)
 		  static_assert(_Slice::stride_type::value > 0);
 		else
 		  __glibcxx_assert(__slice.stride > 0);
 
 		if constexpr (_Extent != dynamic_extent
-		     && __is_constant_wrapper<typename _Slice::offset_type>)
-                  static_assert(std::cmp_greater_equal(
+		     && __is_constant_wrapper_v<typename _Slice::offset_type>)
+		  static_assert(std::cmp_greater_equal(
 		    _Extent - _Slice::offset_type::value,
 		    _Slice::extent_type::value));
 		if constexpr (_Extent != dynamic_extent
-		     && __is_constant_wrapper<typename _Slice::stride_type>)
-                  static_assert(std::cmp_greater(
+		     && __is_constant_wrapper_v<typename _Slice::stride_type>)
+		  static_assert(std::cmp_greater(
 		    _Extent,
 		    (_Slice::extent_type::value - 1) * _Slice::stride_type::value));
 
 		if constexpr (_Extent != dynamic_extent
-		     && __is_constant_wrapper<typename _Slice::offset_type>
-	             && __is_constant_wrapper<typename _Slice::stride_type>)
-                  static_assert(std::cmp_greater(
+		     && __is_constant_wrapper_v<typename _Slice::offset_type>
+		     && __is_constant_wrapper_v<typename _Slice::stride_type>)
+		  static_assert(std::cmp_greater(
 		    _Extent - _Slice::offset_type::value,
 		    (_Slice::extent_type::value - 1) * _Slice::stride_type::value));
 		else
@@ -3460,18 +3554,18 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 		    (_Slice::extent_type::value - 1) * __slice.stride));
 	      }
 	    else if constexpr (is_same_v<typename _Slice::stride_type,
-                                         constant_wrapper<_IndexType(1)>>)
+				         constant_wrapper<_IndexType(1)>>)
 	      {
-	        __mdspan::__check_valid_index(__ext, __slice.offset);
+		__mdspan::__check_valid_index(__ext, __slice.offset);
 		__glibcxx_assert(std::cmp_greater_equal(
 		  __ext.extent(0) - __slice.offset,
 		  __slice.extent));
-              }
+	      }
 	    else if (__slice.extent == 0)
 	      __mdspan::__check_valid_index(__ext, __slice.offset);
 	    else
 	      {
-	        __glibcxx_assert(__slice.offset < __ext.extent(0));
+		__glibcxx_assert(__slice.offset < __ext.extent(0));
 		__glibcxx_assert(__slice.extent == 1 || __slice.stride > 0);
 		__glibcxx_assert(__slice.extent == 1 || std::cmp_greater(
 		  __ext.extent(0) - __slice.offset,
@@ -3479,7 +3573,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	      }
 	  }
 	else if constexpr (!is_same_v<_Slice, full_extent_t>)
-          __mdspan::__check_inrange_index(__ext, __slice);
+	  __mdspan::__check_inrange_index(__ext, __slice);
       }
 
     template<typename _Extents, typename... _Slices>
@@ -3548,7 +3642,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	   typename _Accessor, typename... _RawSlices>
     requires (sizeof...(_RawSlices) == _Extents::rank()
 	&& __mdspan::__sliceable_mapping<typename _Layout::template mapping<_Extents>,
-	                                 __mdspan::__full_extent_t<_RawSlices>...>)
+					 __mdspan::__full_extent_t<_RawSlices>...>)
     constexpr auto
     submdspan(
 	const mdspan<_ElementType, _Extents, _Layout, _Accessor>& __md,

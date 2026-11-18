@@ -696,7 +696,7 @@ lto_init_attributes (void)
 #define DEF_ATTR_NULL_TREE(ENUM)				\
   built_in_attributes[(int) ENUM] = NULL_TREE;
 #define DEF_ATTR_INT(ENUM, VALUE)				\
-  built_in_attributes[(int) ENUM] = build_int_cst (NULL_TREE, VALUE);
+  built_in_attributes[(int) ENUM] = build_int_cst (integer_type_node, VALUE);
 #define DEF_ATTR_STRING(ENUM, VALUE)				\
   built_in_attributes[(int) ENUM] = build_string (strlen (VALUE), VALUE);
 #define DEF_ATTR_IDENT(ENUM, STRING)				\
@@ -932,7 +932,7 @@ lto_post_options (const char **pfilename ATTRIBUTE_UNUSED)
       break;
 
     case LTO_LINKER_OUTPUT_DYN: /* .so: PID library */
-      /* On some targets, like i386 it makes sense to build PIC library wihout
+      /* On some targets, like i386 it makes sense to build PIC library without
 	 -fpic for performance reasons.  So no need to adjust flags.  */
       break;
 
@@ -959,7 +959,7 @@ lto_post_options (const char **pfilename ATTRIBUTE_UNUSED)
   if (flag_excess_precision == EXCESS_PRECISION_DEFAULT)
     flag_excess_precision = EXCESS_PRECISION_FAST;
 
-  /* When partitioning, we can tear appart STRING_CSTs uses from the same
+  /* When partitioning, we can tear apart STRING_CSTs uses from the same
      TU into multiple partitions.  Without constant merging the constants
      might not be equal at runtime.  See PR50199.  */
   if (!flag_merge_constants)

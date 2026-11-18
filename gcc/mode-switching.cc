@@ -1109,6 +1109,10 @@ optimize_mode_switching (void)
   bitmap_clear (jumping_blocks);
   for (j = n_entities - 1; j >= 0; j--)
     {
+      if (dump_file)
+	fprintf (dump_file,
+		 "Calculating mode switching transitions for entity %d:\n", j);
+
       int no_mode = num_modes[entity_map[j]];
       struct bb_info *info = bb_info[j];
 
@@ -1152,7 +1156,7 @@ optimize_mode_switching (void)
 	      return no_mode;
 	    };
 
-	  /* intialize mode in/out availability for bb.  */
+	  /* initialize mode in/out availability for bb.  */
 	  if (!targetm.mode_switching.confluence)
 	    {
 	      info[bb->index].mode_out = modes_confluence (avout);
@@ -1212,6 +1216,12 @@ optimize_mode_switching (void)
 		  targetm.mode_switching.emit (entity_map[j], ptr->mode,
 					       cur_mode, ptr->regs_live);
 		  mode_set = end_sequence ();
+
+		  if (dump_file)
+		    fprintf(dump_file,
+			    "Emitting transition %d --> %d at"
+			    " instruction %d.\n", cur_mode, ptr->mode,
+			    INSN_UID (ptr->insn_ptr));
 
 		  /* Insert MODE_SET only if it is nonempty.  */
 		  if (mode_set != NULL_RTX)

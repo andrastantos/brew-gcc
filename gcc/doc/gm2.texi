@@ -230,8 +230,8 @@ such as the AVR and the ARM).
 * Semantic checking::     How to detect run time problems at compile time.
 * Extensions::            GNU Modula-2 language extensions.
 * Type compatibility::    Data type compatibility.
-* Unbounded by reference::Explanation of a language optimization.
 * Exception handling::    Example of exception handling.
+* Unbounded by reference::Explanation of a language optimization.
 * Building a shared library:: How to build a shared library.
 * Interface for Python::  How to produce swig interface files.
 * Producing a Python module::  How to produce a Python module.
@@ -406,9 +406,13 @@ The default implementation and module filename suffix is @file{.def}.
 If this option is used GNU Modula-2 will still fall back to this
 default if a requested definition module is not found.
 
+@item -fdump-builtins
+Display all builtin procedure functions.
+This is an internal command line option.
+
 @item -fdump-system-exports
 display all inbuilt system items.
-This is an internal command line option.
+This is an internal command-line option.
 
 @item -fexceptions
 turn on exception handling code.  By default this option is on.
@@ -466,7 +470,7 @@ this option forces the use of the static version.
 
 @item -fm2-debug-trace=
 turn on trace debugging using a comma separated list:
-@samp{line,token,quad,all}.  This is an internal command line option.
+@samp{line,token,quad,all}.  This is an internal command-line option.
 
 @item -fm2-dump=
 enable dumping of modula-2 internal representation of data structures
@@ -1493,7 +1497,7 @@ the following pairs of options:
 The option @samp{-fsources} will show the source module, path and
 pathname for each module parsed.
 
-@node Exceptions, Semantic checking, Dialect, Using
+@node Exceptions, Semantic checking, Module Search Path, Using
 @section Exception implementation
 
 This section describes how exceptions are implemented in GNU Modula-2
@@ -1738,7 +1742,7 @@ anywhere   __COLUMN__               Gives a constant literal number
 @end example
 
 The preprocessor @samp{cpp} can be invoked via the @samp{-fcpp}
-command line option.  This in turn invokes @samp{cpp} with the
+command-line option.  This in turn invokes @samp{cpp} with the
 following arguments @samp{-traditional -lang-asm}.  These options
 preserve comments and all quotations.  @samp{gm2} treats a @samp{#}
 character in the first column as a preprocessor directive unless
@@ -2122,7 +2126,7 @@ EXCEPT
    (* Now fixup.  Determine the source of the exception and retry.  *)
    IF head = NIL
    THEN
-      printf ("list was empty, add sentinal\n");
+      printf ("list was empty, add sentinel\n");
       Add (head, -1) ;
       RETRY  (* Jump back to the begin statement.  *)
    ELSIF p^.next = NIL
@@ -2159,7 +2163,7 @@ END lazyunique.
 @example
 @group
 new value 0
-list was empty, add sentinal
+list was empty, add sentinel
 new value 0
 growing the list
 new value 0
@@ -2303,10 +2307,74 @@ intersect.
 @section Building a shared library
 
 This section describes building a tiny shared library implemented in
-Modula-2 and built with @file{libtool}.  Suppose a project consists of
-three definition modules and three implementation modules
-@file{a.def}, @file{a.mod}, @file{b.def}, @file{b.mod} and
-@file{c.mod}.  The first step is to compile the modules using position
+Modula-2 and built with @file{libtool}.  Consider a project consisting
+of three definition modules and three implementation modules
+@file{a.def}, @file{a.mod}, @file{b.def}, @file{b.mod}, @file{c.def}
+and @file{c.mod}.
+
+@example
+DEFINITION MODULE a ;
+
+END a.
+@end example
+
+@example
+IMPLEMENTATION MODULE a ;
+
+FROM libc IMPORT printf ;
+
+BEGIN
+   printf ("init: module a\n")
+FINALLY
+   printf ("finish: module a\n")
+END a.
+@end example
+
+Module @code{b} is almost identical, but it imports module @code{a}.
+
+@example
+DEFINITION MODULE b ;
+
+END b.
+@end example
+
+@example
+IMPLEMENTATION MODULE b ;
+
+IMPORT a ;
+FROM libc IMPORT printf ;
+
+
+BEGIN
+   printf ("init: module b\n")
+FINALLY
+   printf ("finish: module b\n")
+END b.
+@end example
+
+Likewise Module @code{c} is almost identical, but it imports from
+module @code{b}.
+
+@example
+DEFINITION MODULE c ;
+
+END c.
+@end example
+
+@example
+IMPLEMENTATION MODULE c ;
+
+IMPORT b ;
+FROM libc IMPORT printf ;
+
+BEGIN
+   printf ("init: module c\n")
+FINALLY
+   printf ("finish: module c\n")
+END c.
+@end example
+
+The first step is to compile the modules using position
 independent code.  This can be achieved by the following three
 commands:
 
@@ -2463,7 +2531,7 @@ cp .libs/libNumberIO.so _NumberIO.so
 
 The first four commands, generate the swig interface file
 @file{NumberIO.i} and python wrap files @file{NumberIO_wrap.cxx} and
-@file{NumberIO.py}.  The next three @file{libtool} commnads compile
+@file{NumberIO.py}.  The next three @file{libtool} commands compile
 the C++ and Modula-2 source code into @file{.lo} objects.  The last
 @file{libtool} command links all the @file{.lo} files into a
 @file{.la} file and includes all shared library dependencies.
@@ -3175,7 +3243,7 @@ is unsigned and is mapped onto the target C data type @code{size_t}
 whereas the type @code{CSSIZE_T} is mapped onto the signed C data type
 @code{ssize_t}.  The default size for the signed type @code{COFF_T} is
 the same as @code{CSSIZE_T} and this can be overridden by the
-@code{-fm2-file-offset-bits=} command line option.
+@code{-fm2-file-offset-bits=} command-line option.
 
 It is anticipated that these should only be used to provide cross
 platform definition modules for C libraries.
@@ -3195,7 +3263,7 @@ is unsigned and is mapped onto the target C data type @code{size_t}
 whereas the type @code{CSSIZE_T} is mapped onto the signed C data type
 @code{ssize_t}.  The default size for the signed type @code{COFF_T} is
 the same as @code{CSSIZE_T} and this can be overridden by the
-@code{-fm2-file-offset-bits=} command line option.
+@code{-fm2-file-offset-bits=} command-line option.
 
 It is anticipated that these should only be used to provide cross
 platform definition modules for C libraries.

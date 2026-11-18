@@ -149,7 +149,11 @@ static bool
 unite (unsigned int to, unsigned int from)
 {
   gcc_checking_assert (to < graph->size && from < graph->size);
-  if (to != from && graph->rep[from] != to)
+  if (to != from
+      && graph->rep[from] != to
+      /* Do not merge an artificial variable into another, this will
+	 explode solution sets unnecessarily.  */
+      && (from >= FIRST_REF_NODE || !get_varinfo (from)->is_artificial_var))
     {
       graph->rep[from] = to;
       return true;
@@ -527,7 +531,7 @@ merge_node_constraints (constraint_graph_t graph, unsigned int to,
   FOR_EACH_VEC_ELT (graph->complex[from], i, c)
     {
       /* In complex constraints for node FROM, we may have either
-	 a = *FROM, and *FROM = a, or an offseted constraint which are
+	 a = *FROM, and *FROM = a, or an offsetted constraint which are
 	 always added to the rhs node's constraints.  */
 
       if (c->rhs.type == DEREF)
@@ -553,9 +557,10 @@ clear_edges_for_node (constraint_graph_t graph, unsigned int node)
     BITMAP_FREE (graph->succs[node]);
 }
 
-/* Merge GRAPH nodes FROM and TO into node TO.  */
+/* Merge GRAPH nodes FROM and TO into node TO.  Return whether TO
+   received new successor edges.  */
 
-static void
+static bool
 merge_graph_nodes (constraint_graph_t graph, unsigned int to,
 		   unsigned int from)
 {
@@ -572,15 +577,17 @@ merge_graph_nodes (constraint_graph_t graph, unsigned int to,
     }
 
   /* Merge all the successor edges.  */
+  bool new_succs = false;
   if (graph->succs[from])
     {
       if (!graph->succs[to])
 	graph->succs[to] = BITMAP_ALLOC (&pta_obstack);
-      bitmap_ior_into (graph->succs[to],
-		       graph->succs[from]);
+      new_succs = bitmap_ior_into (graph->succs[to],
+				   graph->succs[from]);
     }
 
   clear_edges_for_node (graph, from);
+  return new_succs;
 }
 
 
@@ -641,7 +648,7 @@ add_graph_edge (constraint_graph_t graph, unsigned int to,
 	 adding the direct edge FROM -> TO when we have FROM -> ESCAPED
 	 and TO contains ESCAPED.
 	 ???  Note this is only a heuristic, it does not prevent the
-	 situation from occuring.  The heuristic helps PR38474 and
+	 situation from occurring.  The heuristic helps PR38474 and
 	 PR99912 significantly.  */
       if (to < FIRST_REF_NODE
 	  && bitmap_bit_p (graph->succs[from], find (escaped_id))
@@ -959,8 +966,8 @@ scc_visit (constraint_graph_t graph, class scc_info *si, unsigned int n)
 		}
 	      else
 		{
-		  unite (lowest_node, i);
-		  graph->indirect_cycles[i - FIRST_REF_NODE] = lowest_node;
+		  if (unite (lowest_node, i))
+		    graph->indirect_cycles[i - FIRST_REF_NODE] = lowest_node;
 		}
 	    }
 	  bitmap_set_bit (si->deleted, lowest_node);
@@ -991,7 +998,15 @@ unify_nodes (constraint_graph_t graph, unsigned int to, unsigned int from,
   else
     stats.unified_vars_static++;
 
-  merge_graph_nodes (graph, to, from);
+  varinfo_t tovi = get_varinfo (to);
+  if (merge_graph_nodes (graph, to, from))
+    {
+      /* If from brings new successors and the TO solution is not a
+	 subset of FROM we have to forward the TO solution along these
+	 edges.  */
+      if (update_changed)
+	bitmap_set_bit (changed, to);
+    }
   if (merge_node_constraints (graph, to, from))
     {
       if (update_changed)
@@ -1009,7 +1024,6 @@ unify_nodes (constraint_graph_t graph, unsigned int to, unsigned int from,
     {
       /* If the solution changes because of the merging, we need to mark
 	 the variable as changed.  */
-      varinfo_t tovi = get_varinfo (to);
       if (bitmap_ior_into (tovi->solution, fromvi->solution))
 	{
 	  if (update_changed)
@@ -1977,8 +1991,10 @@ find_equivalent_node (constraint_graph_t graph,
 	{
 	  /* Unify the two variables since we know they are equivalent.  */
 	  if (unite (graph->eq_rep[label], node))
-	    unify_nodes (graph, graph->eq_rep[label], node, false);
-	  return graph->eq_rep[label];
+	    {
+	      unify_nodes (graph, graph->eq_rep[label], node, false);
+	      return graph->eq_rep[label];
+	    }
 	}
       else
 	{

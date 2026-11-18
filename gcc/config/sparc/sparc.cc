@@ -1190,7 +1190,8 @@ sparc_do_work_around_errata (void)
 	  && jump_to_label_p (jump)
 	  && get_attr_branch_type (jump) == BRANCH_TYPE_ICC)
 	{
-	  rtx_insn *target = next_active_insn (JUMP_LABEL_AS_INSN (jump));
+	  rtx_insn *target
+	    = next_active_non_empty_insn (JUMP_LABEL_AS_INSN (jump));
 	  if (target
 	      && (fpop_insn_p (target)
 		  || (JUMP_P (target)
@@ -1207,7 +1208,8 @@ sparc_do_work_around_errata (void)
 	{
 	  if (jump && jump_to_label_p (jump))
 	    {
-	      rtx_insn *target = next_active_insn (JUMP_LABEL_AS_INSN (jump));
+	      rtx_insn *target
+		= next_active_non_empty_insn (JUMP_LABEL_AS_INSN (jump));
 	      if (target && atomic_insn_for_leon3_p (target))
 		emit_insn_before (gen_nop (), target);
 	    }
@@ -3578,7 +3580,7 @@ emit_scc_insn (rtx operands[])
       return true;
     }
 
-  /* All the posibilities to use addx/subx based sequences has been
+  /* All the possibilities to use addx/subx based sequences has been
      exhausted, try for a 3 instruction sequence using v9 conditional
      moves.  */
   if (TARGET_V9 && gen_v9_scc (operands[0], code, x, y))
@@ -3976,13 +3978,12 @@ emit_tfmode_cvt (enum rtx_code code, rtx *operands)
 int
 empty_delay_slot (rtx_insn *insn)
 {
-  rtx seq;
 
   /* If no previous instruction (should not happen), return true.  */
   if (PREV_INSN (insn) == NULL)
     return 1;
 
-  seq = NEXT_INSN (PREV_INSN (insn));
+  rtx_insn *seq = NEXT_INSN (PREV_INSN (insn));
   if (GET_CODE (PATTERN (seq)) == SEQUENCE)
     return 0;
 
@@ -3998,14 +3999,15 @@ empty_delay_slot (rtx_insn *insn)
 int
 emit_cbcond_nop (rtx_insn *insn)
 {
-  rtx next = next_active_insn (insn);
+  rtx_insn *next = next_active_insn (insn);
 
   if (!next)
     return 1;
 
+  rtx_sequence *seq;
   if (NONJUMP_INSN_P (next)
-      && GET_CODE (PATTERN (next)) == SEQUENCE)
-    next = XVECEXP (PATTERN (next), 0, 0);
+      && (seq = dyn_cast <rtx_sequence *> (PATTERN (next))))
+    next = seq->insn (0);
   else if (CALL_P (next)
 	   && GET_CODE (PATTERN (next)) == PARALLEL)
     {
@@ -4036,7 +4038,7 @@ emit_cbcond_nop (rtx_insn *insn)
    instruction.  */
 
 static int
-eligible_for_restore_insn (rtx trial, bool return_p)
+eligible_for_restore_insn (rtx_insn *trial, bool return_p)
 {
   rtx pat = PATTERN (trial);
   rtx src = SET_SRC (pat);
@@ -6351,15 +6353,15 @@ sparc_asm_function_epilogue (FILE *file)
 
   rtx_insn *insn = get_last_insn ();
 
-  rtx last_real_insn = prev_real_insn (insn);
+  rtx_insn *last_real_insn = prev_real_insn (insn);
+  rtx_sequence *seq;
   if (last_real_insn
       && NONJUMP_INSN_P (last_real_insn)
-      && GET_CODE (PATTERN (last_real_insn)) == SEQUENCE)
-    last_real_insn = XVECEXP (PATTERN (last_real_insn), 0, 0);
+      && (seq = dyn_cast <rtx_sequence *> (PATTERN (last_real_insn))))
+    last_real_insn = seq->insn (0);
 
-  if (last_real_insn
-      && CALL_P (last_real_insn)
-      && !SIBLING_CALL_P (last_real_insn))
+  auto call = safe_dyn_cast<rtx_call_insn *> (last_real_insn);
+  if (call && !SIBLING_CALL_P (call))
     fputs("\tnop\n", file);
 
   sparc_output_deferred_case_vectors ();
@@ -10479,7 +10481,8 @@ sparc_output_addr_vec (rtx vec)
   for (idx = 0; idx < vlen; idx++)
     {
       ASM_OUTPUT_ADDR_VEC_ELT
-	(asm_out_file, CODE_LABEL_NUMBER (XEXP (XVECEXP (body, 0, idx), 0)));
+	(asm_out_file,
+	 CODE_LABEL_NUMBER (label_ref_label (XVECEXP (body, 0, idx))));
     }
 
 #ifdef ASM_OUTPUT_ADDR_VEC_END
@@ -10491,7 +10494,7 @@ static void
 sparc_output_addr_diff_vec (rtx vec)
 {
   rtx lab = XEXP (vec, 0), body = XEXP (vec, 1);
-  rtx base = XEXP (XEXP (body, 0), 0);
+  rtx_insn *base = label_ref_label (XEXP (body, 0));
   int idx, vlen = XVECLEN (body, 1);
 
 #ifdef ASM_OUTPUT_ADDR_VEC_START
@@ -10510,7 +10513,7 @@ sparc_output_addr_diff_vec (rtx vec)
       ASM_OUTPUT_ADDR_DIFF_ELT
         (asm_out_file,
          body,
-         CODE_LABEL_NUMBER (XEXP (XVECEXP (body, 1, idx), 0)),
+	 CODE_LABEL_NUMBER (label_ref_label (XVECEXP (body, 1, idx))),
          CODE_LABEL_NUMBER (base));
     }
 
@@ -12340,7 +12343,7 @@ sparc_register_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
    function calls, with the possible exception of calls to the GOT helper.  */
 
 static void
-emit_and_preserve (rtx seq, rtx reg, rtx reg2)
+emit_and_preserve (rtx_insn *seq, rtx reg, rtx reg2)
 {
   /* We must preserve the lowest 16 words for the register save area.  */
   HOST_WIDE_INT offset = 16*UNITS_PER_WORD;
@@ -12506,7 +12509,8 @@ sparc_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
     {
       /* The hoops we have to jump through in order to generate a sibcall
 	 without using delay slots...  */
-      rtx spill_reg, seq, scratch = gen_rtx_REG (Pmode, 1);
+      rtx spill_reg, scratch = gen_rtx_REG (Pmode, 1);
+      rtx_insn *seq;
 
       if (flag_pic)
         {
@@ -12763,7 +12767,7 @@ sparc_emit_membar_for_model (enum memmodel model,
 	 are followed by an implied StoreStore.  */
       implied |= StoreStore;
 
-      /* If we're not looking for a raw barrer (before+after), then atomic
+      /* If we're not looking for a raw barrier (before+after), then atomic
 	 operations get the benefit of being both load and store.  */
       if (load_store == 3 && before_after == 1)
 	implied |= StoreLoad;
@@ -12774,7 +12778,7 @@ sparc_emit_membar_for_model (enum memmodel model,
 	 are followed by an implied LoadLoad | LoadStore.  */
       implied |= LoadLoad | LoadStore;
 
-      /* If we're not looking for a raw barrer (before+after), then atomic
+      /* If we're not looking for a raw barrier (before+after), then atomic
 	 operations get the benefit of being both load and store.  */
       if (load_store == 3 && before_after == 2)
 	implied |= StoreLoad | StoreStore;

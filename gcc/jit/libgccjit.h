@@ -1637,7 +1637,7 @@ gcc_jit_context_new_case (gcc_jit_context *ctxt,
 extern gcc_jit_object *
 gcc_jit_case_as_object (gcc_jit_case *case_);
 
-/* Terminate a block by adding evalation of an rvalue, then performing
+/* Terminate a block by adding evaluation of an rvalue, then performing
    a multiway branch.
 
    This is roughly equivalent to this C code:
@@ -2093,6 +2093,12 @@ gcc_jit_function_type_get_param_type (gcc_jit_function_type *function_type,
 /* Return non-zero if the type is an integral.  */
 extern int
 gcc_jit_type_is_integral (gcc_jit_type *type);
+
+/* Return non-zero if the type is floating point.  */
+extern int
+gcc_jit_type_is_floating_point (gcc_jit_type * type);
+
+#define LIBGCCJIT_HAVE_gcc_jit_type_is_floating_point
 
 /* Return the type pointed by the pointer type or NULL if it's not a
  * pointer.  */

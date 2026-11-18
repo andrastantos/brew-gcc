@@ -185,7 +185,7 @@ sbr_vector::bb_range_p (const_basic_block bb)
   return false;
 }
 
-// Like an sbr_vector, except it uses a bitmap to manage whetehr  vale is set
+// Like an sbr_vector, except it uses a bitmap to manage whether value is set
 // or not rather than cleared memory.
 
 class sbr_lazy_vector : public sbr_vector
@@ -381,6 +381,17 @@ block_range_cache::~block_range_cache ()
   bitmap_obstack_release (&m_bitmaps);
 }
 
+// Clear block info for NAME.
+
+void
+block_range_cache::clear (tree name)
+{
+  unsigned v = SSA_NAME_VERSION (name);
+  if (v >= m_ssa_ranges.length ())
+    return;
+  m_ssa_ranges[v] = NULL;
+}
+
 // Set the range for NAME on entry to block BB to R.
 // If it has not been accessed yet, allocate it first.
 
@@ -404,7 +415,7 @@ block_range_cache::set_bb_range (tree name, const_basic_block bb,
 	}
       else if (last_basic_block_for_fn (cfun) < param_vrp_vector_threshold)
 	{
-	  // For small CFGs use the basic vector implemntation.
+	  // For small CFGs use the basic vector implementation.
 	  void *r = m_range_allocator->alloc (sizeof (sbr_vector));
 	  m_ssa_ranges[v] = new (r) sbr_vector (TREE_TYPE (name),
 						m_range_allocator);
@@ -801,13 +812,31 @@ ssa_lazy_cache::clear ()
 
 // --------------------------------------------------------------------------
 
+// A cache timestamp has two components.
+//
+// STORED and CALC are maintained separately.  STORED is updated only when
+// the cached value actually changes, while CALC is updated every time the
+// value is recalculated.
+//
+// This allows stale values to be recalculated without forcing dependent
+// values to be recalculated as well.  If a recalculation produces the same
+// value, only CALC changes and the STORED timestamp remains unchanged,
+// indicating that the observable value has not changed.
 
-// This class will manage the timestamps for each ssa_name.
-// When a value is calculated, the timestamp is set to the current time.
-// Current time is then incremented.  Any dependencies will already have
-// been calculated, and will thus have older timestamps.
-// If one of those values is ever calculated again, it will get a newer
-// timestamp, and the "current_p" check will fail.
+struct time_stamp
+{
+  unsigned stored;	// Timestamp of last time value was SET.
+  unsigned calc;	// Timestamp when the value was calcuclated last.
+};
+
+// Manage dependency timestamps for SSA names.
+//
+// Each SSA name records when its value last changed (stored) and when it
+// was last recalculated (calc).  Dependencies are current if their stored
+// timestamps are no newer than the dependent value.  Recalculating a value
+// without changing it updates only the calc timestamp, avoiding unnecessary
+// invalidation of dependent values.
+// always_current is managed by setting the calcualted timestamp to 0.
 
 class temporal_cache
 {
@@ -815,13 +844,15 @@ public:
   temporal_cache ();
   ~temporal_cache ();
   bool current_p (tree name, tree dep1, tree dep2) const;
-  void set_timestamp (tree name);
-  void set_always_current (tree name, bool value);
+  void set_timestamp_stored (tree name);
+  void set_timestamp_calc (tree name);
+  void set_always_current (tree name);
   bool always_current_p (tree name) const;
 private:
-  int temporal_value (unsigned ssa) const;
-  int m_current_time;
-  vec <int> m_timestamp;
+  unsigned temporal_value_stored (unsigned ssa) const;
+  unsigned temporal_value_calc (unsigned ssa) const;
+  unsigned m_current_time;
+  vec <struct time_stamp> m_timestamp;
 };
 
 inline
@@ -829,7 +860,7 @@ temporal_cache::temporal_cache ()
 {
   m_current_time = 1;
   m_timestamp.create (0);
-  m_timestamp.safe_grow_cleared (num_ssa_names);
+  m_timestamp.safe_grow_cleared (num_ssa_names + 1);
 }
 
 inline
@@ -838,17 +869,31 @@ temporal_cache::~temporal_cache ()
   m_timestamp.release ();
 }
 
-// Return the timestamp value for SSA, or 0 if there isn't one.
+// Return the timestamp value for SSA when it was last stored to
+// or 0 if there isn't one.
 
-inline int
-temporal_cache::temporal_value (unsigned ssa) const
+inline unsigned
+temporal_cache::temporal_value_stored (unsigned ssa) const
 {
   if (ssa >= m_timestamp.length ())
     return 0;
-  return abs (m_timestamp[ssa]);
+  return m_timestamp[ssa].stored;
 }
 
-// Return TRUE if the timestamp for NAME is newer than any of its dependents.
+// Return the timestamp value for SSA when it was last calculated
+// or 0 if there isn't one.
+
+inline unsigned
+temporal_cache::temporal_value_calc (unsigned ssa) const
+{
+  if (ssa >= m_timestamp.length ())
+    return 0;
+  return m_timestamp[ssa].calc;
+}
+
+// Return TRUE if the timestamp for when NAME was calculated is newer
+// than the last time any of its dependents were stored.  This indicates
+// it dos not need to be calculated again.
 // Up to 2 dependencies can be checked.
 
 bool
@@ -858,41 +903,52 @@ temporal_cache::current_p (tree name, tree dep1, tree dep2) const
     return true;
 
   // Any non-registered dependencies will have a value of 0 and thus be older.
-  // Return true if time is newer than either dependent.
-  int ts = temporal_value (SSA_NAME_VERSION (name));
-  if (dep1 && ts < temporal_value (SSA_NAME_VERSION (dep1)))
+  // Return true if the last time this was calculated is newer than either
+  // dependent value.
+  unsigned ts = temporal_value_calc (SSA_NAME_VERSION (name));
+  if (dep1 && ts < temporal_value_stored (SSA_NAME_VERSION (dep1)))
     return false;
-  if (dep2 && ts < temporal_value (SSA_NAME_VERSION (dep2)))
+  if (dep2 && ts < temporal_value_stored (SSA_NAME_VERSION (dep2)))
     return false;
 
   return true;
 }
 
-// This increments the global timer and sets the timestamp for NAME.
+// This increments the global timer and sets both timestamps for NAME.
 
 inline void
-temporal_cache::set_timestamp (tree name)
+temporal_cache::set_timestamp_stored (tree name)
 {
   unsigned v = SSA_NAME_VERSION (name);
   if (v >= m_timestamp.length ())
     m_timestamp.safe_grow_cleared (num_ssa_names + 20);
-  m_timestamp[v] = ++m_current_time;
+  m_timestamp[v].stored = ++m_current_time;
+  m_timestamp[v].calc = m_current_time;
 }
 
-// Set the timestamp to 0, marking it as "always up to date".
+// This increments the global timer and sets the calculated timestamp for NAME.
 
 inline void
-temporal_cache::set_always_current (tree name, bool value)
+temporal_cache::set_timestamp_calc (tree name)
 {
   unsigned v = SSA_NAME_VERSION (name);
   if (v >= m_timestamp.length ())
     m_timestamp.safe_grow_cleared (num_ssa_names + 20);
+  m_timestamp[v].calc = ++m_current_time;
+}
 
-  int ts = abs (m_timestamp[v]);
-  // If this does not have a timestamp, create one.
-  if (ts == 0)
-    ts = ++m_current_time;
-  m_timestamp[v] = value ? -ts : ts;
+// Set the calculated timestamp to 0, marking it as "always up to date".
+
+inline void
+temporal_cache::set_always_current (tree name)
+{
+  unsigned v = SSA_NAME_VERSION (name);
+  if (v >= m_timestamp.length ())
+    m_timestamp.safe_grow_cleared (num_ssa_names + 20);
+  // If stored timestamp hasn't been set, set it now.
+  if (m_timestamp[v].stored == 0)
+    m_timestamp[v].stored = ++m_current_time;
+  m_timestamp[v].calc = 0;
 }
 
 // Return true if NAME is always current.
@@ -903,7 +959,7 @@ temporal_cache::always_current_p (tree name) const
   unsigned v = SSA_NAME_VERSION (name);
   if (v >= m_timestamp.length ())
     return false;
-  return m_timestamp[v] <= 0;
+  return m_timestamp[v].calc == 0;
 }
 
 // --------------------------------------------------------------------------
@@ -1019,10 +1075,12 @@ ranger_cache::ranger_cache (int not_executable_flag, bool use_imm_uses)
 	gori_ssa ()->exports (bb);
     }
   m_update = new update_list ();
+  m_stale = BITMAP_ALLOC (NULL);
 }
 
 ranger_cache::~ranger_cache ()
 {
+  BITMAP_FREE (m_stale);
   delete m_update;
   destroy_infer_oracle ();
   destroy_relation_oracle ();
@@ -1064,6 +1122,24 @@ ranger_cache::get_global_range (vrange &r, tree name) const
   return false;
 }
 
+// Mark NAME as stale.  The next query of NAME forces a recalculation.
+
+void
+ranger_cache::mark_stale (tree name)
+{
+  if (SSA_NAME_IS_DEFAULT_DEF (name))
+    {
+      // Default defs have no DEF to recalculate, just create a new timestamp.
+      m_temporal->set_timestamp_stored (name);
+    }
+  else if (m_globals.has_range (name))
+    {
+      // Otherwise Only mark it as stale if it has been processed. If it has no
+      // range it will be calculated at the next request anyway.
+      bitmap_set_bit (m_stale, SSA_NAME_VERSION (name));
+    }
+}
+
 // Get the global range for NAME, and return in R.  Return false if the
 // global range is not set, and R will contain the legacy global value.
 // CURRENT_P is set to true if the value was in cache and not stale.
@@ -1102,9 +1178,16 @@ ranger_cache::get_global_range (vrange &r, tree name, bool &current_p)
       m_globals.set_range (name, r);
     }
 
+  // If NAME is out of date, clear the bit and mark as not current.
+  if (bitmap_bit_p (m_stale, SSA_NAME_VERSION (name)))
+    {
+      bitmap_clear_bit (m_stale, SSA_NAME_VERSION (name));
+      current_p = false;
+    }
+
   // If the existing value was not current, mark it as always current.
   if (!current_p)
-    m_temporal->set_always_current (name, true);
+    m_temporal->set_always_current (name);
   return had_global;
 }
 
@@ -1114,7 +1197,7 @@ ranger_cache::get_global_range (vrange &r, tree name, bool &current_p)
 void
 ranger_cache::update_consumers (tree name)
 {
-  m_temporal->set_timestamp (name);
+  m_temporal->set_timestamp_stored (name);
 }
 
 //  Set the global range of NAME to R and give it a timestamp.
@@ -1122,14 +1205,10 @@ ranger_cache::update_consumers (tree name)
 void
 ranger_cache::set_global_range (tree name, const vrange &r, bool changed)
 {
-  // Setting a range always clears the always_current flag.
-  m_temporal->set_always_current (name, false);
   if (!changed)
     {
-      // If there are dependencies, make sure this is not out of date.
-      if (!m_temporal->current_p (name, gori_ssa ()->depend1 (name),
-				 gori_ssa ()->depend2 (name)))
-	m_temporal->set_timestamp (name);
+      // If the value did not change, simply update the calculated timestamp.
+      m_temporal->set_timestamp_calc (name);
       return;
     }
   if (m_globals.set_range (name, r))
@@ -1151,10 +1230,15 @@ ranger_cache::set_global_range (tree name, const vrange &r, bool changed)
   // Timestamp must always be updated, or dependent calculations may
   // not include this latest value. PR 100774.
 
-  if (r.singleton_p ()
-      || (POINTER_TYPE_P (TREE_TYPE (name)) && r.nonzero_p ()))
+  // With Points_to info in prange now, it is no longer acceptable to make
+  // [1, +INF] invariant, as most points to values will have that range,
+  // and then we lose the ability to propagate points to info.
+
+  if (r.singleton_p ())
     gori_ssa ()->set_range_invariant (name);
-  m_temporal->set_timestamp (name);
+
+  // update the stored and calucalted timestamp now.
+  m_temporal->set_timestamp_stored (name);
 }
 
 //  Provide lookup for the gori-computes class to access the best known range
@@ -1254,19 +1338,21 @@ bool
 ranger_cache::range_of_expr (vrange &r, tree name, gimple *stmt)
 {
   if (!gimple_range_ssa_p (name))
-    {
-      get_tree_range (r, name, stmt);
-      return true;
-    }
-
-  basic_block bb = gimple_bb (stmt);
-  gimple *def_stmt = SSA_NAME_DEF_STMT (name);
-  basic_block def_bb = gimple_bb (def_stmt);
-
-  if (bb == def_bb)
-    range_of_def (r, name, bb);
+    get_tree_range (r, name, stmt);
+  /* If no context is provided, pick up the global value.  */
+  else if (!stmt)
+    get_global_range (r, name);
   else
-    entry_range (r, name, bb, RFD_NONE);
+    {
+      basic_block bb = gimple_bb (stmt);
+      gimple *def_stmt = SSA_NAME_DEF_STMT (name);
+      basic_block def_bb = gimple_bb (def_stmt);
+
+      if (bb == def_bb)
+	range_of_def (r, name, bb);
+      else
+	entry_range (r, name, bb, RFD_NONE);
+    }
   return true;
 }
 
@@ -1720,10 +1806,6 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
   basic_block bb;
   basic_block prev_bb = start_bb;
 
-  // Track any inferred ranges seen.
-  value_range infer (TREE_TYPE (name));
-  infer.set_varying (TREE_TYPE (name));
-
   // Range on entry to the DEF block should not be queried.
   gcc_checking_assert (start_bb != def_bb);
   unsigned start_limit = m_workback.length ();
@@ -1741,11 +1823,9 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
   // Search until a value is found, pushing blocks which may need calculating.
   for ( ; bb; prev_bb = bb, bb = get_immediate_dominator (CDI_DOMINATORS, bb))
     {
-      // Accumulate any block exit inferred ranges.
-      infer_oracle ().maybe_adjust_range (infer, name, bb);
-
       // This block has an outgoing range.
-      if (gori ().has_edge_range_p (name, bb))
+      if (gori ().has_edge_range_p (name, bb)
+	  || infer_oracle ().has_range_p (bb, name))
 	m_workback.safe_push (prev_bb);
       else
 	{
@@ -1793,7 +1873,7 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
 	fprintf (dump_file, " at function top\n");
     }
 
-  // Now process any blocks wit incoming edges that nay have adjustments.
+  // Now process any blocks with incoming edges that may have adjustments.
   while (m_workback.length () > start_limit)
     {
       value_range er (TREE_TYPE (name));
@@ -1813,25 +1893,18 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
       edge e = single_pred_edge (prev_bb);
       bb = e->src;
       if (gori ().edge_range_p (er, e, name, *this))
+	r.intersect (er);
+      // If this is a normal edge, apply any inferred ranges.
+      if ((e->flags & (EDGE_EH | EDGE_ABNORMAL)) == 0)
+	infer_oracle ().maybe_adjust_range (r, name, bb);
+      if (DEBUG_RANGE_CACHE)
 	{
-	  r.intersect (er);
-	  // If this is a normal edge, apply any inferred ranges.
-	  if ((e->flags & (EDGE_EH | EDGE_ABNORMAL)) == 0)
-	    infer_oracle ().maybe_adjust_range (r, name, bb);
-
-	  if (DEBUG_RANGE_CACHE)
-	    {
-	      fprintf (dump_file, "CACHE: Adjusted edge range for %d->%d : ",
-		       bb->index, prev_bb->index);
-	      r.dump (dump_file);
-	      fprintf (dump_file, "\n");
-	    }
+	  fprintf (dump_file, "CACHE: Final Adjusted edge range for %d->%d : ",
+		   bb->index, prev_bb->index);
+	  r.dump (dump_file);
+	  fprintf (dump_file, "\n");
 	}
     }
-
-  // Apply non-null if appropriate.
-  if (!has_abnormal_call_or_eh_pred_edge_p (start_bb))
-    r.intersect (infer);
 
   if (DEBUG_RANGE_CACHE)
     {
@@ -1874,20 +1947,33 @@ ranger_cache::apply_inferred_ranges (gimple *s)
   if (infer.num () == 0)
     return;
 
-  // Do not update the on-entry cache for block ending stmts.
+  // Do not update the on-entry cache for block ending stmts if there is
+  // an outgoing abnormal edge.  Any outgoing abnormal edge makes the
+  // value unsafe to use.
   if (stmt_ends_bb_p (s))
     {
       edge_iterator ei;
       edge e;
       FOR_EACH_EDGE (e, ei, gimple_bb (s)->succs)
-	if (!(e->flags & (EDGE_ABNORMAL|EDGE_EH)))
-	  break;
-      if (e == NULL)
-	update = false;
+	if (e->flags & (EDGE_ABNORMAL|EDGE_EH))
+	  {
+	    update = false;
+	    break;
+	  }
     }
 
   infer_oracle ().add_ranges (s, infer);
   if (update)
     for (unsigned x = 0; x < infer.num (); x++)
       register_inferred_value (infer.range (x), infer.name (x), bb);
+}
+
+// Reset range info for NAME.
+
+void
+ranger_cache::reset_range_info (tree name)
+{
+  m_on_entry.clear (name);
+  m_globals.clear_range (name);
+  range_query::reset_range_info (name);
 }

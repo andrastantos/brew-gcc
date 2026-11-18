@@ -131,7 +131,7 @@ along with GCC; see the file COPYING3.  If not see
       heuristic that disables prefetching in a loop if the prefetching
       cost is above a certain limit.  The relative prefetching cost is
       estimated by taking the ratio between the prefetch count and the
-      total intruction count (this models the I-cache cost).
+      total instruction count (this models the I-cache cost).
 
    The limits used in these heuristics are defined as parameters with
    reasonable default values. Machine-specific default values will be
@@ -1015,7 +1015,7 @@ should_issue_prefetch_p (struct mem_ref *ref)
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file,
 		 "Step for reference %u:%u (" HOST_WIDE_INT_PRINT_DEC
-		 ") is less than the mininum required stride of %d\n",
+		 ") is less than the minimum required stride of %d\n",
 		 ref->group->uid, ref->uid, int_cst_value (ref->group->step),
 		 param_prefetch_minimum_stride);
       return false;
@@ -1081,7 +1081,7 @@ schedule_prefetches (struct mem_ref_group *groups, unsigned unroll_factor,
 	  continue;
 
         /* The loop is far from being sufficiently unrolled for this
-           prefetch.  Do not generate prefetch to avoid many redudant
+           prefetch.  Do not generate prefetch to avoid many redundant
            prefetches.  */
         if (ref->prefetch_mod / unroll_factor > PREFETCH_MOD_TO_UNROLL_FACTOR_RATIO)
           continue;
@@ -1210,13 +1210,7 @@ issue_prefetch_ref (struct mem_ref *ref, unsigned unroll_factor, unsigned ahead)
       if (addr_base != addr
 	  && TREE_CODE (addr_base) == SSA_NAME
 	  && TREE_CODE (addr) == SSA_NAME)
-	{
-	  duplicate_ssa_name_ptr_info (addr, SSA_NAME_PTR_INFO (addr_base));
-	  /* As this isn't a plain copy we have to reset alignment
-	     information.  */
-	  if (SSA_NAME_PTR_INFO (addr))
-	    mark_ptr_info_alignment_unknown (SSA_NAME_PTR_INFO (addr));
-	}
+	duplicate_ssa_name_pt_solution (addr, addr_base);
 
       /* Create the prefetch instruction.  */
       prefetch = gimple_build_call (builtin_decl_explicit (BUILT_IN_PREFETCH),
@@ -1470,6 +1464,20 @@ volume_of_references (struct mem_ref_group *refs)
   return volume;
 }
 
+/* Return VOLUME * COUNT, saturating at the largest representable reuse
+   distance.  Distances above the L2 cache size are equivalent for
+   the reuse analysis, but wrapping them could make a streaming access look
+   cache-resident.  Check before multiplying so even a wide COUNT is safe.  */
+
+static unsigned
+saturating_mul (unsigned volume, unsigned HOST_WIDE_INT count)
+{
+  if (volume != 0 && count > UINT_MAX / volume)
+    return UINT_MAX;
+
+  return volume * count;
+}
+
 /* Returns the volume of memory references accessed across VEC iterations of
    loops, whose sizes are described in the LOOP_SIZES array.  N is the number
    of the loops in the nest (length of VEC and LOOP_SIZES vectors).  */
@@ -1490,7 +1498,7 @@ volume_of_dist_vector (lambda_vector vec, unsigned *loop_sizes, unsigned n)
 
   /* We ignore the parts of the distance vector in subloops, since usually
      the numbers of iterations are much smaller.  */
-  return loop_sizes[i] * vec[i];
+  return saturating_mul (loop_sizes[i], vec[i]);
 }
 
 /* Add the steps of ACCESS_FN multiplied by STRIDE to the array STRIDE
@@ -1655,7 +1663,7 @@ determine_loop_nest_reuse (class loop *loop, struct mem_ref_group *refs,
       vol = estimated_stmt_executions_int (aloop);
       if (vol == -1)
 	vol = expected_loop_iterations (aloop);
-      volume *= vol;
+      volume = saturating_mul (volume, vol);
     }
 
   /* Prepare the references in the form suitable for data dependence

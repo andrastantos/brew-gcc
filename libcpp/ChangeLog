@@ -1,3 +1,246 @@
+2026-11-15  Kael Andrew Franco  <kaelfandrew@gmail.com>
+
+	PR bootstrap/112422
+	* configure.ac: Remove check for limits.h.
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* system.h: Remove #ifndef UCHAR_MAX and HAVE_LIMITS_H.
+
+2026-11-08  Jason Merrill  <jason@redhat.com>
+
+	PR c++/127940
+	* files.cc (_cpp_stack_include): Use _cpp_FFK_HAS_INCLUDE
+	to check for an alternate header.
+
+2026-10-27  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* lex.cc (search_line_neon): Use ULL instead of UL.
+	(search_line_fast): Likewise.
+
+2026-10-27  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* lex.cc (search_line_neon): Use __builtin_ctzll for LLP64 targets.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't check for errno.
+	* system.h: Drop errno fallback.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for abort.
+	* system.h: Drop abort fallback.
+
+2026-10-10  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Drop AC_C_CONST and AC_C_INLINE.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* configure: Regenerate.
+	* configure.ac: Drop AC_HEADER_STDC.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for stddef.h.
+	* system.h (HAVE_STDDEF_H): Delete.
+	Include stddef.h unconditionally.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* configure: Regenerate.
+	* configure.ac: Don't search for stdlib.h.
+	* system.h (HAVE_STDLIB_H): Delete.
+	Include stdlib.h unconditionally.
+
+2026-10-09  Jakub Jelinek  <jakub@redhat.com>
+
+	PR preprocessor/121508
+	PR preprocessor/123339
+	* macro.cc (builtin_has_include_1): Revert 2026-09-21 changes.
+	* directives.cc (get_token_no_padding): Remove.
+	(glue_header_name): Use _cpp_get_token_no_padding instead of
+	get_token_no_padding.
+	(parse_include): Likewise.
+	(get__Pragma_string): Likewise.  Don't _cpp_backup_tokens on
+	CPP_EOF.
+
+2026-09-21  Léo Hardt  <leom.hardt@inf.ufrgs.br>
+
+	PR preprocessor/121508
+	PR preprocessor/123339
+	* macro.cc (builtin_has_include_1): Bail early if
+	not on a preprocessor directive.
+
+2026-09-18  Jakub Jelinek  <jakub@redhat.com>
+
+	* makeucnid.cc (write_copyright): Update Unicode Copyright years.
+	* makeuname2c.cc (generated_ranges): Adjust Unicode version from 17.0
+	to 18.0.  Add JURCHEN CHARACTER- and SMALL SEAL CHARACTER- generated
+	ranges, adjust indexes in following entries.
+	(write_copyright): Update Unicode Copyright years.
+	* generated_cpp_wcwidth.h: Regenerated.
+	* ucnid.h: Regenerated.
+	* uname2c.h: Regenerated.
+
+2026-09-02  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* lex.cc (search_line_fast): Optimized Arm implementation.
+
+2026-09-01  Alexey Klimkin  <alexey.klimkin@intel.com>
+
+	PR c++/127097
+	* files.cc (_cpp_find_header_unit): Close descriptor zero and set
+	the closed descriptor sentinel to -1.
+
+2026-08-29  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR middle-end/125507
+	* include/cpplib.h (struct cpp_token): Remove ENUM_BITFIELD.
+	(struct cpp_hashnode): Ditto.
+	* include/line-map.h (struct line_map_ordinary): Ditto.
+
+2026-08-21  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* lex.cc (search_line_neon): New optimized AdvSIMD implementation.
+
+2026-08-20  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* lex.cc (search_line_sve): Improve.
+
+2026-08-19  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	PR target/126935
+	* lex.cc (HWCAP_SVE): Define if not already defined.
+	(init_vectorized_lexer): Require HWCAP_SVE as well as
+	HWCAP2_SVE2.
+
+2026-08-13  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	* configure.ac: Test whether the AArch64 SVE2 lexer can be built.
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* internal.h (CPP_BUFFER_PADDING): Increase to 256 for SVE2.
+	* lex.cc (search_line_fast): Rename AArch64 Neon version to...
+	(search_line_neon): ...this.
+	(search_line_sve2): New function.
+	(lexer_has_sve2): New variable.
+	(init_vectorized_lexer): New function.
+	(search_line_fast): New function, dispatching between the two.
+
+2026-08-06  Jakub Jelinek  <jakub@redhat.com>
+
+	* makeuname2c.cc: Implement C++29 P3733R1 - More named universal
+	character escapes as a DR.
+	(read_table): Don't ignore figment and abbreviation aliases.
+	* uname2c.h: Regenerate.
+
+2026-08-06  Jakub Jelinek  <jakub@redhat.com>
+
+	* charset.cc (cpp_check_xid_property): Return
+	CPP_XID_START | CPP_XID_CONTINUE only if CXX23 bit is set and NXX23
+	is not.  If both are set, return CPP_XID_CONTINUE.
+
+2026-08-06  Jakub Jelinek  <jakub@redhat.com>
+
+	* makeucnid.cc: Implement C++29 P3658R1 - Adjust identifier
+	following new Unicode recommendations as a DR.  Adjust invocation
+	in the toplevel comment.
+	(NONC): Add another enumerator to the unnamed enum, or it into
+	all_languages, renumber the rest of enumerators.
+	(read_proplist): New function.
+	(write_table): Print also NONC bit.
+	(main): Expect 6 arguments rather than 5.  Call read_proplist.
+	* charset.cc (NONC): Add another enumerator to the unnamed enum.
+	(cpp_check_xid_property): Return 0 if NONC bit is set.
+	(ucn_valid_in_identifier): If pedantic xid_identifiers in C,
+	return 0 if NONC bit is set.
+	* ucnid.h: Regenerate.
+
+2026-08-06  Jakub Jelinek  <jakub@redhat.com>
+
+	PR preprocessor/125048
+	* macro.cc (replace_args): Remember the position of map
+	in the pfile->line_table->info_macro.maps array and if vostate
+	is DROP, recompute map pointer as expand_arg call could have
+	reallocated the pfile->line_table->info_macro.maps array.
+
+2026-07-17  Lewis Hyatt  <lhyatt@gmail.com>
+
+	* include/line-map.h (linemap_next_start_location): New function.
+	(linemap_add_raw_map): Declare new function.
+	* line-map.cc (linemap_add): Minor refactor to make use of
+	linemap_next_start_location().
+	(linemap_add_raw_map): New function.
+	(linemap_lookup): Update the comment for clarity.
+
+2026-06-30  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/125837
+	* include/cpplib.h: Implement C++29 P3540R3 - #embed offset parameter.
+	(enum cpp_warning_reason): Add CPP_W_CXX29_EXTENSIONS.
+	* directives.cc (EMBED_PARAMS): Add OFFSET.
+	(enum embed_param_kind): Change NUM_EMBED_STD_PARAMS.
+	(_cpp_parse_embed_params): Handle offset parameter for C++.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Replace AC_CANONICAL_SYSTEM with AC_CANONICAL_TARGET.
+	Replace AC_TRY_COMPILE with AC_COMPILE_IFELSE.
+
+2026-06-16  Jakub Jelinek  <jakub@redhat.com>
+
+	* include/cpplib.h (enum c_lang): Add CLK_GNUCXX29 and CLK_CXX29.
+	* init.cc (lang_defaults): Add CLK_GNUCXX29 and CLK_CXX29 row.
+	(cpp_init_builtins): Change __cplusplus value for C++26 from 202400L
+	to 202603L and set __cplusplus value for C++29 to 202700L.
+
+2026-06-14  Ben Boeckel  <ben.boeckel@kitware.com>
+
+	* init.cc (cpp_finish): Remove unnecessary `struct` keyword.
+
+2026-06-14  Ben Boeckel  <ben.boeckel@kitware.com>
+
+	* mkdeps.cc (fdeps_add_target): Fix indentation.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* files.cc (_cpp_stack_translated_file): Fix typos.
+	(_cpp_get_file_path): Likewise.
+	* include/cpplib.h (PREV_FALLTHROUGH): Likewise.
+	(struct cpp_options): Likewise.
+	* include/line-map.h (enum lc_reason): Likewise.
+	* internal.h (struct cpp_buffer): Likewise.
+	* lex.cc (lex_raw_string): Likewise.
+	(cpp_directive_only_process): Likewise.
+	* line-map.cc (linemap_add): Likewise.
+	(linemap_module_restore): Likewise.
+	(rich_location::get_last_fixit_hint): Likewise.
+	* macro.cc (_cpp_builtin_macro_text): Likewise.
+	(arg_token_ptr_at): Likewise.
+	(replace_args): Likewise.
+	(reached_end_of_context): Likewise.
+	(cpp_get_token_1): Likewise.
+	(create_iso_definition): Likewise.
+	(get_deferred_or_lazy_macro): Likewise.
+	* traditional.cc (check_output_buffer): Likewise.
+
 2026-04-21  Marek Polacek  <polacek@redhat.com>
 
 	PR preprocessor/124930

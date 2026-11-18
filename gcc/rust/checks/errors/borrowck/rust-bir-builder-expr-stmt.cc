@@ -111,7 +111,7 @@ ExprStmtBuilder::visit (HIR::StructExprStructFields &fields)
     {
       field_locations.push_back (field->get_locus ());
     }
-  move_all (init_values, field_locations);
+  move_all (init_values, field_locations, fields.get_mappings ().get_hirid ());
   return_expr (new InitializerExpr (std::move (init_values)),
 	       lookup_type (fields), fields.get_locus ());
 }
@@ -490,20 +490,20 @@ ExprStmtBuilder::visit (HIR::RangeFullExpr &expr)
 }
 
 void
-ExprStmtBuilder::visit (HIR::RangeFromToInclExpr &expr)
-{
-  auto from = visit_expr (expr.get_from_expr ());
-  auto to = visit_expr (expr.get_to_expr ());
-  return_expr (new InitializerExpr ({from, to}), lookup_type (expr),
-	       expr.get_locus ());
-}
-
-void
 ExprStmtBuilder::visit (HIR::RangeToInclExpr &expr)
 {
   auto to = visit_expr (expr.get_to_expr ());
   return_expr (new InitializerExpr ({to}), lookup_type (expr),
 	       expr.get_locus ());
+}
+
+void
+ExprStmtBuilder::visit (HIR::BoxExpr &expr)
+{
+  PlaceId result = visit_expr (expr.get_expr ());
+
+  rust_assert (result != INVALID_PLACE);
+  push_tmp_assignment (result, expr.get_locus ());
 }
 
 void
@@ -703,7 +703,8 @@ ExprStmtBuilder::visit (HIR::PathInExpression &expr)
 {
   // Note: Type is only stored for the expr, not the segment.
   PlaceId result = resolve_variable_or_fn (expr, lookup_type (expr));
-  return_place (result, expr.get_locus ());
+  return_place (result, expr.get_locus (), false,
+		expr.get_mappings ().get_hirid ());
 }
 
 void

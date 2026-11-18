@@ -70,13 +70,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "symtab-thunks.h"
 #include "symtab-clones.h"
 #include "attr-callback.h"
+#include "callback-info.h"
 
 /* FIXME: Only for PROP_loops, but cgraph shouldn't have to know about this.  */
 #include "tree-pass.h"
-
-/* Queue of cgraph nodes scheduled to be lowered.  */
-symtab_node *x_cgraph_nodes_queue;
-#define cgraph_nodes_queue ((cgraph_node *)x_cgraph_nodes_queue)
 
 /* Symbol table global context.  */
 symbol_table *symtab;
@@ -313,6 +310,7 @@ cgraph_node::scale_profile_to (profile_count ipa_count)
   profile_count num = count.combine_with_ipa_count (ipa_count);
   profile_count den = count;
   profile_count::adjust_for_ipa_scaling (&num, &den);
+  apply_scale (num, den);
 }
 
 /* Insert a new cgraph_function_version_info node into cgraph_fnver_htab
@@ -872,10 +870,10 @@ cgraph_add_edge_to_call_site_hash (cgraph_edge *e)
      one indirect); always hash the direct one.  */
   if (e->speculative && e->indirect_unknown_callee)
     return;
-  /* We always want to hash the carrying edge of a callback, not the edges
-     pointing to the callbacks themselves, as their call statement doesn't
-     exist.  */
-  if (e->callback)
+  /* Callback edges share the call statement of the carrying edge, so hash
+     the carrying edge instead.  Internal callback edges have no carrying
+     edge, so hash the callback edge directly.  */
+  if (e->callback_with_carrying_edge_p ())
     return;
   cgraph_edge **slot = e->caller->call_site_hash->find_slot_with_hash
       (e->call_stmt, cgraph_edge_hasher::hash (e->call_stmt), INSERT);
@@ -936,7 +934,7 @@ cgraph_node::get_edge (gimple *call_stmt)
      comes to callback edges, a call statement might have multiple callback
      edges attached to it.  These can be easily obtained from the carrying edge
      instead.  */
-  if (e && e->callback)
+  if (e && e->callback_with_carrying_edge_p ())
     e = e->get_callback_carrying_edge ();
 
   if (n > 100)
@@ -1014,7 +1012,8 @@ cgraph_edge::set_call_stmt (cgraph_edge *e, gcall *new_stmt,
 
   /* When updating a callback or a callback-carrying edge, update every edge
      involved.  */
-  if (update_derived_edges && (e->callback || e->has_callback))
+  if (update_derived_edges
+      && (e->callback_with_carrying_edge_p () || e->has_callback))
     {
       cgraph_edge *current, *next, *carrying;
       carrying = e->has_callback ? e : e->get_callback_carrying_edge ();
@@ -1107,7 +1106,6 @@ symbol_table::create_edge (cgraph_node *caller, cgraph_node *callee,
   edge->speculative = false;
   edge->has_callback = false;
   edge->callback = false;
-  edge->callback_id = 0;
   edge->indirect_unknown_callee = indir_unknown_callee;
   if (call_stmt && caller->call_site_hash)
     cgraph_add_edge_to_call_site_hash (edge);
@@ -1356,13 +1354,13 @@ cgraph_edge::make_speculative (cgraph_node *n2, profile_count direct_count,
    the callback-carrying edge, which is the instance this method
    is called on.
 
-   callback_id is used to pair the returned edge with the attribute that
-   originated it.
+   FN_IDX is the index of the callback function in dispatching function's
+   argument list.  ATTR is the attribute used to derive the edge.
 
    Return the resulting callback edge.  */
 
 cgraph_edge *
-cgraph_edge::make_callback (cgraph_node *n2, unsigned int callback_id)
+cgraph_edge::make_callback (cgraph_node *n2, unsigned fn_idx, tree attr)
 {
   cgraph_node *n = caller;
   cgraph_edge *e2;
@@ -1377,14 +1375,46 @@ cgraph_edge::make_callback (cgraph_node *n2, unsigned int callback_id)
       callee->dump_name ());
   e2->inline_failed = CIF_CALLBACK_EDGE;
   e2->callback = true;
-  e2->callback_id = callback_id;
   if (TREE_NOTHROW (n2->decl))
     e2->can_throw_external = false;
   else
     e2->can_throw_external = can_throw_external;
   e2->lto_stmt_uid = lto_stmt_uid;
+  callback_info *ci = callback_info_sum->get_create (e2);
+  ci->init (e2, fn_idx, attr);
+  symtab->call_edge_duplication_hooks (this, e2);
   n2->mark_address_taken ();
   return e2;
+}
+
+/* Create a callback edge, representing an indirect call to target
+    passed to an internal function by argument.  As internal calls are not
+    represented in the callgraph, the created edge won't have any associated
+    dispatching edge.  The created callback edge will be attached to the
+    internal call statement STMT.  Returns created callback edge.  */
+
+cgraph_edge *
+cgraph_edge::make_callback_internal (cgraph_node *caller, cgraph_node *target,
+				     gcall *call_stmt)
+{
+  cgraph_edge *ret;
+
+  ret
+    = caller->create_edge (target, call_stmt, profile_count::uninitialized ());
+  if (dump_file)
+    {
+      fprintf (dump_file,
+	       "Created callback edge %s -> %s belonging to internal call ",
+	       ret->caller->dump_name (), ret->callee->dump_name ());
+      print_gimple_stmt (dump_file, call_stmt, 0);
+    }
+  ret->inline_failed = CIF_CALLBACK_EDGE;
+  ret->callback = true;
+  if (TREE_NOTHROW (target->decl))
+    ret->can_throw_external = false;
+  target->mark_address_taken ();
+  callback_info::create_internal_summary (ret, IFN_ASSUME);
+  return ret;
 }
 
 /* Returns the callback_carrying edge of a callback edge on which
@@ -1405,6 +1435,14 @@ cgraph_edge::get_callback_carrying_edge ()
 	break;
     }
   return e;
+}
+
+/* Returns TRUE iff THIS is a callback edge with a carrying edge.  */
+bool
+cgraph_edge::callback_with_carrying_edge_p () const
+{
+  /* Callback edges are always direct, i.e. callee != NULL.  */
+  return callback && !callee->assume_function;
 }
 
 /* Returns the first callback edge in the list of callees of the caller node.
@@ -1708,7 +1746,7 @@ cgraph_edge::redirect_callee (cgraph_node *n)
       /* When redirecting a callback callee, redirect its ref as well.  */
       ipa_ref *old_ref = caller->find_reference (old_callee, call_stmt,
 						 lto_stmt_uid, IPA_REF_ADDR);
-      gcc_checking_assert(old_ref);
+      gcc_checking_assert (old_ref);
       old_ref->remove_reference ();
       ipa_ref *new_ref = caller->create_reference (n, IPA_REF_ADDR, call_stmt);
       new_ref->lto_stmt_uid = lto_stmt_uid;
@@ -1718,6 +1756,8 @@ cgraph_edge::redirect_callee (cgraph_node *n)
       if (!old_callee->iterate_referring (0, old_ref))
 	old_callee->address_taken = 0;
       n->mark_address_taken ();
+      callback_info *ci = callback_info_sum->get (this);
+      ci->redirected = true;
     }
 
   if (!inline_failed)
@@ -1836,26 +1876,54 @@ cgraph_edge::redirect_call_stmt_to_callee (cgraph_edge *e,
       || decl == e->callee->decl)
     return e->call_stmt;
 
+  clone_info *callee_info = clone_info::get (e->callee);
+  if (symtab->dump_file)
+    {
+      fprintf (symtab->dump_file,
+	       "updating call of %s -> %s: ", e->caller->dump_name (),
+	       e->callee->dump_name ());
+      print_gimple_stmt (symtab->dump_file, e->call_stmt, 0, dump_flags);
+      if (callee_info && callee_info->param_adjustments)
+	callee_info->param_adjustments->dump (symtab->dump_file);
+    }
+
   /* When redirecting a callback edge, all we need to do is replace
      the original address with the address of the function we are
      redirecting to.  */
-  if (e->callback)
+  if (e->callback_with_carrying_edge_p ())
     {
       cgraph_edge *carrying = e->get_callback_carrying_edge ();
       if (!callback_is_special_cased (carrying->callee->decl, e->call_stmt)
-	  && !lookup_attribute (CALLBACK_ATTR_IDENT,
+	  && !lookup_attribute ("callback_only",
 				DECL_ATTRIBUTES (carrying->callee->decl)))
 	/* Callback attribute is removed if the dispatching function changes
 	   signature, as the indices wouldn't be correct anymore.  These edges
 	   will get cleaned up later, ignore their redirection for now.  */
 	return e->call_stmt;
-      int fn_idx = callback_fetch_fn_position (e, carrying);
-      tree previous_arg = gimple_call_arg (e->call_stmt, fn_idx);
-      location_t loc = EXPR_LOCATION (previous_arg);
-      tree new_addr = build_fold_addr_expr_loc (loc, e->callee->decl);
-      gimple_call_set_arg (e->call_stmt, fn_idx, new_addr);
+      callback_redirect_edge (e);
       return e->call_stmt;
     }
+  /* Callback calls to .ASSUME bodies might need to have their statement
+     rebuilt.  */
+  else if (e->callback && e->callee->assume_function)
+    {
+      ipa_param_adjustments *padjs
+	= callee_info ? callee_info->param_adjustments : NULL;
+
+      /* If there are no param adjustments, replace the address in the call
+	 statement.  */
+      if (!padjs)
+	callback_redirect_edge (e);
+      else
+	{
+	  new_stmt = padjs->modify_call (e, false, killed_ssas);
+	  gcc_checking_assert (callback_ifn_assume_call_p (new_stmt));
+	  e->caller->set_call_stmt_including_clones (e->call_stmt, new_stmt,
+						     false);
+	}
+      return e->call_stmt;
+    }
+  gcc_checking_assert (!e->callback);
 
   if (decl && ipa_saved_clone_sources)
     {
@@ -1873,16 +1941,6 @@ cgraph_edge::redirect_call_stmt_to_callee (cgraph_edge *e,
 	  clone_info *info = clone_info::get (node);
 	  gcc_assert (!info || !info->param_adjustments);
 	}
-    }
-
-  clone_info *callee_info = clone_info::get (e->callee);
-  if (symtab->dump_file)
-    {
-      fprintf (symtab->dump_file, "updating call of %s -> %s: ",
-	       e->caller->dump_name (), e->callee->dump_name ());
-      print_gimple_stmt (symtab->dump_file, e->call_stmt, 0, dump_flags);
-      if (callee_info && callee_info->param_adjustments)
-	callee_info->param_adjustments->dump (symtab->dump_file);
     }
 
   if (ipa_param_adjustments *padjs
@@ -2582,6 +2640,8 @@ cgraph_node::dump (FILE *f)
     fprintf (f, " calls_comdat_local");
   if (icf_merged)
     fprintf (f, " icf_merged");
+  if (assume_function)
+    fprintf (f, " assume_function");
   if (merged_comdat)
     fprintf (f, " merged_comdat");
   if (merged_extern_inline)
@@ -3083,7 +3143,7 @@ add_detected_attribute_1 (cgraph_node *node, const char *attr, bool *changed)
       add_detected_attribute_1 (e->caller, attr, changed);
 }
 
-/* Add attribyte ATTR to function and its aliases.  */
+/* Add attribute ATTR to function and its aliases.  */
 
 bool
 cgraph_node::add_detected_attribute (const char *attr)
@@ -3442,7 +3502,7 @@ cgraph_edge::maybe_hot_p (sreal scale)
   if (caller->frequency == NODE_FREQUENCY_HOT)
     return true;
 
-  /* Use IPA count and if it s not available appy local heuristics.  */
+  /* Use IPA count and if it s not available apply local heuristics.  */
   if (c.initialized_p ())
     {
       /* A special case; AFDO zero means that function may quite possibly
@@ -4165,6 +4225,67 @@ cgraph_node::verify_node (void)
 	  && verify_speculative_call (e->caller, e->call_stmt, e->lto_stmt_uid,
 				      NULL))
 	error_found = true;
+      if (e->callback && e->has_callback)
+	{
+	  error ("edge has both callback and has_callback set");
+	  error_found = true;
+	}
+      if (e->callback)
+	{
+	  cgraph_edge *carrying = e->get_callback_carrying_edge ();
+	  if (!carrying && !e->callee->assume_function)
+	    {
+	      error ("callback edge %s->%s has no callback-carrying edge",
+		     identifier_to_locale (e->caller->dump_name ()),
+		     identifier_to_locale (e->callee->dump_name ()));
+	      error_found = true;
+	    }
+	  else if (carrying && e->callee->assume_function)
+	    {
+	      error ("internal callback edge %s->%s should not have a "
+		     "callback-carrying edge",
+		     identifier_to_locale (e->caller->dump_name ()),
+		     identifier_to_locale (e->callee->dump_name ()));
+	      error_found = true;
+	    }
+	}
+      if (e->has_callback
+	  && !callback_is_special_cased (e->callee->decl, e->call_stmt)
+	  && !fndecl_built_in_p (e->callee->decl, BUILT_IN_UNREACHABLE))
+	{
+	  int ncallbacks = 0;
+	  int nfound_edges = 0;
+	  for (tree cb = lookup_attribute ("callback_only",
+					   DECL_ATTRIBUTES (e->callee->decl));
+	       cb; cb = lookup_attribute ("callback_only", TREE_CHAIN (cb)),
+		    ncallbacks++)
+	    ;
+	  for (cgraph_edge *cbe = callees; cbe; cbe = cbe->next_callee)
+	    {
+	      if (cbe->callback && cbe->call_stmt == e->call_stmt
+		  && cbe->lto_stmt_uid == e->lto_stmt_uid)
+		{
+		  nfound_edges++;
+		}
+	    }
+	  if (ncallbacks < nfound_edges)
+	    {
+	      error ("callback edge %s->%s callback edge count mismatch, "
+		     "expected at most %d, found %d",
+		     identifier_to_locale (e->caller->name ()),
+		     identifier_to_locale (e->callee->name ()), ncallbacks,
+		     nfound_edges);
+	    }
+	}
+      if (e->has_callback
+	  && fndecl_built_in_p (e->callee->decl, BUILT_IN_UNREACHABLE))
+	for (cgraph_edge *cbe = e->first_callback_edge (); cbe;
+	     cbe = cbe->next_callback_edge ())
+	  if (!fndecl_built_in_p (cbe->callee->decl, BUILT_IN_UNREACHABLE))
+	    error ("callback-carrying edge is pointing towards "
+		   "__builtin_unreachable, but its callback edge %s -> %s "
+		   "is not",
+		   cbe->caller->name (), cbe->callee->name ());
     }
   for (e = indirect_calls; e; e = e->next_callee)
     {
@@ -4390,68 +4511,6 @@ cgraph_node::verify_node (void)
 
       for (e = callees; e; e = e->next_callee)
 	{
-	  if (!e->callback && e->callback_id)
-	    {
-	      error ("non-callback edge has callback_id set");
-	      error_found = true;
-	    }
-
-	  if (e->callback && e->has_callback)
-	    {
-	      error ("edge has both callback and has_callback set");
-	      error_found = true;
-	    }
-
-	  if (e->callback)
-	    {
-	      if (!e->get_callback_carrying_edge ())
-		{
-		  error ("callback edge %s->%s has no callback-carrying",
-			 identifier_to_locale (e->caller->name ()),
-			 identifier_to_locale (e->callee->name ()));
-		  error_found = true;
-		}
-	    }
-
-	  if (e->has_callback
-	      && !callback_is_special_cased (e->callee->decl, e->call_stmt)
-	      && !fndecl_built_in_p (e->callee->decl, BUILT_IN_UNREACHABLE))
-	    {
-	      int ncallbacks = 0;
-	      int nfound_edges = 0;
-	      for (tree cb = lookup_attribute (CALLBACK_ATTR_IDENT, DECL_ATTRIBUTES (
-							     e->callee->decl));
-		   cb; cb = lookup_attribute (CALLBACK_ATTR_IDENT, TREE_CHAIN (cb)),
-			ncallbacks++)
-		;
-	      for (cgraph_edge *cbe = callees; cbe; cbe = cbe->next_callee)
-		{
-		  if (cbe->callback && cbe->call_stmt == e->call_stmt
-		      && cbe->lto_stmt_uid == e->lto_stmt_uid)
-		    {
-		      nfound_edges++;
-		    }
-		}
-	      if (ncallbacks < nfound_edges)
-		{
-		  error ("callback edge %s->%s callback edge count mismatch, "
-			 "expected at most %d, found %d",
-			 identifier_to_locale (e->caller->name ()),
-			 identifier_to_locale (e->callee->name ()), ncallbacks,
-			 nfound_edges);
-		}
-	    }
-
-	  if (e->has_callback
-	      && fndecl_built_in_p (e->callee->decl, BUILT_IN_UNREACHABLE))
-	    for (cgraph_edge *cbe = e->first_callback_edge (); cbe;
-		 cbe = cbe->next_callback_edge ())
-	      if (!fndecl_built_in_p (cbe->callee->decl, BUILT_IN_UNREACHABLE))
-		error ("callback-carrying edge is pointing towards "
-		       "__builtin_unreachable, but its callback edge %s -> %s "
-		       "is not",
-		       cbe->caller->name (), cbe->callee->name ());
-
 	  if (!e->aux && !e->speculative && !e->callback && !e->has_callback)
 	    {
 	      error ("edge %s->%s has no corresponding call_stmt",
@@ -4718,9 +4777,8 @@ cgraph_cc_finalize (void)
   nested_function_info::release ();
   thunk_info::release ();
   clone_info::release ();
+  callback_info_sum_t::free_info_sum ();
   symtab = NULL;
-
-  x_cgraph_nodes_queue = NULL;
 
   cgraph_fnver_htab = NULL;
   version_info_node = NULL;

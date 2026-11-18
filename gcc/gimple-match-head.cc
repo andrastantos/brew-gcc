@@ -91,7 +91,7 @@ types_match (tree t1, tree t2, tree t3)
   return types_match (t1, t2) && types_match (t2, t3);
 }
 
-/* Return if T has a single use.  For GIMPLE, we also allow any
+/* Return if T has uses in a single stmt.  For GIMPLE, we also allow any
    non-SSA_NAME (ie constants) and zero uses to cope with uses
    that aren't linked up yet.  */
 
@@ -107,14 +107,14 @@ single_use (const_tree t)
   /* Inline return has_zero_uses (t) || has_single_use (t);  */
   const ssa_use_operand_t *const head = &(SSA_NAME_IMM_USE_NODE (t));
   const ssa_use_operand_t *ptr;
-  bool single = false;
+  gimple *single = NULL;
 
   for (ptr = head->next; ptr != head; ptr = ptr->next)
-    if (USE_STMT(ptr) && !is_gimple_debug (USE_STMT (ptr)))
+    if (USE_STMT (ptr) && !is_gimple_debug (USE_STMT (ptr)))
       {
-        if (single)
+	if (single && single != USE_STMT (ptr))
           return false;
-	single = true;
+	single = USE_STMT (ptr);
       }
   return true;
 }
@@ -534,4 +534,21 @@ gimple_match_range_of_expr (vrange &r, tree op, tree ctx = NULL_TREE)
 					      : NULL))
     return false;
   return !r.undefined_p ();
+}
+
+/* Return true if CODE applied to OP0 and OP1 in TYPE cannot overflow,
+   either because TYPE says so or because their ranges prove it.  CTX is
+   a capture passed on to gimple_match_range_of_expr.  */
+
+static inline bool
+gimple_match_no_overflow_p (tree_code code, tree type, tree op0, tree op1,
+			    tree ctx)
+{
+  if (TYPE_OVERFLOW_UNDEFINED (type))
+    return true;
+
+  int_range_max vr0, vr1;
+  return (gimple_match_range_of_expr (vr0, op0, ctx)
+	  && gimple_match_range_of_expr (vr1, op1, ctx)
+	  && range_op_handler (code).overflow_free_p (vr0, vr1));
 }

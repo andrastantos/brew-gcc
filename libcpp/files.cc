@@ -1007,7 +1007,7 @@ _cpp_stack_translated_file (cpp_reader *pfile, _cpp_file *file,
   /* We don't increment the line number at the end of a buffer,
      because we don't usually need that location (we're popping an
      include file).  However in this case we do want to do the
-     increment.  So push a writable buffer of two newlines to acheive
+     increment.  So push a writable buffer of two newlines to achieve
      that.  (We also need an extra newline, so this looks like a regular
      file, which we do that to to make sure we don't fall off the end in the
      middle of a line.  */
@@ -1190,8 +1190,8 @@ _cpp_stack_include (cpp_reader *pfile, const char *fname, int angle_brackets,
       if (!buf && aname)
 	{
 	  _cpp_file *afile = _cpp_find_file (pfile, aname, dir, angle_brackets,
-					     _cpp_FFK_NORMAL, loc);
-	  if (afile && !afile->header_unit)
+					     _cpp_FFK_HAS_INCLUDE, loc);
+	  if (afile && !afile->deferred_error && !afile->header_unit)
 	    buf = (pfile->cb.translate_include
 		   (pfile, pfile->line_table, loc,
 		    afile, angle_brackets, nullptr));
@@ -1227,11 +1227,11 @@ _cpp_find_header_unit (cpp_reader *pfile, const char *name, bool angle,
 {
   if (_cpp_file *file = test_header_unit (pfile, name, angle, loc))
     {
-      if (file->fd > 0)
+      if (file->fd != -1)
 	{
 	  /* Don't leave it open.  */
 	  close (file->fd);
-	  file->fd = 0;
+	  file->fd = -1;
 	}
 
       file->header_unit = +1;
@@ -2377,7 +2377,7 @@ _cpp_get_file_path (_cpp_file *f)
   return f->path;
 }
 
-/* Inteface to file statistics record in _cpp_file structure. */
+/* Interface to file statistics record in _cpp_file structure. */
 struct stat *
 _cpp_get_file_stat (_cpp_file *file)
 {

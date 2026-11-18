@@ -89,7 +89,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "function-abi.h"
 #include "attribs.h"
 #include "asan.h"
-#include "emit-rtl.h"
 #include "gimple.h"
 #include "cfgloop.h"
 #include "tree-vectorizer.h"
@@ -399,6 +398,14 @@ default_print_operand (FILE *stream ATTRIBUTE_UNUSED, rtx x ATTRIBUTE_UNUSED,
 #endif
 }
 
+/* No named operand modifiers are supported by default.  */
+
+int
+default_print_operand_modifier (string_slice, bool)
+{
+  return 0;
+}
+
 /* Emit to STREAM the assembler syntax for an insn operand whose memory
    address is X.  */
 
@@ -620,7 +627,7 @@ default_floatn_mode (int n, bool extended)
    should implicitly enable the built-in function without the __builtin_ prefix
    in addition to the normal built-in function with the __builtin_ prefix.  The
    default is to only enable built-in functions without the __builtin_ prefix
-   for the GNU C langauge.  The argument FUNC is the enum builtin_in_function
+   for the GNU C language.  The argument FUNC is the enum builtin_in_function
    id of the function to be enabled.  */
 
 bool
@@ -638,7 +645,7 @@ default_floatn_builtin_p (int func ATTRIBUTE_UNUSED)
   return c_or_objective_c;
 }
 
-/* Make some target macros useable by target-independent code.  */
+/* Make some target macros usable by target-independent code.  */
 bool
 targhook_words_big_endian (void)
 {
@@ -777,6 +784,7 @@ default_builtin_vectorization_cost (enum vect_cost_for_stmt type_of_cost,
         return 3;
 
       case vec_construct:
+      case vec_deconstruct:
 	return estimated_poly_value (TYPE_VECTOR_SUBPARTS (vectype)) - 1;
 
       default:
@@ -941,9 +949,13 @@ default_stack_protect_guard (void)
     {
       rtx x;
 
+      if (UINTPTR_TYPE && targetm.stack_protect_guard_symbol_p ())
+	/* Get unsigned integer type for uintptr_t.  */
+	t = unsigned_integer_tree_node_for_type (UINTPTR_TYPE);
+      else
+	t = ptr_type_node;
       t = build_decl (UNKNOWN_LOCATION,
-		      VAR_DECL, get_identifier ("__stack_chk_guard"),
-		      ptr_type_node);
+		      VAR_DECL, get_identifier ("__stack_chk_guard"), t);
       TREE_STATIC (t) = 1;
       TREE_PUBLIC (t) = 1;
       DECL_EXTERNAL (t) = 1;
@@ -954,8 +966,14 @@ default_stack_protect_guard (void)
 
       /* Do not share RTL as the declaration is visible outside of
 	 current function.  */
-      x = DECL_RTL (t);
-      RTX_FLAG (x, used) = 1;
+      if (mode_mem_attrs[(int) DECL_MODE (t)])
+	{
+	  /* NB: Don't call make_decl_rtl when mode_mem_attrs isn't
+	     initialized.  -save-temps won't initialize mode_mem_attrs
+	     and make_decl_rtl will fail.  */
+	  x = DECL_RTL (t);
+	  RTX_FLAG (x, used) = 1;
+	}
 
       stack_chk_guard_decl = t;
     }
@@ -1564,7 +1582,7 @@ default_builtin_vector_alignment_reachable (const_tree /*type*/, bool is_packed)
 }
 
 /* By default, assume that a target supports any factor of misalignment
-   memory access if it supports movmisalign patten.
+   memory access if it supports movmisalign pattern.
    is_packed is true if the memory access is defined in a packed struct.  */
 bool
 default_builtin_support_vector_misalignment (machine_mode mode,
@@ -1689,8 +1707,8 @@ default_ref_may_alias_errno (ao_ref *ref)
   else if (TREE_CODE (base) == MEM_REF
 	   && TREE_CODE (TREE_OPERAND (base, 0)) == SSA_NAME)
     {
-      struct ptr_info_def *pi = SSA_NAME_PTR_INFO (TREE_OPERAND (base, 0));
-      return !pi || pi->pt.anything || pi->pt.nonlocal;
+      const pt_solution *pt = ssa_name_pt_solution (TREE_OPERAND (base, 0));
+      return !pt || pt->anything || pt->nonlocal;
     }
   return false;
 }
@@ -1717,10 +1735,13 @@ default_addr_space_address_mode (addr_space_t addrspace ATTRIBUTE_UNUSED)
    To match the above, the same modes apply to all address spaces.  */
 
 bool
-default_addr_space_valid_pointer_mode (scalar_int_mode mode,
+default_addr_space_valid_pointer_mode (machine_mode mode,
 				       addr_space_t as ATTRIBUTE_UNUSED)
 {
-  return targetm.valid_pointer_mode (mode);
+  if (! SCALAR_INT_MODE_P (mode))
+    return false;
+
+  return targetm.valid_pointer_mode (as_a <scalar_int_mode> (mode));
 }
 
 /* Some places still assume that all pointer or address modes are the
@@ -1818,7 +1839,7 @@ default_addr_space_for_artificial_rodata (tree, artificial_rodata)
 }
 
 
-/* The defualt implementation of TARGET_HARD_REGNO_NREGS.  */
+/* The default implementation of TARGET_HARD_REGNO_NREGS.  */
 
 unsigned int
 default_hard_regno_nregs (unsigned int, machine_mode mode)
@@ -1947,6 +1968,15 @@ bool
 default_have_ccmp (void)
 {
   return targetm.gen_ccmp_first != NULL;
+}
+
+/* Default implementation of TARGET_CCMP_FIRST_PREFERENCE.  */
+
+ccmp_first_kind
+default_ccmp_first_preference (machine_mode, tree_code, const_tree,
+			       const_tree)
+{
+  return CCMP_FIRST_UNSUPPORTED;
 }
 
 /* By default we assume that c99 functions are present at the runtime,
@@ -2309,6 +2339,37 @@ default_preferred_output_reload_class (rtx x ATTRIBUTE_UNUSED,
 				       reg_class_t rclass)
 {
   return rclass;
+}
+
+/* The default implementation of TARGET_BASE_REG_CLASS.  */
+
+reg_class_t
+default_base_reg_class (machine_mode mode ATTRIBUTE_UNUSED,
+			addr_space_t as ATTRIBUTE_UNUSED,
+			enum rtx_code outer_code ATTRIBUTE_UNUSED,
+			enum rtx_code index_code ATTRIBUTE_UNUSED,
+			rtx mem ATTRIBUTE_UNUSED,
+			rtx_insn *insn ATTRIBUTE_UNUSED)
+{
+#ifdef MODE_CODE_BASE_REG_CLASS
+  return MODE_CODE_BASE_REG_CLASS (MACRO_MODE (mode), as, outer_code,
+				   index_code);
+#else
+#ifdef MODE_BASE_REG_REG_CLASS
+  if (index_code == REG)
+    return MODE_BASE_REG_REG_CLASS (MACRO_MODE (mode));
+#endif
+#ifdef MODE_BASE_REG_CLASS
+  return MODE_BASE_REG_CLASS (MACRO_MODE (mode));
+#elif defined (BASE_REG_CLASS)
+  return BASE_REG_CLASS;
+#else
+  /* No target that leaves TARGET_BASE_REG_CLASS at its default also fails
+     to define BASE_REG_CLASS or one of the other macros above; a target
+     that defines none of them must override the hook directly instead.  */
+  gcc_unreachable ();
+#endif
+#endif
 }
 
 /* The default implementation of TARGET_PREFERRED_RENAME_CLASS.  */
@@ -2937,6 +2998,13 @@ default_memtag_untagged_pointer (rtx tagged_pointer, rtx target)
 					   OPTAB_DIRECT);
   gcc_assert (untagged_base);
   return untagged_base;
+}
+
+/* The default implementation of TARGET_SCHED_REASSOCIATION_WIDTH.  */
+int
+default_reassociation_width (tree_code, machine_mode)
+{
+  return 1;
 }
 
 #include "gt-targhooks.h"

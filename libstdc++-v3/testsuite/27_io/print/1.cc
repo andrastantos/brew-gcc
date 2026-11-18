@@ -7,6 +7,8 @@
 #include <testsuite_hooks.h>
 #include <testsuite_fs.h>
 
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 void
 test_print_default()
 {
@@ -25,7 +27,7 @@ void
 test_print_file()
 {
   __gnu_test::scoped_file f;
-  FILE* strm = std::fopen(f.path.string().c_str(), "w");
+  FILE* strm = std::fopen(f.path.string().c_str(), "w"); 
   VERIFY( strm );
   std::print(strm, "File under '{}' for {}", 'O', "OUT OF FILE");
   std::fclose(strm);
@@ -63,6 +65,22 @@ test_print_raw()
   // Invalid UTF-8 should be written out unchanged if the stream is not
   // connected to a tty:
   VERIFY( txt == "\xa3" );
+}
+
+void
+test_print_setvbuf()
+{
+  __gnu_test::scoped_file f;
+  FILE* strm = std::fopen(f.path.string().c_str(), "w");
+  VERIFY( strm );
+  VERIFY( std::setvbuf(strm, nullptr, _IOFBF, 4096) == 0 );
+  std::string str{"Hello, World!"};
+  std::print(strm, "{}", str);
+  std::fclose(strm);
+
+  std::ifstream in(f.path);
+  std::string txt(std::istreambuf_iterator<char>(in), {});
+  VERIFY( txt == "Hello, World!" );
 }
 
 void
@@ -140,6 +158,7 @@ int main()
   test_print_file();
   test_println_file();
   test_print_raw();
+  test_print_setvbuf();
   test_vprint_nonunicode();
 #ifdef __cpp_exceptions
   test_errors();

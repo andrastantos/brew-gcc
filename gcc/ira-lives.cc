@@ -846,16 +846,16 @@ mark_hard_reg_early_clobbers (rtx_insn *insn, bool live_p)
 }
 
 /* Checks that CONSTRAINTS permits to use only one hard register.  If
-   it is so, the function returns the class of the hard register.
-   Otherwise it returns NO_REGS.  */
-static enum reg_class
-single_reg_class (const char *constraints, rtx op, rtx equiv_const)
+   it is so, the function returns the register.  Otherwise it returns -1.  */
+static int
+single_reg_class_regno (const char *constraints, rtx op, rtx equiv_const)
 {
   int c;
-  enum reg_class cl, next_cl;
+  int regno, next_regno;
+  enum reg_class next_cl;
   enum constraint_num cn;
 
-  cl = NO_REGS;
+  regno = -1;
   alternative_mask preferred = preferred_alternatives;
   while ((c = *constraints))
     {
@@ -867,7 +867,14 @@ single_reg_class (const char *constraints, rtx op, rtx equiv_const)
 	switch (c)
 	  {
 	  case 'g':
-	    return NO_REGS;
+	    return -1;
+
+	  case '{':
+	    next_regno = decode_hard_reg_constraint (constraints);
+	    if (regno >= 0 && regno != next_regno)
+	      return -1;
+	    regno = next_regno;
+	    break;
 
 	  default:
 	    /* ??? Is this the best way to handle memory constraints?  */
@@ -876,21 +883,21 @@ single_reg_class (const char *constraints, rtx op, rtx equiv_const)
 		|| insn_extra_special_memory_constraint (cn)
 		|| insn_extra_relaxed_memory_constraint (cn)
 		|| insn_extra_address_constraint (cn))
-	      return NO_REGS;
+	      return -1;
 	    if (constraint_satisfied_p (op, cn)
 		|| (equiv_const != NULL_RTX
 		    && CONSTANT_P (equiv_const)
 		    && constraint_satisfied_p (equiv_const, cn)))
-	      return NO_REGS;
+	      return -1;
 	    next_cl = reg_class_for_constraint (cn);
 	    if (next_cl == NO_REGS)
 	      break;
-	    if (cl == NO_REGS
-		? ira_class_singleton[next_cl][GET_MODE (op)] < 0
-		: (ira_class_singleton[cl][GET_MODE (op)]
-		   != ira_class_singleton[next_cl][GET_MODE (op)]))
-	      return NO_REGS;
-	    cl = next_cl;
+	    next_regno = ira_class_singleton[next_cl][GET_MODE (op)];
+	    if (regno < 0
+		? next_regno < 0
+		: regno != next_regno)
+	      return -1;
+	    regno = next_regno;
 	    break;
 
 	  case '0': case '1': case '2': case '3': case '4':
@@ -899,33 +906,32 @@ single_reg_class (const char *constraints, rtx op, rtx equiv_const)
 	      char *end;
 	      unsigned long dup = strtoul (constraints, &end, 10);
 	      constraints = end;
-	      next_cl
-		= single_reg_class (recog_data.constraints[dup],
-				    recog_data.operand[dup], NULL_RTX);
-	      if (cl == NO_REGS
-		  ? ira_class_singleton[next_cl][GET_MODE (op)] < 0
-		  : (ira_class_singleton[cl][GET_MODE (op)]
-		     != ira_class_singleton[next_cl][GET_MODE (op)]))
-		return NO_REGS;
-	      cl = next_cl;
+	      next_regno
+		= single_reg_class_regno (recog_data.constraints[dup],
+					  recog_data.operand[dup], NULL_RTX);
+	      if (regno < 0
+		  ? next_regno < 0
+		  : regno != next_regno)
+		return -1;
+	      regno = next_regno;
 	      continue;
 	    }
 	  }
       constraints += CONSTRAINT_LEN (c, constraints);
    }
-  return cl;
+  return regno;
 }
 
 /* The function checks that operand OP_NUM of the current insn can use
    only one hard register.  If it is so, the function returns the
-   class of the hard register.  Otherwise it returns NO_REGS.  */
-static enum reg_class
-single_reg_operand_class (int op_num)
+   hard register.  Otherwise it returns -1.  */
+static int
+single_reg_operand_class_regno (int op_num)
 {
   if (op_num < 0 || recog_data.n_alternatives == 0)
-    return NO_REGS;
-  return single_reg_class (recog_data.constraints[op_num],
-			   recog_data.operand[op_num], NULL_RTX);
+    return -1;
+  return single_reg_class_regno (recog_data.constraints[op_num],
+				 recog_data.operand[op_num], NULL_RTX);
 }
 
 /* The function sets up hard register set *SET to hard registers which
@@ -956,12 +962,14 @@ ira_implicitly_set_insn_hard_regs (HARD_REG_SET *set,
 	  mode = (GET_CODE (op) == SCRATCH
 		  ? GET_MODE (op) : PSEUDO_REGNO_MODE (regno));
 	  cl = NO_REGS;
-	  for (; (c = *p); p += CONSTRAINT_LEN (c, p))
+	  for (alternative_mask curr_preferred = preferred;
+	       (c = *p);
+	       p += CONSTRAINT_LEN (c, p))
 	    if (c == '#')
-	      preferred &= ~ALTERNATIVE_BIT (0);
+	      curr_preferred &= ~ALTERNATIVE_BIT (0);
 	    else if (c == ',')
-	      preferred >>= 1;
-	    else if (preferred & 1)
+	      curr_preferred >>= 1;
+	    else if (curr_preferred & 1)
 	      {
 		cl = reg_class_for_constraint (lookup_constraint (p));
 		if (cl != NO_REGS)
@@ -987,9 +995,9 @@ ira_implicitly_set_insn_hard_regs (HARD_REG_SET *set,
    hard register and makes other currently living allocnos conflicting
    with the hard register.  */
 static void
-process_single_reg_class_operands (bool in_p, int freq)
+process_single_reg_constrained_operands (bool in_p, int freq)
 {
-  int i, regno;
+  int i, regno, hard_regno;
   unsigned int px;
   enum reg_class cl;
   rtx operand;
@@ -1004,8 +1012,8 @@ process_single_reg_class_operands (bool in_p, int freq)
       if (! in_p && recog_data.operand_type[i] != OP_OUT
 	  && recog_data.operand_type[i] != OP_INOUT)
 	continue;
-      cl = single_reg_operand_class (i);
-      if (cl == NO_REGS)
+      hard_regno = single_reg_operand_class_regno (i);
+      if (hard_regno < 0)
 	continue;
 
       operand_a = NULL;
@@ -1017,6 +1025,11 @@ process_single_reg_class_operands (bool in_p, int freq)
 	  && (regno = REGNO (operand)) >= FIRST_PSEUDO_REGISTER)
 	{
 	  enum reg_class aclass;
+
+	  cl = NO_REGS;
+	  int nregs = hard_regno_nregs (hard_regno, recog_data.operand_mode[i]);
+	  for (int j = 0; j < nregs; ++j)
+	    cl = reg_class_superunion[cl][REGNO_REG_CLASS (hard_regno + j)];
 
 	  operand_a = ira_curr_regno_allocno_map[regno];
 	  aclass = ALLOCNO_CLASS (operand_a);
@@ -1034,7 +1047,7 @@ process_single_reg_class_operands (bool in_p, int freq)
 	      poly_int64 offset;
 
 	      xmode = recog_data.operand_mode[i];
-	      xregno = ira_class_singleton[cl][xmode];
+	      xregno = hard_regno;
 	      gcc_assert (xregno >= 0);
 	      ymode = ALLOCNO_MODE (operand_a);
 	      offset = subreg_lowpart_offset (ymode, xmode);
@@ -1057,6 +1070,10 @@ process_single_reg_class_operands (bool in_p, int freq)
 	    }
 	}
 
+      HARD_REG_SET hard_regs;
+      CLEAR_HARD_REG_SET (hard_regs);
+      add_to_hard_reg_set (&hard_regs, recog_data.operand_mode[i], hard_regno);
+
       EXECUTE_IF_SET_IN_SPARSESET (objects_live, px)
         {
 	  ira_object_t obj = ira_object_id_map[px];
@@ -1066,8 +1083,8 @@ process_single_reg_class_operands (bool in_p, int freq)
 	      /* We could increase costs of A instead of making it
 		 conflicting with the hard register.  But it works worse
 		 because it will be spilled in reload in anyway.  */
-	      OBJECT_CONFLICT_HARD_REGS (obj) |= reg_class_contents[cl];
-	      OBJECT_TOTAL_CONFLICT_HARD_REGS (obj) |= reg_class_contents[cl];
+	      OBJECT_CONFLICT_HARD_REGS (obj) |= hard_regs;
+	      OBJECT_TOTAL_CONFLICT_HARD_REGS (obj) |= hard_regs;
 	    }
 	}
     }
@@ -1133,11 +1150,103 @@ process_register_constraint_filters ()
     }
 }
 
+/* Append a dependent filter ID with mode MODE, referenced allocno
+   REF_ALLOCNO, hardreg REF_HARD_REGNO, and REF_MODE to allocno A.  */
+
+void
+ira_add_dependent_filter (ira_allocno_t a, int id,
+			  machine_mode mode, ira_allocno_t ref_allocno,
+			  unsigned int ref_hard_regno, machine_mode ref_mode)
+{
+  /* Check if we already have the filter that should be added.
+     This is a linear search and the assumption is that we'll never
+     have more than a handful of dependent filters.  Right now, the
+     maximum is 32 (see gensupport.cc).  */
+  for (auto *filter = ALLOCNO_DEPENDENT_FILTERS (a);
+       filter;
+       filter = filter->next)
+    if (filter->id == id
+	&& filter->ref_allocno == ref_allocno
+	&& filter->ref_hard_regno == ref_hard_regno
+	&& filter->mode == mode
+	&& filter->ref_mode == ref_mode)
+      return;
+
+  auto *filter = (ira_dependent_filter *)
+    ira_allocate (sizeof (ira_dependent_filter));
+  filter->id = id;
+  filter->ref_allocno = ref_allocno;
+  filter->ref_hard_regno = ref_hard_regno;
+  filter->mode = mode;
+  filter->ref_mode = ref_mode;
+  filter->next = ALLOCNO_DEPENDENT_FILTERS (a);
+  ALLOCNO_DEPENDENT_FILTERS (a) = filter;
+}
+
+/* Walk the operand alternatives of the current insn.  For each
+   operand with a dependent-filter constraint, add one
+   ira_dependent_filter in the appropriate allocno.  */
+
+static void
+process_dependent_filters ()
+{
+  if (!NUM_DEPENDENT_FILTERS)
+    return;
+
+  for (int opno = 0; opno < recog_data.n_operands; ++opno)
+    {
+      rtx op = recog_data.operand[opno];
+      if (!REG_P (op) || HARD_REGISTER_P (op))
+	continue;
+
+      ira_allocno_t a = ira_curr_regno_allocno_map[REGNO (op)];
+
+      for (int alt = 0; alt < recog_data.n_alternatives; alt++)
+	{
+	  if (!TEST_BIT (preferred_alternatives, alt))
+	    continue;
+
+	  auto *op_alt = &recog_op_alt[alt * recog_data.n_operands];
+	  auto cl = alternative_class (op_alt, opno);
+	  if (!ira_class_subset_p[ALLOCNO_CLASS (a)][cl])
+	    continue;
+
+	  auto dep_filter_mask = alternative_dependent_filters (op_alt, opno);
+	  if (!dep_filter_mask)
+	    continue;
+
+	  for (int id = 0; id < NUM_DEPENDENT_FILTERS; ++id)
+	    {
+	      if (!(dep_filter_mask & (1U << id)))
+		continue;
+
+	      int ref_opno = get_dependent_filter_ref (id);
+	      if (ref_opno < 0 || ref_opno >= recog_data.n_operands)
+		continue;
+	      rtx ref_op = recog_data.operand[ref_opno];
+	      if (!REG_P (ref_op))
+		continue;
+
+	      ira_allocno_t ref_a = NULL;
+	      unsigned int ref_hard_regno = INVALID_REGNUM;
+	      if (HARD_REGISTER_P (ref_op))
+		ref_hard_regno = REGNO (ref_op);
+	      else
+		ref_a = ira_curr_regno_allocno_map[REGNO (ref_op)];
+
+	      ira_add_dependent_filter (a, id, GET_MODE (op),
+					ref_a, ref_hard_regno,
+					GET_MODE (ref_op));
+	    }
+	}
+    }
+}
+
 /* Look through the CALL_INSN_FUNCTION_USAGE of a call insn INSN, and see if
    we find a SET rtx that we can use to deduce that a register can be cheaply
    caller-saved.  Return such a register, or NULL_RTX if none is found.  */
 static rtx
-find_call_crossed_cheap_reg (rtx_insn *insn)
+find_call_crossed_cheap_reg (rtx_call_insn *insn)
 {
   rtx cheap_reg = NULL_RTX;
   rtx exp = CALL_INSN_FUNCTION_USAGE (insn);
@@ -1309,7 +1418,7 @@ static void
 process_bb_node_lives (ira_loop_tree_node_t loop_tree_node)
 {
   int i, freq;
-  unsigned int j;
+  unsigned int j, k;
   basic_block bb;
   rtx_insn *insn;
   bitmap_iterator bi;
@@ -1330,27 +1439,28 @@ process_bb_node_lives (ira_loop_tree_node_t loop_tree_node)
       sparseset_clear (objects_live);
       REG_SET_TO_HARD_REG_SET (hard_regs_live, reg_live_out);
       hard_regs_live &= ~(eliminable_regset | ira_no_alloc_regs);
-      for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-	if (TEST_HARD_REG_BIT (hard_regs_live, i))
-	  {
-	    enum reg_class aclass, pclass, cl;
+      hard_reg_set_iterator hrsi;
+      k = 0;
+      EXECUTE_IF_SET_IN_HARD_REG_SET (hard_regs_live, 0, k, hrsi)
+	{
+	  enum reg_class aclass, pclass, cl;
 
-	    aclass = ira_allocno_class_translate[REGNO_REG_CLASS (i)];
-	    pclass = ira_pressure_class_translate[aclass];
-	    for (j = 0;
-		 (cl = ira_reg_class_super_classes[pclass][j])
-		   != LIM_REG_CLASSES;
-		 j++)
-	      {
-		if (! ira_reg_pressure_class_p[cl])
-		  continue;
-		curr_reg_pressure[cl]++;
-		if (curr_bb_node->reg_pressure[cl] < curr_reg_pressure[cl])
-		  curr_bb_node->reg_pressure[cl] = curr_reg_pressure[cl];
-		ira_assert (curr_reg_pressure[cl]
-			    <= ira_class_hard_regs_num[cl]);
-	      }
-	  }
+	  aclass = ira_allocno_class_translate[REGNO_REG_CLASS (k)];
+	  pclass = ira_pressure_class_translate[aclass];
+	  for (j = 0;
+	       (cl = ira_reg_class_super_classes[pclass][j])
+		 != LIM_REG_CLASSES;
+	       j++)
+	    {
+	      if (! ira_reg_pressure_class_p[cl])
+		continue;
+	      curr_reg_pressure[cl]++;
+	      if (curr_bb_node->reg_pressure[cl] < curr_reg_pressure[cl])
+		curr_bb_node->reg_pressure[cl] = curr_reg_pressure[cl];
+	      ira_assert (curr_reg_pressure[cl]
+			  <= ira_class_hard_regs_num[cl]);
+	    }
+	}
       EXECUTE_IF_SET_IN_BITMAP (reg_live_out, FIRST_PSEUDO_REGISTER, j, bi)
 	mark_pseudo_regno_live (j);
 
@@ -1440,16 +1550,17 @@ process_bb_node_lives (ira_loop_tree_node_t loop_tree_node)
 
 	  preferred_alternatives = ira_setup_alts (insn);
 	  process_register_constraint_filters ();
-	  process_single_reg_class_operands (false, freq);
+	  process_dependent_filters ();
+	  process_single_reg_constrained_operands (false, freq);
 
-	  if (call_p)
+	  if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	    {
 	      /* Try to find a SET in the CALL_INSN_FUNCTION_USAGE, and from
 		 there, try to find a pseudo that is live across the call but
 		 can be cheaply reconstructed from the return value.  */
-	      rtx cheap_reg = find_call_crossed_cheap_reg (insn);
+	      rtx cheap_reg = find_call_crossed_cheap_reg (call);
 	      if (cheap_reg != NULL_RTX)
-		add_reg_note (insn, REG_RETURNED, cheap_reg);
+		add_reg_note (call, REG_RETURNED, cheap_reg);
 
 	      last_call_num++;
 	      sparseset_clear (allocnos_processed);
@@ -1459,22 +1570,22 @@ process_bb_node_lives (ira_loop_tree_node_t loop_tree_node)
 		  ira_object_t obj = ira_object_id_map[i];
 		  a = OBJECT_ALLOCNO (obj);
 		  int num = ALLOCNO_NUM (a);
-		  function_abi callee_abi = insn_callee_abi (insn);
+		  function_abi callee_abi = insn_callee_abi (call);
 
 		  /* Don't allocate allocnos that cross setjmps or any
 		     call, if this function receives a nonlocal
 		     goto.  */
 		  if (cfun->has_nonlocal_label
 		      || (!targetm.setjmp_preserves_nonvolatile_regs_p ()
-			  && (find_reg_note (insn, REG_SETJMP, NULL_RTX)
+			  && (find_reg_note (call, REG_SETJMP, NULL_RTX)
 			      != NULL_RTX)))
 		    {
 		      SET_HARD_REG_SET (OBJECT_CONFLICT_HARD_REGS (obj));
 		      SET_HARD_REG_SET (OBJECT_TOTAL_CONFLICT_HARD_REGS (obj));
 		    }
 		  eh_region r;
-		  if (can_throw_internal (insn)
-		      && (r = get_eh_region_from_rtx (insn)) != NULL)
+		  if (can_throw_internal (call)
+		      && (r = get_eh_region_from_rtx (call)) != NULL)
 		    add_conflict_from_region_landing_pads (r, obj, callee_abi);
 		  if (sparseset_bit_p (allocnos_processed, num))
 		    continue;
@@ -1518,7 +1629,7 @@ process_bb_node_lives (ira_loop_tree_node_t loop_tree_node)
 	  FOR_EACH_INSN_USE (use, insn)
 	    mark_ref_live (use);
 
-	  process_single_reg_class_operands (true, freq);
+	  process_single_reg_constrained_operands (true, freq);
 
 	  set_p = mark_hard_reg_early_clobbers (insn, true);
 

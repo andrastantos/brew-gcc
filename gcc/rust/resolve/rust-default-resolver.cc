@@ -31,13 +31,21 @@ namespace Resolver2_0 {
 void
 DefaultResolver::visit (AST::Crate &crate)
 {
-  auto inner_fn = [this, &crate] () { AST::DefaultASTVisitor::visit (crate); };
+  // Guard against infinite recursion: `extern crate self;` resolves to the
+  // current crate, causing visit(AST::Crate) to call itself infinitely.
+  if (!visited_crates.insert (crate.get_node_id ()).second)
+    return;
 
-  auto &mappings = Analysis::Mappings::get ();
+  auto inner_fn = [this, &crate] () {
+    maybe_prelude_import ();
+    AST::DefaultASTVisitor::visit (crate);
+  };
 
-  auto crate_num = mappings.lookup_crate_num (crate.get_node_id ());
+  auto &crate_mappings = Analysis::Mappings::get ().crate;
+
+  auto crate_num = crate_mappings.lookup_crate_num (crate.get_node_id ());
   rust_assert (crate_num.has_value ());
-  auto crate_name = mappings.get_crate_name (*crate_num);
+  auto crate_name = crate_mappings.crate_names.lookup (*crate_num);
   rust_assert (crate_name.has_value ());
 
   ctx.canonical_ctx.scope_crate (crate.get_node_id (), *crate_name, inner_fn);
@@ -57,8 +65,10 @@ DefaultResolver::visit (AST::BlockExpr &expr)
 void
 DefaultResolver::visit (AST::Module &module)
 {
-  auto item_fn_1
-    = [this, &module] () { AST::DefaultASTVisitor::visit (module); };
+  auto item_fn_1 = [this, &module] () {
+    maybe_prelude_import ();
+    AST::DefaultASTVisitor::visit (module);
+  };
 
   auto item_fn_2 = [this, &module, &item_fn_1] () {
     ctx.canonical_ctx.scope (module.get_node_id (), module.get_name (),
@@ -81,10 +91,29 @@ DefaultResolver::visit (AST::Function &function)
 			     std::move (def_fn_1));
   };
 
-  ctx.scoped (Rib::Kind::Function, function.get_node_id (), def_fn_2,
-	      function.get_function_name ());
+  ctx.scoped (Rib::Kind::Function, function.get_node_id (), def_fn_2);
 }
 
+void
+DefaultResolver::visit (AST::LoopExpr &expr)
+{
+  ctx.scoped (Rib::Kind::Normal, expr.get_node_id (),
+	      [this, &expr] () { AST::DefaultASTVisitor::visit (expr); });
+}
+
+void
+DefaultResolver::visit (AST::WhileLoopExpr &expr)
+{
+  ctx.scoped (Rib::Kind::Normal, expr.get_node_id (),
+	      [this, &expr] () { AST::DefaultASTVisitor::visit (expr); });
+}
+
+void
+DefaultResolver::visit (AST::WhileLetLoopExpr &expr)
+{
+  ctx.scoped (Rib::Kind::Normal, expr.get_node_id (),
+	      [this, &expr] () { AST::DefaultASTVisitor::visit (expr); });
+}
 void
 DefaultResolver::visit (AST::ForLoopExpr &expr)
 {
@@ -342,6 +371,21 @@ DefaultResolver::visit (AST::TypeAlias &type)
 }
 
 void
+DefaultResolver::visit (AST::TraitAlias &trait)
+{
+  auto inner_fn_1
+    = [this, &trait] () { AST::DefaultASTVisitor::visit (trait); };
+
+  auto inner_fn_2 = [this, &trait, &inner_fn_1] () {
+    ctx.canonical_ctx.scope (trait.get_node_id (), trait.get_alias_name (),
+			     std::move (inner_fn_1));
+  };
+
+  ctx.scoped (Rib::Kind::Item, trait.get_node_id (), inner_fn_2,
+	      trait.get_alias_name ());
+}
+
+void
 DefaultResolver::visit_closure_params (AST::ClosureExpr &expr)
 {
   for (auto &param : expr.get_params ())
@@ -428,23 +472,37 @@ DefaultResolver::visit (AST::StaticItem &item)
 void
 DefaultResolver::visit (AST::TypeParam &param)
 {
-  auto expr_vis = [this, &param] () { AST::DefaultASTVisitor::visit (param); };
+  auto param_ban_vis = [this, &param] () {
+    visit_outer_attrs (param);
+    if (param.has_type ())
+      visit (param.get_type ());
+  };
 
-  ctx.scoped (Rib::Kind::ForwardTypeParamBan, param.get_node_id (), expr_vis);
+  ctx.scoped (Rib::Kind::ForwardTypeParamBan, param.get_node_id (),
+	      param_ban_vis);
+
+  for (auto &bound : param.get_type_param_bounds ())
+    visit (bound);
 }
 
 void
 DefaultResolver::visit_extern_crate (AST::ExternCrate &extern_crate,
 				     AST::Crate &crate, CrateNum num)
 {
-  visit (crate);
+  // We do *NOT* visit the crate because loaded crates are resolved
+  // independently.
 }
 
 void
 DefaultResolver::visit (AST::ExternCrate &crate)
 {
   auto &mappings = Analysis::Mappings::get ();
-  auto num_opt = mappings.lookup_crate_name (crate.get_referenced_crate ());
+  auto &crate_mappings = mappings.crate;
+  tl::optional<CrateNum> num_opt;
+  if (crate.get_referenced_crate () == "self")
+    num_opt = crate_mappings.get_current_crate ();
+  else
+    num_opt = crate_mappings.lookup_crate_name (crate.get_referenced_crate ());
 
   if (!num_opt)
     {
@@ -455,14 +513,16 @@ DefaultResolver::visit (AST::ExternCrate &crate)
 
   CrateNum num = *num_opt;
 
-  AST::Crate &referenced_crate = mappings.get_ast_crate (num);
+  AST::Crate &referenced_crate = mappings.crate.get_ast_crate (num);
 
   auto sub_visitor_1
     = [&, this] () { visit_extern_crate (crate, referenced_crate, num); };
 
   auto sub_visitor_2 = [&] () {
     ctx.canonical_ctx.scope_crate (referenced_crate.get_node_id (),
-				   crate.get_referenced_crate (),
+				   crate.get_referenced_crate () == "self"
+				     ? crate_mappings.get_current_crate_name ()
+				     : crate.get_referenced_crate (),
 				   std::move (sub_visitor_1));
   };
 

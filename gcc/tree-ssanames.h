@@ -20,31 +20,38 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_TREE_SSANAMES_H
 #define GCC_TREE_SSANAMES_H
 
-/* Aliasing information for SSA_NAMEs representing pointer variables.  */
-
-struct GTY(()) ptr_info_def
+inline irange_storage *
+ssa_name_irange_info (const_tree name)
 {
-  /* The points-to solution.  */
-  struct pt_solution pt;
+  vrange_storage *s = SSA_NAME_RANGE_INFO (name);
+  return s ? s->dyn_irange () : NULL;
+}
 
-  /* Alignment and misalignment of the pointer in bytes.  Together
-     align and misalign specify low known bits of the pointer.
-     ptr & (align - 1) == misalign.  */
+inline prange_storage *
+ssa_name_prange_info (const_tree name)
+{
+  vrange_storage *s = SSA_NAME_RANGE_INFO (name);
+  return s ? s->dyn_prange () : NULL;
+}
 
-  /* When known, this is the power-of-two byte alignment of the object this
-     pointer points into.  This is usually DECL_ALIGN_UNIT for decls and
-     MALLOC_ABI_ALIGNMENT for allocated storage.  When the alignment is not
-     known, it is zero.  Do not access directly but use functions
-     get_ptr_info_alignment, set_ptr_info_alignment,
-     mark_ptr_info_alignment_unknown and similar.  */
-  unsigned int align;
+inline frange_storage *
+ssa_name_frange_info (const_tree name)
+{
+  vrange_storage *s = SSA_NAME_RANGE_INFO (name);
+  return s ? s->dyn_frange () : NULL;
+}
 
-  /* When alignment is known, the byte offset this pointer differs from the
-     above alignment.  Access only through the same helper functions as align
-     above.  */
-  unsigned int misalign;
-};
+/* Return NAME's points-to solution, or NULL if it has none.  Returns NULL
+   for a non pointer type.  */
+inline const pt_solution *
+ssa_name_pt_solution (const_tree name)
+{
+  prange_storage *s = ssa_name_prange_info (name);
+  return s ? s->pt : NULL;
+}
 
+/* Make PT the points-to solution for NAME, which must have pointer type.  */
+extern void set_ssa_name_pt_solution (tree name, const pt_solution &pt);
 
 #define SSANAMES(fun) (fun)->gimple_df->ssa_names
 #define DEFAULT_DEFS(fun) (fun)->gimple_df->default_defs
@@ -70,19 +77,19 @@ extern tree make_ssa_name_fn (struct function *, tree, gimple *,
 			      unsigned int version = 0);
 extern void init_ssa_name_imm_use (tree);
 extern void release_ssa_name_fn (struct function *, tree);
-extern bool get_ptr_info_alignment (struct ptr_info_def *, unsigned int *,
+extern bool get_ssa_name_alignment (const_tree, unsigned int *,
 				    unsigned int *);
-extern void mark_ptr_info_alignment_unknown (struct ptr_info_def *);
-extern void set_ptr_info_alignment (struct ptr_info_def *, unsigned int,
-				    unsigned int);
-extern void adjust_ptr_info_misalignment (struct ptr_info_def *, poly_uint64);
-extern struct ptr_info_def *get_ptr_info (tree);
+extern void mark_ssa_name_alignment_unknown (tree);
+extern void set_ssa_name_alignment (tree, unsigned int, unsigned int);
 extern void set_ptr_nonnull (tree);
+extern bool ptr_nonnull_p (tree);
 
 extern tree copy_ssa_name_fn (struct function *, tree, gimple *);
 extern tree duplicate_ssa_name_fn (struct function *, tree, gimple *);
-extern void duplicate_ssa_name_ptr_info (tree, struct ptr_info_def *);
-extern void duplicate_ssa_name_range_info (tree dest, tree src);
+extern void duplicate_ssa_name_pt_solution (tree dest, const pt_solution *);
+extern void duplicate_ssa_name_pt_solution (tree dest, tree src);
+extern void duplicate_ssa_name_range_info (tree dest, tree src,
+					   bool remove_local_addr = false);
 extern void maybe_duplicate_ssa_info_at_copy (tree dest, tree src);
 extern void reset_flow_sensitive_info (tree);
 extern void reset_flow_sensitive_info_in_bb (basic_block);
@@ -143,22 +150,35 @@ make_temp_ssa_name (tree type, gimple *stmt, const char *name)
 class flow_sensitive_info_storage
 {
 public:
-  void save (tree);
-  void save_and_clear (tree);
-  void restore (tree);
-  void clear_storage ();
+  /* Save the flow sensitive info from NAME. */
+  inline void save (tree name)
+    {
+      gcc_checking_assert (state == 0);
+      range_info = SSA_NAME_RANGE_INFO (name);
+      state = 1;
+    }
+
+  /* Restore the flow sensitive info from NAME. */
+  inline void restore (tree name) const
+    {
+      gcc_checking_assert (state == 1);
+      SSA_NAME_RANGE_INFO (name) = range_info;
+    }
+
+  /* Save the flow sensitive info from NAME and reset that info.  */
+  inline void save_and_clear (tree name)
+    {
+      save (name);
+      reset_flow_sensitive_info (name);
+    }
+
+  /* Clear the storage. */
+  inline void clear_storage () { state = 0; }
 private:
-  /* 0 means there is nothing saved.
-     1 means non pointer is saved.
-     -1 means a pointer type is saved.
-     -2 means a pointer type is saved but no information was saved. */
+  /* 0 means there is nothing saved.  1 means something is saved.  */
   int state = 0;
-  /* The range info for non pointers */
+  /* The range info contains all flow sensitive information now.  */
   vrange_storage *range_info = nullptr;
-  /* Flow sensitive pointer information. */
-  unsigned int align = 0;
-  unsigned int misalign = 0;
-  bool null = true;
 };
 
 #endif /* GCC_TREE_SSANAMES_H */

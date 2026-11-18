@@ -1,3 +1,126 @@
+2026-11-12  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* functions.texi: Regenerate.
+	* strtoll.c: Replace strtoul with strtoull in the documentation comment.
+
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* configure: Regenerate.
+	* configure.ac: Set libiberty_topdir to "${srcdir}/.." and remove AC_CONFIG_AUX_DIR.
+
+2026-11-04  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_CONFIG_HEADER with AC_CONFIG_HEADERS.
+
+2026-11-02  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* Makefile.in (aclocal_deps): Depend on
+	../config/clang-plugin.m4, ../config/hwcaps.m4, and
+	../config/mmap.m4.
+	(./filedescriptor.$(objext)): Update dependencies.
+	(./filename_cmp.$(objext)): Likewise.
+	(./memrchr.$(objext)): Likewise.
+	( ./pex-unix.$(objext)): Likewise.
+	(./setenv.$(objext)): Likewise.
+	( ./xmalloc.$(objext)): Likewise.
+	* acinclude.m4: Stop including ../config/mmap.m4.
+	* aclocal.m4: Regenerate.
+	* functions.texi: Likewise.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* acinclude.m4: Change AC_FUNC_MMAP to GCC_AC_FUNC_MMAP.
+	* configure: Regenerate.
+
+2026-10-15  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Drop AC_C_CONST and AC_C_INLINE.
+
+2026-07-01  Alan Modra  <amodra@gmail.com>
+
+	* cp-demangle.c (d_compact_number): Avoid signed overflow.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* acinclude.m4: Replace AC_TRY_RUN with AC_RUN_IFELSE.  Replace
+	AC_TRY_COMPILE with AC_COMPILE_IFELSE.
+	* configure.ac: Replace AC_TRY_COMPILE with AC_COMPILE_IFELSE.  Replace
+	AC_ISC_POSIX with AC_SEARCH_LIBS([strerror],[cposix]).
+
+2026-06-13  Sunil Dora  <sunilkumar.dora@windriver.com>
+
+	PR driver/111527
+	* argv.c (expandargstr): New function.
+
+2026-06-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* simple-object-mach-o.c (MACH_O_MH_DYLIB): New definition.
+	(simple_object_mach_o_match): Accept dylibs as well as object files.
+
+2026-06-07  Andrew Burgess  <aburgess@redhat.com>
+
+	* d-demangle.c (struct dlang_info::options): New field,
+	carries options passed to the demangler.
+	(struct dlang_info::num_backrefs): Count total number of back
+	referenced types that have been processed.
+	(struct dlang_info::backref_depth): Count the depth of
+	recursive back references.
+	(dlang_type_backref): Track recursive back reference depth,
+	and the total number of back references encountered.  Bail out
+	early if the total number gets too high.
+	(dlang_demangle_init_info): Initialise new 'struct dlang_info'
+	fields.
+	(dlang_demangle): Pass demangler options to
+	dlang_demangle_init_info.
+	* testsuite/d-demangle-expected: Add new test.
+
+2026-06-01  Jakub Jelinek  <jakub@redhat.com>
+
+	* configure: Regenerate.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* simple-object-mach-o.c (simple_object_mach_o_write_segment): Reflow
+	long line.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* bcopy.c: Fix typos.
+	* bsearch.c: Likewise.
+	* bsearch_r.c: Likewise.
+	* configure.ac: Likewise.
+	* cp-demangle.c (d_print_comp_inner): Likewise.
+	(d_print_comp): Likewise.
+	* d-demangle.c (dlang_identifier): Likewise.
+	* dyn-string.c: Likewise.
+	* ldirname.c: Likewise.
+	* make-relative-prefix.c (make_relative_prefix_1): Likewise.
+	* obstacks.texi: Likewise.
+	* pex-win32.c (argv_to_cmdline): Likewise.
+	(spawn_script): Likewise.
+	* random.c (random): Likewise.
+	(setstate): Likewise.
+	* regex.c (WIDE_CHAR_SUPPORT): Likewise.
+	(convert_mbs_to_wcs): Likewise.
+	(PREFIX): Likewise.
+	(wcs_compile_range): Likewise.
+	(count_mbs_length): Likewise.
+	(wcs_re_match_2_internal): Likewise.
+	(byte_re_match_2_internal): Likewise.
+	* sigsetmask.c: Likewise.
+	* simple-object-elf.c (SHT_SYMTAB_SHNDX): Likewise.
+	(STV_HIDDEN): Likewise.
+	(simple_object_elf_copy_lto_debug_sections): Likewise.
+	* simple-object-mach-o.c (struct mach_o_header_32): Likewise.
+	(struct mach_o_header_64): Likewise.
+	(simple_object_mach_o_write_segment): Likewise.
+	* strsignal.c (defined): Likewise.
+
 2026-03-05  Jakub Jelinek  <jakub@redhat.com>
 
 	PR target/124365

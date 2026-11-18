@@ -531,6 +531,10 @@ Wc++26-extensions
 C++ ObjC++ Var(warn_cxx26_extensions) Warning Init(1) CppReason(CPP_W_CXX26_EXTENSIONS)
 Warn about C++26 constructs in code compiled with an older standard.
 
+Wc++29-extensions
+C++ ObjC++ Var(warn_cxx29_extensions) Warning Init(1) CppReason(CPP_W_CXX29_EXTENSIONS)
+Warn about C++29 constructs in code compiled with an older standard.
+
 Wcalloc-transposed-args
 C ObjC C++ ObjC++ Var(warn_calloc_transposed_args) Warning LangEnabledBy(C ObjC C++ ObjC++,Wextra)
 Warn about suspicious calls to calloc-like functions where sizeof expression is the earlier size argument and not the latter.
@@ -594,6 +598,10 @@ Synonym for -Wcomment.
 Wconditionally-supported
 C++ ObjC++ Var(warn_conditionally_supported) Warning
 Warn for conditionally-supported constructs.
+
+Wconstant-logical-operand
+C ObjC C++ ObjC++ Var(warn_constant_logical_operand) Warning LangEnabledBy(C ObjC C++ ObjC++,Wall)
+Warn for constant operands of logical operators other than 0 or 1.
 
 Wconversion
 C ObjC C++ ObjC++ Var(warn_conversion) Warning
@@ -958,6 +966,10 @@ Warn about invalid uses of the \"offsetof\" macro.
 Winvalid-pch
 C ObjC C++ ObjC++ CPP(warn_invalid_pch) CppReason(CPP_W_INVALID_PCH) Var(cpp_warn_invalid_pch) Init(0) Warning
 Warn about PCH files that are found but not used.
+
+Winvalid-specialization
+C++ ObjC++ Var(warn_invalid_specialization) Init(1) Warning
+Error about specializations of templates with \"clang::no_specializations\" attribute.
 
 Winvalid-utf8
 C ObjC C++ ObjC++ CPP(cpp_warn_invalid_utf8) CppReason(CPP_W_INVALID_UTF8) Var(warn_invalid_utf8) Init(0) Warning
@@ -1439,10 +1451,6 @@ Wstrict-null-sentinel
 C++ ObjC++ Warning Var(warn_strict_null_sentinel)
 Warn about uncasted NULL used as sentinel.
 
-Wstrict-overflow=
-C ObjC C++ ObjC++ LangEnabledBy(C ObjC C++ ObjC++,Wall, 1, 0) IntegerRange(0, 5)
-;
-
 Wstrict-prototypes
 C ObjC Var(warn_strict_prototypes) Warning
 Warn about unprototyped function declarations.
@@ -1514,7 +1522,7 @@ Warn when __sync_fetch_and_nand and __sync_nand_and_fetch built-in functions are
 
 Wsynth
 C++ ObjC++ Warning Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 Wsystem-headers
 C ObjC C++ ObjC++ Warning
@@ -1735,7 +1743,7 @@ C++ ObjC++ WarnRemoved
 
 fallow-parameterless-variadic-functions
 C ObjC Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 falt-external-templates
 C++ ObjC++ WarnRemoved
@@ -2144,6 +2152,10 @@ C++ ObjC++ Joined RejectNegative Undocumented
 fmodule-implicit-inline
 C++ ObjC++ Var(flag_module_implicit_inline,0) Integer
 Member functions defined within their class are inline in module purview.
+
+fmodule-include-translate
+C++ ObjC++ Var(flag_module_include_translate) Init(1) Integer
+Implicitly translate #include to import when possible.
 
 fmodule-only
 C++ ObjC RejectNegative Var(flag_module_only) Integer
@@ -2669,12 +2681,20 @@ C++ ObjC++
 Conform to the ISO 2023 C++ standard (published in 2024; experimental and incomplete support).
 
 std=c++2c
-C++ ObjC++ Alias(std=c++26)
-Conform to the ISO 2026 C++ draft standard (experimental and incomplete support).
+C++ ObjC++ Alias(std=c++26) Undocumented
+Deprecated in favor of -std=c++26.
 
 std=c++26
-C++ ObjC++ Undocumented
+C++ ObjC++
 Conform to the ISO 2026 C++ draft standard (experimental and incomplete support).
+
+std=c++2d
+C++ ObjC++ Alias(std=c++29) Undocumented
+Deprecated in favor of -std=c++29.
+
+std=c++29
+C++ ObjC++
+Conform to the ISO 2029 C++ draft standard (experimental and incomplete support).
 
 std=c11
 C ObjC
@@ -2771,12 +2791,20 @@ C++ ObjC++
 Conform to the ISO 2023 C++ standard with GNU extensions (published in 2024; experimental and incomplete support).
 
 std=gnu++2c
-C++ ObjC++ Alias(std=gnu++26)
-Conform to the ISO 2026 C++ draft standard with GNU extensions (experimental and incomplete support).
+C++ ObjC++ Alias(std=gnu++26) Undocumented
+Deprecated in favor of -std=gnu++26.
 
 std=gnu++26
-C++ ObjC++ Undocumented
+C++ ObjC++
 Conform to the ISO 2026 C++ draft standard with GNU extensions (experimental and incomplete support).
+
+std=gnu++2d
+C++ ObjC++ Alias(std=gnu++29) Undocumented
+Deprecated in favor of -std=gnu++29.
+
+std=gnu++29
+C++ ObjC++
+Conform to the ISO 2029 C++ draft standard with GNU extensions (experimental and incomplete support).
 
 std=gnu11
 C ObjC

@@ -80,6 +80,8 @@ extern rtx alter_subreg (rtx *, bool);
 
 /* Print an operand using machine-dependent assembler syntax.  */
 extern void output_operand (rtx, int);
+constexpr int PRINT_OPERAND_MODIFIER_BASE = UCHAR_MAX + 1;
+extern rtx output_operand_modifier_operand (int, unsigned int);
 
 /* Report inconsistency between the assembler template and the operands.
    In an `asm', it's the user's fault; otherwise, the compiler's fault.  */
@@ -96,7 +98,7 @@ extern int insn_current_reference_address (rtx_insn *);
 
 /* Find the alignment associated with a CODE_LABEL.
    Defined in final.cc.  */
-extern align_flags label_to_alignment (rtx);
+extern align_flags label_to_alignment (rtx_insn *);
 
 /* Output a LABEL_REF, or a bare CODE_LABEL, as an assembler symbol.  */
 extern void output_asm_label (rtx);

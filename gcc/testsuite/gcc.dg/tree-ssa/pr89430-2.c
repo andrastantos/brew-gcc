@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -ftree-cselim -fdump-tree-cselim-details" } */
+/* { dg-options "-O2 -ftree-cselim -fdump-tree-phiopt1-details" } */
 
 int c;
 unsigned test(unsigned k, unsigned b) {
@@ -11,4 +11,4 @@ unsigned test(unsigned k, unsigned b) {
         return a[0]+a[1];
 }
 
-/* { dg-final { scan-tree-dump "Conditional store replacement" "cselim" } } */
+/* { dg-final { scan-tree-dump "Conditional store replacement" "phiopt1" } } */

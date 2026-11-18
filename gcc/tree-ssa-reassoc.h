@@ -26,7 +26,7 @@ struct operand_entry
   unsigned int rank;
   unsigned int id;
   tree op;
-  unsigned int count;
+  HOST_WIDE_INT count;
   gimple *stmt_to_insert;
 };
 
@@ -36,7 +36,6 @@ struct range_entry
   tree low;
   tree high;
   bool in_p;
-  bool strict_overflow_p;
   unsigned int idx, next;
 };
 

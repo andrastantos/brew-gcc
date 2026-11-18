@@ -150,14 +150,8 @@ case "${host_cpu}" in
   amdgcn)
     cpu_defines_dir=cpu/gcn
     ;;
-  arm*)
-    cpu_defines_dir=cpu/arm
-    ;;
   nvptx)
     cpu_defines_dir=cpu/nvptx
-    ;;
-  powerpc* | rs6000)
-    cpu_defines_dir=cpu/powerpc
     ;;
 esac
 
@@ -341,9 +335,6 @@ case "${host}" in
         ;;
       powerpc64*)
         abi_baseline_pair=powerpc64-linux-gnu
-        ;;
-      s390)
-        abi_baseline_pair=s390-linux-gnu
         ;;
       s390x)
         abi_baseline_pair=s390x-linux-gnu

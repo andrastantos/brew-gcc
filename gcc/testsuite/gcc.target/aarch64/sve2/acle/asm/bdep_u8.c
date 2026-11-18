@@ -1,9 +1,14 @@
-/* { dg-skip-if "" { *-*-* } { "-DSTREAMING_COMPATIBLE" } { "" } } */
+/* { dg-do assemble { target aarch64_asm_ssve-bitperm_ok } } */
+/* { dg-do compile { target { ! aarch64_asm_ssve-bitperm_ok } } } */
 /* { dg-final { check-function-bodies "**" "" "-DCHECK_ASM" } } */
 
 #include "test_sve_acle.h"
 
+#ifdef STREAMING_COMPATIBLE
+#pragma GCC target "+sve2+ssve-bitperm"
+#else
 #pragma GCC target "+sve2-bitperm"
+#endif
 
 /*
 ** bdep_u8_tied1:

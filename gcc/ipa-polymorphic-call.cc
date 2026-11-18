@@ -23,6 +23,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "coretypes.h"
 #include "backend.h"
 #include "rtl.h"
+#include "tree-core.h"
 #include "tree.h"
 #include "gimple.h"
 #include "tree-pass.h"
@@ -41,6 +42,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "alloc-pool.h"
 #include "symbol-summary.h"
 #include "symtab-thunks.h"
+#include "attr-callback.h"
+#include "callback-info.h"
 
 /* Return true when TYPE contains an polymorphic type and thus is interesting
    for devirtualization machinery.  */
@@ -1405,7 +1408,7 @@ static inline bool
 csftc_abort_walking_p (unsigned speculative)
 {
   unsigned max = param_max_speculative_devirt_maydefs;
-  return speculative > max ? true : false;
+  return speculative > max;
 }
 
 /* Callback of walk_aliased_vdefs and a helper function for
@@ -1582,6 +1585,11 @@ ipa_polymorphic_call_context::get_dynamic_type (tree instance,
   tree instance_outer_type = outer_type;
 
   if (!instance)
+    return false;
+
+  /* Bail to avoid segfaults for IFN_ASSUME internal calls.  They are not
+     polymorphic anyway.  */
+  if (is_gimple_call (call) && gimple_call_internal_p (call, IFN_ASSUME))
     return false;
 
   if (otr_type)
@@ -2227,7 +2235,7 @@ ipa_polymorphic_call_context::combine_with (ipa_polymorphic_call_context ctx,
 	}
 
       /* If we do not know how the context is being used, we cannot
-	 clear MAYBE_IN_CONSTRUCTION because it may be offseted
+	 clear MAYBE_IN_CONSTRUCTION because it may be offsetted
 	 to other component of OUTER_TYPE later and we know nothing
 	 about it.  */
       if (otr_type && maybe_in_construction

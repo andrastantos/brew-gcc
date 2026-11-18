@@ -70,7 +70,7 @@ package Aspects is
    type Aspect_Id is
      (No_Aspect,                            -- Dummy entry for no aspect
 
-      --  The following aspects do not have a (static) boolean value
+      --  The following aspects do not have a Boolean value
 
       Aspect_Abstract_State,                -- GNAT
       Aspect_Address,
@@ -120,6 +120,7 @@ package Aspects is
       Aspect_Machine_Radix,
       Aspect_Max_Entry_Queue_Length,
       Aspect_Max_Queue_Length,              -- GNAT
+      Aspect_Modifies,                      -- GNAT
       Aspect_Object_Size,
       Aspect_Obsolescent,                   -- GNAT
       Aspect_Output,
@@ -159,9 +160,11 @@ package Aspects is
       Aspect_Super,                         -- GNAT
       Aspect_Suppress,
       Aspect_Synchronization,
+      Aspect_Taint_Sanitizer,               -- GNAT
+      Aspect_Taint_Sink,                    -- GNAT
+      Aspect_Taint_Source,                  -- GNAT
       Aspect_Test_Case,                     -- GNAT
       Aspect_Type_Invariant,
-      Aspect_Unimplemented,                 -- GNAT
       Aspect_Unsuppress,
       Aspect_User_Aspect,                   -- GNAT
       Aspect_Value_Size,                    -- GNAT
@@ -169,7 +172,8 @@ package Aspects is
       Aspect_Warnings,                      -- GNAT
       Aspect_Write,
 
-      --  The following aspects correspond to library unit pragmas
+      --  The following are in subtype Library_Unit_Aspects (and also in
+      --  subtype Boolean_Aspects).
 
       Aspect_All_Calls_Remote,
       Aspect_Elaborate_Body,
@@ -180,12 +184,7 @@ package Aspects is
       Aspect_Remote_Types,
       Aspect_Shared_Passive,
 
-      --  Remaining aspects have a static boolean value that turns the aspect
-      --  on or off. They all correspond to pragmas, but are only converted to
-      --  the pragmas where the value is True. A value of False normally means
-      --  that the aspect is ignored, except in the case of derived types where
-      --  the aspect value is inherited from the parent, in which case, we do
-      --  not allow False if we inherit a True value from the parent.
+      --  The following are in subtype Boolean_Aspects
 
       Aspect_Always_Terminates,             -- GNAT
       Aspect_Asynchronous,
@@ -281,89 +280,100 @@ package Aspects is
       Aspect_Type_Invariant    => True,
       others                   => False);
 
+   --  Ignored aspects are intended for use by other tools (e.g., CodePeer) and
+   --  should be accepted and then ignored by the compiler.
+   --  Any aspect_definition in an aspect_specification for an ignored aspect
+   --  is parsed but is otherwise ignored (in particular, it is not analyzed).
+
+   subtype Ignored_Aspects is Aspect_Id range
+     Aspect_Taint_Sanitizer .. Aspect_Taint_Source;
+
    --  The following array identifies all implementation defined aspects
 
    Implementation_Defined_Aspect : constant array (Aspect_Id) of Boolean :=
-     (Aspect_Abstract_State             => True,
-      Aspect_Always_Terminates          => True,
-      Aspect_Annotate                   => True,
-      Aspect_Async_Readers              => True,
-      Aspect_Async_Writers              => True,
-      Aspect_Constant_After_Elaboration => True,
-      Aspect_Contract_Cases             => True,
-      Aspect_CUDA_Device                => True,
-      Aspect_CUDA_Global                => True,
-      Aspect_Depends                    => True,
-      Aspect_Designated_Storage_Model   => True,
-      Aspect_Dimension                  => True,
-      Aspect_Dimension_System           => True,
-      Aspect_Disable_Controlled         => True,
-      Aspect_Effective_Reads            => True,
-      Aspect_Effective_Writes           => True,
-      Aspect_Exceptional_Cases          => True,
-      Aspect_Exit_Cases                 => True,
-      Aspect_Extended_Access            => True,
-      Aspect_Extensions_Visible         => True,
-      Aspect_External_Initialization    => True,
-      Aspect_Favor_Top_Level            => True,
-      Aspect_Finalizable                => True,
+     (Aspect_Abstract_State              => True,
+      Aspect_Always_Terminates           => True,
+      Aspect_Annotate                    => True,
+      Aspect_Async_Readers               => True,
+      Aspect_Async_Writers               => True,
+      Aspect_Constant_After_Elaboration  => True,
+      Aspect_Contract_Cases              => True,
+      Aspect_CUDA_Device                 => True,
+      Aspect_CUDA_Global                 => True,
+      Aspect_Depends                     => True,
+      Aspect_Designated_Storage_Model    => True,
+      Aspect_Dimension                   => True,
+      Aspect_Dimension_System            => True,
+      Aspect_Disable_Controlled          => True,
+      Aspect_Effective_Reads             => True,
+      Aspect_Effective_Writes            => True,
+      Aspect_Exceptional_Cases           => True,
+      Aspect_Exit_Cases                  => True,
+      Aspect_Extended_Access             => True,
+      Aspect_Extensions_Visible          => True,
+      Aspect_External_Initialization     => True,
+      Aspect_Favor_Top_Level             => True,
+      Aspect_Finalizable                 => True,
       Aspect_First_Controlling_Parameter => True,
-      Aspect_Ghost                      => True,
-      Aspect_Ghost_Predicate            => True,
-      Aspect_Global                     => True,
-      Aspect_GNAT_Annotate              => True,
-      Aspect_Initial_Condition          => True,
-      Aspect_Initializes                => True,
-      Aspect_Inline_Always              => True,
-      Aspect_Invariant                  => True,
-      Aspect_Iterable                   => True,
-      Aspect_Linker_Section             => True,
-      Aspect_Local_Restrictions         => True,
-      Aspect_Lock_Free                  => True,
-      Aspect_Max_Queue_Length           => True,
-      Aspect_No_Caching                 => True,
-      Aspect_No_Elaboration_Code_All    => True,
-      Aspect_No_Inline                  => True,
-      Aspect_No_Raise                   => True,
-      Aspect_No_Tagged_Streams          => True,
-      Aspect_No_Task_Parts              => True,
-      Aspect_Obsolescent                => True,
-      Aspect_Part_Of                    => True,
-      Aspect_Persistent_BSS             => True,
-      Aspect_Potentially_Invalid        => True,
-      Aspect_Predicate                  => True,
-      Aspect_Pure_Function              => True,
-      Aspect_Refined_Depends            => True,
-      Aspect_Refined_Global             => True,
-      Aspect_Refined_Post               => True,
-      Aspect_Refined_State              => True,
-      Aspect_Relaxed_Initialization     => True,
-      Aspect_Remote_Access_Type         => True,
-      Aspect_Scalar_Storage_Order       => True,
-      Aspect_Secondary_Stack_Size       => True,
-      Aspect_Shared                     => True,
-      Aspect_Side_Effects               => True,
-      Aspect_Simple_Storage_Pool        => True,
-      Aspect_Simple_Storage_Pool_Type   => True,
-      Aspect_SPARK_Mode                 => True,
-      Aspect_Storage_Model_Type         => True,
-      Aspect_Subprogram_Variant         => True,
-      Aspect_Suppress_Debug_Info        => True,
-      Aspect_Suppress_Initialization    => True,
-      Aspect_Test_Case                  => True,
-      Aspect_Thread_Local_Storage       => True,
-      Aspect_Unimplemented              => True,
-      Aspect_Universal_Aliasing         => True,
-      Aspect_Unmodified                 => True,
-      Aspect_Unreferenced               => True,
-      Aspect_Unreferenced_Objects       => True,
-      Aspect_Unsigned_Base_Range        => True,
-      Aspect_User_Aspect                => True,
-      Aspect_Value_Size                 => True,
-      Aspect_Volatile_Full_Access       => True,
-      Aspect_Volatile_Function          => True,
-      Aspect_Warnings                   => True,
-      others                            => False);
+      Aspect_Ghost                       => True,
+      Aspect_Ghost_Predicate             => True,
+      Aspect_Global                      => True,
+      Aspect_GNAT_Annotate               => True,
+      Aspect_Initial_Condition           => True,
+      Aspect_Initialize                  => True,
+      Aspect_Initializes                 => True,
+      Aspect_Inline_Always               => True,
+      Aspect_Invariant                   => True,
+      Aspect_Iterable                    => True,
+      Aspect_Linker_Section              => True,
+      Aspect_Local_Restrictions          => True,
+      Aspect_Lock_Free                   => True,
+      Aspect_Max_Queue_Length            => True,
+      Aspect_Modifies                    => True,
+      Aspect_No_Caching                  => True,
+      Aspect_No_Elaboration_Code_All     => True,
+      Aspect_No_Inline                   => True,
+      Aspect_No_Raise                    => True,
+      Aspect_No_Tagged_Streams           => True,
+      Aspect_No_Task_Parts               => True,
+      Aspect_Obsolescent                 => True,
+      Aspect_Part_Of                     => True,
+      Aspect_Persistent_BSS              => True,
+      Aspect_Potentially_Invalid         => True,
+      Aspect_Predicate                   => True,
+      Aspect_Pure_Function               => True,
+      Aspect_Refined_Depends             => True,
+      Aspect_Refined_Global              => True,
+      Aspect_Refined_Post                => True,
+      Aspect_Refined_State               => True,
+      Aspect_Relaxed_Initialization      => True,
+      Aspect_Remote_Access_Type          => True,
+      Aspect_Scalar_Storage_Order        => True,
+      Aspect_Secondary_Stack_Size        => True,
+      Aspect_Shared                      => True,
+      Aspect_Side_Effects                => True,
+      Aspect_Simple_Storage_Pool         => True,
+      Aspect_Simple_Storage_Pool_Type    => True,
+      Aspect_SPARK_Mode                  => True,
+      Aspect_Storage_Model_Type          => True,
+      Aspect_Subprogram_Variant          => True,
+      Aspect_Suppress_Debug_Info         => True,
+      Aspect_Suppress_Initialization     => True,
+      Aspect_Test_Case                   => True,
+      Aspect_Thread_Local_Storage        => True,
+      Aspect_Universal_Aliasing          => True,
+      Aspect_Unmodified                  => True,
+      Aspect_Unreferenced                => True,
+      Aspect_Unreferenced_Objects        => True,
+      Aspect_Unsigned_Base_Range         => True,
+      Aspect_User_Aspect                 => True,
+      Aspect_Value_Size                  => True,
+      Aspect_Volatile_Full_Access        => True,
+      Aspect_Volatile_Function           => True,
+      Aspect_Warnings                    => True,
+      Ignored_Aspects                    => True,
+      others                             => False);
+         --  end Implementation_Defined_Aspect
 
    --  The following array indicates aspects that specify operational
    --  characteristics, and thus can be specified on partial views.
@@ -397,18 +407,20 @@ package Aspects is
      Aspect_Id range Aspect_All_Calls_Remote .. Aspect_Shared_Passive;
 
    --  The following subtype defines aspects accepting an optional static
-   --  boolean parameter indicating if the aspect should be active or
-   --  cancelling. If the parameter is missing the effective value is True,
-   --  enabling the aspect. If the parameter is present it must be a static
-   --  expression of type Standard.Boolean. If the value is True, then the
-   --  aspect is enabled. If it is False, the aspect is disabled.
+   --  Boolean parameter. If the parameter is missing the effective value is
+   --  True. These aspects all correspond to pragmas, but are only converted to
+   --  the pragmas if the value is True. A value of False normally means
+   --  that the aspect is ignored, except in the case of derived types where
+   --  the aspect value is inherited from the parent, in which case we do
+   --  not allow False if we inherit a True value from the parent.
    --
-   --  The Always_Terminates fits in this category even though it accepts an
-   --  optional boolean parameter which is non-static, because we want it to
-   --  be usable with pragma User_Defined_Aspect.
+   --  Always_Terminates fits in this category except that it accepts a
+   --  nonstatic value; we want it to be usable with pragma
+   --  User_Aspect_Definition.
 
    subtype Boolean_Aspects is
-     Aspect_Id range Aspect_Always_Terminates .. Aspect_Id'Last;
+     Aspect_Id range Library_Unit_Aspects'First .. Aspect_Id'Last;
+   --  Includes Library_Unit_Aspects
 
    subtype Pre_Post_Aspects is Aspect_Id
    with Static_Predicate => Pre_Post_Aspects in Aspect_Post
@@ -476,6 +488,7 @@ package Aspects is
       Aspect_Machine_Radix              => Expression,
       Aspect_Max_Entry_Queue_Length     => Expression,
       Aspect_Max_Queue_Length           => Expression,
+      Aspect_Modifies                   => Expression,
       Aspect_Object_Size                => Expression,
       Aspect_Obsolescent                => Optional_Expression,
       Aspect_Output                     => Name,
@@ -512,12 +525,11 @@ package Aspects is
       Aspect_Stream_Size                => Expression,
       Aspect_String_Literal             => Name,
       Aspect_Subprogram_Variant         => Expression,
-      Aspect_Super                      => Expression,
+      Aspect_Super                      => Optional_Expression,
       Aspect_Suppress                   => Name,
       Aspect_Synchronization            => Name,
       Aspect_Test_Case                  => Expression,
       Aspect_Type_Invariant             => Expression,
-      Aspect_Unimplemented              => Optional_Expression,
       Aspect_Unsuppress                 => Name,
       Aspect_User_Aspect                => Expression,
       Aspect_Value_Size                 => Expression,
@@ -525,8 +537,9 @@ package Aspects is
       Aspect_Warnings                   => Name,
       Aspect_Write                      => Name,
 
-      Library_Unit_Aspects              => Optional_Expression,
+      Ignored_Aspects                   => Optional_Expression,
       Boolean_Aspects                   => Optional_Expression);
+         --  end Aspect_Argument
 
    --  The following array indicates what aspects are representation aspects
 
@@ -583,6 +596,7 @@ package Aspects is
       Aspect_Machine_Radix                => True,
       Aspect_Max_Entry_Queue_Length       => False,
       Aspect_Max_Queue_Length             => False,
+      Aspect_Modifies                     => False,
       Aspect_Object_Size                  => True,
       Aspect_Obsolescent                  => False,
       Aspect_Output                       => False,
@@ -624,7 +638,6 @@ package Aspects is
       Aspect_Synchronization              => False,
       Aspect_Test_Case                    => False,
       Aspect_Type_Invariant               => False,
-      Aspect_Unimplemented                => False,
       Aspect_Unsigned_Base_Range          => True,
       Aspect_Unsuppress                   => False,
       Aspect_User_Aspect                  => False,
@@ -633,6 +646,7 @@ package Aspects is
       Aspect_Warnings                     => False,
       Aspect_Write                        => False,
 
+      Ignored_Aspects                     => False,
       Library_Unit_Aspects                => False,
 
       Aspect_Always_Terminates            => False,
@@ -689,6 +703,7 @@ package Aspects is
       Aspect_Volatile_Full_Access         => True,
       Aspect_Volatile_Function            => False,
       Aspect_Yield                        => False);
+         --  end Is_Representation_Aspect
 
    -----------------------------------------
    -- Table Linking Names and Aspect_Id's --
@@ -776,6 +791,7 @@ package Aspects is
       Aspect_Machine_Radix                => Name_Machine_Radix,
       Aspect_Max_Entry_Queue_Length       => Name_Max_Entry_Queue_Length,
       Aspect_Max_Queue_Length             => Name_Max_Queue_Length,
+      Aspect_Modifies                     => Name_Modifies,
       Aspect_No_Caching                   => Name_No_Caching,
       Aspect_No_Controlled_Parts          => Name_No_Controlled_Parts,
       Aspect_No_Task_Parts                => Name_No_Task_Parts,
@@ -838,12 +854,14 @@ package Aspects is
       Aspect_Suppress                     => Name_Suppress,
       Aspect_Suppress_Debug_Info          => Name_Suppress_Debug_Info,
       Aspect_Suppress_Initialization      => Name_Suppress_Initialization,
+      Aspect_Taint_Sanitizer              => Name_Taint_Sanitizer,
+      Aspect_Taint_Sink                   => Name_Taint_Sink,
+      Aspect_Taint_Source                 => Name_Taint_Source,
       Aspect_Thread_Local_Storage         => Name_Thread_Local_Storage,
       Aspect_Synchronization              => Name_Synchronization,
       Aspect_Test_Case                    => Name_Test_Case,
       Aspect_Type_Invariant               => Name_Type_Invariant,
       Aspect_Unchecked_Union              => Name_Unchecked_Union,
-      Aspect_Unimplemented                => Name_Unimplemented,
       Aspect_Universal_Aliasing           => Name_Universal_Aliasing,
       Aspect_Unmodified                   => Name_Unmodified,
       Aspect_Unreferenced                 => Name_Unreferenced,
@@ -859,7 +877,7 @@ package Aspects is
       Aspect_Volatile_Function            => Name_Volatile_Function,
       Aspect_Warnings                     => Name_Warnings,
       Aspect_Write                        => Name_Write,
-      Aspect_Yield                        => Name_Yield);
+      Aspect_Yield                        => Name_Yield); -- Aspect_Names
 
    function Get_Aspect_Id (Name : Name_Id) return Aspect_Id;
    pragma Inline (Get_Aspect_Id);
@@ -919,9 +937,9 @@ package Aspects is
    --  To deal with the delayed aspect case, we use two flags. The first is
    --  set on the parent type if it has delayed representation aspects. This
    --  flag Has_Delayed_Rep_Aspects indicates that if we derive from this type
-   --  we have to worry about making sure we inherit any delayed aspects. The
-   --  second flag is set on a derived type: May_Inherit_Delayed_Rep_Aspects
-   --  is set if the parent type has Has_Delayed_Rep_Aspects set.
+   --  we have to make sure we inherit any delayed aspects. The second flag is
+   --  set on a derived type: May_Inherit_Delayed_Rep_Aspects is set if the
+   --  parent type has Has_Delayed_Rep_Aspects set.
 
    --  When we freeze a derived type, if the May_Inherit_Delayed_Rep_Aspects
    --  flag is set, then we call Sem_Ch13.Inherit_Delayed_Rep_Aspects when
@@ -1005,7 +1023,6 @@ package Aspects is
       Aspect_Favor_Top_Level              => Always_Delay,
       Aspect_Finalizable                  => Always_Delay,
       Aspect_Ghost_Predicate              => Always_Delay,
-      Aspect_Implicit_Dereference         => Always_Delay,
       Aspect_Independent                  => Always_Delay,
       Aspect_Independent_Components       => Always_Delay,
       Aspect_Inline                       => Always_Delay,
@@ -1014,7 +1031,6 @@ package Aspects is
       Aspect_Integer_Literal              => Always_Delay,
       Aspect_Interrupt_Handler            => Always_Delay,
       Aspect_Interrupt_Priority           => Always_Delay,
-      Aspect_Invariant                    => Always_Delay,
       Aspect_Iterable                     => Always_Delay,
       Aspect_Iterator_Element             => Always_Delay,
       Aspect_Lock_Free                    => Always_Delay,
@@ -1023,10 +1039,6 @@ package Aspects is
       Aspect_No_Return                    => Always_Delay,
       Aspect_Output                       => Always_Delay,
       Aspect_Persistent_BSS               => Always_Delay,
-      Aspect_Post                         => Always_Delay,
-      Aspect_Postcondition                => Always_Delay,
-      Aspect_Pre                          => Always_Delay,
-      Aspect_Precondition                 => Always_Delay,
       Aspect_Predicate                    => Always_Delay,
       Aspect_Predicate_Failure            => Always_Delay,
       Aspect_Preelaborable_Initialization => Always_Delay,
@@ -1053,17 +1065,14 @@ package Aspects is
       Aspect_Storage_Pool                 => Always_Delay,
       Aspect_Stream_Size                  => Always_Delay,
       Aspect_String_Literal               => Always_Delay,
-      Aspect_Suppress                     => Always_Delay,
       Aspect_Suppress_Debug_Info          => Always_Delay,
       Aspect_Suppress_Initialization      => Always_Delay,
       Aspect_Thread_Local_Storage         => Always_Delay,
-      Aspect_Type_Invariant               => Always_Delay,
       Aspect_Unchecked_Union              => Always_Delay,
       Aspect_Universal_Aliasing           => Always_Delay,
       Aspect_Unmodified                   => Always_Delay,
       Aspect_Unreferenced                 => Always_Delay,
       Aspect_Unreferenced_Objects         => Always_Delay,
-      Aspect_Unsuppress                   => Always_Delay,
       Aspect_Variable_Indexing            => Always_Delay,
       Aspect_Write                        => Always_Delay,
 
@@ -1087,17 +1096,22 @@ package Aspects is
       Aspect_Export                       => Never_Delay,
       Aspect_Extensions_Visible           => Never_Delay,
       Aspect_External_Initialization      => Never_Delay,
+      Aspect_External_Name                => Never_Delay,
       Aspect_First_Controlling_Parameter  => Never_Delay,
       Aspect_Ghost                        => Never_Delay,
       Aspect_Global                       => Never_Delay,
       Aspect_GNAT_Annotate                => Never_Delay,
       Aspect_Import                       => Never_Delay,
       Aspect_Initial_Condition            => Never_Delay,
+      Aspect_Link_Name                    => Never_Delay,
       Aspect_Local_Restrictions           => Never_Delay,
+      Aspect_Implicit_Dereference         => Never_Delay,
       Aspect_Initialize                   => Never_Delay,
       Aspect_Initializes                  => Never_Delay,
+      Aspect_Invariant                    => Never_Delay,
       Aspect_Max_Entry_Queue_Length       => Never_Delay,
       Aspect_Max_Queue_Length             => Never_Delay,
+      Aspect_Modifies                     => Never_Delay,
       Aspect_No_Caching                   => Never_Delay,
       Aspect_No_Controlled_Parts          => Never_Delay,
       Aspect_No_Task_Parts                => Never_Delay,
@@ -1105,7 +1119,11 @@ package Aspects is
       Aspect_No_Tagged_Streams            => Never_Delay,
       Aspect_Obsolescent                  => Never_Delay,
       Aspect_Part_Of                      => Never_Delay,
+      Aspect_Post                         => Never_Delay,
+      Aspect_Postcondition                => Never_Delay,
       Aspect_Potentially_Invalid          => Never_Delay,
+      Aspect_Pre                          => Never_Delay,
+      Aspect_Precondition                 => Never_Delay,
       Aspect_Refined_Depends              => Never_Delay,
       Aspect_Refined_Global               => Never_Delay,
       Aspect_Refined_Post                 => Never_Delay,
@@ -1116,13 +1134,16 @@ package Aspects is
       Aspect_Static                       => Never_Delay,
       Aspect_Subprogram_Variant           => Never_Delay,
       Aspect_Super                        => Never_Delay,
+      Aspect_Suppress                     => Never_Delay,
       Aspect_Synchronization              => Never_Delay,
       Aspect_Test_Case                    => Never_Delay,
-      Aspect_Unimplemented                => Never_Delay,
+      Aspect_Type_Invariant               => Never_Delay,
+      Aspect_Unsuppress                   => Never_Delay,
       Aspect_User_Aspect                  => Never_Delay,
       Aspect_Volatile_Function            => Never_Delay,
       Aspect_Warnings                     => Never_Delay,
       Aspect_Yield                        => Never_Delay,
+      Ignored_Aspects                     => Never_Delay,
 
       Aspect_Alignment                    => Rep_Aspect,
       Aspect_Atomic                       => Rep_Aspect,
@@ -1130,9 +1151,7 @@ package Aspects is
       Aspect_Bit_Order                    => Rep_Aspect,
       Aspect_Component_Size               => Rep_Aspect,
       Aspect_Extended_Access              => Rep_Aspect,
-      Aspect_External_Name                => Rep_Aspect,
       Aspect_Full_Access_Only             => Rep_Aspect,
-      Aspect_Link_Name                    => Rep_Aspect,
       Aspect_Linker_Section               => Rep_Aspect,
       Aspect_Machine_Radix                => Rep_Aspect,
       Aspect_Object_Size                  => Rep_Aspect,
@@ -1194,9 +1213,9 @@ package Aspects is
       Aspect_Warnings                     => True,
       others                              => False);
 
-   -------------------------------------------------------------------
-   -- Handling of Aspects Specifications on Single Concurrent Types --
-   -------------------------------------------------------------------
+   ------------------------------------------------------------------
+   -- Handling of Aspect Specifications on Single Concurrent Types --
+   ------------------------------------------------------------------
 
    --  Certain aspects that appear on the following nodes
 

@@ -219,8 +219,7 @@ new_source_line (void)
 
   MARKER (z)[0] = '\0';
   STRING (z) = NO_TEXT;
-  FILENAME (z) = NO_TEXT;
-  NUMBER (z) = 0;
+  LOCATION (z) = UNKNOWN_LOCATION;
   NEXT (z) = NO_LINE;
   PREVIOUS (z) = NO_LINE;
   return z;
@@ -229,15 +228,15 @@ new_source_line (void)
 /* Append a source line to the internal source file.  */
 
 static void
-append_source_line (const char *str, LINE_T **ref_l, int *line_num,
-		    const char *filename)
+append_source_line (const char *str, LINE_T **ref_l, int *line_num)
 {
   LINE_T *z = new_source_line ();
 
   /* Link line into the chain.  */
   STRING (z) = xstrdup (str);
-  FILENAME (z) = ggc_strdup (filename);
-  NUMBER (z) = (*line_num)++;
+  LOCATION (z) = linemap_line_start (line_table,
+				     (*line_num)++,
+				     80 /* max_column_hint */);
   NEXT (z) = NO_LINE;
   PREVIOUS (z) = *ref_l;
   if (TOP_LINE (&A68_JOB) == NO_LINE)
@@ -250,14 +249,15 @@ append_source_line (const char *str, LINE_T **ref_l, int *line_num,
 /* Append environment source lines.  */
 
 static void
-append_environ (const char *str[], LINE_T **ref_l, int *line_num, const char *name)
+append_environ (const char *str[], LINE_T **ref_l, const char *name)
 {
+  linemap_add (line_table, LC_ENTER, 1 /* sys_p */, name, 0 /* to_line */);
   for (int k = 0; str[k] != NO_TEXT; k++)
     {
-      int zero_line_num = 0;
-      (*line_num)++;
-      append_source_line (str[k], ref_l, &zero_line_num, name);
+      int line_num = 1;
+      append_source_line (str[k], ref_l, &line_num);
     }
+  linemap_add (line_table, LC_LEAVE, 0, NULL, 0);
 }
 
 /*
@@ -285,38 +285,6 @@ unworthy (LINE_T *u, char *v, char ch)
   a68_scan_error (u, v, A68 (edit_line));
 }
 
-/* Concatenate lines that terminate in '\' with next line.  */
-
-static void
-concatenate_lines (LINE_T * top)
-{
-  LINE_T *q;
-  /* Work from bottom backwards.  */
-  for (q = top; q != NO_LINE && NEXT (q) != NO_LINE; FORWARD (q))
-    ;
-
-  for (; q != NO_LINE; BACKWARD (q))
-    {
-      char *z = STRING (q);
-      size_t len = strlen (z);
-
-      if (len >= 2
-	  && z[len - 2] == BACKSLASH_CHAR
-	  && z[len - 1] == NEWLINE_CHAR
-	  && NEXT (q) != NO_LINE
-	  && STRING (NEXT (q)) != NO_TEXT)
-	{
-	  z[len - 2] = '\0';
-	  len += (int) strlen (STRING (NEXT (q)));
-	  z = (char *) xmalloc (len + 1);
-	  a68_bufcpy (z, STRING (q), len + 1);
-	  a68_bufcat (z, STRING (NEXT (q)), len + 1);
-	  STRING (NEXT (q))[0] = '\0';
-	  STRING (q) = z;
-	}
-    }
-}
-
 /* Read source file FILENAME and make internal copy.  */
 
 static bool
@@ -324,7 +292,7 @@ read_source_file (const char *filename)
 {
   struct stat statbuf;
   LINE_T *ref_l = NO_LINE;
-  int line_num = 0;
+  int line_num;
   size_t k;
   size_t bytes_read;
   ssize_t l;
@@ -334,7 +302,7 @@ read_source_file (const char *filename)
   bool ret = true;
 
   /* First open the given file.  */
-  if (!(FILE_SOURCE_FD (&A68_JOB) = fopen (filename, "r")))
+  if (!(FILE_SOURCE_FD (&A68_JOB) = fopen (filename, "rb")))
     fatal_error (UNKNOWN_LOCATION, "could not open source file %s",
 		 filename);
   FILE_SOURCE_NAME (&A68_JOB) = ggc_strdup (filename);
@@ -360,13 +328,14 @@ read_source_file (const char *filename)
   /* Prelude.  */
   append_environ (OPTION_STROPPING (&A68_JOB) == UPPER_STROPPING
 		  ? upper_prelude_start : supper_prelude_start,
-		  &ref_l, &line_num, "prelude");
+		  &ref_l, "prelude");
 
   /* Read the file into a single buffer, so we save on system calls.  */
   line_num = 1;
   buffer = (char *) xmalloc (8 + source_file_size);
   bytes_read = a68_file_read (fileno (f), buffer, source_file_size);
   gcc_assert (bytes_read == source_file_size);
+  linemap_add (line_table, LC_ENTER, 0 /* sys_p */, filename, 0 /* to_line */);
 
   /* Link all lines into the list.  */
   k = 0;
@@ -389,22 +358,26 @@ read_source_file (const char *filename)
       A68_PARSER (scan_buf)[l] = '\0';
       if (k < source_file_size)
 	k++;
-      append_source_line (A68_PARSER (scan_buf), &ref_l, &line_num,
-			  FILE_SOURCE_NAME (&A68_JOB));
+      append_source_line (A68_PARSER (scan_buf), &ref_l, &line_num);
       SCAN_ERROR (l != (ssize_t) strlen (A68_PARSER (scan_buf)),
 		  NO_LINE, NO_TEXT, "invalid characters in source file");
     }
 
+  /* Extra line before adding postlude.  */
+  linemap_line_start (line_table,
+		      line_num,
+		      80 /* max_column_hint */);
+
   /* Postlude.  */
   append_environ (OPTION_STROPPING (&A68_JOB) == UPPER_STROPPING
 		  ? upper_postlude : supper_postlude,
-		  &ref_l, &line_num, "postlude");
-
-  /* Concatenate lines that end with \.  */
-  concatenate_lines (TOP_LINE (&A68_JOB));
+		  &ref_l, "postlude");
 
   /* Include files.  */
   include_files (TOP_LINE (&A68_JOB));
+
+  linemap_add (line_table, LC_LEAVE, 0, NULL, 0);
+  linemap_check_files_exited (line_table);
 
   if (fclose (FILE_SOURCE_FD (&A68_JOB)) != 0)
     gcc_unreachable ();
@@ -438,6 +411,13 @@ next_char (LINE_T **ref_l, char **ref_s, bool allow_typo,
     }
   else
     (*ref_s)++;
+
+  /* Skip backslash at the end of lines.  */
+  if ((*ref_s)[0] == BACKSLASH_CHAR && (*ref_s)[1] == NEWLINE_CHAR)
+    {
+      (*ref_s)++;
+      return next_char (ref_l, ref_s, allow_typo, allow_one_under, found_under);
+    }
 
   /* Deliver next char.  */
   ch = (*ref_s)[0];
@@ -651,7 +631,19 @@ skip_pragmat (LINE_T **top, char **ch, int delim, bool whitespace)
 	      *ch = &v[1];
 	      return true;
 	    }
+	  else if (is_bold (v, "REDRO") && delim == BOLD_PRAGMAT_BEGIN_SYMBOL)
+	    {
+	      *top = u;
+	      *ch = &v[1];
+	      return true;
+	    }
 	  else if (is_bold (v, "PR") && delim == STYLE_I_PRAGMAT_SYMBOL)
+	    {
+	      *top = u;
+	      *ch = &v[1];
+	      return true;
+	    }
+	  else if (v[0] == ']' && v[1] == ']' && delim == STYLE_I_PRAGMAT_BEGIN_SYMBOL)
 	    {
 	      *top = u;
 	      *ch = &v[1];
@@ -778,7 +770,14 @@ next_preprocessor_item (LINE_T **top, char **ch, int *delim)
 	      SCAN_ERROR (!skip_comment (&u, &v, BRIEF_COMMENT_BEGIN_SYMBOL), start_l, start_c,
 			  "unterminated comment");
 	    }
-	  else if (is_bold (v, "PRAGMAT") || is_bold (v, "PR"))
+	  else if ((a68_find_keyword (A68 (top_keyword), "PRAGMAT") != NO_KEYWORD
+		    && is_bold (v, "PRAGMAT"))
+		   || (a68_find_keyword (A68 (top_keyword), "PR") != NO_KEYWORD
+		       && is_bold (v, "PR"))
+		   || (a68_find_keyword (A68 (top_keyword), "ORDER") != NO_KEYWORD
+		       && is_bold (v, "ORDER"))
+		   || (a68_find_keyword (A68 (top_keyword), "[[") != NO_KEYWORD
+		       && v[0] == '[' && v[1] == '['))
 	    {
 	      /* We caught a PRAGMAT.  */
 	      char *item;
@@ -791,6 +790,13 @@ next_preprocessor_item (LINE_T **top, char **ch, int *delim)
 		{
 		  *delim = STYLE_I_PRAGMAT_SYMBOL;
 		  v = &v[strlen ("PR")];
+		}
+	      else if (v[0] == '[' && v[1] == '['
+		       && !OPTION_STRICT (&A68_JOB)
+		       && OPTION_STROPPING (&A68_JOB) == SUPPER_STROPPING)
+		{
+		  *delim = STYLE_I_PRAGMAT_BEGIN_SYMBOL;
+		  v = &v[strlen ("[[")];
 		}
 	      item = get_pragmat_item (&u, &v);
 	      SCAN_ERROR (item == NO_TEXT, start_l, start_c,
@@ -1076,7 +1082,7 @@ include_files (LINE_T *top)
 	      t = NO_LINE;
 
 	      /* Access the file.  */
-	      fp = fopen (fn, "r");
+	      fp = fopen (fn, "rb");
 	      SCAN_ERROR (fp == NULL, start_l, start_c,
 			  "error opening included file");
 	      ssize = a68_file_size (fileno (fp));
@@ -1088,6 +1094,8 @@ include_files (LINE_T *top)
 	      SCAN_ERROR ((size_t) bytes_read != fsize, start_l, start_c,
 			  "error while reading file");
 
+	      linemap_add (line_table, LC_ENTER, 0 /* sys_p */, fn,
+			   0 /* to_line */);
 	      /* Buffer still usable?.  */
 	      if (fsize > A68_PARSER (max_scan_buf_length))
 		{
@@ -1105,7 +1113,7 @@ include_files (LINE_T *top)
 		  /* If file is empty, insert single empty line.  */
 		  A68_PARSER (scan_buf)[0] = NEWLINE_CHAR;
 		  A68_PARSER (scan_buf)[1] = NULL_CHAR;
-		  append_source_line (A68_PARSER (scan_buf), &t, &linum, fn);
+		  append_source_line (A68_PARSER (scan_buf), &t, &linum);
 		}
 	      else
 		{
@@ -1126,14 +1134,14 @@ include_files (LINE_T *top)
 		      A68_PARSER (scan_buf)[n] = NULL_CHAR;
 		      if (k < fsize)
 			k++;
-		      append_source_line (A68_PARSER (scan_buf), &t, &linum, fn);
+		      append_source_line (A68_PARSER (scan_buf), &t, &linum);
 		    }
 		}
 
 	      /* Conclude and go find another include directive, if any.  */
+	      linemap_add (line_table, LC_LEAVE, 0, NULL, 0);
 	      NEXT (t) = s;
 	      PREVIOUS (s) = t;
-	      concatenate_lines (top);
 	      if (fclose (fp) != 0)
 		gcc_unreachable ();
 	      make_pass = true;
@@ -1225,6 +1233,11 @@ pragment (int type, LINE_T **ref_l, char **ref_c)
       else if (type == STYLE_I_PRAGMAT_SYMBOL)
 	{
 	  term_s = "pr";
+	  pragmat = true;
+	}
+      else if (type == STYLE_I_PRAGMAT_BEGIN_SYMBOL)
+	{
+	  term_s = "]]";
 	  pragmat = true;
 	}
       else if (type == BOLD_PRAGMAT_SYMBOL)
@@ -1679,6 +1692,17 @@ get_next_token (bool in_format,
 	  uint64_t radix = strtoul (A68_PARSER (scan_buf), &end, 10);
 	  gcc_assert (errno == 0 && end != A68_PARSER (scan_buf) && *end == 'r');
 
+	  /* Validate radix.  */
+	  if (radix != 2
+	      && radix != 4
+	      && radix != 8
+	      && (OPTION_STRICT (&A68_JOB) || radix != 10)
+	      && radix != 16)
+	    {
+	      SCAN_ERROR (true, *start_l, *ref_s,
+			  "invalid radix in %<bits%> denotation");
+	    }
+
 	  /* Get the rest of the bits literal.  Typographical display features
 	     are allowed in the reference language between the digit symbols
 	     composing the denotation.  However, in SUPPER stropping this could
@@ -1698,6 +1722,7 @@ get_next_token (bool in_format,
 	  while (((radix == 2 && (c == '0' || c == '1'))
 		  || (radix == 4 && (c >= '0' && c <= '3'))
 		  || (radix == 8 && (c >= '0' && c <= '7'))
+		  || (!OPTION_STRICT (&A68_JOB) && radix == 10 && ISDIGIT (c))
 		  || (radix == 16 && (ISDIGIT (c) || strchr ("abcdef", c) != NO_TEXT))))
 	    {
 	      (sym++)[0] = c;
@@ -1834,7 +1859,37 @@ string break character point"));
       sym[0] = '\0';
       *att = (in_format ? LITERAL : ROW_CHAR_DENOTATION);
     }
-  else if (strchr ("#$()[]{},;@", c) != NO_TEXT)
+  else if (c == '['
+	   && !OPTION_STRICT (&A68_JOB)
+	   && OPTION_STROPPING (&A68_JOB) == SUPPER_STROPPING)
+    {
+      /* Either a single [ or [[ for a pragmat.  */
+      (sym++)[0] = c;
+      c = next_char (ref_l, ref_s, false);
+      if (c == '[')
+	{
+	  (sym++)[0] = c;
+	  (void) next_char (ref_l, ref_s, false);
+	}
+      sym[0] = '\0';
+      *att = STOP;
+    }
+  else if (c == ']'
+	   && !OPTION_STRICT (&A68_JOB)
+	   && OPTION_STROPPING (&A68_JOB) == SUPPER_STROPPING)
+    {
+      /* Either a single ] or ]] for a pragmat.  */
+      (sym++)[0] = c;
+      c = next_char (ref_l, ref_s, false);
+      if (c == ']')
+	{
+	  (sym++)[0] = c;
+	  (void) next_char (ref_l, ref_s, false);
+	}
+      sym[0] = '\0';
+      *att = STOP;
+    }
+  else if (strchr ("#$(){}[],;@", c) != NO_TEXT)
     {
       /* Single character symbols.  */
       (sym++)[0] = c;
@@ -2189,7 +2244,8 @@ tokenise_source (NODE_T **root, int level, bool in_format,
 		      make_node = false;
 		    }
 		  else if (att == STYLE_I_PRAGMAT_SYMBOL
-			   || att == BOLD_PRAGMAT_SYMBOL)
+			   || att == BOLD_PRAGMAT_SYMBOL
+			   || att == STYLE_I_PRAGMAT_BEGIN_SYMBOL)
 		    {
 		      char *nlpr = pragment (ATTRIBUTE (kw), l, s);
 		      if (pragmat_lpr == NO_TEXT
@@ -2331,7 +2387,7 @@ a68_lexical_analyser (const char *filename, bool *empty_program)
     s = STRING (l);
   tokenise_source (&root, 0, false, &l, &s, &start_l, &start_c);
 
-  /* Detemine whether the actual file contents resulted in some token.  This is
+  /* Determine whether the actual file contents resulted in some token.  This is
      used in order to provide better diagnostics for empty source files or
      files containing only comments or pragmats.  These are not valid Algol 68
      packets.  */

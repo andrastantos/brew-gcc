@@ -336,8 +336,17 @@ package body Ch10 is
 
       Set_Keyword_Casing (Current_Source_File, Determine_Token_Casing);
 
-      if Style_Check then
-         Style.Check_Indentation;
+      --  For most column style checks, we only test that the first non-blank
+      --  character is on a column multiple of the indentation value. But here
+      --  the only reasonable choice seems to start at the first column, so we
+      --  test for that instead.
+
+      if RM_Column_Check
+         and then Token_Is_At_Start_Of_Line
+         and then Start_Column /= 0
+      then
+         Error_Msg_BC -- CODEFIX
+           ("(style) incorrect layout?l?");
       end if;
 
       --  Remaining processing depends on particular type of compilation unit
@@ -360,10 +369,10 @@ package body Ch10 is
             Error_Msg_BC -- CODEFIX
               ("keyword BODY expected here '[see file name']");
             Restore_Scan_State (Scan_State);
-            Set_Unit (Comp_Unit_Node, P_Package (Pf_Pbod_Pexp));
+            Set_Unit (Comp_Unit_Node, P_Package (Pf_Pbod_Expf));
          else
             Restore_Scan_State (Scan_State);
-            Set_Unit (Comp_Unit_Node, P_Package (Pf_Decl_Gins_Pbod_Rnam_Pexp));
+            Set_Unit (Comp_Unit_Node, P_Package (Pf_Decl_Gins_Pbod_Rnam_Expf));
          end if;
 
       elsif Token = Tok_Generic then
@@ -374,7 +383,7 @@ package body Ch10 is
 
       elsif Token in Tok_Function | Tok_Not | Tok_Overriding | Tok_Procedure
       then
-         Set_Unit (Comp_Unit_Node, P_Subprogram (Pf_Decl_Gins_Pbod_Rnam_Pexp));
+         Set_Unit (Comp_Unit_Node, P_Subprogram (Pf_Decl_Gins_Pbod_Rnam_Expf));
 
          --  A little bit of an error recovery check here. If we just scanned
          --  a subprogram declaration (as indicated by an SIS entry being
@@ -1044,10 +1053,10 @@ package body Ch10 is
       Ignore (Tok_Semicolon);
 
       if Token in Tok_Function | Tok_Not | Tok_Overriding | Tok_Procedure then
-         Body_Node := P_Subprogram (Pf_Pbod_Pexp);
+         Body_Node := P_Subprogram (Pf_Pbod_Expf);
 
       elsif Token = Tok_Package then
-         Body_Node := P_Package (Pf_Pbod_Pexp);
+         Body_Node := P_Package (Pf_Pbod_Expf);
 
       elsif Token = Tok_Protected then
          Scan; -- past PROTECTED

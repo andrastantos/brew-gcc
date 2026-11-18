@@ -482,7 +482,7 @@ add_shift (gimple_stmt_iterator *gsi, tree type, tree op0, int *shiftcnts,
       if (op != unknown_optab
 	  && can_implement_p (op, TYPE_MODE (type)))
 	return gimplify_build2 (gsi, code, type, op0,
-				build_int_cst (NULL_TREE, shiftcnts[0]));
+				build_int_cst (integer_type_node, shiftcnts[0]));
     }
 
   op = optab_for_tree_code (code, type, optab_vector);
@@ -701,7 +701,11 @@ expand_vector_divmod (gimple_stmt_iterator *gsi, tree type, tree op0,
 {
   bool use_pow2 = true;
   bool has_vector_shift = true;
+  bool has_vector_negate = true;
   bool use_abs_op1 = false;
+  /* For the power-of-two path: 1 if the quotient is negated (all divisors
+     are negative), 0 if not, -1 if undetermined.  */
+  int negate_p = -1;
   int mode = -1, this_mode;
   int pre_shift = -1, post_shift;
   unsigned int nunits = nunits_for_known_piecewise_op (type);
@@ -725,6 +729,17 @@ expand_vector_divmod (gimple_stmt_iterator *gsi, tree type, tree op0,
       || !can_implement_p (op, TYPE_MODE (type)))
     has_vector_shift = false;
 
+  /* expand_unop falls back to 0 - x for a missing vector negation.  */
+  op = optab_for_tree_code (NEGATE_EXPR, type, optab_default);
+  if (op == unknown_optab
+      || !can_implement_p (op, TYPE_MODE (type)))
+    {
+      op = optab_for_tree_code (MINUS_EXPR, type, optab_default);
+      if (op == unknown_optab
+	  || !can_implement_p (op, TYPE_MODE (type)))
+	has_vector_negate = false;
+    }
+
   /* Analysis phase.  Determine if all op1 elements are either power
      of two and it is possible to expand it using shifts (or for remainder
      using masking).  Additionally compute the multiplicative constants
@@ -740,16 +755,35 @@ expand_vector_divmod (gimple_stmt_iterator *gsi, tree type, tree op0,
       pre_shifts[i] = 0;
       post_shifts[i] = 0;
       mulc[i] = 0;
-      if (use_pow2
-	  && (!integer_pow2p (cst) || tree_int_cst_sgn (cst) != 1))
-	use_pow2 = false;
       if (use_pow2)
 	{
-	  shifts[i] = tree_log2 (cst);
-	  if (shifts[i] != shifts[0]
-	      && code == TRUNC_DIV_EXPR
-	      && !has_vector_shift)
+	  /* Divide by a negative power of two as by its absolute value and
+	     negate the quotient, as expand_divmod does.  The quotient needs
+	     all elements to have the same sign; the remainder does not
+	     depend on the sign, as x % d == x % -d.  INT_MIN is excluded,
+	     as its magnitude does not fit.  */
+	  int this_neg = 0;
+	  wide_int w = wi::to_wide (cst);
+	  if (sign_p == SIGNED && wi::neg_p (w))
+	    {
+	      this_neg = code == TRUNC_DIV_EXPR;
+	      w = wi::neg (w);
+	    }
+	  int log2 = wi::exact_log2 (w);
+	  if (log2 < 0
+	      || (sign_p == SIGNED && log2 >= prec - 1)
+	      || (this_neg && !has_vector_negate)
+	      || (negate_p >= 0 && negate_p != this_neg))
 	    use_pow2 = false;
+	  else
+	    {
+	      negate_p = this_neg;
+	      shifts[i] = log2;
+	      if (shifts[i] != shifts[0]
+		  && code == TRUNC_DIV_EXPR
+		  && !has_vector_shift)
+		use_pow2 = false;
+	    }
 	}
       if (mode == -2)
 	continue;
@@ -952,7 +986,8 @@ expand_vector_divmod (gimple_stmt_iterator *gsi, tree type, tree op0,
 	  else if (addend != NULL_TREE)
 	    {
 	      /* t1 = op0 + addend;
-		 q = t1 >> shift;  */
+		 q = t1 >> shift;
+		 and, for a negative power-of-two divisor, q = -q.  */
 	      op = optab_for_tree_code (PLUS_EXPR, type, optab_default);
 	      if (op != unknown_optab
 		  && can_implement_p (op, TYPE_MODE (type)))
@@ -960,7 +995,12 @@ expand_vector_divmod (gimple_stmt_iterator *gsi, tree type, tree op0,
 		  cur_op = gimplify_build2 (gsi, PLUS_EXPR, type, op0, addend);
 		  cur_op = add_shift (gsi, type, cur_op, shifts, RSHIFT_EXPR);
 		  if (cur_op != NULL_TREE)
-		    return cur_op;
+		    {
+		      if (negate_p == 1)
+			cur_op = gimplify_build1 (gsi, NEGATE_EXPR, type,
+						  cur_op);
+		      return cur_op;
+		    }
 		}
 	    }
 	}
@@ -1509,7 +1549,7 @@ type_for_widest_vector_mode (tree original_vector_type, optab op)
    ARRAY_REF expression.
 
    GSI is required to insert temporary variables while building a
-   refernece to the element of the vector VECT.
+   reference to the element of the vector VECT.
 
    PTMPVEC is a pointer to the temporary variable for caching
    purposes.  In case when PTMPVEC is NULL new temporary variable
@@ -1619,7 +1659,11 @@ lower_vec_perm (gimple_stmt_iterator *gsi)
   tree vect_type = TREE_TYPE (vec0);
   tree mask_type = TREE_TYPE (mask);
   tree vect_elt_type = TREE_TYPE (vect_type);
-  tree mask_elt_type = TREE_TYPE (mask_type);
+  /* Perform the index computations in an unsigned type, the mask
+     elements are interpreted modulo the number of elements and with
+     a signed type masking with ELEMENTS - 1 can be a no-op when
+     ELEMENTS - 1 is not representable, leaving negative indices.  */
+  tree mask_elt_type = unsigned_type_for (TREE_TYPE (mask_type));
   unsigned HOST_WIDE_INT elements, in_elements;
   vec<constructor_elt, va_gc> *v;
   tree constr, t, si, i_val;
@@ -1640,75 +1684,19 @@ lower_vec_perm (gimple_stmt_iterator *gsi)
 	mask = gimple_assign_rhs1 (def_stmt);
     }
 
-  vec_perm_builder sel_int;
 
+  vec_perm_indices indices;
   if (TREE_CODE (mask) == VECTOR_CST
-      && tree_to_vec_perm_builder (&sel_int, mask))
+      && tree_to_vec_perm_indices (&indices, vec0, vec1, mask))
     {
-      vec_perm_indices indices (sel_int, 2, in_elements);
       machine_mode vmode = TYPE_MODE (vect_type);
       tree lhs_type = TREE_TYPE (gimple_assign_lhs (stmt));
       machine_mode lhs_mode = TYPE_MODE (lhs_type);
-      if (can_vec_perm_const_p (lhs_mode, vmode, indices))
+      if (can_vec_perm_const_p (lhs_mode, vmode, indices, true))
 	{
 	  gimple_assign_set_rhs3 (stmt, mask);
 	  update_stmt (stmt);
 	  return;
-	}
-      /* Also detect vec_shr pattern - VEC_PERM_EXPR with zero
-	 vector as VEC1 and a right element shift MASK.  */
-      if (can_implement_p (vec_shr_optab, TYPE_MODE (vect_type))
-	  && TREE_CODE (vec1) == VECTOR_CST
-	  && initializer_zerop (vec1)
-	  && maybe_ne (indices[0], 0)
-	  && known_lt (poly_uint64 (indices[0]), elements))
-	{
-	  bool ok_p = indices.series_p (0, 1, indices[0], 1);
-	  if (!ok_p)
-	    {
-	      for (i = 1; i < elements; ++i)
-		{
-		  poly_uint64 actual = indices[i];
-		  poly_uint64 expected = i + indices[0];
-		  /* Indices into the second vector are all equivalent.  */
-		  if (maybe_lt (actual, elements)
-		      ? maybe_ne (actual, expected)
-		      : maybe_lt (expected, elements))
-		    break;
-		}
-	      ok_p = i == elements;
-	    }
-	  if (ok_p)
-	    {
-	      gimple_assign_set_rhs3 (stmt, mask);
-	      update_stmt (stmt);
-	      return;
-	    }
-	}
-      /* And similarly vec_shl pattern.  */
-      if (can_implement_p (vec_shl_optab, TYPE_MODE (vect_type))
-	  && TREE_CODE (vec0) == VECTOR_CST
-	  && initializer_zerop (vec0))
-	{
-	  unsigned int first = 0;
-	  for (i = 0; i < elements; ++i)
-	    if (known_eq (poly_uint64 (indices[i]), elements))
-	      {
-		if (i == 0 || first)
-		  break;
-		first = i;
-	      }
-	    else if (first
-		     ? maybe_ne (poly_uint64 (indices[i]),
-					      elements + i - first)
-		     : maybe_ge (poly_uint64 (indices[i]), elements))
-	      break;
-	  if (first && i == elements)
-	    {
-	      gimple_assign_set_rhs3 (stmt, mask);
-	      update_stmt (stmt);
-	      return;
-	    }
 	}
     }
   else if (can_vec_perm_var_p (TYPE_MODE (vect_type)))
@@ -1724,6 +1712,7 @@ lower_vec_perm (gimple_stmt_iterator *gsi)
     {
       si = size_int (i);
       i_val = vector_element (gsi, mask, si, &masktmp);
+      i_val = fold_convert (mask_elt_type, i_val);
 
       if (TREE_CODE (i_val) == INTEGER_CST)
         {
@@ -1985,12 +1974,11 @@ expand_vector_conversion (gimple_stmt_iterator *gsi)
 	    {
 	      tree ret1_type = build_vector_type (TREE_TYPE (ret_type), nelts);
 	      tree arg1_type = build_vector_type (TREE_TYPE (arg_type), nelts);
-	      if (supportable_convert_operation (code, ret1_type, arg1_type,
-						 &code1))
+	      if (supportable_convert_operation (code, ret1_type, arg1_type))
 		{
 		  new_rhs = expand_vector_piecewise (gsi, do_vec_conversion,
 						     ret_type, arg1_type, arg,
-						     NULL_TREE, code1, false);
+						     NULL_TREE, code, false);
 		  g = gimple_build_assign (lhs, new_rhs);
 		  gsi_replace (gsi, g, false);
 		  return;

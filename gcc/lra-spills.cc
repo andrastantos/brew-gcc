@@ -146,8 +146,9 @@ assign_mem_slot (int i)
   x = slots[slot_num].mem;
   if (!x)
     {
-      x = assign_stack_local (BLKmode, slots[slot_num].size,
-			      slots[slot_num].align);
+      x = assign_stack_local_1 (BLKmode, slots[slot_num].size,
+				slots[slot_num].align,
+				ASLK_RECORD_PAD | ASLK_REDUCE_ALIGN);
       slots[slot_num].mem = x;
     }
 
@@ -555,13 +556,15 @@ spill_pseudos (void)
 	{
 	  bool removed_pseudo_p = false;
 
+	  rtx_call_insn *call;
 	  if (bitmap_bit_p (changed_insns, INSN_UID (insn)))
 	    {
 	      rtx *link_loc, link;
 
 	      removed_pseudo_p = remove_pseudos (&PATTERN (insn), insn);
-	      if (CALL_P (insn)
-		  && remove_pseudos (&CALL_INSN_FUNCTION_USAGE (insn), insn))
+	      auto call = dyn_cast<rtx_call_insn *> (insn);
+	      if (call
+		  && remove_pseudos (&CALL_INSN_FUNCTION_USAGE (call), call))
 		removed_pseudo_p = true;
 	      for (link_loc = &REG_NOTES (insn);
 		   (link = *link_loc) != NULL_RTX;
@@ -597,7 +600,7 @@ spill_pseudos (void)
 	      if (lra_reg_spill_p || targetm.different_addr_displacement_p ())
 		lra_set_used_insn_alternative (insn, LRA_UNKNOWN_ALT);
 	    }
-	  else if (CALL_P (insn)
+	  else if ((call = dyn_cast<rtx_call_insn *> (insn))
 		   /* Presence of any pseudo in CALL_INSN_FUNCTION_USAGE
 		      does not affect value of insn_bitmap of the
 		      corresponding lra_reg_info.  That is because we
@@ -606,7 +609,7 @@ spill_pseudos (void)
 		      insns in the insn_bitmap of given pseudo here, we
 		      can miss the pseudo in some
 		      CALL_INSN_FUNCTION_USAGEs.  */
-		   && remove_pseudos (&CALL_INSN_FUNCTION_USAGE (insn), insn))
+		   && remove_pseudos (&CALL_INSN_FUNCTION_USAGE (call), call))
 	    removed_pseudo_p = true;
 	  if (removed_pseudo_p)
 	    {

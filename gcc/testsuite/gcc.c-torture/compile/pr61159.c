@@ -1,6 +1,6 @@
 /* { dg-require-alias "" } */
 /* { dg-require-weak "" } */
-/* { dg-xfail-if "weak alias" { powerpc-ibm-aix* || { *86*-*-solaris* && { ! gas } } } } */
+/* { dg-xfail-if "weak alias" { powerpc-ibm-aix* || { x86 && solaris_as } } } */
 
 static int dummy = 0;
 extern int foo __attribute__((__weak__, __alias__("dummy")));

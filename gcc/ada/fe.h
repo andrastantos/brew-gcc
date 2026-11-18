@@ -122,9 +122,11 @@ extern void Set_Identifier_Casing	(void *, const void *);
 
 #define Error_Msg_Uint_1	err_vars__error_msg_uint_1
 #define Error_Msg_Uint_2	err_vars__error_msg_uint_2
+#define Error_Msg_Sloc	err_vars__error_msg_sloc
 
 extern Uint Error_Msg_Uint_1;
 extern Uint Error_Msg_Uint_2;
+extern Source_Ptr Error_Msg_Sloc;
 
 /* exp_ch11:  */
 
@@ -534,6 +536,9 @@ extern Node_Id Renamed_Entity (N Node);
 
 #define Renamed_Object einfo__entities__renamed_or_alias
 extern Node_Id Renamed_Object (N Node);
+
+#define Scope sinfo__nodes__scope_raw
+extern Node_Id Scope (N Node);
 
 #ifdef __cplusplus
 }

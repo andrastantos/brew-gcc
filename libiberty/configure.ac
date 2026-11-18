@@ -20,24 +20,8 @@ AC_ARG_WITH(cross-host,
 AC_ARG_WITH(newlib,
 [  --with-newlib                    Configuring with newlib])
 
-if test "${srcdir}" = "."; then
-  if test -n "${with_build_subdir}"; then
-    libiberty_topdir="${srcdir}/../.."
-    with_target_subdir=
-  elif test -z "${with_target_subdir}"; then
-    libiberty_topdir="${srcdir}/.."
-  else
-    if test "${with_target_subdir}" != "."; then
-      libiberty_topdir="${srcdir}/${with_multisrctop}../.."
-    else
-      libiberty_topdir="${srcdir}/${with_multisrctop}.."
-    fi
-  fi
-else
-  libiberty_topdir="${srcdir}/.."
-fi
+libiberty_topdir="${srcdir}/.."
 AC_SUBST(libiberty_topdir)
-AC_CONFIG_AUX_DIR($libiberty_topdir)
 
 dnl Very limited version of automake's enable-maintainer-mode
 
@@ -210,8 +194,6 @@ fi
 AC_SUBST(NO_MINUS_C_MINUS_O)
 AC_SUBST(OUTPUT_OPTION)
 
-AC_C_CONST
-AC_C_INLINE
 AC_C_BIGENDIAN
 
 dnl When we start using libtool:
@@ -222,8 +204,6 @@ dnl AM_DISABLE_SHARED
 dnl When we start using libtool:
 dnl AM_PROG_LIBTOOL
 
-dnl When we start using automake:
-dnl AM_CONFIG_HEADER(config.h:config.in)
 AC_CONFIG_HEADERS([config.h:config.in])
 
 dnl When we start using automake:
@@ -321,7 +301,7 @@ AC_CHECK_SIZEOF([int])
 AC_CHECK_SIZEOF([long])
 AC_CHECK_SIZEOF([size_t])
 
-# Check for presense of long long
+# Check for presence of long long
 AC_CHECK_TYPE([long long],
   [AC_DEFINE(HAVE_LONG_LONG, 1, [Define if you have the `long long' type.]) AC_CHECK_SIZEOF([long long])],
   [])
@@ -329,30 +309,30 @@ AC_CHECK_TYPE([long long],
 # Look for a 64-bit type.
 AC_MSG_CHECKING([for a 64-bit type])
 AC_CACHE_VAL(liberty_cv_uint64,
-[AC_TRY_COMPILE(
-[#ifdef HAVE_STDINT_H
+[AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+[[#ifdef HAVE_STDINT_H
 #include <stdint.h>
-#endif],
-[extern uint64_t foo;],
-liberty_cv_uint64=uint64_t,
-[AC_TRY_COMPILE(
-[#ifdef HAVE_LIMITS_H
+#endif]],
+[[extern uint64_t foo;]])],
+[liberty_cv_uint64=uint64_t],
+[AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+[[#ifdef HAVE_LIMITS_H
 #include <limits.h>
 #endif
 #ifndef CHAR_BIT
 #define CHAR_BIT 8
-#endif],
-[extern char foo[sizeof(long) * CHAR_BIT >= 64 ? 1 : -1];],
-liberty_cv_uint64="unsigned long",
-[AC_TRY_COMPILE(
-[#ifdef HAVE_LIMITS_H
+#endif]],
+[[extern char foo[sizeof(long) * CHAR_BIT >= 64 ? 1 : -1];]])],
+[liberty_cv_uint64="unsigned long"],
+[AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+[[#ifdef HAVE_LIMITS_H
 #include <limits.h>
 #endif
 #ifndef CHAR_BIT
 #define CHAR_BIT 8
-#endif],
-[extern char foo[sizeof(long long) * CHAR_BIT >= 64 ? 1 : -1];],
-liberty_cv_uint64="unsigned long long", liberty_cv_uint64=none)])])])
+#endif]],
+[[extern char foo[sizeof(long long) * CHAR_BIT >= 64 ? 1 : -1];]])],
+[liberty_cv_uint64="unsigned long long"], [liberty_cv_uint64=none])])])])
 AC_MSG_RESULT($liberty_cv_uint64)
 if test "$liberty_cv_uint64" != none; then
   AC_DEFINE_UNQUOTED(UNSIGNED_64BIT_TYPE, $liberty_cv_uint64,
@@ -701,7 +681,7 @@ if test -z "${setobjs}"; then
 
   # We haven't set the list of objects yet.  Use the standard autoconf
   # tests.  This will only work if the compiler works.
-  AC_ISC_POSIX
+  AC_SEARCH_LIBS([strerror],[cposix])
   AC_REPLACE_FUNCS($funcs)
   libiberty_AC_FUNC_C_ALLOCA
   AC_FUNC_FORK

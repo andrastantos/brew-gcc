@@ -33,6 +33,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "wide-int.h"
 #include "sreal.h"
 #include "profile.h"
+#include "selftest.h"
 
 /* Names from profile_quality enum values.  */
 
@@ -507,12 +508,12 @@ profile_probability::sqrt () const
     max_range = 0;
   if (m_val == max_probability)
     min_range = max_probability;
-  while (min_range != max_range)
+  while (min_range < max_range)
     {
       uint32_t val = (min_range + max_range) / 2;
       uint32_t val2 = RDIV ((uint64_t)val * val, max_probability);
       if (val2 == m_val)
-	min_range = max_range = m_val;
+	min_range = max_range = val;
       else if (val2 > m_val)
 	max_range = val - 1;
       else if (val2 < m_val)
@@ -595,3 +596,49 @@ profile_count::force_nonzero () const
     }
   return ret;
 }
+
+#if CHECKING_P
+
+namespace selftest {
+
+/* Verify profile_probability::apply.  */
+
+static void
+test_profile_probability_apply ()
+{
+  const gcov_type min = INTTYPE_MINIMUM (gcov_type);
+  const gcov_type max = INTTYPE_MAXIMUM (gcov_type);
+  profile_probability quarter = profile_probability::guessed_always () / 4;
+  profile_probability even = profile_probability::even ();
+
+  ASSERT_EQ (1, quarter.apply (3));
+  ASSERT_EQ (-1, quarter.apply (-3));
+  ASSERT_EQ (2, even.apply (3));
+  ASSERT_EQ (-2, even.apply (-3));
+  ASSERT_EQ (0, even.apply (0));
+
+  ASSERT_EQ (0, profile_probability::never ().apply (min));
+  ASSERT_EQ (min, profile_probability::always ().apply (min));
+  ASSERT_EQ (max, profile_probability::always ().apply (max));
+  ASSERT_EQ (min, profile_probability::guessed_always ().apply (min));
+  ASSERT_EQ (min / 2, even.apply (min));
+  ASSERT_EQ (max / 2 + 1, even.apply (max));
+
+  profile_probability uninitialized = profile_probability::uninitialized ();
+  ASSERT_EQ (1, uninitialized.apply (3));
+  ASSERT_EQ (-1, uninitialized.apply (-3));
+  ASSERT_EQ (min / 2, uninitialized.apply (min));
+  ASSERT_EQ (max / 2, uninitialized.apply (max));
+}
+
+/* Run all of the selftests within this file.  */
+
+void
+profile_count_cc_tests ()
+{
+  test_profile_probability_apply ();
+}
+
+} // namespace selftest
+
+#endif

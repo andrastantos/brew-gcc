@@ -1784,7 +1784,7 @@ gimple_call_return_flags (const gcall *stmt)
 /* Return true if call STMT is known to return a non-zero result.  */
 
 bool
-gimple_call_nonnull_result_p (gcall *call)
+gimple_call_nonnull_result_p (const gcall *call)
 {
   tree fndecl = gimple_call_fndecl (call);
   if (!fndecl)
@@ -1810,7 +1810,7 @@ gimple_call_nonnull_result_p (gcall *call)
 /* If CALL returns a non-null result in an argument, return that arg.  */
 
 tree
-gimple_call_nonnull_arg (gcall *call)
+gimple_call_nonnull_arg (const gcall *call)
 {
   tree fndecl = gimple_call_fndecl (call);
   if (!fndecl)
@@ -1835,7 +1835,7 @@ gimple_call_nonnull_arg (gcall *call)
 /* Return true if GS is a copy assignment.  */
 
 bool
-gimple_assign_copy_p (gimple *gs)
+gimple_assign_copy_p (const gimple *gs)
 {
   return (gimple_assign_single_p (gs)
 	  && is_gimple_val (gimple_op (gs, 1)));
@@ -1845,7 +1845,7 @@ gimple_assign_copy_p (gimple *gs)
 /* Return true if GS is a SSA_NAME copy assignment.  */
 
 bool
-gimple_assign_ssa_name_copy_p (gimple *gs)
+gimple_assign_ssa_name_copy_p (const gimple *gs)
 {
   return (gimple_assign_single_p (gs)
 	  && TREE_CODE (gimple_assign_lhs (gs)) == SSA_NAME
@@ -1868,7 +1868,7 @@ gimple_assign_ssa_name_copy_p (gimple *gs)
    treatment of unary NOPs is appropriate.  */
 
 bool
-gimple_assign_unary_nop_p (gimple *gs)
+gimple_assign_unary_nop_p (const gimple *gs)
 {
   return (is_gimple_assign (gs)
           && (CONVERT_EXPR_CODE_P (gimple_assign_rhs_code (gs))
@@ -2042,7 +2042,7 @@ gimple_set_lhs (gimple *stmt, tree lhs)
    copy isn't part of any sequence.  */
 
 gimple *
-gimple_copy (gimple *stmt)
+gimple_copy (const gimple *stmt)
 {
   enum gimple_code code = gimple_code (stmt);
   unsigned num_ops = gimple_num_ops (stmt);
@@ -2063,7 +2063,7 @@ gimple_copy (gimple *stmt)
 	{
 	case GIMPLE_BIND:
 	  {
-	    gbind *bind_stmt = as_a <gbind *> (stmt);
+	    const gbind *bind_stmt = as_a <const gbind *> (stmt);
 	    gbind *bind_copy = as_a <gbind *> (copy);
 	    new_seq = gimple_seq_copy (gimple_bind_body (bind_stmt));
 	    gimple_bind_set_body (bind_copy, new_seq);
@@ -2075,7 +2075,7 @@ gimple_copy (gimple *stmt)
 
 	case GIMPLE_CATCH:
 	  {
-	    gcatch *catch_stmt = as_a <gcatch *> (stmt);
+	    const gcatch *catch_stmt = as_a <const gcatch *> (stmt);
 	    gcatch *catch_copy = as_a <gcatch *> (copy);
 	    new_seq = gimple_seq_copy (gimple_catch_handler (catch_stmt));
 	    gimple_catch_set_handler (catch_copy, new_seq);
@@ -2086,7 +2086,7 @@ gimple_copy (gimple *stmt)
 
 	case GIMPLE_EH_FILTER:
 	  {
-	    geh_filter *eh_filter_stmt = as_a <geh_filter *> (stmt);
+	    const geh_filter *eh_filter_stmt = as_a <const geh_filter *> (stmt);
 	    geh_filter *eh_filter_copy = as_a <geh_filter *> (copy);
 	    new_seq
 	      = gimple_seq_copy (gimple_eh_filter_failure (eh_filter_stmt));
@@ -2098,7 +2098,7 @@ gimple_copy (gimple *stmt)
 
 	case GIMPLE_EH_ELSE:
 	  {
-	    geh_else *eh_else_stmt = as_a <geh_else *> (stmt);
+	    const geh_else *eh_else_stmt = as_a <const geh_else *> (stmt);
 	    geh_else *eh_else_copy = as_a <geh_else *> (copy);
 	    new_seq = gimple_seq_copy (gimple_eh_else_n_body (eh_else_stmt));
 	    gimple_eh_else_set_n_body (eh_else_copy, new_seq);
@@ -2109,7 +2109,7 @@ gimple_copy (gimple *stmt)
 
 	case GIMPLE_TRY:
 	  {
-	    gtry *try_stmt = as_a <gtry *> (stmt);
+	    const gtry *try_stmt = as_a <const gtry *> (stmt);
 	    gtry *try_copy = as_a <gtry *> (copy);
 	    new_seq = gimple_seq_copy (gimple_try_eval (try_stmt));
 	    gimple_try_set_eval (try_copy, new_seq);
@@ -2145,7 +2145,8 @@ gimple_copy (gimple *stmt)
 
 	case GIMPLE_OMP_PARALLEL:
 	  {
-	    gomp_parallel *omp_par_stmt = as_a <gomp_parallel *> (stmt);
+	    const gomp_parallel *omp_par_stmt
+	      = as_a <const gomp_parallel *> (stmt);
 	    gomp_parallel *omp_par_copy = as_a <gomp_parallel *> (copy);
 	    t = unshare_expr (gimple_omp_parallel_clauses (omp_par_stmt));
 	    gimple_omp_parallel_set_clauses (omp_par_copy, t);
@@ -2173,21 +2174,21 @@ gimple_copy (gimple *stmt)
 
 	case GIMPLE_OMP_CRITICAL:
 	  t = unshare_expr (gimple_omp_critical_name
-				(as_a <gomp_critical *> (stmt)));
+				(as_a <const gomp_critical *> (stmt)));
 	  gimple_omp_critical_set_name (as_a <gomp_critical *> (copy), t);
 	  t = unshare_expr (gimple_omp_critical_clauses
-				(as_a <gomp_critical *> (stmt)));
+				(as_a <const gomp_critical *> (stmt)));
 	  gimple_omp_critical_set_clauses (as_a <gomp_critical *> (copy), t);
 	  goto copy_omp_body;
 
 	case GIMPLE_OMP_ORDERED:
 	  t = unshare_expr (gimple_omp_ordered_clauses
-				(as_a <gomp_ordered *> (stmt)));
+				(as_a <const gomp_ordered *> (stmt)));
 	  gimple_omp_ordered_set_clauses (as_a <gomp_ordered *> (copy), t);
 	  goto copy_omp_body;
 
 	case GIMPLE_OMP_SCAN:
-	  t = gimple_omp_scan_clauses (as_a <gomp_scan *> (stmt));
+	  t = gimple_omp_scan_clauses (as_a <const gomp_scan *> (stmt));
 	  t = unshare_expr (t);
 	  gimple_omp_scan_set_clauses (as_a <gomp_scan *> (copy), t);
 	  goto copy_omp_body;
@@ -2229,7 +2230,8 @@ gimple_copy (gimple *stmt)
 
 	case GIMPLE_OMP_TARGET:
 	  {
-	    gomp_target *omp_target_stmt = as_a <gomp_target *> (stmt);
+	    const gomp_target *omp_target_stmt
+	      = as_a <const gomp_target *> (stmt);
 	    gomp_target *omp_target_copy = as_a <gomp_target *> (copy);
 	    t = unshare_expr (gimple_omp_target_clauses (omp_target_stmt));
 	    gimple_omp_target_set_clauses (omp_target_copy, t);
@@ -2268,7 +2270,7 @@ gimple_copy (gimple *stmt)
 
 	case GIMPLE_TRANSACTION:
 	  new_seq = gimple_seq_copy (gimple_transaction_body (
-				       as_a <gtransaction *> (stmt)));
+				       as_a <const gtransaction *> (stmt)));
 	  gimple_transaction_set_body (as_a <gtransaction *> (copy),
 				       new_seq);
 	  break;
@@ -2334,7 +2336,7 @@ gimple_copy (gimple *stmt)
    that OLD_STMT is about to be removed.  */
 
 void
-gimple_move_vops (gimple *new_stmt, gimple *old_stmt)
+gimple_move_vops (gimple *new_stmt, const gimple *old_stmt)
 {
   tree vdef = gimple_vdef (old_stmt);
   gimple_set_vuse (new_stmt, gimple_vuse (old_stmt));
@@ -2382,8 +2384,8 @@ gimple_has_side_effects (const gimple *s)
 
 /* Helper for gimple_could_trap_p and gimple_assign_rhs_could_trap_p.
    Return true if S can trap.  When INCLUDE_MEM is true, check whether
-   the memory operations could trap.  When INCLUDE_STORES is true and
-   S is a GIMPLE_ASSIGN, the LHS of the assignment is also checked.  */
+   the memory operations could trap.  When INCLUDE_STORES is true, also
+   check a memory LHS with store semantics.  */
 
 bool
 gimple_could_trap_p_1 (const gimple *s, bool include_mem, bool include_stores)
@@ -2393,7 +2395,17 @@ gimple_could_trap_p_1 (const gimple *s, bool include_mem, bool include_stores)
 
   if (include_mem)
     {
-      unsigned i, start = (is_gimple_assign (s) && !include_stores) ? 1 : 0;
+      unsigned i, start = 0;
+
+      /* Use store semantics for the LHS.  A call marked for return-slot
+	 optimization can still use a temporary and a caller-side copy.  */
+      if (include_stores
+	  && gimple_store_p (s)
+	  && lhs_could_trap_p (gimple_get_lhs (s)))
+	return true;
+
+      if (gimple_has_lhs (s))
+	start = 1;
 
       for (i = start; i < gimple_num_ops (s); i++)
 	if (tree_could_trap_p (gimple_op (s, i)))
@@ -2435,13 +2447,14 @@ gimple_could_trap_p_1 (const gimple *s, bool include_mem, bool include_stores)
     case GIMPLE_ASSIGN:
       op = gimple_assign_rhs_code (s);
 
-      /* For COND_EXPR only the condition may trap.  */
-      if (op == COND_EXPR)
-	return tree_could_trap_p (gimple_assign_rhs1 (s));
+      /* COND_EXPR does not trap.  */
+      if (op == COND_EXPR || op == VEC_COND_EXPR)
+	return false;
 
       /* For comparisons we need to check rhs operand types instead of lhs type
          (which is BOOLEAN_TYPE).  */
-      if (TREE_CODE_CLASS (op) == tcc_comparison)
+      if (TREE_CODE_CLASS (op) == tcc_comparison
+	  || op == FIX_TRUNC_EXPR)
 	t = TREE_TYPE (gimple_assign_rhs1 (s));
       else
 	t = TREE_TYPE (gimple_assign_lhs (s));
@@ -2477,7 +2490,7 @@ gimple_could_trap_p (const gimple *s)
 /* Return true if RHS of a GIMPLE_ASSIGN S can trap.  */
 
 bool
-gimple_assign_rhs_could_trap_p (gimple *s)
+gimple_assign_rhs_could_trap_p (const gimple *s)
 {
   gcc_assert (is_gimple_assign (s));
   return gimple_could_trap_p_1 (s, true, false);
@@ -2579,7 +2592,7 @@ const unsigned char gimple_rhs_class_table[] = {
    the positions marked by the set ARGS_TO_SKIP.  */
 
 gcall *
-gimple_call_copy_skip_args (gcall *stmt, bitmap args_to_skip)
+gimple_call_copy_skip_args (const gcall *stmt, const_bitmap args_to_skip)
 {
   int i;
   int nargs = gimple_call_num_args (stmt);
@@ -2619,7 +2632,7 @@ gimple_call_copy_skip_args (gcall *stmt, bitmap args_to_skip)
    This is intended to be used on GIMPLE types only.  */
 
 bool
-gimple_compare_field_offset (tree f1, tree f2)
+gimple_compare_field_offset (const_tree f1, const_tree f2)
 {
   if (DECL_OFFSET_ALIGN (f1) == DECL_OFFSET_ALIGN (f2))
     {
@@ -2797,6 +2810,9 @@ gimple_signed_or_unsigned_type (bool unsignedp, tree type)
       || TYPE_UNSIGNED (type) == unsignedp)
     return type;
 
+  if (BITINT_TYPE_P (type))
+    return build_bitint_type (TYPE_PRECISION (type), unsignedp);
+
 #define TYPE_OK(node)							    \
   (TYPE_MODE (type) == TYPE_MODE (node)					    \
    && TYPE_PRECISION (type) == TYPE_PRECISION (node))
@@ -2881,7 +2897,8 @@ gimple_get_alias_set (tree t)
     return 0;
 
   /* Allow aliasing between signed and unsigned variants of the same
-     type.  We treat the signed variant as canonical.  */
+     type.  We treat the signed variant as canonical.  BITINT_TYPEs
+     are handled by canonical type merging.  */
   if (TREE_CODE (t) == INTEGER_TYPE && TYPE_UNSIGNED (t))
     {
       tree t1 = gimple_signed_type (t);
@@ -2902,34 +2919,6 @@ gimple_get_alias_set (tree t)
     }
 
   return -1;
-}
-
-
-/* Helper for gimple_ior_addresses_taken_1.  */
-
-static bool
-gimple_ior_addresses_taken_1 (gimple *, tree addr, tree, void *data)
-{
-  bitmap addresses_taken = (bitmap)data;
-  addr = get_base_address (addr);
-  if (addr
-      && DECL_P (addr))
-    {
-      bitmap_set_bit (addresses_taken, DECL_UID (addr));
-      return true;
-    }
-  return false;
-}
-
-/* Set the bit for the uid of all decls that have their address taken
-   in STMT in the ADDRESSES_TAKEN bitmap.  Returns true if there
-   were any in this stmt.  */
-
-bool
-gimple_ior_addresses_taken (bitmap addresses_taken, gimple *stmt)
-{
-  return walk_stmt_load_store_addr_ops (stmt, addresses_taken, NULL, NULL,
-					gimple_ior_addresses_taken_1);
 }
 
 
@@ -3066,7 +3055,7 @@ gimple_asm_clobbers_memory_p (const gasm *stmt)
 /* Dump bitmap SET (assumed to contain VAR_DECLs) to FILE.  */
 
 void
-dump_decl_set (FILE *file, bitmap set)
+dump_decl_set (FILE *file, const_bitmap set)
 {
   if (set)
     {
@@ -3090,7 +3079,7 @@ dump_decl_set (FILE *file, bitmap set)
 /* Return true when CALL is a call stmt that definitely doesn't
    free any memory or makes it unavailable otherwise.  */
 bool
-nonfreeing_call_p (gimple *call)
+nonfreeing_call_p (const gimple *call)
 {
   if (gimple_call_builtin_p (call, BUILT_IN_NORMAL)
       && gimple_call_flags (call) & ECF_LEAF)
@@ -3136,7 +3125,7 @@ nonfreeing_call_p (gimple *call)
 /* Return true when CALL is a call stmt that definitely need not
    be considered to be a memory barrier.  */
 bool
-nonbarrier_call_p (gimple *call)
+nonbarrier_call_p (const gimple *call)
 {
   if (gimple_call_flags (call) & (ECF_PURE | ECF_CONST))
     return true;
@@ -3153,9 +3142,17 @@ nonbarrier_call_p (gimple *call)
    This routine only makes a superficial check for a dereference.  Thus
    it must only be used if it is safe to return a false negative.  */
 static bool
-check_loadstore (gimple *, tree op, tree, void *data)
+check_loadstore (gimple *stmt, tree op, tree, void *data)
 {
-  if (TREE_CODE (op) == MEM_REF || TREE_CODE (op) == TARGET_MEM_REF)
+  if (TREE_CODE (op) == MEM_REF
+      || (TREE_CODE (op) == TARGET_MEM_REF
+	  && !TMR_INDEX2 (op)
+	  && (!TMR_INDEX (op)
+	      || (TMR_STEP (op)
+		  && expr_not_equal_to (TMR_STEP (op),
+					wi::one (TYPE_PRECISION (TREE_TYPE
+							(TMR_STEP (op)))),
+					stmt)))))
     {
       /* Some address spaces may legitimately dereference zero.  */
       addr_space_t as = TYPE_ADDR_SPACE (TREE_TYPE (op));
@@ -3205,7 +3202,8 @@ infer_nonnull_range_by_dereference (gimple *stmt, tree op)
    returning true doesn't mean OP can be unconditionally inferred to be
    non-NULL, but conditionally).  */
 bool
-infer_nonnull_range_by_attribute (gimple *stmt, tree op, tree *op2, tree *op3)
+infer_nonnull_range_by_attribute (const gimple *stmt, tree op, tree *op2,
+				  tree *op3)
 {
   if (op2)
     {
@@ -3301,7 +3299,7 @@ infer_nonnull_range_by_attribute (gimple *stmt, tree op, tree *op2, tree *op3)
 
   /* If this function is marked as returning non-null, then we can
      infer OP is non-null if it is used in the return statement.  */
-  if (greturn *return_stmt = dyn_cast <greturn *> (stmt))
+  if (const greturn *return_stmt = dyn_cast <const greturn *> (stmt))
     if (gimple_return_retval (return_stmt)
 	&& operand_equal_p (gimple_return_retval (return_stmt), op, 0)
 	&& lookup_attribute ("returns_nonnull",
@@ -3567,7 +3565,7 @@ maybe_remove_unused_call_args (struct function *fn, gimple *stmt)
 /* Return false if STMT will likely expand to real function call.  */
 
 bool
-gimple_inexpensive_call_p (gcall *stmt)
+gimple_inexpensive_call_p (const gcall *stmt)
 {
   if (gimple_call_internal_p (stmt))
     return true;
@@ -3581,7 +3579,7 @@ gimple_inexpensive_call_p (gcall *stmt)
    location information, get the location from EXPR.  */
 
 location_t
-gimple_or_expr_nonartificial_location (gimple *stmt, tree expr)
+gimple_or_expr_nonartificial_location (const gimple *stmt, tree expr)
 {
   location_t loc = gimple_nonartificial_location (stmt);
   if (loc == UNKNOWN_LOCATION && EXPR_HAS_LOCATION (expr))
@@ -3662,6 +3660,63 @@ test_assign_binop ()
   ASSERT_EQ (MULT_EXPR, gimple_assign_rhs_code (stmt));
 }
 
+/* Verify that GIMPLE trap queries distinguish a register definition and a
+   trapping store from their nontrapping right-hand sides.  */
+
+static void
+test_could_trap ()
+{
+  tree reg_lhs = build_decl (UNKNOWN_LOCATION, VAR_DECL,
+			     get_identifier ("readonly_reg"),
+			     integer_type_node);
+  TREE_READONLY (reg_lhs) = 1;
+  gassign *stmt = gimple_build_assign (reg_lhs, integer_one_node);
+
+  ASSERT_FALSE (gimple_store_p (stmt));
+  ASSERT_FALSE (gimple_could_trap_p (stmt));
+  ASSERT_FALSE (gimple_assign_rhs_could_trap_p (stmt));
+
+  tree mem_lhs = build_decl (UNKNOWN_LOCATION, VAR_DECL,
+			     get_identifier ("readonly_mem"),
+			     integer_type_node);
+  TREE_READONLY (mem_lhs) = 1;
+  TREE_STATIC (mem_lhs) = 1;
+  TREE_ADDRESSABLE (mem_lhs) = 1;
+  stmt = gimple_build_assign (mem_lhs, integer_one_node);
+
+  ASSERT_TRUE (gimple_store_p (stmt));
+  ASSERT_TRUE (gimple_could_trap_p (stmt));
+  ASSERT_FALSE (gimple_assign_rhs_could_trap_p (stmt));
+
+  tree record_type = make_node (RECORD_TYPE);
+  tree field = build_decl (UNKNOWN_LOCATION, FIELD_DECL,
+			   get_identifier ("value"), integer_type_node);
+  DECL_CONTEXT (field) = record_type;
+  TYPE_FIELDS (record_type) = field;
+  layout_type (record_type);
+
+  tree call_lhs = build_decl (UNKNOWN_LOCATION, VAR_DECL,
+			      get_identifier ("readonly_call_mem"),
+			      record_type);
+  TREE_READONLY (call_lhs) = 1;
+  TREE_STATIC (call_lhs) = 1;
+  TREE_ADDRESSABLE (call_lhs) = 1;
+
+  tree fn_type = build_function_type_list (record_type, NULL_TREE);
+  tree fn = build_fn_decl ("nothrow_call", fn_type);
+  gcall *call = gimple_build_call (fn, 0);
+  gimple_call_set_lhs (call, call_lhs);
+  gimple_call_set_nothrow (call, true);
+
+  ASSERT_TRUE (gimple_store_p (call));
+  ASSERT_TRUE (gimple_could_trap_p (call));
+  ASSERT_FALSE (gimple_could_trap_p_1 (call, true, false));
+
+  gimple_call_set_return_slot_opt (call, true);
+  ASSERT_TRUE (gimple_could_trap_p (call));
+  ASSERT_FALSE (gimple_could_trap_p_1 (call, true, false));
+}
+
 /* Build a GIMPLE_NOP and verify various properties of it.  */
 
 static void
@@ -3715,6 +3770,7 @@ gimple_cc_tests ()
 {
   test_assign_single ();
   test_assign_binop ();
+  test_could_trap ();
   test_nop_stmt ();
   test_return_stmt ();
   test_return_without_value ();

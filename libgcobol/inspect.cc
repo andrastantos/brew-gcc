@@ -8,7 +8,6 @@
  * * Redistributions of source code must retain the above copyright
  *   notice, this list of conditions and the following disclaimer.
  * * Redistributions in binary form must reproduce the above
- * * Redistributions in binary form must reproduce the above
  *   copyright notice, this list of conditions and the following disclaimer
  *   in the documentation and/or other materials provided with the
  *   distribution.
@@ -64,6 +63,7 @@
 #include "common-defs.h"
 #include "io.h"
 #include "gcobolio.h"
+#include "cobol-endian.h"
 #include "libgcobol.h"
 #include "gfileio.h"
 #include "charmaps.h"
@@ -79,6 +79,18 @@
 
 #define NO_RDIGITS (0)
 
+static inline char *
+as_chars(unsigned char *p)
+  {
+  return reinterpret_cast<char *>(p);
+  }
+
+static inline const char *
+as_chars(const unsigned char *p)
+  {
+  return reinterpret_cast<const char *>(p);
+  }
+
 typedef std::vector<cbl_char_t>::const_iterator char_it_c ;
 typedef std::vector<cbl_char_t>::iterator       char_it   ;
 
@@ -91,16 +103,23 @@ funky_find( const char *piece,
   const char *retval = NULL;
 
   size_t length_of_piece = piece_end - piece;
-  if(length_of_piece == 0)
+  size_t length_of_whole = whole_end - whole;
+
+  if( length_of_piece == 0 )
     {
     __gg__abort("funky_find() length_of_piece shouldn't be zero");
     }
 
-  whole_end -= length_of_piece;
-
-  while( whole <= whole_end )
+  if( length_of_piece > length_of_whole )
     {
-    if( memcmp( piece, whole, length_of_piece) == 0 )
+    return NULL;
+    }
+
+  const char *last = whole_end - length_of_piece;
+
+  while( whole <= last )
+    {
+    if( memcmp(piece, whole, length_of_piece) == 0 )
       {
       retval = whole;
       break;
@@ -122,25 +141,32 @@ funky_find_wide( char_it_c needle,
   char_it_c retval = notfound;
 
   size_t length_of_piece = needle_end - needle;
-  if(length_of_piece == 0)
+  size_t length_of_haystack = haystack_end - haystack;
+
+  if( length_of_piece == 0 )
     {
     __gg__abort("funky_find_wide() length_of_piece shouldn't be zero");
     }
 
-  haystack_end -= length_of_piece;
+  if( length_of_piece > length_of_haystack )
+    {
+    return notfound;
+    }
 
-  while( haystack <= haystack_end )
+  char_it_c last = haystack_end - length_of_piece;
+
+  while( haystack <= last )
     {
     // Compare the memory at needle to the memory at haystack
-    if( memcmp( &(*needle),
-                &(*haystack),
-                length_of_piece*sizeof(cbl_char_t)) == 0 )
+    if( memcmp(&(*needle),
+               &(*haystack),
+               length_of_piece * sizeof(cbl_char_t)) == 0 )
       {
       // They are the same; return where needle was found
       retval = haystack;
       break;
       }
-    // Not found; move to the next location in the haystach
+    // Not found; move to the next location in the haystack
     haystack += 1;
     }
   return retval;
@@ -155,56 +181,71 @@ funky_find_backward(const char *piece,
   const char *retval = NULL;
 
   size_t length_of_piece = piece_end - piece;
-  if(length_of_piece == 0)
+  size_t length_of_whole = whole_end - whole;
+
+  if( length_of_piece == 0 )
     {
     __gg__abort("funky_find_backward() length_of_piece shouldn't be zero");
     }
 
-  whole_end -= length_of_piece;
-
-  while( whole <= whole_end )
+  if( length_of_piece > length_of_whole )
     {
-    if( memcmp( piece, whole_end, length_of_piece) == 0 )
+    return NULL;
+    }
+
+  const char *last = whole_end - length_of_piece;
+
+  while( whole <= last )
+    {
+    if( memcmp(piece, last, length_of_piece) == 0 )
       {
-      retval = whole_end;
+      retval = last;
       break;
       }
-    whole_end -= 1;
+    last -= 1;
     }
   return retval;
   }
 
 static char_it_c
 funky_find_wide_backward( char_it_c needle,
-                 char_it_c needle_end,    // Actually end+1
-                 char_it_c haystack,
-                 char_it_c haystack_end,  // Actually end+1
-                 char_it_c notfound)
+                          char_it_c needle_end,    // Actually end+1
+                          char_it_c haystack,
+                          char_it_c haystack_end,  // Actually end+1
+                          char_it_c notfound)
   {
   // We are looking for the needle in the haystack
 
   char_it_c retval = notfound;
 
   size_t length_of_piece = needle_end - needle;
-  if(length_of_piece == 0)
+  size_t length_of_haystack = haystack_end - haystack;
+
+  if( length_of_piece == 0 )
     {
-    __gg__abort("funky_find_wide_backward() length_of_piece shouldn't be zero");
+    __gg__abort(
+      "funky_find_wide_backward() length_of_piece shouldn't be zero");
     }
 
-  haystack_end -= length_of_piece;
-
-  while( haystack <= haystack_end )
+  if( length_of_piece > length_of_haystack )
     {
-    if( memcmp( &(*needle),
-                &(*haystack_end),
-                length_of_piece*sizeof(cbl_char_t)) == 0 )
+    return notfound;
+    }
+
+  char_it_c last = haystack_end - length_of_piece;
+
+  while( haystack <= last )
+    {
+    if( memcmp(&(*needle),
+               &(*last),
+               length_of_piece * sizeof(cbl_char_t)) == 0 )
       {
       // They are the same; return where needle was found
-      retval = haystack_end;
+      retval = last;
       break;
       }
     // Not found; move to the next location in the haystack
-    haystack_end -= 1;
+    last -= 1;
     }
   return retval;
   }
@@ -248,9 +289,10 @@ typedef struct comparand_sbc
   size_t id_2_index;
   cbl_inspect_bound_t operation;
   std::string identifier_3; // The thing to be found
-//q  std::string identifier_5; // The replacement, for FORMAT 2
+  std::string identifier_5; // The replacement, for FORMAT 2
   size_t      alpha; // The start location within normalized_id_1
   size_t      omega; // The end+1 location within normalized_id_1
+  size_t      trailing_bound;
   size_t      leading_count;
   bool        leading;
   bool        first;
@@ -264,6 +306,13 @@ typedef struct id_2_result
   size_t result;
   } id_2_result;
 
+static void
+append_normalized_character(normalized_operand &operand, cbl_char_t ch)
+  {
+  operand.the_vectorxxxx.push_back(ch);
+  operand.the_characters += static_cast<char>(ch & 0xFF);
+  }
+
 static normalized_operand
 normalize_id( const cblc_field_t *field,
               size_t              field_o,
@@ -272,173 +321,122 @@ normalize_id( const cblc_field_t *field,
   {
   normalized_operand retval;
 
-  if( field )
+  retval.offset = 0;
+  retval.length = 0;
+
+  if( !field )
     {
-    charmap_t *charmap = __gg__get_charmap(encoding);
-
-    // This is the old-style byte-based assumption
-    const unsigned char *data = field->data + field_o;
-    cbl_figconst_t figconst
-      = (cbl_figconst_t)(field->attr & FIGCONST_MASK);
-
-    retval.offset = 0;
-    retval.length = field_s;
-
-    if( field->type == FldNumericDisplay )
-      {
-      // The value is NumericDisplay.
-      if( field->attr & separate_e )
-        {
-        // Because the sign is a separate plus or minus, the length
-        // gets reduced by one:
-        retval.length = field_s - 1;
-        if( field->attr & leading_e )
-          {
-          // Because the sign character is LEADING, we increase the
-          // offset by one
-          retval.offset = 1;
-          }
-        }
-      for( size_t i=retval.offset; i<retval.length; i+=1 )
-        {
-        // Because we are dealing with a NumericDisplay that might have
-        // the minus bit turned on, we will to mask it off as we copy the
-        // input characters over to retval:
-        retval.the_characters += charmap->set_digit_negative(data[i], false);
-        }
-      }
-    else
-      {
-      // We are set up to create the_characters;
-      if( figconst == normal_value_e )
-        {
-        for( size_t i=retval.offset; i<retval.length; i+=1 )
-          {
-          retval.the_characters += data[i];
-          }
-        }
-      else
-        {
-        char ch =  charmap->figconst_character(figconst);
-        for( size_t i=retval.offset; i<retval.length; i+=1 )
-          {
-          retval.the_characters += ch;
-          }
-        }
-      }
-    }
-  else
-    {
-    // There is no field, so leave the_characters empty.
-    retval.offset = 0;
-    retval.length = 0;
+    return retval;
     }
 
-  if( field )
-    {
-    cbl_encoding_t source_encoding = field->encoding;
-    const charmap_t *charmap_source = __gg__get_charmap(source_encoding);
-    charmap_t *charmap = __gg__get_charmap(encoding);
-    int stride = charmap->stride();
+  cbl_encoding_t source_encoding = field->encoding;
+  const charmap_t *charmap_source = __gg__get_charmap(source_encoding);
+  charmap_t *charmap_host32 = __gg__get_charmap(HOST_32_ENCODING);
+  (void)encoding;
+  int source_stride = charmap_source->stride();
 
-    const unsigned char *data = field->data + field_o;
-    cbl_figconst_t figconst = (cbl_figconst_t)(field->attr & FIGCONST_MASK);
-    if( figconst == normal_value_e )
+  const unsigned char *data = field->data + field_o;
+  cbl_figconst_t figconst
+    = static_cast<cbl_figconst_t>(field->attr & FIGCONST_MASK);
+
+  size_t character_count = field_s / source_stride;
+  size_t offset = 0;
+  size_t length = character_count;
+
+  if( field->type == FldNumericDisplay && (field->attr & separate_e) )
+    {
+    if( length > 0 )
       {
-      retval.offset = 0;
-      retval.length = field_s / stride;
+      length -= 1;
+      }
+    if( field->attr & leading_e )
+      {
+      offset = 1;
+      }
+    }
+
+  retval.offset = offset;
+  retval.length = length;
+
+  if( figconst == normal_value_e )
+    {
+    size_t converted_bytes = 0;
+    const char *converted = __gg__iconverter(source_encoding,
+                                             HOST_32_ENCODING,
+                                             data + offset * source_stride,
+                                             length * source_stride,
+                                             &converted_bytes);
+
+    for( size_t i = 0; i < converted_bytes; i += width_of_utf32 )
+      {
+      cbl_char_t ch = charmap_host32->getch(converted, i);
 
       if( field->type == FldNumericDisplay )
         {
-        // The value is NumericDisplay, so we might need to adjust the offset
-        // and length:
-        if( field->attr & separate_e )
+        if( charmap_source->is_like_ebcdic() )
           {
-          // Because the sign is a separate plus or minus, the length
-          // gets reduced by one:
-          retval.length = field_s - 1;
-          if( field->attr & leading_e )
+          // In EBCDIC, a flagged negative digit 0xF0 through 0xF9 becomes
+          // 0xD0 through 0xD9.  Those represent the characters
+          // "}JKLMNOPQR", which, now that we are in UTF32 space, don't
+          // have the right bit pattern to be fixed with set_digit_negative().
+          // So, we fix it separately with this table.  Note that location
+          // 0x7D, which is ASCII '{', becomes 0x30 '0'.  See also that
+          // locations 0x4A through 0x52 become 0x31 through 0x39.
+          static const uint8_t fixit[256] =
             {
-            // Because the sign character is LEADING, we increase the
-            // offset by one
-            retval.offset = 1;
-            }
+      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+      0x80, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+      0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+      0x81, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+      0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+      0x82, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+      0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+      0x83, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+      0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+      0x84, 0x49, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36,
+      0x37, 0x38, 0x39, 0x53, 0x54, 0x55, 0x56, 0x57,
+      0x85, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
+      0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+      0x86, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+      0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
+      0x87, 0x79, 0x7a, 0x7b, 0x7c, 0x30, 0x7e, 0x7f,
+      0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+      0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+      0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+      0x89, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+      0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+      0x8a, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
+      0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+      0x8b, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
+      0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
+      0x8c, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf,
+      0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7,
+      0x8d, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
+      0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
+      0x8e, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef,
+      0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+      0x8f, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
+            };
+          ch = fixit[ch & 0xFF];
+          }
+        else
+          {
+          ch = charmap_host32->set_digit_negative(ch, false);
           }
         }
-      // We are ready to convert from the input to UTF32
-      size_t converted_characters;
-      const char *converted = __gg__iconverter(source_encoding,
-                                               DEFAULT_32_ENCODING,
-                                               data+retval.offset * stride,
-                                               retval.length * stride,
-                                               &converted_characters);
-      // We are ready to copy the characters over:
-      for( size_t i=0; i<converted_characters; i+=width_of_utf32 )
-        {
-        // Because we are dealing with a NumericDisplay that might have
-        // the minus bit turned on, we will to mask it off as we copy the
-        // input characters over to retval:
-        cbl_char_t ch = charmap->getch(converted, i);
-        if( field->type == FldNumericDisplay )
-          {
-          if( charmap_source->is_like_ebcdic() )
-            {
-            // In EBCDIC, a flagged negative digit 0xF0 through 0xF9 becomes
-            // 0xD0 through 0xD9.  Those represent the characters
-            // "}JKLMNOPQR", which, now that we are in UTF32 space, don't have
-            // the right bit pattern to be fixed with set_digit_negative().
-            // So, we fix it separately with this table:  Note that location
-            // 0x7D, which is ASCII '{', becomes 0x30 '0'.  See also that
-            // locations 0x4A through 0x52 become 0x31 through 0x39.
-            static const uint8_t fixit[256] =
-              {
-              0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x80, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-              0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x81, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
-              0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x82, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
-              0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x83, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
-              0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x84, 0x49, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36,
-              0x37, 0x38, 0x39, 0x53, 0x54, 0x55, 0x56, 0x57, 0x85, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
-              0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x86, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
-              0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x87, 0x79, 0x7a, 0x7b, 0x7c, 0x30, 0x7e, 0x7f,
-              0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
-              0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x89, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
-              0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0x8a, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
-              0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0x8b, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
-              0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0x8c, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf,
-              0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0x8d, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
-              0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0x8e, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef,
-              0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0x8f, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
-              };
-            ch = fixit[ch & 0xFF];
-            }
-          else
-            {
-            ch = charmap->set_digit_negative(ch, false);
-            }
-          }
-        retval.the_vectorxxxx.push_back(ch);
-        }
-      }
-    else
-      {
-      // We need to fill the field with a figurative constant:
-      // We are set up to create the_characters;
-      charmap_t *charmap32 = __gg__get_charmap(DEFAULT_32_ENCODING);
-      char ch =  charmap32->figconst_character(figconst);
-      for( size_t i=retval.offset; i<retval.length; i+=1 )
-        {
-        retval.the_characters += ch;
-        retval.the_vectorxxxx.push_back(ch);
-        }
+      append_normalized_character(retval, ch);
       }
     }
   else
     {
-    // There is no field, so leave the_characters empty.
-    retval.offset = 0;
-    retval.length = 0;
+    cbl_char_t ch = charmap_host32->figconst_character(figconst);
+    for( size_t i = 0; i < length; i += 1 )
+      {
+      append_normalized_character(retval, ch);
+      }
     }
 
+  retval.length = retval.the_vectorxxxx.size();
   return retval;
   }
 
@@ -475,7 +473,7 @@ normalize_id_sbc( const cblc_field_t *field,
           }
         }
       // At this point, the bytes start at data, and there are field_s of them.
-      retval.assign(reinterpret_cast<const char *>(data), field_s);
+      retval.assign(as_chars(data), field_s);
       if( field->attr & signable_e )
         {
         if( field->attr & leading_e )
@@ -495,12 +493,12 @@ normalize_id_sbc( const cblc_field_t *field,
       // We aren't dealing with numeric-display, so
       if( figconst == normal_value_e )
         {
-        retval.assign(reinterpret_cast<const char *>(data), field_s);
+        retval.assign(as_chars(data), field_s);
         }
       else
         {
         // This field is flagged as figconst
-        char ch =  charmap->figconst_character(figconst);
+        uint8_t ch =  charmap->figconst_character(figconst);
         retval.assign(field_s, ch);
         }
       }
@@ -557,13 +555,15 @@ the_alpha_and_omega(const normalized_operand &id_before,
       unambiguous.
 
       The BEFORE phrase modifies the character position to use as the rightmost
-      position in source for the corresponding comparison operation. Comparisons
+      position in source for the corresponding comparison
+      operation. Comparisons
       in source occur only to the left of the first occurrence of delimiter. If
       delimiter is not present in source, then the comparison proceeds as if
       there were no BEFORE phrase.
 
       The AFTER phrase modifies the character position to use as the leftmost
-      position in source for the corresponding comparison operation. Comparisons
+      position in source for the corresponding comparison
+      operation. Comparisons
       in source occur only to the right of the first occurrence of delimiter.
       This character position is the one immediately to the right of the
       rightmost character of the delimiter found. If delimiter is not found in
@@ -668,13 +668,15 @@ the_alpha_and_omega_sbc(const std::string     &id_before,
       unambiguous.
 
       The BEFORE phrase modifies the character position to use as the rightmost
-      position in source for the corresponding comparison operation. Comparisons
+      position in source for the corresponding comparison
+      operation. Comparisons
       in source occur only to the left of the first occurrence of delimiter. If
       delimiter is not present in source, then the comparison proceeds as if
       there were no BEFORE phrase.
 
       The AFTER phrase modifies the character position to use as the leftmost
-      position in source for the corresponding comparison operation. Comparisons
+      position in source for the corresponding comparison
+      operation. Comparisons
       in source occur only to the right of the first occurrence of delimiter.
       This character position is the one immediately to the right of the
       rightmost character of the delimiter found. If delimiter is not found in
@@ -708,8 +710,8 @@ the_alpha_and_omega_sbc(const std::string     &id_before,
     // This is the AFTER delimiter.  We look for the first occurrence of that
     // delimiter in id_1 that occurs to the left of BEFORE/omega
 
-    alpha = haystack.substr(0, omega).find(id_after);
-    if( alpha == std::string::npos )
+    alpha = haystack.find(id_after);
+    if( alpha == std::string::npos || alpha + id_after.length() > omega )
       {
       // If there is no AFTER to the left of omega, then we can't find anything
       // in this haystack.
@@ -723,6 +725,135 @@ the_alpha_and_omega_sbc(const std::string     &id_before,
   else
     {
     alpha = 0;
+    }
+  }
+
+static void
+the_alpha_and_omega_backward_sbc(const std::string &id_before,
+                                 const std::string &id_after,
+                                 const std::string &haystack,
+                                 size_t            &alpha,
+                                 size_t            &omega)
+  {
+  alpha = 0;
+  omega = haystack.length();
+
+  if( id_before.length() )
+    {
+    size_t found = haystack.rfind(id_before);
+    if( found != std::string::npos )
+      {
+      alpha = found + id_before.length();
+      }
+    }
+
+  if( id_after.length() )
+    {
+    size_t found = haystack.rfind(id_after, omega - 1);
+    if( found != std::string::npos && found >= alpha )
+      {
+      omega = found;
+      }
+    else
+      {
+      omega = alpha;
+      }
+    }
+  }
+
+static void
+match_lengths_sbc(std::string       &id_target,
+                  const std::string &id_source)
+  {
+  id_target.assign(id_source.length(), id_target[0]);
+  }
+
+static inline bool
+matches_sbc(const std::string &haystack,
+            size_t             offset,
+            const std::string &needle,
+            size_t             length)
+  {
+  const char *candidate = haystack.data() + offset;
+  const char *pattern   = needle.data();
+
+  if( length == 0 )
+    {
+    return true;
+    }
+
+  if( candidate[0] != pattern[0] )
+    {
+    return false;
+    }
+
+  if( length == 1 )
+    {
+    return true;
+    }
+
+  if( candidate[length-1] != pattern[length-1] )
+    {
+    return false;
+    }
+
+  if( length == 2 )
+    {
+    return true;
+    }
+
+  return memcmp(candidate + 1, pattern + 1, length - 2) == 0;
+  }
+
+static void
+set_trailing_bounds_sbc(std::vector<comparand_sbc> &comparands,
+                        const std::string           &haystack,
+                        bool                         backward)
+  {
+  // Forward replacement never changes the unread suffix, and backward
+  // replacement never changes the unread prefix.  Consequently, each
+  // TRAILING run can be found once instead of being rescanned at every
+  // candidate position.
+  for(size_t i=0; i<comparands.size(); i++)
+    {
+    comparand_sbc &comparand = comparands[i];
+    if( comparand.operation != bound_trailing_e )
+      {
+      continue;
+      }
+
+    size_t length = comparand.identifier_3.length();
+    if( length == 0 || comparand.alpha >= comparand.omega )
+      {
+      comparand.trailing_bound = backward
+                                 ? comparand.alpha
+                                 : comparand.omega;
+      continue;
+      }
+    if( backward )
+      {
+      comparand.trailing_bound = comparand.alpha;
+      while( length <= comparand.omega - comparand.trailing_bound
+             && matches_sbc(haystack,
+                            comparand.trailing_bound,
+                            comparand.identifier_3,
+                            length) )
+        {
+        comparand.trailing_bound += length;
+        }
+      }
+    else
+      {
+      comparand.trailing_bound = comparand.omega;
+      while( length <= comparand.trailing_bound - comparand.alpha
+             && matches_sbc(haystack,
+                            comparand.trailing_bound - length,
+                            comparand.identifier_3,
+                            length) )
+        {
+        comparand.trailing_bound -= length;
+        }
+      }
     }
   }
 
@@ -764,7 +895,8 @@ the_alpha_and_omega_backward( const normalized_operand &id_before,
       alpha = found + id_before.length;
       }
 
-    char_it_c omega_found = funky_find_wide_backward(id_before.the_vectorxxxx.begin(),
+    char_it_c omega_found
+      = funky_find_wide_backward(id_before.the_vectorxxxx.begin(),
                                             id_before.the_vectorxxxx.end(),
                                             alpha_it,
                                             omega_it,
@@ -798,7 +930,8 @@ the_alpha_and_omega_backward( const normalized_operand &id_before,
       omega = alpha;
       }
 
-    char_it_c omega_found = funky_find_wide_backward(id_after.the_vectorxxxx.begin(),
+    char_it_c omega_found
+      = funky_find_wide_backward(id_after.the_vectorxxxx.begin(),
                                             id_after.the_vectorxxxx.end(),
                                             alpha_it,
                                             omega_it,
@@ -820,7 +953,8 @@ the_alpha_and_omega_backward( const normalized_operand &id_before,
 
 static
 void
-inspect_backward_format_1(const size_t integers[])
+inspect_backward_format_1(const size_t integers[],
+                          const cblc_referlet_t *params)
   {
   size_t int_index = 0;
   size_t cblc_index = 0;
@@ -833,12 +967,13 @@ inspect_backward_format_1(const size_t integers[])
   std::vector<id_2_result> id_2_results(n_identifier_2);
 
   // Pick up identifier_1, which is the string being inspected
-  const cblc_field_t *id1   = __gg__treeplet_1f[cblc_index];
-  size_t              id1_o = __gg__treeplet_1o[cblc_index];
-  size_t              id1_s = __gg__treeplet_1s[cblc_index];
+  const cblc_field_t *id1   = params[cblc_index].field ;
+  size_t              id1_o = params[cblc_index].offset;
+  size_t              id1_s = params[cblc_index].size  ;
   cblc_index += 1;
   // normalize it, according to the language specification.
-  normalized_operand normalized_id_1 = normalize_id(id1, id1_o, id1_s, id1->encoding);
+  normalized_operand normalized_id_1
+    = normalize_id(id1, id1_o, id1_s, id1->encoding);
 
   std::vector<comparand> comparands;
 
@@ -846,9 +981,9 @@ inspect_backward_format_1(const size_t integers[])
     {
     // For each identifier_2, we pick up its value:
 
-    id_2_results[i].id2   = __gg__treeplet_1f  [cblc_index];
-    id_2_results[i].id2_o = __gg__treeplet_1o[cblc_index];
-    id_2_results[i].id2_s = __gg__treeplet_1s[cblc_index];
+    id_2_results[i].id2   = params[cblc_index].field ;
+    id_2_results[i].id2_o = params[cblc_index].offset;
+    id_2_results[i].id2_s = params[cblc_index].size  ;
 
     cblc_index += 1;
     id_2_results[i].result = 0;
@@ -873,18 +1008,21 @@ inspect_backward_format_1(const size_t integers[])
           next_comparand.operation = operation;
           next_comparand.identifier_3.length = 1;
 
-          const cblc_field_t *id4_before   = __gg__treeplet_1f  [cblc_index];
-          size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_before   = params[cblc_index].field ;
+          size_t              id4_before_o = params[cblc_index].offset;
+          size_t              id4_before_s = params[cblc_index].size  ;
           cblc_index += 1;
 
-          const cblc_field_t *id4_after   = __gg__treeplet_1f  [cblc_index];
-          size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_after   = params[cblc_index].field ;
+          size_t              id4_after_o = params[cblc_index].offset;
+          size_t              id4_after_s = params[cblc_index].size  ;
           cblc_index += 1;
 
           normalized_operand normalized_id_4_before
-            = normalize_id(id4_before, id4_before_o, id4_before_s, id1->encoding);
+            = normalize_id(id4_before,
+                           id4_before_o,
+                           id4_before_s,
+                           id1->encoding);
 
           normalized_operand normalized_id_4_after
             = normalize_id(id4_after, id4_after_o, id4_after_s, id1->encoding);
@@ -911,7 +1049,7 @@ inspect_backward_format_1(const size_t integers[])
           }
         default:
           {
-          // We have some number of identifer-3 values,
+          // We have some number of identifier-3 values,
           // each with possible PHRASE1 modifiers.
           size_t pair_count = integers[int_index++];
 
@@ -923,23 +1061,23 @@ inspect_backward_format_1(const size_t integers[])
             next_comparand.id_2_index = i;
             next_comparand.operation = operation;
 
-            const cblc_field_t *id3   = __gg__treeplet_1f[cblc_index];
-            size_t              id3_o = __gg__treeplet_1o[cblc_index];
-            size_t              id3_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id3   = params[cblc_index].field ;
+            size_t              id3_o = params[cblc_index].offset;
+            size_t              id3_s = params[cblc_index].size  ;
             cblc_index += 1;
 
-            const cblc_field_t *id4_before   = __gg__treeplet_1f[cblc_index];
-            size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-            size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id4_before   = params[cblc_index].field ;
+            size_t              id4_before_o = params[cblc_index].offset;
+            size_t              id4_before_s = params[cblc_index].size  ;
             cblc_index += 1;
 
-            const cblc_field_t *id4_after   = __gg__treeplet_1f[cblc_index];
-            size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-            size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id4_after   = params[cblc_index].field ;
+            size_t              id4_after_o = params[cblc_index].offset;
+            size_t              id4_after_s = params[cblc_index].size  ;
             cblc_index += 1;
 
             next_comparand.identifier_3
-                                    = normalize_id(id3, id3_o, id3_s, id1->encoding);
+              = normalize_id(id3, id3_o, id3_s, id1->encoding);
 
             next_comparand.alpha
               = normalized_id_1.the_characters.c_str();
@@ -947,10 +1085,16 @@ inspect_backward_format_1(const size_t integers[])
               = next_comparand.alpha + normalized_id_1.length;
 
             normalized_operand normalized_id_4_before
-              = normalize_id(id4_before, id4_before_o, id4_before_s, id1->encoding);
+              = normalize_id(id4_before,
+                           id4_before_o,
+                           id4_before_s,
+                           id1->encoding);
 
             normalized_operand normalized_id_4_after
-              = normalize_id(id4_after, id4_after_o, id4_after_s, id1->encoding);
+              = normalize_id(id4_after,
+                             id4_after_o,
+                             id4_after_s,
+                             id1->encoding);
 
             next_comparand.alpha_it = normalized_id_1.the_vectorxxxx.begin();
             next_comparand.omega_it = normalized_id_1.the_vectorxxxx.end();
@@ -1146,38 +1290,38 @@ inspect_backward_format_1(const size_t integers[])
 
   for(size_t i = 0; i<id_2_results.size(); i++)
     {
-    int rdigits;
-    __int128 id_2_value
-      = __gg__binary_value_from_qualified_field(&rdigits,
-                                                id_2_results[i].id2,
-                                                id_2_results[i].id2_o,
-                                                id_2_results[i].id2_s);
-    while(rdigits--)
+    int128 id_2_value;
+    __gg__int128_from_qualified_field(id_2_value,
+                                      id_2_results[i].id2,
+                                      id_2_results[i].id2_o,
+                                      id_2_results[i].id2_s);
+    while(id_2_value.rdigits--)
       {
-      id_2_value /= 10.0;
+      id_2_value.i128 /= 10.0;
       }
 
     // Accumulate what we've found into it
-    id_2_value += id_2_results[i].result;
+    id_2_value.i128 += id_2_results[i].result;
 
     // And put it back:
     __gg__int128_to_qualified_field(id_2_results[i].id2,
                                     id_2_results[i].id2_o,
                                     id_2_results[i].id2_s,
-                                    id_2_value,
+                                    id_2_value.i128,
                                     0,
-                                    truncation_e,
-                                    NULL);
+                                    truncation_e);
     }
   }
 
 extern "C"
 void
-__gg__inspect_format_1(int backward, size_t integers[])
+__gg__inspect_format_1( int backward,
+                        size_t integers[],
+                        const cblc_referlet_t *params)
   {
   if( backward )
     {
-    return inspect_backward_format_1(integers);
+    return inspect_backward_format_1(integers, params);
     }
 
   size_t int_index = 0;
@@ -1191,9 +1335,9 @@ __gg__inspect_format_1(int backward, size_t integers[])
   std::vector<id_2_result> id_2_results(n_identifier_2);
 
   // Pick up identifier_1, which is the string being inspected
-  const cblc_field_t *id1   = __gg__treeplet_1f[cblc_index];
-  size_t              id1_o = __gg__treeplet_1o[cblc_index];
-  size_t              id1_s = __gg__treeplet_1s[cblc_index];
+  const cblc_field_t *id1   = params[cblc_index].field ;
+  size_t              id1_o = params[cblc_index].offset;
+  size_t              id1_s = params[cblc_index].size  ;
   cblc_index += 1;
   // normalize it, according to the language specification.
   normalized_operand normalized_id_1
@@ -1205,9 +1349,9 @@ __gg__inspect_format_1(int backward, size_t integers[])
     {
     // For each identifier_2, we pick up its value:
 
-    id_2_results[i].id2   = __gg__treeplet_1f  [cblc_index];
-    id_2_results[i].id2_o = __gg__treeplet_1o[cblc_index];
-    id_2_results[i].id2_s = __gg__treeplet_1s[cblc_index];
+    id_2_results[i].id2   = params[cblc_index].field ;
+    id_2_results[i].id2_o = params[cblc_index].offset;
+    id_2_results[i].id2_s = params[cblc_index].size  ;
 
     cblc_index += 1;
     id_2_results[i].result = 0;
@@ -1232,18 +1376,21 @@ __gg__inspect_format_1(int backward, size_t integers[])
           next_comparand.operation = operation;
           next_comparand.identifier_3.length = 1;
 
-          const cblc_field_t *id4_before   = __gg__treeplet_1f  [cblc_index];
-          size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_before   = params[cblc_index].field ;
+          size_t              id4_before_o = params[cblc_index].offset;
+          size_t              id4_before_s = params[cblc_index].size  ;
           cblc_index += 1;
 
-          const cblc_field_t *id4_after   = __gg__treeplet_1f  [cblc_index];
-          size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_after   = params[cblc_index].field ;
+          size_t              id4_after_o = params[cblc_index].offset;
+          size_t              id4_after_s = params[cblc_index].size  ;
           cblc_index += 1;
 
           normalized_operand normalized_id_4_before
-            = normalize_id(id4_before, id4_before_o, id4_before_s, id1->encoding);
+            = normalize_id(id4_before,
+                           id4_before_o,
+                           id4_before_s,
+                           id1->encoding);
 
           normalized_operand normalized_id_4_after
             = normalize_id(id4_after, id4_after_o, id4_after_s, id1->encoding);
@@ -1270,7 +1417,7 @@ __gg__inspect_format_1(int backward, size_t integers[])
           }
         default:
           {
-          // We have some number of identifer-3 values,
+          // We have some number of identifier-3 values,
           // each with possible PHRASE1 modifiers.
           size_t pair_count = integers[int_index++];
 
@@ -1282,19 +1429,19 @@ __gg__inspect_format_1(int backward, size_t integers[])
             next_comparand.id_2_index = i;
             next_comparand.operation = operation;
 
-            const cblc_field_t *id3   = __gg__treeplet_1f[cblc_index];
-            size_t              id3_o = __gg__treeplet_1o[cblc_index];
-            size_t              id3_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id3   = params[cblc_index].field ;
+            size_t              id3_o = params[cblc_index].offset;
+            size_t              id3_s = params[cblc_index].size  ;
             cblc_index += 1;
 
-            const cblc_field_t *id4_before   = __gg__treeplet_1f[cblc_index];
-            size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-            size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id4_before   = params[cblc_index].field ;
+            size_t              id4_before_o = params[cblc_index].offset;
+            size_t              id4_before_s = params[cblc_index].size  ;
             cblc_index += 1;
 
-            const cblc_field_t *id4_after   = __gg__treeplet_1f[cblc_index];
-            size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-            size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id4_after   = params[cblc_index].field ;
+            size_t              id4_after_o = params[cblc_index].offset;
+            size_t              id4_after_s = params[cblc_index].size  ;
             cblc_index += 1;
 
             next_comparand.identifier_3
@@ -1312,10 +1459,16 @@ __gg__inspect_format_1(int backward, size_t integers[])
             next_comparand.omega_it = normalized_id_1.the_vectorxxxx.end();
 
             normalized_operand normalized_id_4_before
-              = normalize_id(id4_before, id4_before_o, id4_before_s, id1->encoding);
+              = normalize_id(id4_before,
+                           id4_before_o,
+                           id4_before_s,
+                           id1->encoding);
 
             normalized_operand normalized_id_4_after
-              = normalize_id(id4_after, id4_after_o, id4_after_s, id1->encoding);
+              = normalize_id(id4_after,
+                             id4_after_o,
+                             id4_after_s,
+                             id1->encoding);
 
             the_alpha_and_omega(normalized_id_4_before,
                                 normalized_id_4_after,
@@ -1356,7 +1509,8 @@ __gg__inspect_format_1(int backward, size_t integers[])
         // to the left of the comparand's alpha.
         continue;
         }
-      if( leftmost + comparands[k].identifier_3.length > comparands[k].omega_it )
+      if( leftmost + comparands[k].identifier_3.length
+          > comparands[k].omega_it )
         {
         // This can't be a match, because the rightmost
         // character of the comparand falls to the right
@@ -1504,34 +1658,33 @@ __gg__inspect_format_1(int backward, size_t integers[])
 
   for(size_t i = 0; i<id_2_results.size(); i++)
     {
-    int rdigits;
-    __int128 id_2_value
-      = __gg__binary_value_from_qualified_field(&rdigits,
-                                                id_2_results[i].id2,
-                                                id_2_results[i].id2_o,
-                                                id_2_results[i].id2_s);
-    while(rdigits--)
+    int128 id_2_value;
+    __gg__int128_from_qualified_field(id_2_value,
+                                      id_2_results[i].id2,
+                                      id_2_results[i].id2_o,
+                                      id_2_results[i].id2_s);
+    while(id_2_value.rdigits--)
       {
-      id_2_value /= 10.0;
+      id_2_value.i128 /= 10.0;
       }
 
     // Accumulate what we've found into it
-    id_2_value += id_2_results[i].result;
+    id_2_value.i128 += id_2_results[i].result;
 
     // And put it back:
     __gg__int128_to_qualified_field(id_2_results[i].id2,
                                     id_2_results[i].id2_o,
                                     id_2_results[i].id2_s,
-                                    id_2_value,
+                                    id_2_value.i128,
                                     0,
-                                    truncation_e,
-                                    NULL);
+                                    truncation_e);
     }
   }
 
 static
 void
-inspect_backward_format_2(const size_t integers[])
+inspect_backward_format_2(const size_t integers[],
+                          const cblc_referlet_t *params)
   {
   size_t int_index = 0;
   size_t cblc_index = 0;
@@ -1539,14 +1692,14 @@ inspect_backward_format_2(const size_t integers[])
   // Reference the language specification for the meanings of identifier_X
 
   // Pick up identifier_1, which is the string being inspected
-  cblc_field_t *id1   = __gg__treeplet_1f[cblc_index];
-  size_t        id1_o = __gg__treeplet_1o[cblc_index];
-  size_t        id1_s = __gg__treeplet_1s[cblc_index];
+  cblc_field_t *id1   = params[cblc_index].field ;
+  size_t        id1_o = params[cblc_index].offset;
+  size_t        id1_s = params[cblc_index].size  ;
   cblc_index += 1;
 
   // normalize it, according to the language specification.
   normalized_operand normalized_id_1
-                                   = normalize_id(id1, id1_o, id1_s, id1->encoding);
+    = normalize_id(id1, id1_o, id1_s, id1->encoding);
 
   std::vector<comparand> comparands;
 
@@ -1564,25 +1717,28 @@ inspect_backward_format_2(const size_t integers[])
         comparand next_comparand = {};
         next_comparand.operation = operation;
 
-        const cblc_field_t *id5   = __gg__treeplet_1f[cblc_index];
-        size_t              id5_o = __gg__treeplet_1o[cblc_index];
-        size_t              id5_s = __gg__treeplet_1s[cblc_index];
+        const cblc_field_t *id5   = params[cblc_index].field ;
+        size_t              id5_o = params[cblc_index].offset;
+        size_t              id5_s = params[cblc_index].size  ;
         cblc_index += 1;
 
-        const cblc_field_t *id4_before   = __gg__treeplet_1f[cblc_index];
-        size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-        size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+        const cblc_field_t *id4_before   = params[cblc_index].field ;
+        size_t              id4_before_o = params[cblc_index].offset;
+        size_t              id4_before_s = params[cblc_index].size  ;
         cblc_index += 1;
 
-        const cblc_field_t *id4_after   = __gg__treeplet_1f  [cblc_index];
-        size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-        size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+        const cblc_field_t *id4_after   = params[cblc_index].field ;
+        size_t              id4_after_o = params[cblc_index].offset;
+        size_t              id4_after_s = params[cblc_index].size  ;
         cblc_index += 1;
 
         next_comparand.identifier_5
           = normalize_id(id5, id5_o, id5_s, id1->encoding);
         normalized_operand normalized_id_4_before
-          = normalize_id(id4_before, id4_before_o, id4_before_s, id1->encoding);
+          = normalize_id(id4_before,
+                         id4_before_o,
+                         id4_before_s,
+                         id1->encoding);
         normalized_operand normalized_id_4_after
           = normalize_id(id4_after, id4_after_o, id4_after_s, id1->encoding);
 
@@ -1614,7 +1770,7 @@ inspect_backward_format_2(const size_t integers[])
         }
       default:
         {
-        // We have some number of identifer-3/identifier-5 pairs,
+        // We have some number of identifier-3/identifier-5 pairs,
         // each with possible PHRASE1 modifiers.
         size_t pair_count = integers[int_index++];
 
@@ -1623,28 +1779,30 @@ inspect_backward_format_2(const size_t integers[])
           comparand next_comparand = {};
           next_comparand.operation = operation;
 
-          const cblc_field_t *id3   = __gg__treeplet_1f[cblc_index];
-          size_t              id3_o = __gg__treeplet_1o[cblc_index];
-          size_t              id3_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id3   = params[cblc_index].field ;
+          size_t              id3_o = params[cblc_index].offset;
+          size_t              id3_s = params[cblc_index].size  ;
           cblc_index += 1;
 
-          const cblc_field_t *id5   = __gg__treeplet_1f[cblc_index];
-          size_t              id5_o = __gg__treeplet_1o[cblc_index];
-          size_t              id5_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id5   = params[cblc_index].field ;
+          size_t              id5_o = params[cblc_index].offset;
+          size_t              id5_s = params[cblc_index].size  ;
           cblc_index += 1;
 
-          const cblc_field_t *id4_before   = __gg__treeplet_1f[cblc_index];
-          size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_before   = params[cblc_index].field ;
+          size_t              id4_before_o = params[cblc_index].offset;
+          size_t              id4_before_s = params[cblc_index].size  ;
           cblc_index += 1;
 
-          const cblc_field_t *id4_after   = __gg__treeplet_1f[cblc_index];
-          size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_after   = params[cblc_index].field ;
+          size_t              id4_after_o = params[cblc_index].offset;
+          size_t              id4_after_s = params[cblc_index].size  ;
           cblc_index += 1;
 
-          next_comparand.identifier_3 = normalize_id(id3, id3_o, id3_s, id1->encoding);
-          next_comparand.identifier_5 = normalize_id(id5, id5_o, id5_s, id1->encoding);
+          next_comparand.identifier_3
+            = normalize_id(id3, id3_o, id3_s, id1->encoding);
+          next_comparand.identifier_5
+            = normalize_id(id5, id5_o, id5_s, id1->encoding);
 
           // Identifiers 3 and 5 have to be the same length.  But
           // but either, or both, can be figurative constants.  If
@@ -1669,7 +1827,10 @@ inspect_backward_format_2(const size_t integers[])
             = next_comparand.alpha + normalized_id_1.length;
 
           normalized_operand normalized_id_4_before
-            = normalize_id(id4_before, id4_before_o, id4_before_s, id1->encoding);
+            = normalize_id(id4_before,
+                           id4_before_o,
+                           id4_before_s,
+                           id1->encoding);
           normalized_operand normalized_id_4_after
             = normalize_id(id4_after, id4_after_o, id4_after_s, id1->encoding);
 
@@ -1715,14 +1876,16 @@ inspect_backward_format_2(const size_t integers[])
         // to the left of the comparand's alpha.
         continue;
         }
-      if( rightmost + comparands[k].identifier_3.length > comparands[k].omega_it )
+      if( rightmost + comparands[k].identifier_3.length
+          > comparands[k].omega_it )
         {
         // This can't be a match, because the rightmost
         // character of the comparand falls to the right
         // of the comparand's omega
         continue;
         }
-      if( rightmost + comparands[k].identifier_3.length > the_end_of_the_world )
+      if( rightmost + comparands[k].identifier_3.length
+          > the_end_of_the_world )
         {
         // This can't be a match, because the rightmost character of the
         // comparand falls past the new edge of id_1 established by a prior
@@ -1780,7 +1943,8 @@ inspect_backward_format_2(const size_t integers[])
             if( comparands[k].leading )
               {
               if(   rightmost
-                  + comparands[k].identifier_3.length * (comparands[k].leading_count +1)
+                  + comparands[k].identifier_3.length
+                    * (comparands[k].leading_count + 1)
                     == comparands[k].omega_it)
                 {
                 // This means that the match here is just the latest of a
@@ -1865,7 +2029,7 @@ inspect_backward_format_2(const size_t integers[])
 
   charmap_t *charmap = __gg__get_charmap(id1->encoding);
   // Wastefully prefill id_1 with spaces in case the processing resulted in a
-  // string shorter than the original.  (There is always the possiblity that
+  // string shorter than the original.  (There is always the possibility that
   // a UTF-8 or UTF-16 codeset pair got replaced with a single character.) Do
   // this before calling __gg__converter, because both mapped_character and
   // __gg__iconverter use the same static buffer.
@@ -1874,7 +2038,7 @@ inspect_backward_format_2(const size_t integers[])
 
   // We've been working in UTF32; we convert back to the original id1 encoding.
   size_t bytes_converted;
-  const char *converted = __gg__iconverter( DEFAULT_32_ENCODING,
+  const char *converted = __gg__iconverter( HOST_32_ENCODING,
                                          id1->encoding,
                                          normalized_id_1.the_vectorxxxx.data(),
                                          normalized_id_1.length*width_of_utf32,
@@ -1889,26 +2053,28 @@ inspect_backward_format_2(const size_t integers[])
 
 extern "C"
 void
-__gg__inspect_format_2(int backward, size_t integers[])
+__gg__inspect_format_2( int backward,
+                        size_t integers[],
+                        const cblc_referlet_t *params)
   {
   if( backward )
     {
-    return inspect_backward_format_2(integers);
+    return inspect_backward_format_2(integers, params);
     }
   size_t int_index = 0;
   size_t cblc_index = 0;
 
   // Reference the language specification for the meanings of identifier_X
 
-  // Pick up identifier_1, which is the string being inspected
-  cblc_field_t *id1   = __gg__treeplet_1f[cblc_index];
-  size_t        id1_o = __gg__treeplet_1o[cblc_index];
-  size_t        id1_s = __gg__treeplet_1s[cblc_index];
+  // id1 is the string being inspected
+  cblc_field_t *id1   = params[cblc_index].field;
+  size_t        id1_o = params[cblc_index].offset;
+  size_t        id1_s = params[cblc_index].size;
   cblc_index += 1;
 
   // normalize it, according to the language specification.
   normalized_operand normalized_id_1
-                                   = normalize_id(id1, id1_o, id1_s, id1->encoding);
+    = normalize_id(id1, id1_o, id1_s, id1->encoding);
 
   std::vector<comparand> comparands;
 
@@ -1927,25 +2093,28 @@ __gg__inspect_format_2(int backward, size_t integers[])
         comparand next_comparand = {} ;
         next_comparand.operation = operation;
 
-        const cblc_field_t *id5   = __gg__treeplet_1f[cblc_index];
-        size_t              id5_o = __gg__treeplet_1o[cblc_index];
-        size_t              id5_s = __gg__treeplet_1s[cblc_index];
+        const cblc_field_t *id5   = params[cblc_index].field;
+        size_t              id5_o = params[cblc_index].offset;
+        size_t              id5_s = params[cblc_index].size;
         cblc_index += 1;
 
-        const cblc_field_t *id4_before   = __gg__treeplet_1f[cblc_index];
-        size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-        size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+        const cblc_field_t *id4_before   = params[cblc_index].field;
+        size_t              id4_before_o = params[cblc_index].offset;
+        size_t              id4_before_s = params[cblc_index].size;
         cblc_index += 1;
 
-        const cblc_field_t *id4_after   = __gg__treeplet_1f  [cblc_index];
-        size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-        size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+        const cblc_field_t *id4_after   = params[cblc_index].field;
+        size_t              id4_after_o = params[cblc_index].offset;
+        size_t              id4_after_s = params[cblc_index].size;
         cblc_index += 1;
 
         next_comparand.identifier_5
           = normalize_id(id5, id5_o, id5_s, id1->encoding);
         normalized_operand normalized_id_4_before
-          = normalize_id(id4_before, id4_before_o, id4_before_s, id1->encoding);
+          = normalize_id(id4_before,
+                         id4_before_o,
+                         id4_before_s,
+                         id1->encoding);
         normalized_operand normalized_id_4_after
           = normalize_id(id4_after, id4_after_o, id4_after_s, id1->encoding);
 
@@ -1975,7 +2144,7 @@ __gg__inspect_format_2(int backward, size_t integers[])
         }
       default:
         {
-        // We have some number of identifer-3/identifier-5 pairs,
+        // We have some number of identifier-3/identifier-5 pairs,
         // each with possible PHRASE1 modifiers.
         size_t pair_count = integers[int_index++];
 
@@ -1984,24 +2153,24 @@ __gg__inspect_format_2(int backward, size_t integers[])
           comparand next_comparand = {};
           next_comparand.operation = operation;
 
-          const cblc_field_t *id3   = __gg__treeplet_1f[cblc_index];
-          size_t              id3_o = __gg__treeplet_1o[cblc_index];
-          size_t              id3_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id3   = params[cblc_index].field;
+          size_t              id3_o = params[cblc_index].offset;
+          size_t              id3_s = params[cblc_index].size;
           cblc_index += 1;
 
-          const cblc_field_t *id5   = __gg__treeplet_1f[cblc_index];
-          size_t              id5_o = __gg__treeplet_1o[cblc_index];
-          size_t              id5_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id5   = params[cblc_index].field;
+          size_t              id5_o = params[cblc_index].offset;
+          size_t              id5_s = params[cblc_index].size;
           cblc_index += 1;
 
-          const cblc_field_t *id4_before   = __gg__treeplet_1f[cblc_index];
-          size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_before   = params[cblc_index].field;
+          size_t              id4_before_o = params[cblc_index].offset;
+          size_t              id4_before_s = params[cblc_index].size;
           cblc_index += 1;
 
-          const cblc_field_t *id4_after   = __gg__treeplet_1f[cblc_index];
-          size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_after   = params[cblc_index].field;
+          size_t              id4_after_o = params[cblc_index].offset;
+          size_t              id4_after_s = params[cblc_index].size;
           cblc_index += 1;
 
           next_comparand.identifier_3 = normalize_id(id3,
@@ -2036,7 +2205,10 @@ __gg__inspect_format_2(int backward, size_t integers[])
             = next_comparand.alpha + normalized_id_1.length;
 
           normalized_operand normalized_id_4_before
-            = normalize_id(id4_before, id4_before_o, id4_before_s, id1->encoding);
+            = normalize_id(id4_before,
+                           id4_before_o,
+                           id4_before_s,
+                           id1->encoding);
           normalized_operand normalized_id_4_after
             = normalize_id(id4_after, id4_after_o, id4_after_s, id1->encoding);
 
@@ -2234,7 +2406,7 @@ __gg__inspect_format_2(int backward, size_t integers[])
 
   charmap_t *charmap = __gg__get_charmap(id1->encoding);
   // Wastefully prefill id_1 with spaces in case the processing resulted in a
-  // string shorter than the original.  (There is always the possiblity that
+  // string shorter than the original.  (There is always the possibility that
   // a UTF-8 or UTF-16 codeset pair got replaced with a single character.) Do
   // this before calling __gg__converter, because both mapped_character and
   // __gg__iconverter use the same static buffer.
@@ -2243,7 +2415,7 @@ __gg__inspect_format_2(int backward, size_t integers[])
 
   // We've been working in UTF32; we convert back to the original id1 encoding.
   size_t bytes_converted;
-  const char *converted = __gg__iconverter( DEFAULT_32_ENCODING,
+  const char *converted = __gg__iconverter( HOST_32_ENCODING,
                                          id1->encoding,
                                          normalized_id_1.the_vectorxxxx.data(),
                                          normalized_id_1.length*width_of_utf32,
@@ -2265,7 +2437,7 @@ normalize_for_inspect_format_4(const cblc_field_t  *var,
   if(var)
     {
     const charmap_t *charmap_var = __gg__get_charmap(source_encoding);
-    charmap_t *charmap32 = __gg__get_charmap(DEFAULT_32_ENCODING);
+    charmap_t *charmap32 = __gg__get_charmap(HOST_32_ENCODING);
 
     cbl_figconst_t figconst =
                       static_cast<cbl_figconst_t>(var->attr & FIGCONST_MASK);
@@ -2341,7 +2513,7 @@ normalize_for_inspect_format_4(const cblc_field_t  *var,
       size_t converted_bytes;
       const char *converted = __gg__iconverter(
                               var->encoding,
-                              DEFAULT_32_ENCODING,
+                              HOST_32_ENCODING,
                               var->data + var_offset,
                               var_size,
                               &converted_bytes);
@@ -2435,11 +2607,31 @@ __gg__inspect_format_4( int backward,
     replacement_size = charmap->stride();
     }
 
-  std::u32string str_input       = normalize_for_inspect_format_4(input      , input_offset      , input_size      , input->encoding);
-  std::u32string str_original    = normalize_for_inspect_format_4(original   , original_offset   , original_size   , input->encoding);
-  std::u32string str_replacement = normalize_for_inspect_format_4(replacement, replacement_offset, replacement_size, input->encoding);
-  std::u32string str_after       = normalize_for_inspect_format_4(after      , after_offset      , after_size      , input->encoding);
-  std::u32string str_before      = normalize_for_inspect_format_4(before     , before_offset     , before_size     , input->encoding);
+  std::u32string str_input
+    = normalize_for_inspect_format_4(input,
+                                     input_offset,
+                                     input_size,
+                                     input->encoding);
+  std::u32string str_original
+    = normalize_for_inspect_format_4(original,
+                                     original_offset,
+                                     original_size,
+                                     input->encoding);
+  std::u32string str_replacement
+    = normalize_for_inspect_format_4(replacement,
+                                     replacement_offset,
+                                     replacement_size,
+                                     input->encoding);
+  std::u32string str_after
+    = normalize_for_inspect_format_4(after,
+                                     after_offset,
+                                     after_size,
+                                     input->encoding);
+  std::u32string str_before
+    = normalize_for_inspect_format_4(before,
+                                     before_offset,
+                                     before_size,
+                                     input->encoding);
 
   if( all )
     {
@@ -2592,7 +2784,7 @@ __gg__inspect_format_4( int backward,
   // We now take the converted str_input, and put it back into id_1:
 
   size_t bytes_converted;
-  const char *converted = __gg__iconverter(DEFAULT_32_ENCODING,
+  const char *converted = __gg__iconverter(HOST_32_ENCODING,
                                            input->encoding,
                                            str_input.data(),
                                            str_input.size()*width_of_utf32,
@@ -2608,15 +2800,12 @@ __gg__inspect_format_4( int backward,
 
 extern "C"
 void
-__gg__inspect_format_1_sbc(int backward, size_t integers[])
+__gg__inspect_format_1_sbc( int backward,
+                            const size_t integers[],
+                            const cblc_referlet_t *params)
   {
   // When this routine is called, we know we are working in a single-byte-coded
   // codeset like ASCII or EBCDIC.
-  if( backward )
-    {
-    return inspect_backward_format_1(integers);
-    }
-
   size_t int_index = 0;
   size_t cblc_index = 0;
 
@@ -2628,23 +2817,24 @@ __gg__inspect_format_1_sbc(int backward, size_t integers[])
   std::vector<id_2_result> id_2_results(n_identifier_2);
 
   // Pick up identifier_1, which is the string being inspected
-  const cblc_field_t *id1   = __gg__treeplet_1f[cblc_index];
-  size_t              id1_o = __gg__treeplet_1o[cblc_index];
-  size_t              id1_s = __gg__treeplet_1s[cblc_index];
+  const cblc_field_t *id1   = params[cblc_index].field ;
+  size_t              id1_o = params[cblc_index].offset;
+  size_t              id1_s = params[cblc_index].size  ;
   cblc_index += 1;
   // normalize it, according to the language specification.
   std::string normalized_id_1
                          = normalize_id_sbc(id1, id1_o, id1_s, id1->encoding);
 
   std::vector<comparand_sbc> comparands;
+  comparands.reserve(n_identifier_2);
 
   for(size_t i=0; i<n_identifier_2; i++)
     {
     // For each identifier_2, we pick up its value:
 
-    id_2_results[i].id2   = __gg__treeplet_1f  [cblc_index];
-    id_2_results[i].id2_o = __gg__treeplet_1o[cblc_index];
-    id_2_results[i].id2_s = __gg__treeplet_1s[cblc_index];
+    id_2_results[i].id2   = params[cblc_index].field ;
+    id_2_results[i].id2_o = params[cblc_index].offset;
+    id_2_results[i].id2_s = params[cblc_index].size  ;
 
     cblc_index += 1;
     id_2_results[i].result = 0;
@@ -2668,14 +2858,14 @@ __gg__inspect_format_1_sbc(int backward, size_t integers[])
           next_comparand.operation = operation;
           next_comparand.identifier_3 = " ";
 
-          const cblc_field_t *id4_before   = __gg__treeplet_1f  [cblc_index];
-          size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_before   = params[cblc_index].field ;
+          size_t              id4_before_o = params[cblc_index].offset;
+          size_t              id4_before_s = params[cblc_index].size  ;
           cblc_index += 1;
 
-          const cblc_field_t *id4_after   = __gg__treeplet_1f  [cblc_index];
-          size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-          size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+          const cblc_field_t *id4_after   = params[cblc_index].field ;
+          size_t              id4_after_o = params[cblc_index].offset;
+          size_t              id4_after_s = params[cblc_index].size  ;
           cblc_index += 1;
 
           std::string normalized_id_4_before
@@ -2688,11 +2878,22 @@ __gg__inspect_format_1_sbc(int backward, size_t integers[])
                                                           id4_after_o,
                                                           id4_after_s,
                                                           id1->encoding);
-          the_alpha_and_omega_sbc(normalized_id_4_before,
-                                  normalized_id_4_after,
-                                  normalized_id_1,
-                                  next_comparand.alpha,
-                                  next_comparand.omega);
+          if( backward )
+            {
+            the_alpha_and_omega_backward_sbc(normalized_id_4_before,
+                                             normalized_id_4_after,
+                                             normalized_id_1,
+                                             next_comparand.alpha,
+                                             next_comparand.omega);
+            }
+          else
+            {
+            the_alpha_and_omega_sbc(normalized_id_4_before,
+                                    normalized_id_4_after,
+                                    normalized_id_1,
+                                    next_comparand.alpha,
+                                    next_comparand.omega);
+            }
 
           comparands.push_back(next_comparand);
           break;
@@ -2700,31 +2901,32 @@ __gg__inspect_format_1_sbc(int backward, size_t integers[])
 
         default:
           {
-          // We have some number of identifer-3 values,
+          // We have some number of identifier-3 values,
           // each with possible PHRASE1 modifiers.
           size_t pair_count = integers[int_index++];
 
           // We need to build up pair_count comparand structures:
 
+          comparands.reserve(comparands.size() + pair_count);
           for(size_t k=0; k<pair_count; k++)
             {
             comparand_sbc next_comparand = {};
             next_comparand.id_2_index = i;
             next_comparand.operation = operation;
 
-            const cblc_field_t *id3   = __gg__treeplet_1f[cblc_index];
-            size_t              id3_o = __gg__treeplet_1o[cblc_index];
-            size_t              id3_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id3   = params[cblc_index].field ;
+            size_t              id3_o = params[cblc_index].offset;
+            size_t              id3_s = params[cblc_index].size  ;
             cblc_index += 1;
 
-            const cblc_field_t *id4_before   = __gg__treeplet_1f[cblc_index];
-            size_t              id4_before_o = __gg__treeplet_1o[cblc_index];
-            size_t              id4_before_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id4_before   = params[cblc_index].field ;
+            size_t              id4_before_o = params[cblc_index].offset;
+            size_t              id4_before_s = params[cblc_index].size  ;
             cblc_index += 1;
 
-            const cblc_field_t *id4_after   = __gg__treeplet_1f[cblc_index];
-            size_t              id4_after_o = __gg__treeplet_1o[cblc_index];
-            size_t              id4_after_s = __gg__treeplet_1s[cblc_index];
+            const cblc_field_t *id4_after   = params[cblc_index].field ;
+            size_t              id4_after_o = params[cblc_index].offset;
+            size_t              id4_after_s = params[cblc_index].size  ;
             cblc_index += 1;
 
             next_comparand.identifier_3 = normalize_id_sbc(id3,
@@ -2741,11 +2943,22 @@ __gg__inspect_format_1_sbc(int backward, size_t integers[])
                                                               id4_after_o,
                                                               id4_after_s,
                                                               id1->encoding);
-            the_alpha_and_omega_sbc(normalized_id_4_before,
-                                    normalized_id_4_after,
-                                    normalized_id_1,
-                                    next_comparand.alpha,
-                                    next_comparand.omega);
+            if( backward )
+              {
+              the_alpha_and_omega_backward_sbc(normalized_id_4_before,
+                                               normalized_id_4_after,
+                                               normalized_id_1,
+                                               next_comparand.alpha,
+                                               next_comparand.omega);
+              }
+            else
+              {
+              the_alpha_and_omega_sbc(normalized_id_4_before,
+                                      normalized_id_4_after,
+                                      normalized_id_1,
+                                      next_comparand.alpha,
+                                      next_comparand.omega);
+              }
             next_comparand.leading = true;
             next_comparand.leading_count = 0;
             comparands.push_back(next_comparand);
@@ -2755,197 +2968,800 @@ __gg__inspect_format_1_sbc(int backward, size_t integers[])
       }
     }
 
-  // We are now ready to walk through identifier-1, character by
-  // character, checking each of the comparands for a match:
+  set_trailing_bounds_sbc(comparands, normalized_id_1, backward);
 
-  // We are now set up to accomplish the data flow described
-  // in the language specification.  We loop through the
-  // the character positions in normalized_id_1:
-  size_t leftmost = 0;
-  size_t rightmost = leftmost + normalized_id_1.length();
-
-  while( leftmost < rightmost )
+  if( backward )
     {
-    // For each leftmost position, we check each of the
-    // pairs:
+    size_t rightmost = normalized_id_1.length();
+    size_t the_end_of_the_world = rightmost;
 
-    for(size_t k=0; k<comparands.size(); k++)
+    while( rightmost > 0 )
       {
-      if( leftmost < comparands[k].alpha )
-        {
-        // This can't be a match, because leftmost is
-        // to the left of the comparand's alpha.
-        continue;
-        }
-      if( leftmost + comparands[k].identifier_3.length() > comparands[k].omega)
-        {
-        // This can't be a match, because the rightmost
-        // character of the comparand falls to the right
-        // of the comparand's omega
-        continue;
-        }
-      // A match is theoretically possible, because all
-      // the characters of the comparand fall between
-      // alpha and omega:
-      bool possible_match = true;
+      size_t rightmost_delta = 0;
+      rightmost -= 1;
 
-      if( comparands[k].operation != bound_characters_e )
+      for(size_t k=0; k<comparands.size(); k++)
         {
-        for(size_t m=0; m<comparands[k].identifier_3.length(); m++)
+        size_t length = comparands[k].identifier_3.length();
+
+        if( rightmost < comparands[k].alpha )
           {
-          if( comparands[k].identifier_3[m] != normalized_id_1[leftmost+m] )
-            {
-            possible_match = false;
-            break;
-            }
+          continue;
           }
-        }
-      if( possible_match )
-        {
-        // The characters of the comparand match the
-        // characters at leftmost.
-        bool match = false;
-        switch( comparands[k].operation )
+        if( rightmost + length > comparands[k].omega )
           {
-          case bound_first_e:
-            // This can't happen in a FORMAT_1
-            warnx("The compiler goofed: "
-                  "INSPECT FORMAT 1 "
-                  "shouldn't have "
-                  "bound_first_e");
-            abort();
-            break;
+          continue;
+          }
+        if( rightmost + length > the_end_of_the_world )
+          {
+          continue;
+          }
 
-          case bound_characters_e:
-            match = true;
-            break;
+        bool possible_match = true;
+        if( comparands[k].operation != bound_characters_e )
+          {
+          possible_match = matches_sbc(normalized_id_1,
+                                       rightmost,
+                                       comparands[k].identifier_3,
+                                       length);
+          }
 
-          case bound_all_e:
+        if( possible_match )
+          {
+          bool match = false;
+
+          switch( comparands[k].operation )
             {
-            // We have a match.
-            match = true;
-            break;
-            }
+            case bound_first_e:
+              warnx("The compiler goofed: "
+                    "INSPECT FORMAT 1 "
+                    "shouldn't have "
+                    "bound_first_e");
+              abort();
+              break;
 
-          case bound_leading_e:
-            {
-            // We have a match at leftmost.  But we need to figure out if this
-            // particular match is valid for LEADING.
+            case bound_characters_e:
+            case bound_all_e:
+              match = true;
+              break;
 
-            // Hang onto your hat.  This is delightfully clever.
-            //
-            // This position is LEADING if:
-            //  1) .leading is still true
-            //  2) leftmost / (length_of_comparand ) = current_count
-            //
-            // I get chills every time I look at that.
-
-            if( comparands[k].leading )
-              {
-              // So far, so good.
-              size_t count = ((leftmost - comparands[k].alpha))
-                              / comparands[k].identifier_3.length();
-              if( count == comparands[k].leading_count )
+            case bound_leading_e:
+              if( comparands[k].leading
+                  && rightmost
+                       + length * (comparands[k].leading_count + 1)
+                     == comparands[k].omega )
                 {
-                // This means that the match here is just the latest of a
-                // string of LEADING matches that started at .alpha
                 comparands[k].leading_count += 1;
                 match = true;
+                rightmost_delta = length - 1;
                 }
-              }
-            break;
+              break;
+
+            case bound_trailing_e:
+              match = rightmost + length <= comparands[k].trailing_bound
+                      && (rightmost - comparands[k].alpha) % length == 0;
+              break;
             }
 
-          case bound_trailing_e:
+          if( match )
             {
-            // We have a match at leftmost.
-            //
-            // We want to know if this is a trailing match.  For that to be,
-            // all of the possible matches from here to the omega have to be
-            // true as well:
-
-            if( (comparands[k].omega-leftmost)
-                    % comparands[k].identifier_3.length() == 0 )
+            id_2_results[comparands[k].id_2_index].result += 1;
+            the_end_of_the_world = rightmost;
+            if( rightmost_delta > rightmost )
               {
-              // The remaining number of characters is correct for a match.
-              // Keep checking.
-
-              // Assume a match until we learn otherwise:
-              match = true;
-              size_t local_left = leftmost;
-              local_left += comparands[k].identifier_3.length();
-              while( match && local_left < comparands[k].omega )
-                {
-                for(size_t m=0; m<comparands[k].identifier_3.length(); m++)
-                  {
-                  if( comparands[k].identifier_3[m] 
-                                            != normalized_id_1[local_left+m] )
-                    {
-                    // We have a mismatched character, so no trailing match is
-                    // possible
-                    match = false;
-                    break;
-                    }
-                  }
-                local_left += comparands[k].identifier_3.length();
-                }
+              rightmost = 0;
+              }
+            else
+              {
+              rightmost -= rightmost_delta;
               }
             break;
             }
           }
-
-        if( match )
+        else
           {
-          // We have a match at leftmost:
-
-          // Bump the result counter
-          id_2_results[comparands[k].id_2_index].result += 1;
-
-          // Adjust the leftmost pointer to point to
-          // the rightmost character of the matched
-          // string, keeping in mind that it will be
-          // bumped again after we break out of the
-          // k<pair_count loop:
-          leftmost += comparands[k].identifier_3.length() - 1;
-          break;
+          comparands[k].leading = false;
           }
-        }
-      else
-        {
-        // We are within alpha/omega, but there was no
-        // match, which permanently disqualifies the
-        // possibility of LEADING
-        comparands[k].leading = false;
         }
       }
-    leftmost += 1;
+    }
+  else
+    {
+    // We are now ready to walk through identifier-1, character by
+    // character, checking each of the comparands for a match.
+    size_t leftmost = 0;
+    size_t rightmost = normalized_id_1.length();
+
+    while( leftmost < rightmost )
+      {
+      // For each leftmost position, we check each of the pairs.
+
+      for(size_t k=0; k<comparands.size(); k++)
+        {
+        size_t length = comparands[k].identifier_3.length();
+
+        if( leftmost < comparands[k].alpha )
+          {
+          // This can't be a match, because leftmost is
+          // to the left of the comparand's alpha.
+          continue;
+          }
+        if( leftmost + length > comparands[k].omega )
+          {
+          // This can't be a match, because the rightmost
+          // character of the comparand falls to the right
+          // of the comparand's omega
+          continue;
+          }
+        // A match is theoretically possible, because all
+        // the characters of the comparand fall between
+        // alpha and omega:
+        bool possible_match = true;
+
+        if( comparands[k].operation != bound_characters_e )
+          {
+          possible_match = matches_sbc(normalized_id_1,
+                                       leftmost,
+                                       comparands[k].identifier_3,
+                                       length);
+          }
+        if( possible_match )
+          {
+          // The characters of the comparand match the
+          // characters at leftmost.
+          bool match = false;
+          switch( comparands[k].operation )
+            {
+            case bound_first_e:
+              // This can't happen in a FORMAT_1
+              warnx("The compiler goofed: "
+                    "INSPECT FORMAT 1 "
+                    "shouldn't have "
+                    "bound_first_e");
+              abort();
+              break;
+
+            case bound_characters_e:
+              match = true;
+              break;
+
+            case bound_all_e:
+              {
+              // We have a match.
+              match = true;
+              break;
+              }
+
+            case bound_leading_e:
+              {
+              // We have a match at leftmost.  But we need to figure out if this
+              // particular match is valid for LEADING.
+
+              // Hang onto your hat.  This is delightfully clever.
+              //
+              // This position is LEADING if:
+              //  1) .leading is still true
+              //  2) leftmost / (length_of_comparand ) = current_count
+              //
+              // I get chills every time I look at that.
+
+              if( comparands[k].leading )
+                {
+                // So far, so good.
+                size_t count = ((leftmost - comparands[k].alpha))
+                                / length;
+                if( count == comparands[k].leading_count )
+                  {
+                  // This means that the match here is just the latest of a
+                  // string of LEADING matches that started at .alpha
+                  comparands[k].leading_count += 1;
+                  match = true;
+                  }
+                }
+              break;
+              }
+
+            case bound_trailing_e:
+              {
+              // We have a match at leftmost.
+              //
+              // We want to know if this is a trailing match.  For that to be,
+              // all of the possible matches from here to the omega have to be
+              // true as well:
+
+              match = leftmost >= comparands[k].trailing_bound
+                      && (comparands[k].omega-leftmost) % length == 0;
+              break;
+              }
+            }
+
+          if( match )
+            {
+            // We have a match at leftmost:
+
+            // Bump the result counter
+            id_2_results[comparands[k].id_2_index].result += 1;
+
+            // Adjust the leftmost pointer to point to
+            // the rightmost character of the matched
+            // string, keeping in mind that it will be
+            // bumped again after we break out of the
+            // k<pair_count loop:
+            leftmost += length - 1;
+            break;
+            }
+          }
+        else
+          {
+          // We are within alpha/omega, but there was no
+          // match, which permanently disqualifies the
+          // possibility of LEADING
+          comparands[k].leading = false;
+          }
+        }
+      leftmost += 1;
+      }
     }
 
   // Add our results to the identifier_2 values:
 
   for(size_t i = 0; i<id_2_results.size(); i++)
     {
-    int rdigits;
-    __int128 id_2_value
-      = __gg__binary_value_from_qualified_field(&rdigits,
-                                                id_2_results[i].id2,
-                                                id_2_results[i].id2_o,
-                                                id_2_results[i].id2_s);
-    while(rdigits--)
+    int128 id_2_value;
+    __gg__int128_from_qualified_field(id_2_value,
+                                      id_2_results[i].id2,
+                                      id_2_results[i].id2_o,
+                                      id_2_results[i].id2_s);
+    while(id_2_value.rdigits--)
       {
-      id_2_value /= 10.0;
+      id_2_value.i128 /= 10.0;
       }
 
     // Accumulate what we've found into it
-    id_2_value += id_2_results[i].result;
+    id_2_value.i128 += id_2_results[i].result;
 
     // And put it back:
     __gg__int128_to_qualified_field(id_2_results[i].id2,
                                     id_2_results[i].id2_o,
                                     id_2_results[i].id2_s,
-                                    id_2_value,
+                                    id_2_value.i128,
                                     0,
-                                    truncation_e,
-                                    NULL);
+                                    truncation_e);
     }
+  }
+
+extern "C"
+void
+__gg__inspect_format_2_sbc( int backward,
+                            const size_t integers[],
+                            const cblc_referlet_t *params)
+  {
+  // When this routine is called, we know we are working in a single-byte-coded
+  // codeset like ASCII or EBCDIC.
+  size_t int_index = 0;
+  size_t cblc_index = 0;
+
+  // Reference the language specification for the meanings of identifier_X
+
+  // Pick up identifier_1, which is the string being inspected.
+  cblc_field_t *id1   = params[cblc_index].field;
+  size_t        id1_o = params[cblc_index].offset;
+  size_t        id1_s = params[cblc_index].size;
+  cblc_index += 1;
+
+  std::string normalized_id_1
+    = normalize_id_sbc(id1, id1_o, id1_s, id1->encoding);
+
+  std::vector<comparand_sbc> comparands;
+
+  // Pick up the count of operations.
+  size_t nbounds = integers[int_index++];
+  comparands.reserve(nbounds);
+
+  for(size_t j=0; j<nbounds; j++)
+    {
+    cbl_inspect_bound_t operation
+      = (cbl_inspect_bound_t)integers[int_index++];
+
+    switch( operation )
+      {
+      case bound_characters_e:
+        {
+        comparand_sbc next_comparand = {};
+        next_comparand.operation = operation;
+
+        const cblc_field_t *id5   = params[cblc_index].field;
+        size_t              id5_o = params[cblc_index].offset;
+        size_t              id5_s = params[cblc_index].size;
+        cblc_index += 1;
+
+        const cblc_field_t *id4_before   = params[cblc_index].field;
+        size_t              id4_before_o = params[cblc_index].offset;
+        size_t              id4_before_s = params[cblc_index].size;
+        cblc_index += 1;
+
+        const cblc_field_t *id4_after   = params[cblc_index].field;
+        size_t              id4_after_o = params[cblc_index].offset;
+        size_t              id4_after_s = params[cblc_index].size;
+        cblc_index += 1;
+
+        next_comparand.identifier_3.assign(1, '\0');
+        next_comparand.identifier_5
+          = normalize_id_sbc(id5, id5_o, id5_s, id1->encoding);
+        next_comparand.identifier_5.resize(1);
+
+        std::string normalized_id_4_before
+          = normalize_id_sbc(id4_before,
+                             id4_before_o,
+                             id4_before_s,
+                             id1->encoding);
+        std::string normalized_id_4_after
+          = normalize_id_sbc(id4_after,
+                             id4_after_o,
+                             id4_after_s,
+                             id1->encoding);
+
+        if( backward )
+          {
+          the_alpha_and_omega_backward_sbc(normalized_id_4_before,
+                                           normalized_id_4_after,
+                                           normalized_id_1,
+                                           next_comparand.alpha,
+                                           next_comparand.omega);
+          }
+        else
+          {
+          the_alpha_and_omega_sbc(normalized_id_4_before,
+                                  normalized_id_4_after,
+                                  normalized_id_1,
+                                  next_comparand.alpha,
+                                  next_comparand.omega);
+          }
+        comparands.push_back(next_comparand);
+        break;
+        }
+
+      default:
+        {
+        // There are pair_count identifier-3/identifier-5 pairs, each with
+        // possible PHRASE1 modifiers.
+        size_t pair_count = integers[int_index++];
+        comparands.reserve(comparands.size() + pair_count);
+
+        for(size_t k=0; k<pair_count; k++)
+          {
+          comparand_sbc next_comparand = {};
+          next_comparand.operation = operation;
+
+          const cblc_field_t *id3   = params[cblc_index].field;
+          size_t              id3_o = params[cblc_index].offset;
+          size_t              id3_s = params[cblc_index].size;
+          cblc_index += 1;
+
+          const cblc_field_t *id5   = params[cblc_index].field;
+          size_t              id5_o = params[cblc_index].offset;
+          size_t              id5_s = params[cblc_index].size;
+          cblc_index += 1;
+
+          const cblc_field_t *id4_before   = params[cblc_index].field;
+          size_t              id4_before_o = params[cblc_index].offset;
+          size_t              id4_before_s = params[cblc_index].size;
+          cblc_index += 1;
+
+          const cblc_field_t *id4_after   = params[cblc_index].field;
+          size_t              id4_after_o = params[cblc_index].offset;
+          size_t              id4_after_s = params[cblc_index].size;
+          cblc_index += 1;
+
+          next_comparand.identifier_3
+            = normalize_id_sbc(id3, id3_o, id3_s, id1->encoding);
+          next_comparand.identifier_5
+            = normalize_id_sbc(id5, id5_o, id5_s, id1->encoding);
+
+          if( id3->attr & FIGCONST_MASK )
+            {
+            match_lengths_sbc(next_comparand.identifier_3,
+                              next_comparand.identifier_5);
+            }
+          else if( id5->attr & FIGCONST_MASK )
+            {
+            match_lengths_sbc(next_comparand.identifier_5,
+                              next_comparand.identifier_3);
+            }
+
+          std::string normalized_id_4_before
+            = normalize_id_sbc(id4_before,
+                               id4_before_o,
+                               id4_before_s,
+                               id1->encoding);
+          std::string normalized_id_4_after
+            = normalize_id_sbc(id4_after,
+                               id4_after_o,
+                               id4_after_s,
+                               id1->encoding);
+
+          if( backward )
+            {
+            the_alpha_and_omega_backward_sbc(normalized_id_4_before,
+                                             normalized_id_4_after,
+                                             normalized_id_1,
+                                             next_comparand.alpha,
+                                             next_comparand.omega);
+            }
+          else
+            {
+            the_alpha_and_omega_sbc(normalized_id_4_before,
+                                    normalized_id_4_after,
+                                    normalized_id_1,
+                                    next_comparand.alpha,
+                                    next_comparand.omega);
+            }
+
+          next_comparand.leading = true;
+          next_comparand.leading_count = 0;
+          next_comparand.first = true;
+          comparands.push_back(next_comparand);
+          }
+        break;
+        }
+      }
+    }
+
+  set_trailing_bounds_sbc(comparands, normalized_id_1, backward);
+
+  if( backward )
+    {
+    size_t rightmost = normalized_id_1.length();
+    size_t the_end_of_the_world = rightmost;
+
+    while( rightmost > 0 )
+      {
+      size_t rightmost_delta = 0;
+      rightmost -= 1;
+
+      for(size_t k=0; k<comparands.size(); k++)
+        {
+        size_t length = comparands[k].identifier_3.length();
+
+        if( rightmost < comparands[k].alpha )
+          {
+          continue;
+          }
+        if( rightmost + length > comparands[k].omega )
+          {
+          continue;
+          }
+        if( rightmost + length > the_end_of_the_world )
+          {
+          continue;
+          }
+
+        bool possible_match = true;
+        if( comparands[k].operation != bound_characters_e )
+          {
+          possible_match = matches_sbc(normalized_id_1,
+                                       rightmost,
+                                       comparands[k].identifier_3,
+                                       length);
+          }
+
+        if( possible_match )
+          {
+          bool match = false;
+
+          switch( comparands[k].operation )
+            {
+            case bound_first_e:
+              warnx("The compiler goofed: "
+                    "INSPECT FORMAT 2 "
+                    "shouldn't have "
+                    "bound_first_e");
+              abort();
+              break;
+
+            case bound_characters_e:
+            case bound_all_e:
+              match = true;
+              break;
+
+            case bound_leading_e:
+              if( comparands[k].leading
+                  && rightmost
+                       + length * (comparands[k].leading_count + 1)
+                     == comparands[k].omega )
+                {
+                comparands[k].leading_count += 1;
+                match = true;
+                rightmost_delta = length - 1;
+                }
+              break;
+
+            case bound_trailing_e:
+              match = rightmost + length <= comparands[k].trailing_bound
+                      && (rightmost - comparands[k].alpha) % length == 0;
+              break;
+            }
+
+          if( match )
+            {
+            memcpy(&normalized_id_1[rightmost],
+                   comparands[k].identifier_5.data(),
+                   comparands[k].identifier_5.length());
+            the_end_of_the_world = rightmost;
+            if( rightmost_delta > rightmost )
+              {
+              rightmost = 0;
+              }
+            else
+              {
+              rightmost -= rightmost_delta;
+              }
+            break;
+            }
+          }
+        else
+          {
+          comparands[k].leading = false;
+          }
+        }
+      }
+    }
+  else
+    {
+    size_t leftmost = 0;
+    size_t rightmost = normalized_id_1.length();
+
+    while( leftmost < rightmost )
+      {
+      for(size_t k=0; k<comparands.size(); k++)
+        {
+        size_t length = comparands[k].identifier_3.length();
+
+        if( leftmost < comparands[k].alpha )
+          {
+          continue;
+          }
+        if( leftmost + length > comparands[k].omega )
+          {
+          continue;
+          }
+
+        bool possible_match = true;
+        if( comparands[k].operation != bound_characters_e )
+          {
+          possible_match = matches_sbc(normalized_id_1,
+                                       leftmost,
+                                       comparands[k].identifier_3,
+                                       length);
+          }
+
+        if( possible_match )
+          {
+          bool match = false;
+
+          switch( comparands[k].operation )
+            {
+            case bound_characters_e:
+            case bound_all_e:
+              match = true;
+              break;
+
+            case bound_first_e:
+              if( comparands[k].first )
+                {
+                match = true;
+                comparands[k].first = false;
+                }
+              break;
+
+            case bound_leading_e:
+              if( comparands[k].leading )
+                {
+                size_t count = (leftmost - comparands[k].alpha) / length;
+                if( count == comparands[k].leading_count )
+                  {
+                  comparands[k].leading_count += 1;
+                  match = true;
+                  }
+                }
+              break;
+
+            case bound_trailing_e:
+              match = leftmost >= comparands[k].trailing_bound
+                      && (comparands[k].omega - leftmost) % length == 0;
+              break;
+            }
+
+          if( match )
+            {
+            memcpy(&normalized_id_1[leftmost],
+                   comparands[k].identifier_5.data(),
+                   comparands[k].identifier_5.length());
+            leftmost += length - 1;
+            break;
+            }
+          }
+        else
+          {
+          comparands[k].leading = false;
+          }
+        }
+      leftmost += 1;
+      }
+    }
+  charmap_t *charmap = __gg__get_charmap(id1->encoding);
+  unsigned char *id1_data = id1->data + id1_o;
+  charmap->memset(id1_data, charmap->mapped_character(ascii_space), id1_s);
+  memcpy(id1_data,
+         normalized_id_1.data(),
+         std::min(normalized_id_1.length(), id1_s));
+  }
+
+extern "C"
+void
+__gg__inspect_format_4_sbc( int backward,
+                            cblc_field_t *input,
+                            size_t        input_offset,
+                            size_t        input_size,
+                      const cblc_field_t *original,
+                            size_t        original_offset,
+                            size_t        original_size,
+                      const cblc_field_t *replacement,
+                            size_t        replacement_offset,
+                            size_t        replacement_size,
+                      const cblc_field_t *after,
+                            size_t        after_offset,
+                            size_t        after_size,
+                      const cblc_field_t *before,
+                            size_t        before_offset,
+                            size_t        before_size)
+  {
+  // When this routine is called, we know we are working in a single-byte-coded
+  // codeset like ASCII or EBCDIC.
+  cbl_figconst_t figconst_original
+    = static_cast<cbl_figconst_t>(original->attr & FIGCONST_MASK);
+  cbl_figconst_t figconst_replacement
+    = static_cast<cbl_figconst_t>(replacement->attr & FIGCONST_MASK);
+  int figswitch = (figconst_original ? 2 : 0)
+                  + (figconst_replacement ? 1 : 0);
+
+  switch( figswitch )
+    {
+    case 0:
+      break;
+    case 1:
+      replacement_size = (size_t)(-1LL);
+      break;
+    case 2:
+      original_size = 1;
+      break;
+    case 3:
+      replacement_size = original_size = 1;
+      break;
+    }
+
+  if( before && before_size && before->attr & FIGCONST_MASK )
+    {
+    before_size = 1;
+    }
+  if( after && after_size && after->attr & FIGCONST_MASK )
+    {
+    after_size = 1;
+    }
+
+  bool all = replacement_size == (size_t)(-1LL);
+  if( all )
+    {
+    replacement_size = 1;
+    }
+
+  std::string str_input
+    = normalize_id_sbc(input,
+                       input_offset,
+                       input_size,
+                       input->encoding);
+  std::string str_original
+    = normalize_id_sbc(original,
+                       original_offset,
+                       original_size,
+                       input->encoding);
+  std::string str_replacement
+    = normalize_id_sbc(replacement,
+                       replacement_offset,
+                       replacement_size,
+                       input->encoding);
+  std::string str_after
+    = normalize_id_sbc(after,
+                       after_offset,
+                       after_size,
+                       input->encoding);
+  std::string str_before
+    = normalize_id_sbc(before,
+                       before_offset,
+                       before_size,
+                       input->encoding);
+
+  if( all )
+    {
+    str_replacement.assign(str_original.length(), str_replacement[0]);
+    }
+
+  size_t leftmost;
+  size_t rightmost;
+
+  if( backward )
+    {
+    if( str_after.empty() )
+      {
+      rightmost = str_input.length();
+      }
+    else
+      {
+      size_t found = str_input.rfind(str_after, str_input.length());
+      rightmost = found == std::string::npos ? 0 : found;
+      }
+
+    if( str_before.empty() )
+      {
+      leftmost = 0;
+      }
+    else
+      {
+      size_t found = str_input.rfind(str_before, rightmost);
+      leftmost = found == std::string::npos
+                 ? 0
+                 : found + str_before.length();
+      }
+    }
+  else
+    {
+    if( str_after.empty() )
+      {
+      leftmost = 0;
+      }
+    else
+      {
+      size_t found = str_input.find(str_after);
+      leftmost = found == std::string::npos
+                 ? str_input.length()
+                 : found + str_after.length();
+      }
+
+    if( str_before.empty() )
+      {
+      rightmost = str_input.length();
+      }
+    else
+      {
+      size_t found = str_input.find(str_before, leftmost);
+      rightmost = found == std::string::npos ? str_input.length() : found;
+      }
+    }
+
+  if( leftmost < rightmost )
+    {
+    unsigned char conversion[256];
+    for(size_t i=0; i<256; i++)
+      {
+      conversion[i] = static_cast<unsigned char>(i);
+      }
+
+    // Construct the table backwards so that the first occurrence of a
+    // repeated original character supplies its replacement.
+    for(size_t i=str_original.length(); i>0; i--)
+      {
+      unsigned char from = static_cast<unsigned char>(str_original[i-1]);
+      conversion[from] = static_cast<unsigned char>(str_replacement[i-1]);
+      }
+
+    for(size_t i=leftmost; i<rightmost; i++)
+      {
+      unsigned char from = static_cast<unsigned char>(str_input[i]);
+      str_input[i] = static_cast<char>(conversion[from]);
+      }
+    }
+
+  memcpy(input->data + input_offset,
+         str_input.data(),
+         std::min(str_input.length(), input_size));
   }

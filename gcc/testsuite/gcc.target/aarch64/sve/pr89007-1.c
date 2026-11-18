@@ -7,15 +7,16 @@ unsigned char dst[N];
 unsigned char in1[N];
 unsigned char in2[N];
 
+/* The rounded average is computed through the four-operation identity
+   x + y = 2 * (x | y) - (x ^ y), so the loop body is an orr, an eor, a
+   shift and a subtract -- and still no widening.  */
 /*
 **  foo: 
 **	...
-**	lsr	(z[0-9]+\.b), z[0-9]+\.b, #1
-**	lsr	(z[0-9]+\.b), z[0-9]+\.b, #1
-**	add	(z[0-9]+\.b), (\1, \2|\2, \1)
 **	orr	(z[0-9]+)\.d, z[0-9]+\.d, z[0-9]+\.d
-**	and	(z[0-9]+\.b), \5\.b, #0x1
-**	add	z[0-9]+\.b, (\3, \6|\6, \3)
+**	eor	(z[0-9]+)\.d, z[0-9]+\.d, z[0-9]+\.d
+**	lsr	(z[0-9]+\.b), \2\.b, #1
+**	sub	z[0-9]+\.b, \1\.b, \3
 **	...
 */
 void

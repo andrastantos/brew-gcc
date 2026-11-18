@@ -113,6 +113,7 @@
 #include "errors.h"
 #include "read-md.h"
 #include "gensupport.h"
+#include "hash-map.h"
 
 #undef GENERATOR_FILE
 enum true_rtx_doe {
@@ -1784,9 +1785,57 @@ public:
   /* Index N says whether operands[N] has been set.  */
   auto_vec <bool> set_operands;
 
-  /* A guranteed lower bound on the value of peep2_current_count.  */
+  /* A guaranteed lower bound on the value of peep2_current_count.  */
   int peep2_count;
 };
+
+/* The distinct .md conditions, in the order they were first printed, and a
+   map from the condition text to that position.  A condition is written out
+   once as a helper function and called wherever it is needed, rather than
+   inlined at each of the decisions that test it.  */
+
+static auto_vec<const char *> md_conditions;
+static hash_map<nofree_string_hash, unsigned int> md_condition_ids;
+
+/* Return the index of COND's helper function, registering it if this is the
+   first time it has been seen.  */
+
+static unsigned int
+md_condition_id (const char *cond)
+{
+  bool existed;
+  unsigned int &id = md_condition_ids.get_or_insert (cond, &existed);
+  if (!existed)
+    {
+      id = md_conditions.length ();
+      md_conditions.safe_push (cond);
+    }
+  return id;
+}
+
+/* Write a helper function for each condition to F.  They go in the header,
+   which every generated file includes after the target headers, so that a
+   condition is compiled once however many decisions test it.
+
+   The helpers take the operands and the insn, which is everything a
+   condition may read, and are declared inline so that the host compiler can
+   fold them back into their callers.  */
+
+static void
+print_md_conditions (FILE *f)
+{
+  unsigned int i;
+  const char *cond;
+
+  FOR_EACH_VEC_ELT (md_conditions, i, cond)
+    {
+      fprintf (f, "\nstatic inline bool\ninsn_condition_%d "
+	       "(rtx *operands ATTRIBUTE_UNUSED,\n"
+	       "\t\t   rtx_insn *insn ATTRIBUTE_UNUSED)\n{\n  return ", i);
+      rtx_reader_ptr->print_c_condition (f, cond);
+      fprintf (f, ";\n}\n");
+    }
+}
 
 /* Return true if TEST can safely be performed at D, where
    the conditions in KC hold.  TEST is known to occur along the
@@ -2454,7 +2503,7 @@ prune_invalid_results (merge_state_info *sinfo)
     }
 }
 
-/* Return true if PAT represents the biggest posssible match for SINFO;
+/* Return true if PAT represents the biggest possible match for SINFO;
    that is, if the next action of SINFO's state on return from PAT will
    be something that cannot be merged with any other state.  */
 
@@ -3175,7 +3224,7 @@ split_out_patterns (vec <merge_state_info> &states)
      The non-leaf patterns that we try are as deep as possible
      and are an extension of the state's previous best candidate match (PB).
      We need only consider states whose current potential match is also PB;
-     any states that don't match as much as PB cannnot match the new pattern,
+     any states that don't match as much as PB cannot match the new pattern,
      while any states that already match more than PB must be different from
      the new pattern.  */
   for (unsigned int i2 = states.length (); i2-- > 0; )
@@ -4762,10 +4811,13 @@ print_test (FILE *f, output_state *os, const rtx_test &test, bool is_param,
       break;
 
     case rtx_test::C_TEST:
+      /* Pattern routines take no insn, and pattern_c_test_p keeps C tests
+	 out of them for that reason.  */
       gcc_assert (!is_param && value == 1);
       if (invert_p)
 	fprintf (f, "!");
-      rtx_reader_ptr->print_c_condition (f, test.u.string);
+      fprintf (f, "insn_condition_%d (operands, insn)",
+	       md_condition_id (test.u.string));
       break;
 
     case rtx_test::ACCEPT:
@@ -5288,11 +5340,10 @@ print_subroutine (FILE *f, output_state *os, state *s, int proc_id,
 /* Print out a routine of type TYPE that performs ROOT.  */
 
 static void
-print_subroutine_group (vec<FILE *> &vec, FILE *header, output_state *os,
+print_subroutine_group (const vec<generator_output> &outputs, FILE *header,
+			output_state *os,
 			routine_type type, state *root)
 {
-  FILE *f;
-  unsigned idx;
   os->type = type;
   if (use_subroutines_p)
     {
@@ -5305,19 +5356,14 @@ print_subroutine_group (vec<FILE *> &vec, FILE *header, output_state *os,
       unsigned int i;
       state *s;
 
-      FILE *f = header;
       FOR_EACH_VEC_ELT (subroutines, i, s)
 	print_subroutine (header, os, s, i + 1, true);
 
       FOR_EACH_VEC_ELT (subroutines, i, s)
-	{
-	  f = choose_output (vec, idx);
-	  print_subroutine (f, os, s, i + 1);
-	}
+	print_subroutine (choose_output (outputs), os, s, i + 1);
     }
   /* Output the main routine.  */
-  f = choose_output (vec, idx);
-  print_subroutine (f, os, root, 0);
+  print_subroutine (choose_output (outputs), os, root, 0);
 }
 
 /* Return the rtx pattern for the list of rtxes in a define_peephole2.  */
@@ -5388,24 +5434,22 @@ remove_clobbers (acceptance_type *acceptance_ptr, rtx *pattern_ptr)
   return true;
 }
 
-auto_vec<FILE *, 10> output_files;
-char header_name[255];
-FILE *header = NULL;
+auto_vec<generator_output, 10> output_files;
+const char *header_name;
 
 static bool
 handle_arg (const char *arg)
 {
-  printf ("%s\n", arg);
   if (arg[1] == 'O')
     {
-      FILE *file = fopen (&arg[2], "w");
-      output_files.safe_push (file);
+      add_generator_output (output_files, &arg[2], true);
       return true;
     }
   if (arg[1] == 'H')
     {
-      snprintf (header_name, 255, "%s", &arg[2]);
-      header = fopen (header_name, "w");
+      if (header_name)
+	fatal ("option -H specified more than once");
+      header_name = &arg[2];
       return true;
     }
   return false;
@@ -5421,14 +5465,18 @@ main (int argc, const char **argv)
   if (!init_rtx_reader_args_cb (argc, argv, handle_arg))
     return (FATAL_EXIT_CODE);
 
+  if (!header_name)
+    fatal ("no -H output file specified");
   if (output_files.is_empty ())
-    output_files.safe_push (stdout);
+    add_generator_output (output_files, NULL, true);
+  unsigned int header_index
+    = add_generator_output (output_files, header_name, false);
+  open_generator_outputs (output_files);
+  FILE *header = output_files[header_index].file;
 
-  for (auto f : output_files)
-    write_header (f, header_name);
-
-  FILE *file = NULL;
-  unsigned file_idx;
+  for (const generator_output &output : output_files)
+    if (output.partition_p)
+      write_header (output.file, header_name);
 
   /* Read the machine description.  */
 
@@ -5436,7 +5484,6 @@ main (int argc, const char **argv)
   while (read_md_rtx (&info))
     {
       rtx def = info.def;
-      file = choose_output (output_files, file_idx);
 
       acceptance_type acceptance;
       acceptance.partial_p = false;
@@ -5494,8 +5541,9 @@ main (int argc, const char **argv)
   if (have_error)
     return FATAL_EXIT_CODE;
 
-  for (auto f : output_files)
-    fprintf (f, "%s", "\n\n");
+  for (const generator_output &output : output_files)
+    if (output.partition_p)
+      fprintf (output.file, "%s", "\n\n");
 
   /* Optimize each routine in turn.  */
   optimize_subroutine_group ("recog", &insn_root);
@@ -5522,10 +5570,7 @@ main (int argc, const char **argv)
 	print_pattern (header, &os, routine, true);
 
       FOR_EACH_VEC_ELT (patterns, i, routine)
-	{
-	  file = choose_output (output_files, file_idx);
-	  print_pattern (file, &os, routine);
-	}
+	print_pattern (choose_output (output_files), &os, routine);
     }
 
   /* Print out the matching routines.  */
@@ -5533,11 +5578,9 @@ main (int argc, const char **argv)
   print_subroutine_group (output_files, header, &os, SPLIT, &split_root);
   print_subroutine_group (output_files, header, &os, PEEPHOLE2, &peephole2_root);
 
-  fclose (header);
+  /* Every test has been printed, so the set of conditions is complete.  */
+  print_md_conditions (header);
 
-  int ret = SUCCESS_EXIT_CODE;
-  for (FILE *f : output_files)
-    if (fclose (f) != 0)
-      ret = FATAL_EXIT_CODE;
-  return ret;
+  return (close_generator_outputs (output_files)
+	  ? SUCCESS_EXIT_CODE : FATAL_EXIT_CODE);
 }

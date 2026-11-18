@@ -193,7 +193,7 @@
    (V8SI "V8HI")
    (V4DI "V4SI")])
 
-;; Double-sized Vector MODE with same elemet type. "Vector, Enlarged-MODE"
+;; Double-sized Vector MODE with same element type. "Vector, Enlarged-MODE"
 (define_mode_attr VEMODE256
   [(V8SF "V16SF")
    (V8SI "V16SI")
@@ -3746,7 +3746,7 @@ gen_lasx_xvmulwod_<dlasxfmt>_<lasxfmt><u>;
   DONE;
 })
 
-(define_expand "usadv32qi"
+(define_expand "usadv8siv32qi"
   [(match_operand:V8SI 0 "register_operand")
    (match_operand:V32QI 1 "register_operand")
    (match_operand:V32QI 2 "register_operand")
@@ -3763,7 +3763,7 @@ gen_lasx_xvmulwod_<dlasxfmt>_<lasxfmt><u>;
   DONE;
 })
 
-(define_expand "ssadv32qi"
+(define_expand "ssadv8siv32qi"
   [(match_operand:V8SI 0 "register_operand")
    (match_operand:V32QI 1 "register_operand")
    (match_operand:V32QI 2 "register_operand")

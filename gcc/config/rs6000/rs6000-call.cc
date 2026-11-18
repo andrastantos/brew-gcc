@@ -400,6 +400,21 @@ rs6000_discover_homogeneous_aggregate (machine_mode mode, const_tree type,
   return false;
 }
 
+/* Return true if a _BitInt with byte size SIZE must be passed or returned
+   by reference rather than in registers.  SIZE < 0 (variable-length) is
+   always large.  ELFv2 threshold is 16 bytes; AIX32/V4 is 8 bytes.
+   Centralises the threshold so rs6000_return_in_memory and
+   rs6000_pass_by_reference stay in sync.  */
+static bool
+rs6000_bitint_large_p (HOST_WIDE_INT size)
+{
+  if (size < 0)
+    return true;
+  if (DEFAULT_ABI == ABI_ELFv2)
+    return (unsigned HOST_WIDE_INT) size > 16;
+  return (unsigned HOST_WIDE_INT) size > (TARGET_64BIT ? 16 : 8);
+}
+
 /* Return a nonzero value to say to return the function value in
    memory, just as large structures are always returned.  TYPE will be
    the data type of the value, and FNTYPE will be the type of the
@@ -432,21 +447,34 @@ rs6000_discover_homogeneous_aggregate (machine_mode mode, const_tree type,
 bool
 rs6000_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
 {
-  /* We do not allow MMA types being used as return values.  Only report
-     the invalid return value usage the first time we encounter it.  */
+  /* We do not allow Dense Math/MMA types being used as return values.  Only
+     report the invalid return value usage the first time we encounter it.  */
   if (cfun
       && !cfun->machine->mma_return_type_error
       && TREE_TYPE (cfun->decl) == fntype
-      && (TYPE_MODE (type) == OOmode || TYPE_MODE (type) == XOmode))
+      && (TYPE_MODE (type) == OOmode
+	   || TYPE_MODE (type) == XOmode
+	   || TYPE_MODE (type) == TDOmode))
     {
       /* Record we have now handled function CFUN, so the next time we
 	 are called, we do not re-report the same error.  */
       cfun->machine->mma_return_type_error = true;
       if (TYPE_CANONICAL (type) != NULL_TREE)
 	type = TYPE_CANONICAL (type);
-      error ("invalid use of MMA type %qs as a function return value",
+      const char *type_class =
+	 (TYPE_MODE (type) == TDOmode) ? "Dense Math" : "MMA";
+      error ("invalid use of %s type %qs as a function return value",
+	     type_class,
 	     IDENTIFIER_POINTER (DECL_NAME (TYPE_NAME (type))));
     }
+
+  /* Handle _BitInt return convention before aggregate classification.
+     Small _BitInt fits in registers; large _BitInt is returned via a
+     hidden pointer.  BITINT_TYPE_P covers both BITINT_TYPE and
+     ENUMERAL_TYPE backed by _BitInt (C2Y bit-precise enums).
+     Must agree with rs6000_pass_by_reference.  */
+  if (BITINT_TYPE_P (type))
+    return rs6000_bitint_large_p (int_size_in_bytes (type));
 
   /* For the Darwin64 ABI, test if we can fit the return value in regs.  */
   if (TARGET_MACHO
@@ -1631,12 +1659,15 @@ rs6000_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
   machine_mode elt_mode;
   int n_elts;
 
-  /* We do not allow MMA types being used as function arguments.  */
-  if (mode == OOmode || mode == XOmode)
+  /* We do not allow Dense Math/MMA types being used as function arguments.  */
+  if (mode == OOmode || mode == XOmode || mode == TDOmode)
     {
       if (TYPE_CANONICAL (type) != NULL_TREE)
 	type = TYPE_CANONICAL (type);
-      error ("invalid use of MMA operand of type %qs as a function parameter",
+      const char *type_class =
+	 (mode == TDOmode) ? "Dense Math" : "MMA";
+      error ("invalid use of %s operand of type %qs as a function parameter",
+	     type_class,
 	     IDENTIFIER_POINTER (DECL_NAME (TYPE_NAME (type))));
       return NULL_RTX;
     }
@@ -1984,6 +2015,14 @@ rs6000_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
 {
   if (!arg.type)
     return 0;
+
+  /* Handle _BitInt before the generic checks.  Large _BitInt must be
+     passed by reference so the ABI matches gimple-lower-bitint.cc output.
+     BITINT_TYPE_P covers both BITINT_TYPE and ENUMERAL_TYPE backed by
+     _BitInt (C2Y bit-precise enums).  Thresholds mirror
+     rs6000_return_in_memory.  */
+  if (BITINT_TYPE_P (arg.type))
+    return rs6000_bitint_large_p (int_size_in_bytes (arg.type));
 
   if (DEFAULT_ABI == ABI_V4 && TARGET_IEEEQUAD
       && FLOAT128_IEEE_P (TYPE_MODE (arg.type)))
@@ -2371,7 +2410,7 @@ setup_incoming_varargs (cumulative_args_t cum,
     {
       int fregno = next_cum.fregno, nregs;
       rtx cr1 = gen_rtx_REG (CCmode, CR1_REGNO);
-      rtx lab = gen_label_rtx ();
+      rtx_code_label *lab = gen_label_rtx ();
       int off = (GP_ARG_NUM_REG * reg_size) + ((fregno - FP_ARG_MIN_REG)
 					       * UNITS_PER_FP_WORD);
 
@@ -2501,7 +2540,7 @@ rs6000_va_start (tree valist, rtx nextarg)
   if (cfun->va_list_gpr_size)
     {
       t = build2 (MODIFY_EXPR, TREE_TYPE (gpr), gpr,
-		  build_int_cst (NULL_TREE, n_gpr));
+		  build_int_cst (integer_type_node, n_gpr));
       TREE_SIDE_EFFECTS (t) = 1;
       expand_expr (t, const0_rtx, VOIDmode, EXPAND_NORMAL);
     }
@@ -2509,7 +2548,7 @@ rs6000_va_start (tree valist, rtx nextarg)
   if (cfun->va_list_fpr_size)
     {
       t = build2 (MODIFY_EXPR, TREE_TYPE (fpr), fpr,
-		  build_int_cst (NULL_TREE, n_fpr));
+		  build_int_cst (integer_type_node, n_fpr));
       TREE_SIDE_EFFECTS (t) = 1;
       expand_expr (t, const0_rtx, VOIDmode, EXPAND_NORMAL);
 
@@ -2572,7 +2611,8 @@ rs6000_gimplify_va_arg (tree valist, tree type, gimple_seq *pre_p,
      std_gimplify_va_arg_expr that carries out the align adjust, for the case
      of relevance.
      We don't need to check for pass-by-reference because of the test above.
-     We can return a simplifed answer, since we know there's no offset to add.  */
+     We can return a simplified answer, since we know there's no offset to
+     add.  */
 
   if (((TARGET_MACHO
         && rs6000_darwin64_abi)

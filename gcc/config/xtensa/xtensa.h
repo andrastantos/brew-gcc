@@ -38,11 +38,17 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_CLAMPS		XCHAL_HAVE_CLAMPS
 #define TARGET_DEPBITS		XCHAL_HAVE_DEPBITS
 #define TARGET_BOOLEANS		XCHAL_HAVE_BOOLEANS
-#define TARGET_HARD_FLOAT	XCHAL_HAVE_FP
-#define TARGET_HARD_FLOAT_DIV	XCHAL_HAVE_FP_DIV
-#define TARGET_HARD_FLOAT_RECIP	XCHAL_HAVE_FP_RECIP
-#define TARGET_HARD_FLOAT_SQRT	XCHAL_HAVE_FP_SQRT
-#define TARGET_HARD_FLOAT_RSQRT	XCHAL_HAVE_FP_RSQRT
+#define TARGET_HARD_FLOAT	(XCHAL_HAVE_FP || XCHAL_HAVE_DFP)
+#define TARGET_FLOAT32		XCHAL_HAVE_FP
+#define TARGET_FLOAT64		XCHAL_HAVE_DFP
+#define TARGET_FLOAT32_DIV	XCHAL_HAVE_FP_DIV
+#define TARGET_FLOAT32_RECIP	XCHAL_HAVE_FP_RECIP
+#define TARGET_FLOAT32_SQRT	XCHAL_HAVE_FP_SQRT
+#define TARGET_FLOAT32_RSQRT	XCHAL_HAVE_FP_RSQRT
+#define TARGET_FLOAT64_DIV	XCHAL_HAVE_DFP_DIV
+#define TARGET_FLOAT64_RECIP	XCHAL_HAVE_DFP_RECIP
+#define TARGET_FLOAT64_SQRT	XCHAL_HAVE_DFP_SQRT
+#define TARGET_FLOAT64_RSQRT	XCHAL_HAVE_DFP_RSQRT
 #define TARGET_HARD_FLOAT_POSTINC XCHAL_HAVE_FP_POSTINC
 #define TARGET_ABS		XCHAL_HAVE_ABS
 #define TARGET_ADDX		XCHAL_HAVE_ADDX
@@ -58,6 +64,11 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_SALT		(XTENSA_MARCH_EARLIEST >= 270000)
 
 #define TARGET_DEFAULT (MASK_SERIALIZE_VOLATILE)
+#define TARGET_HARD_FLOAT_CONST					\
+		(TARGET_FLOAT32_DIV || TARGET_FLOAT32_RECIP	\
+		 || TARGET_FLOAT32_SQRT || TARGET_FLOAT32_RSQRT	\
+		 || TARGET_FLOAT64_DIV  || TARGET_FLOAT64_RECIP	\
+		 || TARGET_FLOAT64_SQRT || TARGET_FLOAT64_RSQRT)
 
 #ifndef HAVE_AS_TLS
 #define HAVE_AS_TLS 0
@@ -114,7 +125,7 @@ along with GCC; see the file COPYING3.  If not see
 #define MIN_UNITS_PER_WORD 4
 
 /* Width of a floating point register.  */
-#define UNITS_PER_FPREG 4
+#define UNITS_PER_FPREG (TARGET_FLOAT64 ? 8 : 4)
 
 /* Size in bits of various types on the target machine.  */
 #define INT_TYPE_SIZE 32
@@ -246,40 +257,38 @@ along with GCC; see the file COPYING3.  If not see
 
 #define REG_ALLOC_ORDER							\
 {									\
-   8,  9, 10, 11, 12, 13, 14, 15,  7,  6,  5,  4,  3,  2,		\
-  18,									\
+   8,  9, 10, 11, 12, 13, 14, 15,  7,  6,  5,  4,  3,  2, 18,		\
   19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,	\
-   0,  1, 16, 17,							\
-  35,									\
+   0,  1, 16, 17, 35,							\
 }
 #define ADJUST_REG_ALLOC_ORDER xtensa_adjust_reg_alloc_order ()
+
+/* Tell IRA to use the order we define rather than messing it up with its
+   own cost calculations.  */
+#define HONOR_REG_ALLOC_ORDER 1
 
 /* Internal macros to classify a register number.  */
 
 /* 16 address registers + fake registers */
-#define GP_REG_FIRST 0
-#define GP_REG_LAST  17
-#define GP_REG_NUM   (GP_REG_LAST - GP_REG_FIRST + 1)
+#define GP_REG_FIRST	0
+#define GP_REG_LAST	17
 
 /* Coprocessor registers */
-#define BR_REG_FIRST 18
-#define BR_REG_LAST  18
-#define BR_REG_NUM   (BR_REG_LAST - BR_REG_FIRST + 1)
+#define BR_REG_FIRST	18
+#define BR_REG_LAST	18
 
 /* 16 floating-point registers */
-#define FP_REG_FIRST 19
-#define FP_REG_LAST  34
-#define FP_REG_NUM   (FP_REG_LAST - FP_REG_FIRST + 1)
+#define FP_REG_FIRST	19
+#define FP_REG_LAST	34
 
 /* MAC16 accumulator */
-#define ACC_REG_FIRST 35
-#define ACC_REG_LAST 35
-#define ACC_REG_NUM  (ACC_REG_LAST - ACC_REG_FIRST + 1)
+#define ACC_REG_FIRST	35
+#define ACC_REG_LAST	35
 
-#define GP_REG_P(REGNO) ((unsigned) ((REGNO) - GP_REG_FIRST) < GP_REG_NUM)
-#define BR_REG_P(REGNO) ((unsigned) ((REGNO) - BR_REG_FIRST) < BR_REG_NUM)
-#define FP_REG_P(REGNO) ((unsigned) ((REGNO) - FP_REG_FIRST) < FP_REG_NUM)
-#define ACC_REG_P(REGNO) ((unsigned) ((REGNO) - ACC_REG_FIRST) < ACC_REG_NUM)
+#define GP_REG_P(REGNO)  (IN_RANGE ((REGNO), GP_REG_FIRST, GP_REG_LAST))
+#define BR_REG_P(REGNO)  (IN_RANGE ((REGNO), BR_REG_FIRST, BR_REG_LAST))
+#define FP_REG_P(REGNO)  (IN_RANGE ((REGNO), FP_REG_FIRST, FP_REG_LAST))
+#define ACC_REG_P(REGNO) (IN_RANGE ((REGNO), ACC_REG_FIRST, ACC_REG_LAST))
 
 /* Register to use for pushing function arguments.  */
 #define STACK_POINTER_REGNUM (GP_REG_FIRST + 1)
@@ -317,6 +326,13 @@ along with GCC; see the file COPYING3.  If not see
    call an address kept in a register.  */
 #define NO_FUNCTION_CSE 1
 
+/* Named address spaces.  */
+#define ADDR_SPACE_FORCE_L32 1
+#define REGISTER_TARGET_PRAGMAS()					\
+  do {									\
+    c_register_addr_space ("__force_l32", ADDR_SPACE_FORCE_L32);	\
+  } while (0)
+
 /* Xtensa processors have "register windows".  GCC does not currently
    take advantage of the possibility for variable-sized windows; instead,
    we use a fixed window size of 8.  */
@@ -333,6 +349,9 @@ along with GCC; see the file COPYING3.  If not see
      ((unsigned) ((IN) - GP_REG_FIRST) < WINDOW_SIZE)) ?		\
     (IN) + WINDOW_SIZE : (IN)) : (IN))
 
+#define LOCAL_REGNO(REGNO)						\
+  (TARGET_WINDOWED_ABI && GP_REG_P (REGNO)				\
+   && ((unsigned) ((REGNO) - GP_REG_FIRST) < WINDOW_SIZE))
 
 /* Define the classes of registers for register constraints in the
    machine description.  */
@@ -393,7 +412,8 @@ enum reg_class
    register REGNO.  In general there is more that one such class;
    choose a class which is "minimal", meaning that no smaller class
    also contains the register.  */
-#define REGNO_REG_CLASS(REGNO) xtensa_regno_to_class (REGNO)
+extern enum reg_class xtensa_regno_to_class[FIRST_PSEUDO_REGISTER];
+#define REGNO_REG_CLASS(REGNO) xtensa_regno_to_class[REGNO]
 
 /* Use the Xtensa AR register file for base registers.
    No index registers.  */
@@ -521,10 +541,6 @@ typedef struct xtensa_args
 
 /* Stack pointer value doesn't matter at exit.  */
 #define EXIT_IGNORE_STACK 1
-
-/* The "return" pattern requires A0 register as return address, and is
-   also required so that restoring A0 in the epilogue is not dead code.  */
-#define EPILOGUE_USES(REGNO) ((REGNO) == A0_REG)
 
 /* Size in bytes of the trampoline, as an integer.  Make sure this is
    a multiple of TRAMPOLINE_ALIGNMENT to avoid -Wpadded warnings.  */

@@ -142,7 +142,7 @@ enum lc_reason
              |   This packing scheme means we effectively have
              |     (column_bits - range_bits)
              |   of bits for the columns, typically (12 - 5) = 7, for 128
-             |   columns; longer line widths are accomodated by starting a
+             |   columns; longer line widths are accommodated by starting a
              |   new ordmap with a higher column_bits.
              |
              | ordmap[2]->start_location-1   | Final location in ordmap 1
@@ -428,7 +428,7 @@ struct GTY((tag ("1"))) line_map_ordinary : public line_map {
   /* 4 bytes of integers, each 1 byte for easy extraction/insertion.  */
 
   /* The reason for creation of this line map.  */
-  ENUM_BITFIELD (lc_reason) reason : 8;
+  enum lc_reason reason : 8;
 
   /* SYSP is one for a system header, two for a C system header file
      that therefore needs to be extern "C" protected in C++, and zero
@@ -1071,6 +1071,15 @@ extern location_t linemap_line_start
 /* Allocate a raw block of line maps, zero initialized.  */
 extern line_map *line_map_new_raw (line_maps *, bool, line_map_uint_t);
 
+/* Return the location_t at which a new line map with RANGE_BITS range bits
+   would begin, if it needs to begin at least at START_LOC.  */
+inline location_t
+linemap_next_start_location (location_t start_loc, int range_bits)
+{
+  const auto mask = (location_t (1) << range_bits) - 1;
+  return (start_loc + mask) & ~mask;
+}
+
 /* Add a mapping of logical source line to physical source file and
    line number. This function creates an "ordinary map", which is a
    map that records locations of tokens that are not part of macro
@@ -1087,6 +1096,17 @@ extern line_map *line_map_new_raw (line_maps *, bool, line_map_uint_t);
 extern const line_map *linemap_add
   (class line_maps *, enum lc_reason, unsigned int sysp,
    const char *to_file, linenum_type to_line);
+
+/* Create a map with exactly the requested parameters.  Not intended for general
+   use, but useful for applications that need to work with linemap internals
+   directly.  NUM_LINES is the number of lines this map should be able to hold;
+   this just ensures that set->highest_location is set properly so that the next
+   added map will leave sufficient room for NUM_LINES lines in this map.  */
+extern line_map_ordinary *
+linemap_add_raw_map (line_maps *set, lc_reason reason, location_t start_loc,
+		     unsigned int sysp, int column_and_range_bits,
+		     int range_bits, const char *to_file, linenum_type to_line,
+		     line_map_uint_t num_lines);
 
 /* Create a macro map.  A macro map encodes source locations of tokens
    that are part of a macro replacement-list, at a macro expansion
@@ -1128,10 +1148,8 @@ extern location_t linemap_module_restore
 
 /* Given a logical source location, returns the map which the
    corresponding (source file, line, column) triplet can be deduced
-   from. Since the set is built chronologically, the logical lines are
-   monotonic increasing, and so the list is sorted and we can use a
-   binary search. If no line map have been allocated yet, this
-   function returns NULL.  */
+   from.  Since the start_location of each map is monotonic increasing,
+   this can be done with binary search.  */
 extern const line_map *linemap_lookup
   (const line_maps *, location_t);
 

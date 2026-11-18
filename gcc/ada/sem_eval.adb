@@ -124,11 +124,6 @@ package body Sem_Eval is
       V : Uint;
    end record;
 
-   type Match_Result is (Match, No_Match, Non_Static);
-   --  Result returned from functions that test for a matching result. If the
-   --  operands are not OK_Static then Non_Static will be returned. Otherwise
-   --  Match/No_Match is returned depending on whether the match succeeds.
-
    type CV_Cache_Array is array (CV_Range) of CV_Entry;
 
    CV_Cache : CV_Cache_Array;
@@ -178,16 +173,6 @@ package body Sem_Eval is
    --  Note: if Choice_Matches finds that a choice raises Constraint_Error, e.g
    --  a reference to a type, one of whose bounds raises Constraint_Error, then
    --  it also sets the Raises_Constraint_Error flag on the Choice itself.
-
-   function Choices_Match
-     (Expr    : Node_Id;
-      Choices : List_Id) return Match_Result;
-   --  This function applies Choice_Matches to each element of Choices. If the
-   --  result is No_Match, then it continues and checks the next element. If
-   --  the result is Match or Non_Static, this result is immediately given
-   --  as the result without checking the rest of the list. Expr can be of
-   --  discrete, real, or string type and must be a compile-time-known value
-   --  (it is an error to make the call if these conditions are not met).
 
    procedure Eval_Intrinsic_Call (N : Node_Id; E : Entity_Id);
    --  Evaluate a call N to an intrinsic subprogram E
@@ -1345,9 +1330,9 @@ package body Sem_Eval is
             end;
 
          --  For string types, we have two string literals and we proceed to
-         --  compare them using the Ada style dictionary string comparison.
+         --  compare them using the lexicographic order (RM 4.5.2(26)).
 
-         elsif not Is_Scalar_Type (Ltyp) then
+         elsif Is_String_Type (Ltyp) then
             declare
                Lstring : constant String_Id := Strval (Expr_Value_S (L));
                Rstring : constant String_Id := Strval (Expr_Value_S (R));
@@ -1374,6 +1359,63 @@ package body Sem_Eval is
                   return GT;
                else
                   return EQ;
+               end if;
+            end;
+
+         --  Likewise for other discrete array types, i.e. 1-dimensional array
+         --  types whose component type is discrete.
+
+         elsif Is_Composite_Type (Ltyp) then
+            declare
+               Laggr : constant Node_Id := Expr_Value_A (L);
+               Raggr : constant Node_Id := Expr_Value_A (R);
+               Lbnds : constant Node_Id := Aggregate_Bounds (Laggr);
+               Rbnds : constant Node_Id := Aggregate_Bounds (Raggr);
+
+               Lexp : Node_Id;
+               Rexp : Node_Id;
+               Llen : Uint;
+               Rlen : Uint;
+               Res  : Compare_Result;
+
+            begin
+               if Is_Array_Type (Ltyp)
+                 and then Number_Dimensions (Ltyp) = 1
+                 and then Is_Discrete_Type (Component_Type (Ltyp))
+                 and then Present (Lbnds)
+                 and then Present (Rbnds)
+               then
+                  Llen := UI_Max (Expr_Value (High_Bound (Lbnds)) -
+                                   Expr_Value (Low_Bound (Lbnds)) + 1, 0);
+                  Rlen := UI_Max (Expr_Value (High_Bound (Rbnds)) -
+                                   Expr_Value (Low_Bound (Rbnds)) + 1, 0);
+
+                  Lexp := First (Expressions (Laggr));
+                  Rexp := First (Expressions (Raggr));
+
+                  for J in 1 .. UI_To_Int (UI_Min (Llen, Rlen)) loop
+                     Res :=
+                       Compile_Time_Compare (Lexp, Rexp, Assume_Valid => True);
+                     case Res is
+                        when LT | GT | NE      => return Res;
+                        when LE | GE | Unknown => return Unknown;
+                        when EQ                => null;
+                     end case;
+
+                     Next (Lexp);
+                     Next (Rexp);
+                  end loop;
+
+                  if Llen < Rlen then
+                     return LT;
+                  elsif Llen > Rlen then
+                     return GT;
+                  else
+                     return EQ;
+                  end if;
+
+               else
+                  return Unknown;
                end if;
             end;
 
@@ -1791,6 +1833,12 @@ package body Sem_Eval is
             return False;
          end if;
 
+         --  Never look at junk bounds of a broken type
+
+         if Error_Posted (Scalar_Range (Typ)) then
+            return False;
+         end if;
+
          --  Otherwise check bounds for compile-time-known
 
          if not Compile_Time_Known_Value (Type_Low_Bound (Typ)) then
@@ -1887,6 +1935,15 @@ package body Sem_Eval is
 
          elsif K in
            N_Character_Literal | N_Real_Literal | N_String_Literal | N_Null
+         then
+            return True;
+
+         --  Compile-time known aggregates, but not for string types since
+         --  we cannot rewrite them as string literals for the time being.
+
+         elsif K = N_Aggregate
+           and then Compile_Time_Known_Aggregate (Op)
+           and then not Is_String_Type (Etype (Op))
          then
             return True;
 
@@ -2236,8 +2293,7 @@ package body Sem_Eval is
    --  expressions raise CE, except for the one that will be selected.
 
    procedure Eval_Case_Expression (N : Node_Id) is
-      Alt    : Node_Id;
-      Choice : Node_Id;
+      Alt : Node_Id;
 
    begin
       Set_Is_Static_Expression (N, False);
@@ -2292,44 +2348,35 @@ package body Sem_Eval is
 
       if Raises_Constraint_Error (Expression (N)) then
          Set_Raises_Constraint_Error (N);
+         return;
+      end if;
 
       --  Otherwise we need to check the alternatives to find the matching
       --  one. CE's in other than the matching one are not relevant. But we
       --  do need to check the matching one. Unlike the first loop, we do not
       --  have to go all the way through, when we find the matching one, quit.
 
-      else
-         Alt := First (Alternatives (N));
-         Search : loop
+      Alt := First (Alternatives (N));
+      loop
+         --  We must find a match among the alternatives. If not, this must
+         --  be due to other errors, so just ignore, leaving as non-static.
 
-            --  We must find a match among the alternatives. If not, this must
-            --  be due to other errors, so just ignore, leaving as non-static.
+         if No (Alt) then
+            Set_Is_Static_Expression (N, False);
+            return;
+         end if;
 
-            if No (Alt) then
-               Set_Is_Static_Expression (N, False);
-               return;
-            end if;
+         --  If we find a matching choice, then the Expression of this
+         --  alternative replaces N (Raises_Constraint_Error flag is
+         --  included, so we don't have to special case that).
 
-            --  Otherwise loop through choices of this alternative
+         if Choices_Match (Expression (N), Discrete_Choices (Alt)) = Match then
+            Rewrite (N, Relocate_Node (Expression (Alt)));
+            return;
+         end if;
 
-            Choice := First (Discrete_Choices (Alt));
-            while Present (Choice) loop
-
-               --  If we find a matching choice, then the Expression of this
-               --  alternative replaces N (Raises_Constraint_Error flag is
-               --  included, so we don't have to special case that).
-
-               if Choice_Matches (Expression (N), Choice) = Match then
-                  Rewrite (N, Relocate_Node (Expression (Alt)));
-                  return;
-               end if;
-
-               Next (Choice);
-            end loop;
-
-            Next (Alt);
-         end loop Search;
-      end if;
+         Next (Alt);
+      end loop;
    end Eval_Case_Expression;
 
    ------------------------
@@ -3005,9 +3052,7 @@ package body Sem_Eval is
             Fold_Uint (N, From_Bits (Left_Bits, Etype (N)), Stat);
          end;
 
-      else
-         pragma Assert (Is_Boolean_Type (Etype (N)));
-
+      elsif Is_Boolean_Type (Etype (N)) then
          if Compile_Time_Known_Value (Left)
            and then Compile_Time_Known_Value (Right)
          then
@@ -3250,7 +3295,8 @@ package body Sem_Eval is
    --  static if the operand is potentially static (RM 4.9(7), 4.9(20)).
 
    procedure Eval_Op_Not (N : Node_Id) is
-      Right : constant Node_Id := Right_Opnd (N);
+      Right : constant Node_Id   := Right_Opnd (N);
+      Typ   : constant Entity_Id := Etype (N);
       Stat  : Boolean;
       Fold  : Boolean;
 
@@ -3263,26 +3309,19 @@ package body Sem_Eval is
          return;
       end if;
 
-      --  Fold not operation
+      --  Negation is equivalent to subtracting from the modulus minus one.
+      --  For a binary modulus this is equivalent to the ones-complement of
+      --  the original value. For a nonbinary modulus this is an arbitrary
+      --  but consistent definition.
 
-      declare
-         Rint : constant Uint      := Expr_Value (Right);
-         Typ  : constant Entity_Id := Etype (N);
-
-      begin
-         --  Negation is equivalent to subtracting from the modulus minus one.
-         --  For a binary modulus this is equivalent to the ones-complement of
-         --  the original value. For a nonbinary modulus this is an arbitrary
-         --  but consistent definition.
-
-         if Has_Modular_Operations (Typ) then
-            Fold_Uint (N, Modulus (Typ) - 1 - Rint, Stat);
-         else pragma Assert (Is_Boolean_Type (Typ));
-            Fold_Uint (N, Test (not Is_True (Rint)), Stat);
-         end if;
-
+      if Has_Modular_Operations (Typ) then
+         Fold_Uint (N, Modulus (Typ) - 1 - Expr_Value (Right), Stat);
          Set_Is_Static_Expression (N, Stat);
-      end;
+
+      elsif Is_Boolean_Type (Typ) then
+         Fold_Uint (N, Test (not Is_True (Expr_Value (Right))), Stat);
+         Set_Is_Static_Expression (N, Stat);
+      end if;
    end Eval_Op_Not;
 
    -------------------------------
@@ -3365,7 +3404,7 @@ package body Sem_Eval is
       elsif Is_Real_Type (Target_Type) then
          Fold_Ureal (N, Expr_Value_R (Operand), Stat);
 
-      else
+      elsif Is_String_Type (Target_Type) then
          Fold_Str (N, Strval (Get_String_Val (Operand)), Stat);
 
          if not Stat then
@@ -3374,6 +3413,9 @@ package body Sem_Eval is
             Check_String_Literal_Length (N, Target_Type);
          end if;
 
+         return;
+
+      else
          return;
       end if;
 
@@ -4685,6 +4727,20 @@ package body Sem_Eval is
    end Expr_Value;
 
    ------------------
+   -- Expr_Value_A --
+   ------------------
+
+   function Expr_Value_A (N : Node_Id) return Node_Id is
+   begin
+      if Nkind (N) = N_Aggregate then
+         return N;
+      else
+         pragma Assert (Ekind (Entity (N)) = E_Constant);
+         return Expr_Value_A (Constant_Value (Entity (N)));
+      end if;
+   end Expr_Value_A;
+
+   ------------------
    -- Expr_Value_E --
    ------------------
 
@@ -5348,6 +5404,15 @@ package body Sem_Eval is
         and then Has_Infinities (T1)
         and then Is_Floating_Point_Type (T2)
         and then not Has_Infinities (T2)
+      then
+         return False;
+
+      --  Under GNATprove mode, do not consider T2 in the range of Universal
+      --  Integer (since theoretically they are not); required because
+      --  Universal_Integer is implemented as a 128-bits type.
+
+      elsif GNATprove_Mode
+        and then T1 = Universal_Integer
       then
          return False;
 
@@ -7304,6 +7369,7 @@ package body Sem_Eval is
 
          if not Fold
            and then not Has_Modular_Operations (Etype (N))
+           and then not Is_Array_Type (Etype (N))
          then
             case Nkind (N) is
                when N_Op_And =>
@@ -7387,6 +7453,14 @@ package body Sem_Eval is
 
       elsif Is_Universal_Numeric_Type (Typ) then
          return In_Range;
+
+      --  Under GNATprove mode, Universal type expressions are not in range
+      --  of subtype Typ.
+
+      elsif GNATprove_Mode
+        and then Is_Universal_Numeric_Type (Etype (N))
+      then
+         return Unknown;
 
       --  Never known if not scalar type. Don't know if this can actually
       --  happen, but our spec allows it, so we must check.

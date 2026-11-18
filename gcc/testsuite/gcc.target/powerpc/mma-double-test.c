@@ -52,7 +52,13 @@ MMA (int m, int n, int k, double *A, double *B, double *C)
 	      vec_t *rowA = (vec_t *) & AO[i * 16];
 	      __vector_pair rowB;
 	      vec_t *rb = (vec_t *) & BO[i * 4];
+/* The register order of __builtin_mma_assemble_pair is endian
+   dependent, so the halves must be swapped on big endian.  */
+#ifdef __BIG_ENDIAN__
+	      __builtin_mma_assemble_pair (&rowB, rb[0], rb[1]);
+#else
 	      __builtin_mma_assemble_pair (&rowB, rb[1], rb[0]);
+#endif
 	      __builtin_mma_xvf64gerpp (&acc0, rowB, rowA[0]);
 	      __builtin_mma_xvf64gerpp (&acc1, rowB, rowA[1]);
 	      __builtin_mma_xvf64gerpp (&acc2, rowB, rowA[2]);

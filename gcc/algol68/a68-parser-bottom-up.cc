@@ -95,6 +95,7 @@
      - reduce a sub-phrase starting at a branch, implemented by 'reduce_branch'.
 */
 
+#define INCLUDE_STRING
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -268,7 +269,7 @@ strange_separator (NODE_T *p)
      reduce (p, NO_NOTE, NO_TICK, PARTICULAR_PROGRAM, LABEL, ENCLOSED_CLAUSE, STOP);
      reduce (p, NO_NOTE, NO_TICK, PARTICULAR_PROGRAM, ENCLOSED_CLAUSE, STOP);
 
-   We know that at much only one of these reductions will succeed, becuase if
+   We know that at much only one of these reductions will succeed, because if
    the first reduction succeeds, then P gets changed to LABEL which cannot
    match ENCLOSED_CLAUSE.
 
@@ -302,7 +303,7 @@ strange_separator (NODE_T *p)
 
    Note how, when presented with a sequence of labels like `l1: l2: l3: ...',
    the first call to "reduce" will succeed, turning Q into a LABEL.  Then the
-   second call to "reduce" will also succed, reducing to another LABEL and
+   second call to "reduce" will also succeed, reducing to another LABEL and
    setting SIGA to "true".  In subsequent iterations of the loop the first call
    will always fail, and the second call will keep succeeding as more sequences
    of DEFINING_IDENTIFIER, COLON_SYMBOL get matched.  */
@@ -539,7 +540,7 @@ a68_bottom_up_parser (NODE_T *p)
 
    looking for declarations of indicants, priorities and operators
    (a68_extract_{indicants,priorities,operators}).  Using this information , it
-   determines the nature of bold tags occuring in the branch, by turning
+   determines the nature of bold tags occurring in the branch, by turning
    BOLD_TAG nodes into either INDICANT nodes or OPERATOR nodes
    (a68_elaborate_bold_tags).
 
@@ -755,6 +756,7 @@ reduce_declarers (NODE_T *p, enum a68_attribute expect)
   for (q = p; q != NO_NODE; FORWARD (q))
     {
       siga = true;
+      reduce (q, NO_NOTE, NO_TICK, FIXETY, WORD_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, LONGETY, LONG_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, SHORTETY, SHORT_SYMBOL, STOP);
       while (siga)
@@ -772,7 +774,6 @@ reduce_declarers (NODE_T *p, enum a68_attribute expect)
       reduce (q, NO_NOTE, NO_TICK, INDICANT, REAL_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, BITS_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, BYTES_SYMBOL, STOP);
-      reduce (q, NO_NOTE, NO_TICK, INDICANT, COMPLEX_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, COMPL_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, BOOL_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, CHAR_SYMBOL, STOP);
@@ -800,8 +801,7 @@ reduce_declarers (NODE_T *p, enum a68_attribute expect)
 	      a = ATTRIBUTE (SUB_NEXT (q));
 
 	      if (a == INT_SYMBOL || a == REAL_SYMBOL || a == BITS_SYMBOL
-		  || a == BYTES_SYMBOL || a == COMPLEX_SYMBOL
-		  || a == COMPL_SYMBOL)
+		  || a == BYTES_SYMBOL || a == COMPL_SYMBOL)
 		{
 		  reduce (q, NO_NOTE, NO_TICK, DECLARER, LONGETY, INDICANT, STOP);
 		}
@@ -825,14 +825,38 @@ reduce_declarers (NODE_T *p, enum a68_attribute expect)
 	    {
 	      a = ATTRIBUTE (SUB_NEXT (q));
 	      if (a == INT_SYMBOL || a == REAL_SYMBOL || a == BITS_SYMBOL
-		  || a == BYTES_SYMBOL || a == COMPLEX_SYMBOL || a == COMPL_SYMBOL)
+		  || a == BYTES_SYMBOL || a == COMPL_SYMBOL)
 		{
 		  reduce (q, NO_NOTE, NO_TICK, DECLARER, SHORTETY, INDICANT, STOP);
 		}
 	      else
 		{
 		  a68_error (NEXT (q), "appropriate declarer expected");
-		  reduce (q, NO_NOTE, NO_TICK, DECLARER, LONGETY, INDICANT, STOP);
+		  reduce (q, NO_NOTE, NO_TICK, DECLARER, SHORTETY, INDICANT, STOP);
+		}
+	    }
+	}
+      else if (a68_whether (q, FIXETY, INDICANT, STOP))
+	{
+	  int a;
+
+	  if (SUB_NEXT (q) == NO_NODE)
+	    {
+	      a68_error (NEXT (q), "appropriate declarer expected");
+	      reduce (q, NO_NOTE, NO_TICK, DECLARER, FIXETY, INDICANT, STOP);
+	    }
+	  else
+	    {
+	      a = ATTRIBUTE (SUB_NEXT (q));
+	      if (a == INT_SYMBOL || a == REAL_SYMBOL || a == BITS_SYMBOL
+		  || a == BYTES_SYMBOL || a == COMPL_SYMBOL)
+		{
+		  reduce (q, NO_NOTE, NO_TICK, DECLARER, FIXETY, INDICANT, STOP);
+		}
+	      else
+		{
+		  a68_error (NEXT (q), "appropriate declarer expected");
+		  reduce (q, NO_NOTE, NO_TICK, DECLARER, FIXETY, INDICANT, STOP);
 		}
 	    }
 	}
@@ -1209,6 +1233,9 @@ reduce_primary_parts (NODE_T *p, enum a68_attribute expect)
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, SHORTETY, INT_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, SHORTETY, REAL_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, SHORTETY, BITS_DENOTATION, STOP);
+      reduce (q, NO_NOTE, NO_TICK, DENOTATION, FIXETY, INT_DENOTATION, STOP);
+      reduce (q, NO_NOTE, NO_TICK, DENOTATION, FIXETY, REAL_DENOTATION, STOP);
+      reduce (q, NO_NOTE, NO_TICK, DENOTATION, FIXETY, BITS_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, INT_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, REAL_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, BITS_DENOTATION, STOP);
@@ -2415,6 +2442,7 @@ reduce_enquiry_clauses (NODE_T *p)
 		      ENQUIRY_CLAUSE, ENQUIRY_CLAUSE, SEMI_SYMBOL, UNIT, STOP);
 	      reduce (q, NO_NOTE, &siga,
 		      INITIALISER_SERIES, ENQUIRY_CLAUSE, SEMI_SYMBOL, DECLARATION_LIST, STOP);
+	      /* Errors  */
 	      reduce (q, strange_separator, &siga,
 		      ENQUIRY_CLAUSE, ENQUIRY_CLAUSE, COMMA_SYMBOL, UNIT, STOP);
 	      reduce (q, strange_separator, &siga,
@@ -2434,6 +2462,7 @@ reduce_enquiry_clauses (NODE_T *p)
 		      ENQUIRY_CLAUSE, INITIALISER_SERIES, SEMI_SYMBOL, UNIT, STOP);
 	      reduce (q, NO_NOTE, &siga,
 		      INITIALISER_SERIES, INITIALISER_SERIES, SEMI_SYMBOL, DECLARATION_LIST, STOP);
+	      /* Errors  */
 	      reduce (q, strange_separator, &siga,
 		      ENQUIRY_CLAUSE, INITIALISER_SERIES, COMMA_SYMBOL, UNIT, STOP);
 	      reduce (q, strange_separator, &siga,
@@ -2836,8 +2865,10 @@ recover_from_error (NODE_T * p, enum a68_attribute expect, bool suppress)
 	}
       else
 	{
+	  std::string fmt = seq;
+	  fmt += " is an invalid %e";
 	  a68_attr_format_token a (expect);
-	  a68_error (w, "%s is an invalid %e", seq, &a);
+	  a68_error (w, fmt.c_str (), &a);
 	}
 
     if (ERROR_COUNT (&A68_JOB) >= MAX_ERRORS)

@@ -30,6 +30,26 @@ along with GCC; see the file COPYING3.	If not see
 
 typedef struct lra_live_range *lra_live_range_t;
 
+struct dependent_filter
+{
+  int id;
+  machine_mode mode;
+  unsigned int partner_regno;
+  machine_mode partner_mode;
+  bool is_ref;
+};
+
+/* Cache entry of a dependent filter.  The same fields as above, just with
+   a hard-reg set of allowed hardregs.  */
+
+struct dependent_filter_entry : dependent_filter
+{
+  HARD_REG_SET allowed;
+};
+
+extern void lra_init_dependent_filter_cache (void);
+extern void lra_finish_dependent_filter_cache (void);
+
 /* The structure describes program points where a given pseudo lives.
    The live ranges can be used to find conflicts with other pseudos.
    If the live ranges of two pseudos are intersected, the pseudos are
@@ -113,6 +133,8 @@ public:
   /* This member is set up in lra-lives.cc for subsequent
      assignments.  */
   lra_copy_t copies;
+  /* Dependent filters for this reg.  */
+  vec<dependent_filter> dependent_filters;
 };
 
 /* References to the common info about each register.  */
@@ -132,9 +154,9 @@ struct lra_operand_data
   alternative_mask early_clobber_alts;
   /* It is taken only from machine description (which is different
      from recog_data.operand_mode) and can be of VOIDmode.  */
-  ENUM_BITFIELD(machine_mode) mode : 16;
+  machine_mode mode : 16;
   /* The type of the operand (in/out/inout).  */
-  ENUM_BITFIELD (op_type) type : 8;
+  enum op_type type : 8;
   /* Through if accessed through STRICT_LOW.  */
   unsigned int strict_low : 1;
   /* True if the operand is an operator.  */
@@ -151,9 +173,9 @@ struct lra_insn_reg
   /* The biggest mode through which the insn refers to the register
      occurrence (remember the register can be accessed through a
      subreg in the insn).  */
-  ENUM_BITFIELD(machine_mode) biggest_mode : 16;
+  machine_mode biggest_mode : 16;
   /* The type of the corresponding operand which is the register.  */
-  ENUM_BITFIELD (op_type) type : 8;
+  enum op_type type : 8;
   /* True if the reg is accessed through a subreg and the subreg is
      just a part of the register.  */
   unsigned int subreg_p : 1;

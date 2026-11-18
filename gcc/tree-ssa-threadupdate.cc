@@ -35,7 +35,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "dbgcnt.h"
 #include "tree-cfg.h"
 #include "tree-vectorizer.h"
-#include "tree-pass.h"
 
 /* Given a block B, update the CFG and SSA graph to reflect redirecting
    one or more in-edges to B to instead reach the destination of an
@@ -177,6 +176,53 @@ jt_path_registry::jt_path_registry (bool backedge_threads)
 jt_path_registry::~jt_path_registry ()
 {
   m_paths.release ();
+}
+
+/* Drop path PATHNO, which started on FIRST, keeping the first-edge
+   counts in step.  For callers whose path has already been released.  */
+
+void
+jt_path_registry::remove_path (unsigned pathno, edge first)
+{
+  drop_first_edge (first);
+  m_paths.unordered_remove (pathno);
+}
+
+/* Drop path PATHNO, keeping the first-edge counts in step.  */
+
+void
+jt_path_registry::remove_path (unsigned pathno)
+{
+  remove_path (pathno, (*m_paths[pathno])[0]->e);
+}
+
+/* Note that one more registered path starts on E.  */
+
+void
+jt_path_registry::add_first_edge (edge e)
+{
+  ++m_first_edge_counts.get_or_insert (e);
+}
+
+/* Note that one fewer registered path starts on E.  */
+
+void
+jt_path_registry::drop_first_edge (edge e)
+{
+  unsigned *count = m_first_edge_counts.get (e);
+  gcc_checking_assert (*count > 0);
+  if (--*count == 0)
+    m_first_edge_counts.remove (e);
+}
+
+/* How many registered paths start on E.  */
+
+unsigned
+jt_path_registry::first_edge_count (edge e)
+{
+  unsigned *count = m_first_edge_counts.get (e);
+  gcc_checking_assert (*count > 0);
+  return *count;
 }
 
 fwd_jt_path_registry::fwd_jt_path_registry ()
@@ -1867,9 +1913,10 @@ fwd_jt_path_registry::thread_through_loop_header (class loop *loop,
      must have only a single successor, but the original header had at
      least two successors.  */
   loop->latch = NULL;
-  mfb_kj_edge = single_succ_edge (new_preheader);
-  loop->header = mfb_kj_edge->dest;
-  latch = make_forwarder_block (tgt_bb, mfb_keep_just, NULL);
+  edge keep_edge;
+  keep_edge = single_succ_edge (new_preheader);
+  loop->header = keep_edge->dest;
+  latch = make_forwarder_block (tgt_bb, mfb_keep_just, keep_edge);
   loop->header = latch->dest;
   loop->latch = latch->src;
   return true;
@@ -2009,7 +2056,7 @@ fwd_jt_path_registry::mark_threaded_blocks (bitmap threaded_blocks)
 	    }
 	  else
 	    {
-	      m_paths.unordered_remove (i);
+	      remove_path (i);
 	      cancel_thread (path);
 	    }
 	}
@@ -2044,7 +2091,7 @@ fwd_jt_path_registry::mark_threaded_blocks (bitmap threaded_blocks)
 	  else
 	    {
 	      e->aux = NULL;
-	      m_paths.unordered_remove (i);
+	      remove_path (i);
 	      cancel_thread (path);
 	    }
 	}
@@ -2269,6 +2316,77 @@ back_jt_path_registry::rewire_first_differing_edge (unsigned path_num,
   return true;
 }
 
+/* Adjust the candidate path CAND_PATH_NUM, which starts on the same
+   edge as the path we have just threaded, so it can be threaded within
+   the context of the copies that threading made.  CURR_PATH is the
+   path that was threaded.
+
+   Returns TRUE if the candidate survived.  If it did not, it has been
+   removed from the registry and a different path now sits in its slot.  */
+
+bool
+back_jt_path_registry::adjust_one_path (vec<jump_thread_edge *> *curr_path,
+					unsigned cand_path_num)
+{
+  vec<jump_thread_edge *> *cand_path = m_paths[cand_path_num];
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    {
+      fprintf (dump_file, "adjusting candidate: ");
+      debug_path (dump_file, cand_path_num);
+    }
+
+  /* Find where the candidate differs from the threaded path.  Both start
+     on the same edge, so J is at least 1.  */
+  unsigned minlength = MIN (curr_path->length (), cand_path->length ());
+  unsigned j;
+  for (j = 1; j < minlength; ++j)
+    if ((*cand_path)[j]->e != (*curr_path)[j]->e)
+      {
+	gcc_assert ((*cand_path)[j]->e->src == (*curr_path)[j]->e->src);
+	break;
+      }
+
+  /* If they never differ, the candidate is a prefix of what we threaded, and
+     there's nothing left to do.  */
+  if (j == cand_path->length ())
+    {
+      remove_path (cand_path_num);
+      cancel_thread (cand_path, "Adjusted candidate is EMPTY");
+      return false;
+    }
+
+  /* Edge J leaves a block we have just copied, so rewire it to come out
+     of the copy.  */
+  if (!rewire_first_differing_edge (cand_path_num, j))
+    {
+      remove_path (cand_path_num);
+      cancel_thread (cand_path, "Candidate could not be rewired");
+      return false;
+    }
+
+  /* Chop off from the candidate path any prefix it shares with the
+     recently threaded path.  */
+  if (cand_path->length () - j > 1)
+    {
+      cand_path->block_remove (0, j);
+      /* The candidate started on the edge the threaded path did, and no
+	 longer does, so remove it from the count.  */
+      drop_first_edge ((*curr_path)[0]->e);
+      /* However the candidate path still must be accounted for.  */
+      add_first_edge ((*cand_path)[0]->e);
+    }
+  else if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, "Not chopping prefix: candidate would be too short.\n");
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    {
+      fprintf (dump_file, "adjusted candidate: ");
+      debug_path (dump_file, cand_path_num);
+    }
+  return true;
+}
+
 /* After a path has been jump threaded, adjust the remaining paths
    that are subsets of this path, so these paths can be safely
    threaded within the context of the new threaded path.
@@ -2290,84 +2408,34 @@ void
 back_jt_path_registry::adjust_paths_after_duplication (unsigned curr_path_num)
 {
   vec<jump_thread_edge *> *curr_path = m_paths[curr_path_num];
+  edge curr_first = (*curr_path)[0]->e;
 
-  /* Iterate through all the other paths and adjust them.  */
-  for (unsigned cand_path_num = 0; cand_path_num < m_paths.length (); )
+  /* CURR_PATH is itself registered, so a count of one means nothing else
+     starts here and the scan below won't find a candidate.  */
+  if (first_edge_count (curr_first) == 1)
+    return;
+
+  /* Adjust every other path starting on the edge this one did.  */
+  for (unsigned i = 0; i < m_paths.length (); )
     {
-      if (cand_path_num == curr_path_num)
+      /* The path we just threaded is not a candidate for adjustment.  */
+      if (i == curr_path_num)
 	{
-	  ++cand_path_num;
+	  ++i;
 	  continue;
 	}
-      /* Make sure the candidate to adjust starts with the same path
-	 as the recently threaded path.  */
-      vec<jump_thread_edge *> *cand_path = m_paths[cand_path_num];
-      if ((*cand_path)[0]->e != (*curr_path)[0]->e)
+
+      /* Only a path starting where the threaded one did needs adjusting.  */
+      if ((*m_paths[i])[0]->e != curr_first)
 	{
-	  ++cand_path_num;
+	  ++i;
 	  continue;
 	}
-      if (dump_file && (dump_flags & TDF_DETAILS))
-	{
-	  fprintf (dump_file, "adjusting candidate: ");
-	  debug_path (dump_file, cand_path_num);
-	}
 
-      /* Chop off from the candidate path any prefix it shares with
-	 the recently threaded path.  */
-      unsigned minlength = MIN (curr_path->length (), cand_path->length ());
-      unsigned j;
-      for (j = 0; j < minlength; ++j)
-	{
-	  edge cand_edge = (*cand_path)[j]->e;
-	  edge curr_edge = (*curr_path)[j]->e;
-
-	  /* Once the prefix no longer matches, adjust the first
-	     non-matching edge to point from an adjusted edge to
-	     wherever it was going.  */
-	  if (cand_edge != curr_edge)
-	    {
-	      gcc_assert (cand_edge->src == curr_edge->src);
-	      if (!rewire_first_differing_edge (cand_path_num, j))
-		goto remove_candidate_from_list;
-	      break;
-	    }
-	}
-      if (j == minlength)
-	{
-	  /* If we consumed the max subgraph we could look at, and
-	     still didn't find any different edges, it's the
-	     last edge after MINLENGTH.  */
-	  if (cand_path->length () > minlength)
-	    {
-	      if (!rewire_first_differing_edge (cand_path_num, j))
-		goto remove_candidate_from_list;
-	    }
-	  else if (dump_file && (dump_flags & TDF_DETAILS))
-	    fprintf (dump_file, "adjusting first edge after MINLENGTH.\n");
-	}
-      if (j > 0)
-	{
-	  /* If we are removing everything, delete the entire candidate.  */
-	  if (j == cand_path->length ())
-	    {
-	    remove_candidate_from_list:
-	      cancel_thread (cand_path, "Adjusted candidate is EMPTY");
-	      m_paths.unordered_remove (cand_path_num);
-	      continue;
-	    }
-	  /* Otherwise, just remove the redundant sub-path.  */
-	  if (cand_path->length () - j > 1)
-	    cand_path->block_remove (0, j);
-	  else if (dump_file && (dump_flags & TDF_DETAILS))
-	    fprintf (dump_file, "Dropping illformed candidate.\n");
-	}
-      if (dump_file && (dump_flags & TDF_DETAILS))
-	{
-	  fprintf (dump_file, "adjusted candidate: ");
-	  debug_path (dump_file, cand_path_num);
-	}
-      ++cand_path_num;
+      /* Adjusting can remove the candidate, and unordered_remove then puts
+	 a different path in slot I, so look at I again.  */
+      if (adjust_one_path (curr_path, i))
+	++i;
     }
 }
 
@@ -2381,23 +2449,45 @@ back_jt_path_registry::adjust_paths_after_duplication (unsigned curr_path_num)
    CURRENT_PATH_NO is an index into the global paths[] table
    specifying the jump-thread path.
 
-   Returns false if it is unable to copy the region, true otherwise.  */
+   Returns false if it is unable to copy the region, true otherwise.
+   On failure *FAILURE_REASON says why.  */
 
 bool
 back_jt_path_registry::duplicate_thread_path (edge entry,
 					      edge exit,
 					      basic_block *region,
 					      unsigned n_region,
-					      unsigned current_path_no)
+					      unsigned current_path_no,
+					      const char **failure_reason)
 {
   unsigned i;
   class loop *loop = entry->dest->loop_father;
-  edge exit_copy;
   edge redirected;
   profile_count curr_count;
 
-  if (!can_copy_bbs_p (region, n_region))
-    return false;
+  gcc_checking_assert (n_region && region[n_region - 1] == exit->src);
+
+  /* Let EXIT prevail only when its source ends in abnormal edges, which cannot
+     be redirected.  Ordinary paths commonly thread back into themselves, which
+     the prevailing exit does not support as its copy would have to jump back
+     into the original region.  An abnormal exit reentering the region is
+     refused by can_copy_bbs_p either way.  */
+  edge prevailing_exit = NULL;
+  for (edge e : exit->src->succs)
+    if (e->flags & EDGE_ABNORMAL)
+      {
+	prevailing_exit = exit;
+	break;
+      }
+  /* Abnormal successors imply a computed goto, whose successors are
+     all abnormal, EXIT included.  */
+  gcc_checking_assert (!prevailing_exit || (exit->flags & EDGE_ABNORMAL));
+
+  if (!can_copy_bbs_p (region, n_region, prevailing_exit))
+    {
+      *failure_reason = "Cannot copy the blocks in the path";
+      return false;
+    }
 
   /* Some sanity checking.  Note that we do not check for all possible
      missuses of the functions.  I.e. if you ask to copy something weird,
@@ -2406,9 +2496,19 @@ back_jt_path_registry::duplicate_thread_path (edge entry,
   for (i = 0; i < n_region; i++)
     {
       /* We do not handle subloops, i.e. all the blocks must belong to the
-	 same loop.  */
-      if (region[i]->loop_father != loop)
-	return false;
+	 same loop.  Unless we thread to the subloop exit and thus the
+	 path will belong to loop after the threading.  */
+      if ((region[i]->loop_father != loop
+	   && !(loop_exit_edge_p (region[i]->loop_father, exit)
+		&& exit->dest->loop_father == loop))
+	  /* Avoid creating alternate entries into the original loop.  */
+	  || (loop->header == entry->dest
+	      && region[i] != exit->src
+	      && EDGE_COUNT (region[i]->succs) > 1))
+	{
+	  *failure_reason = "Path crosses loops";
+	  return false;
+	}
     }
 
   initialize_original_copy_tables ();
@@ -2416,8 +2516,8 @@ back_jt_path_registry::duplicate_thread_path (edge entry,
   set_loop_copy (loop, loop);
 
   basic_block *region_copy = XNEWVEC (basic_block, n_region);
-  copy_bbs (region, n_region, region_copy, &exit, 1, &exit_copy, loop,
-	    split_edge_bb_loc (entry), false);
+  copy_bbs (region, n_region, region_copy, NULL, 0, NULL, loop,
+	    split_edge_bb_loc (entry), false, prevailing_exit);
 
   /* Fix up: copy_bbs redirects all edges pointing to copied blocks.  The
      following code ensures that all the edges exiting the jump-thread path are
@@ -2625,8 +2725,8 @@ back_jt_path_registry::update_cfg (bool /*peel_loop_headers*/)
 	  || !valid_jump_thread_path (path))
 	{
 	  /* Remove invalid jump-thread paths.  */
+	  remove_path (0);
 	  cancel_thread (path, "Avoiding threading twice from same edge");
-	  m_paths.unordered_remove (0);
 	  continue;
 	}
 
@@ -2637,17 +2737,22 @@ back_jt_path_registry::update_cfg (bool /*peel_loop_headers*/)
       for (unsigned int j = 0; j < len - 1; j++)
 	region[j] = (*path)[j]->e->dest;
 
-      if (duplicate_thread_path (entry, exit, region, len - 1, 0))
+      const char *failure_reason = NULL;
+      if (duplicate_thread_path (entry, exit, region, len - 1, 0,
+				 &failure_reason))
 	{
 	  /* We do not update dominance info.  */
 	  free_dominance_info (CDI_DOMINATORS);
 	  visited_starting_edges.add (entry);
 	  retval = true;
 	  m_num_threaded_edges++;
+	  path->release ();
 	}
+      else
+	cancel_thread (path, failure_reason);
 
-      path->release ();
-      m_paths.unordered_remove (0);
+      /* Both arms above release PATH, so name the edge it started on.  */
+      remove_path (0, entry);
       free (region);
     }
   return retval;
@@ -2680,8 +2785,8 @@ fwd_jt_path_registry::update_cfg (bool may_peel_loop_headers)
 
 	if (j != path->length ())
 	  {
+	    remove_path (i);
 	    cancel_thread (path, "Thread references removed edge");
-	    m_paths.unordered_remove (i);
 	    continue;
 	  }
 	i++;
@@ -2811,6 +2916,13 @@ jt_path_registry::cancel_invalid_paths (vec<jump_thread_edge *> &path)
       && flow_loop_nested_p (exit->dest->loop_father, exit->src->loop_father))
     return false;
 
+  if (seen_latch && entry->dest == loop->header)
+    {
+      cancel_thread (&path, "Threading through latch from loop header "
+		     "peels loop");
+      return true;
+    }
+
   if (cfun->curr_properties & PROP_loop_opts_done)
     return false;
 
@@ -2871,6 +2983,7 @@ jt_path_registry::register_jump_thread (vec<jump_thread_edge *> *path)
     dump_jump_thread_path (dump_file, *path, true);
 
   m_paths.safe_push (path);
+  add_first_edge ((*path)[0]->e);
   return true;
 }
 

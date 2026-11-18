@@ -185,6 +185,12 @@ along with GCC; see the file COPYING3.  If not see
 #define m_ZNVER (m_ZNVER1 | m_ZNVER2 | m_ZNVER3 | m_ZNVER4 | m_ZNVER5 | m_ZNVER6)
 #define m_AMD_MULTIPLE (m_ATHLON_K8 | m_AMDFAM10 | m_BDVER | m_BTVER \
 			| m_ZNVER)
+#define m_C86_4G_M4 (HOST_WIDE_INT_1U<<PROCESSOR_C86_4G_M4)
+#define m_C86_4G_M6 (HOST_WIDE_INT_1U<<PROCESSOR_C86_4G_M6)
+#define m_C86_4G_M7 (HOST_WIDE_INT_1U<<PROCESSOR_C86_4G_M7)
+#define m_C86_4G_M8 (HOST_WIDE_INT_1U<<PROCESSOR_C86_4G_M8)
+#define m_C86_4G (m_C86_4G_M4 | m_C86_4G_M6 | m_C86_4G_M7 \
+		  | m_C86_4G_M8)
 
 #define m_GENERIC (HOST_WIDE_INT_1U<<PROCESSOR_GENERIC)
 
@@ -265,11 +271,13 @@ static struct ix86_target_opts isa2_opts[] =
   { "-mavx10.1",	OPTION_MASK_ISA2_AVX10_1 },
   { "-mavx10.2",	OPTION_MASK_ISA2_AVX10_2 },
   { "-mamx-avx512",	OPTION_MASK_ISA2_AMX_AVX512 },
-  { "-mamx-tf32",	OPTION_MASK_ISA2_AMX_TF32 },
   { "-mamx-fp8", 	OPTION_MASK_ISA2_AMX_FP8 },
   { "-mmovrs",		OPTION_MASK_ISA2_MOVRS },
   { "-mamx-movrs",	OPTION_MASK_ISA2_AMX_MOVRS },
-  { "-mavx512bmm",	OPTION_MASK_ISA2_AVX512BMM }
+  { "-mavx512bmm",	OPTION_MASK_ISA2_AVX512BMM },
+  { "-mavx10v2aux",	OPTION_MASK_ISA2_AVX10V2AUX },
+  { "-macev1",		OPTION_MASK_ISA2_ACEV1 },
+  { "-mavx10v1aux",	OPTION_MASK_ISA2_AVX10V1AUX }
 };
 static struct ix86_target_opts isa_opts[] =
 {
@@ -814,7 +822,11 @@ static const struct processor_costs *processor_cost_table[] =
   &znver3_cost,		/* PROCESSOR_ZNVER3.		*/
   &znver4_cost,		/* PROCESSOR_ZNVER4.		*/
   &znver5_cost,		/* PROCESSOR_ZNVER5.		*/
-  &znver5_cost		/* PROCESSOR_ZNVER6.		*/
+  &znver5_cost,		/* PROCESSOR_ZNVER6.		*/
+  &c86_4g_m4_cost,	/* PROCESSOR_C86_4G_M4.		*/
+  &c86_4g_m6_cost,	/* PROCESSOR_C86_4G_M6.		*/
+  &c86_4g_m7_cost,	/* PROCESSOR_C86_4G_M7.		*/
+  &c86_4g_m8_cost	/* PROCESSOR_C86_4G_M8.		*/
 };
 
 /* Guarantee that the array is aligned with enum processor_type.  */
@@ -871,7 +883,7 @@ ix86_function_specific_restore (struct gcc_options *opts,
   opts->x_ix86_tune_memset_strategy = ptr->x_ix86_tune_memset_strategy;
   opts->x_ix86_tune_no_default = ptr->x_ix86_tune_no_default;
   ix86_tune_cost = processor_cost_table[ix86_tune];
-  /* TODO: ix86_cost should be chosen at instruction or function granuality
+  /* TODO: ix86_cost should be chosen at instruction or function granularity
      so for cold code we use size_cost even in !optimize_size compilation.  */
   if (opts->x_optimize_size)
     ix86_cost = &ix86_size_cost;
@@ -1126,11 +1138,13 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
     IX86_ATTR_ISA ("avx10.1", OPT_mavx10_1),
     IX86_ATTR_ISA ("avx10.2", OPT_mavx10_2),
     IX86_ATTR_ISA ("amx-avx512", OPT_mamx_avx512),
-    IX86_ATTR_ISA ("amx-tf32", OPT_mamx_tf32),
     IX86_ATTR_ISA ("amx-fp8", OPT_mamx_fp8),
     IX86_ATTR_ISA ("movrs", OPT_mmovrs),
     IX86_ATTR_ISA ("amx-movrs", OPT_mamx_movrs),
     IX86_ATTR_ISA ("avx512bmm", OPT_mavx512bmm),
+    IX86_ATTR_ISA ("avx10v2aux", OPT_mavx10v2aux),
+    IX86_ATTR_ISA ("acev1", OPT_macev1),
+    IX86_ATTR_ISA ("avx10v1aux", OPT_mavx10v1aux),
 
     /* enum options */
     IX86_ATTR_ENUM ("fpmath=",	OPT_mfpmath_),
@@ -1447,7 +1461,7 @@ ix86_valid_target_attribute_tree (tree fndecl, tree args,
 	opts->x_ix86_tune_string
 	  = ggc_strdup (option_strings[IX86_FUNCTION_SPECIFIC_TUNE]);
       /* If we have explicit arch string and no tune string specified, set
-	 tune_string to NULL and later it will be overriden by arch_string
+	 tune_string to NULL and later it will be overridden by arch_string
 	 so target clones can get proper optimization.  */
       else if (option_strings[IX86_FUNCTION_SPECIFIC_ARCH]
 	       || orig_tune_defaulted)
@@ -1952,7 +1966,7 @@ ix86_override_options_after_change_1 (struct gcc_options *opts,
 	OPTS (flag_web) = OPTS (flag_unroll_loops);
       if (!OPTS_SET_P (flag_rename_registers))
 	OPTS (flag_rename_registers) = OPTS (flag_unroll_loops);
-      /* -fcunroll-grow-size default follws -f[no]-unroll-loops.  */
+      /* -fcunroll-grow-size default follows -f[no]-unroll-loops.  */
       if (!OPTS_SET_P (flag_cunroll_grow_size))
 	OPTS (flag_cunroll_grow_size)
 	  = (OPTS (flag_unroll_loops)
@@ -2295,6 +2309,11 @@ ix86_option_override_internal (bool main_args_p,
     sorry ("%i-bit mode not compiled in",
 	   (opts->x_ix86_isa_flags & OPTION_MASK_ISA_64BIT) ? 64 : 32);
 
+  processor_vendor ix86_vendor = VENDOR_OTHER;
+  processor_types ix86_type = CPU_TYPE_MAX;
+  processor_subtypes ix86_subtype = CPU_SUBTYPE_MAX;
+  wide_int_bitmask ix86_pta = 0;
+
   /* Last processor_alias_table must point to "generic" entry.  */
   gcc_checking_assert (strcmp (processor_alias_table[pta_size - 1].name,
 			       "generic") == 0);
@@ -2330,6 +2349,10 @@ ix86_option_override_internal (bool main_args_p,
 
 	ix86_schedule = processor_alias_table[i].schedule;
 	ix86_arch = processor_alias_table[i].processor;
+	ix86_pta = processor_alias_table[i].flags;
+
+	ix86_decode_cpu_info (processor_alias_table[i].model,
+			      ix86_vendor, ix86_type, ix86_subtype);
 
 	/* Default cpu tuning to the architecture, unless the table
 	   entry requests not to do this.  Used by the x86-64 psABI
@@ -2518,6 +2541,47 @@ ix86_option_override_internal (bool main_args_p,
       XDELETEVEC (s);
     }
 
+  /* Disable -m128bit-atomic if not set on command-line.  */
+  if (!TARGET_128BIT_ATOMIC_P (opts_set->x_ix86_target_flags))
+    opts->x_ix86_target_flags &= ~OPTION_MASK_128BIT_ATOMIC;
+
+  if (TARGET_128BIT_ATOMIC_P (opts->x_ix86_target_flags))
+    {
+      if (!TARGET_64BIT_P (opts->x_ix86_isa_flags))
+	error ("%<-m128bit-atomic%> not supported for 32-bit code");
+      else if (!TARGET_CX16_P (opts_set->x_ix86_isa_flags2))
+	{
+	  /* Enable CMPXCHG16B when -m128bit-atomic is enabled.  */
+	  opts->x_ix86_isa_flags2 |= OPTION_MASK_ISA2_CX16;
+	}
+    }
+  else if (!TARGET_128BIT_ATOMIC_P (opts_set->x_ix86_target_flags)
+	   && TARGET_64BIT_P (opts->x_ix86_isa_flags)
+	   && ((TARGET_AVX_P (opts->x_ix86_isa_flags)
+		&& (ix86_vendor == VENDOR_INTEL
+		    || ix86_vendor == VENDOR_AMD
+		    || ix86_vendor == VENDOR_HYGON
+		    || ix86_vendor == VENDOR_ZHAOXIN))
+	       || (ix86_pta & PTA_X86_64_V3) == PTA_X86_64_V3
+	       || ix86_type == AMDFAM17H
+	       || ix86_type == AMDFAM19H
+	       || ix86_type == AMDFAM1AH
+	       || ix86_type == HYGONFAM18H
+	       || (ix86_type >= INTEL_SIERRAFOREST
+		   && ix86_type <= INTEL_CLEARWATERFOREST)
+	       || ix86_subtype == INTEL_COREI7_SANDYBRIDGE
+	       || (ix86_subtype >= AMDFAM17H_ZNVER1
+		   && ix86_subtype <= INTEL_COREI7_ROCKETLAKE)
+	       || (ix86_subtype >= AMDFAM19H_ZNVER4
+		   && ix86_subtype <= HYGONFAM18H_C86_4G_M8)))
+    {
+      /* Turn on -m128bit-atomic in 64-bit mode by default if supported
+	 by the targeting processor, which is one of x86-64-v3 capable
+	 processors as well as AVX capable processors from Intel, AMD,
+	 Hygon and Zhaoxin.  */
+      opts->x_ix86_target_flags |= OPTION_MASK_128BIT_ATOMIC;
+    }
+
   set_ix86_tune_features (opts, ix86_tune, opts->x_ix86_dump_tunes);
 
   ix86_recompute_optlev_based_flags (opts, opts_set);
@@ -2525,7 +2589,7 @@ ix86_option_override_internal (bool main_args_p,
   ix86_override_options_after_change_1 (opts, opts_set);
 
   ix86_tune_cost = processor_cost_table[ix86_tune];
-  /* TODO: ix86_cost should be chosen at instruction or function granuality
+  /* TODO: ix86_cost should be chosen at instruction or function granularity
      so for cold code we use size_cost even in !optimize_size compilation.  */
   if (opts->x_optimize_size)
     ix86_cost = &ix86_size_cost;
@@ -2733,6 +2797,13 @@ ix86_option_override_internal (bool main_args_p,
 	      opts->x_ix86_fpmath = FPMATH_SSE;
 	    }
 	}
+      else if ((opts->x_ix86_fpmath & FPMATH_387)
+	       && !TARGET_80387_P (opts->x_target_flags)
+	       && TARGET_SSE_P (opts->x_ix86_isa_flags))
+	{
+	  warning (0, "387 instruction set disabled, using SSE arithmetics");
+	  opts->x_ix86_fpmath = FPMATH_SSE;
+	}
     }
   /* For all chips supporting SSE2, -mfpmath=sse performs better than
      fpmath=387.  The second is however default at many targets since the
@@ -2764,6 +2835,10 @@ ix86_option_override_internal (bool main_args_p,
 
       case ix86_veclibabi_type_aocl:
 	ix86_veclib_handler = &ix86_veclibabi_aocl;
+	break;
+
+      case ix86_veclibabi_type_hvml:
+	ix86_veclib_handler = &ix86_veclibabi_hvml;
 	break;
 
       default:
@@ -3257,13 +3332,53 @@ ix86_simd_clone_adjust (struct cgraph_node *node)
   ix86_set_current_function (node->decl);
 }
 
+/* Return the call_saved_registers_type for function type FNTYPE.
+   If LOC is nonnull, report incompatible attributes against that
+   location, otherwise remain silent.  */
 
+call_saved_registers_type
+ix86_fntype_call_saved_registers (const_tree fntype, location_t *loc)
+{
+  auto call_saved_registers = TYPE_DEFAULT_CALL_SAVED_REGISTERS;
+  const char *interrupt_conflict = nullptr;
+  if (lookup_attribute ("preserve_none", TYPE_ATTRIBUTES (fntype)))
+    {
+      call_saved_registers = TYPE_PRESERVE_NONE;
+      interrupt_conflict = "preserve_none";
+    }
+  else if (lookup_attribute ("no_callee_saved_registers",
+			     TYPE_ATTRIBUTES (fntype)))
+    {
+      call_saved_registers = TYPE_NO_CALLEE_SAVED_REGISTERS;
+      interrupt_conflict = "no_callee_saved_registers";
+    }
+  else if (lookup_attribute ("no_caller_saved_registers",
+			     TYPE_ATTRIBUTES (fntype)))
+    call_saved_registers = TYPE_NO_CALLER_SAVED_REGISTERS;
+
+  if (lookup_attribute ("interrupt", TYPE_ATTRIBUTES (fntype)))
+    {
+      if (loc && interrupt_conflict)
+	error_at (*loc, "%qs and %qs attributes are not compatible",
+		  "interrupt", interrupt_conflict);
+      return TYPE_NO_CALLER_SAVED_REGISTERS;
+    }
+
+  return call_saved_registers;
+}
 
 /* Set the func_type field from the function FNDECL.  */
 
 static void
 ix86_set_func_type (tree fndecl)
 {
+  if (cfun->machine->func_type != TYPE_UNKNOWN)
+    return;
+
+  cfun->machine->call_saved_registers
+    = ix86_fntype_call_saved_registers (TREE_TYPE (fndecl),
+					&DECL_SOURCE_LOCATION (fndecl));
+
   /* No need to save and restore callee-saved registers for a noreturn
      function with nothrow or compiled with -fno-exceptions unless when
      compiling with -O0 or -Og, except that it interferes with debugging
@@ -3279,74 +3394,37 @@ ix86_set_func_type (tree fndecl)
      function is marked with TREE_THIS_VOLATILE in the IR output, which
      leads to the incompatible attribute error in LTO1.  Ignore the
      interrupt function in this case.  */
-  enum call_saved_registers_type no_callee_saved_registers
-    = TYPE_DEFAULT_CALL_SAVED_REGISTERS;
-  if (lookup_attribute ("preserve_none",
-			     TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
-    no_callee_saved_registers = TYPE_PRESERVE_NONE;
-  else if ((lookup_attribute ("no_callee_saved_registers",
-			      TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
-	   || (ix86_noreturn_no_callee_saved_registers
-	       && TREE_THIS_VOLATILE (fndecl)
-	       && optimize
-	       && !optimize_debug
-	       && (TREE_NOTHROW (fndecl) || !flag_exceptions)
-	       && !lookup_attribute ("interrupt",
-				     TYPE_ATTRIBUTES (TREE_TYPE (fndecl)))
-	       && !lookup_attribute ("no_caller_saved_registers",
-				 TYPE_ATTRIBUTES (TREE_TYPE (fndecl)))))
-    no_callee_saved_registers = TYPE_NO_CALLEE_SAVED_REGISTERS;
+  if (cfun->machine->call_saved_registers == TYPE_DEFAULT_CALL_SAVED_REGISTERS
+      && ix86_noreturn_no_callee_saved_registers
+      && TREE_THIS_VOLATILE (fndecl)
+      && optimize
+      && !optimize_debug
+      && (TREE_NOTHROW (fndecl) || !flag_exceptions))
+    cfun->machine->call_saved_registers = TYPE_NO_CALLEE_SAVED_REGISTERS;
 
-  if (cfun->machine->func_type == TYPE_UNKNOWN)
+  if (lookup_attribute ("interrupt",
+			TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
     {
-      if (lookup_attribute ("interrupt",
-			    TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
-	{
-	  if (ix86_function_naked (fndecl))
-	    error_at (DECL_SOURCE_LOCATION (fndecl),
-		      "interrupt and naked attributes are not compatible");
+      if (ix86_function_naked (fndecl))
+	error_at (DECL_SOURCE_LOCATION (fndecl),
+		  "interrupt and naked attributes are not compatible");
 
-	  if (no_callee_saved_registers)
-	    {
-	      const char *attr;
-	      if (no_callee_saved_registers == TYPE_PRESERVE_NONE)
-		attr = "preserve_none";
-	      else
-		attr = "no_callee_saved_registers";
-	      error_at (DECL_SOURCE_LOCATION (fndecl),
-			"%qs and %qs attributes are not compatible",
-			"interrupt", attr);
-	    }
+      int nargs = 0;
+      for (tree arg = DECL_ARGUMENTS (fndecl);
+	   arg;
+	   arg = TREE_CHAIN (arg))
+	nargs++;
+      cfun->machine->func_type = nargs == 2 ? TYPE_EXCEPTION : TYPE_INTERRUPT;
 
-	  int nargs = 0;
-	  for (tree arg = DECL_ARGUMENTS (fndecl);
-	       arg;
-	       arg = TREE_CHAIN (arg))
-	    nargs++;
-	  cfun->machine->call_saved_registers
-	    = TYPE_NO_CALLER_SAVED_REGISTERS;
-	  cfun->machine->func_type
-	    = nargs == 2 ? TYPE_EXCEPTION : TYPE_INTERRUPT;
+      ix86_optimize_mode_switching[X86_DIRFLAG] = 1;
 
-	  ix86_optimize_mode_switching[X86_DIRFLAG] = 1;
-
-	  /* Only dwarf2out.cc can handle -WORD(AP) as a pointer argument.  */
-	  if (write_symbols != NO_DEBUG && write_symbols != DWARF2_DEBUG)
-	    sorry ("only DWARF debug format is supported for interrupt "
-		   "service routine");
-	}
-      else
-	{
-	  cfun->machine->func_type = TYPE_NORMAL;
-	  if (no_callee_saved_registers)
-	    cfun->machine->call_saved_registers
-	      = no_callee_saved_registers;
-	  else if (lookup_attribute ("no_caller_saved_registers",
-				     TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
-	    cfun->machine->call_saved_registers
-	      = TYPE_NO_CALLER_SAVED_REGISTERS;
-	}
+      /* Only dwarf2out.cc can handle -WORD(AP) as a pointer argument.  */
+      if (write_symbols != NO_DEBUG && write_symbols != DWARF2_DEBUG)
+	sorry ("only DWARF debug format is supported for interrupt "
+	       "service routine");
     }
+  else
+    cfun->machine->func_type = TYPE_NORMAL;
 }
 
 /* Set the indirect_branch_type field from the function FNDECL.  */
@@ -3514,21 +3592,6 @@ ix86_set_current_function (tree fndecl)
     }
   ix86_previous_fndecl = fndecl;
 
-  static call_saved_registers_type prev_call_saved_registers;
-
-  /* 64-bit MS and SYSV ABI have different set of call used registers.
-     Avoid expensive re-initialization of init_regs each time we switch
-     function context.  */
-  if (TARGET_64BIT
-      && (call_used_or_fixed_reg_p (SI_REG)
-	  == (cfun->machine->call_abi == MS_ABI)))
-    reinit_regs ();
-  /* Need to re-initialize init_regs if caller-saved registers are
-     changed.  */
-  else if (prev_call_saved_registers
-	   != cfun->machine->call_saved_registers)
-    reinit_regs ();
-
   if (cfun->machine->func_type != TYPE_NORMAL
       || (cfun->machine->call_saved_registers
 	  == TYPE_NO_CALLER_SAVED_REGISTERS))
@@ -3576,8 +3639,6 @@ ix86_set_current_function (tree fndecl)
 	    = TYPE_DEFAULT_CALL_SAVED_REGISTERS;
 	}
     }
-
-  prev_call_saved_registers = cfun->machine->call_saved_registers;
 }
 
 /* Implement the TARGET_OFFLOAD_OPTIONS hook.  */
@@ -3763,7 +3824,7 @@ ix86_handle_tm_regparm_attribute (tree *node, tree, tree,
     alt = tree_cons (get_identifier ("fastcall"), NULL, NULL);
   else
     {
-      alt = tree_cons (NULL, build_int_cst (NULL, 2), NULL);
+      alt = tree_cons (NULL, build_int_cst (integer_type_node, 2), NULL);
       alt = tree_cons (get_identifier ("regparm"), alt, NULL);
     }
   decl_attributes (node, alt, flags);

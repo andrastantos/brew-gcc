@@ -58,6 +58,10 @@
   UNSPEC_ATOMIC
   UNSPEC_CMPXCHG
   UNSPEC_XCHG
+
+  ;; Stack protector
+  UNSPEC_SSP_SET
+  UNSPEC_SSP_TEST
 ])
 
 ;; UNSPEC_VOLATILE:
@@ -74,6 +78,7 @@
   UNSPECV_MCOUNT
   UNSPECV_FORCE_MOV
   UNSPECV_LDGP1
+  UNSPECV_LDGP2
   UNSPECV_PLDGP2	; prologue ldgp
   UNSPECV_SET_TP
   UNSPECV_RPCC
@@ -2236,21 +2241,28 @@
    (use (match_operand:TF 1 "general_operand"))]
   "TARGET_FP && TARGET_HAS_XFLOATING_LIBS"
 {
-  rtx tmpf, sticky, arg, lo, hi;
+  rtx tmpf, sticky, arg, lo, discarded, kept;
+  HOST_WIDE_INT mask = ((HOST_WIDE_INT) 1 << 60) - 1;
 
   tmpf = gen_reg_rtx (DFmode);
   sticky = gen_reg_rtx (DImode);
   arg = copy_to_mode_reg (TFmode, operands[1]);
   lo = gen_lowpart (DImode, arg);
-  hi = gen_highpart (DImode, arg);
 
-  /* Convert the low word of the TFmode value into a sticky rounding bit,
-     then or it into the low bit of the high word.  This leaves the sticky
-     bit at bit 48 of the fraction, which is representable in DFmode,
-     which prevents rounding error in the final conversion to SFmode.  */
+  /* Round to odd at the last fraction bit DFmode keeps, so that the
+     conversion to DFmode is exact and the one to SFmode is the only
+     rounding.  DFmode keeps 52 fraction bits; the high word holds the first
+     48 of the 112 and the low word the rest, so that is bit 60 of the low
+     word.  Replace everything below it with a sticky bit.  */
 
-  emit_insn (gen_rtx_SET (sticky, gen_rtx_NE (DImode, lo, const0_rtx)));
-  emit_insn (gen_iordi3 (hi, hi, sticky));
+  discarded = expand_binop (DImode, and_optab, lo, GEN_INT (mask),
+			    NULL_RTX, 1, OPTAB_LIB_WIDEN);
+  emit_insn (gen_rtx_SET (sticky, gen_rtx_NE (DImode, discarded, const0_rtx)));
+  kept = expand_binop (DImode, and_optab, lo, GEN_INT (~mask),
+		       NULL_RTX, 1, OPTAB_LIB_WIDEN);
+  sticky = expand_shift (LSHIFT_EXPR, DImode, sticky, 60, NULL_RTX, 1);
+  emit_move_insn (lo, expand_binop (DImode, ior_optab, kept, sticky,
+				    NULL_RTX, 1, OPTAB_LIB_WIDEN));
   emit_insn (gen_trunctfdf2 (tmpf, arg));
   emit_insn (gen_truncdfsf2 (operands[0], tmpf));
   DONE;
@@ -2841,6 +2853,50 @@
     DONE;
   else
     FAIL;
+})
+
+;; Floating-point classification.  Defining these patterns also stops
+;; fold_builtin_interclass_mathfn from rewriting the built-ins into FP
+;; comparisons, which are unusable here; see alpha_expand_fp_classify.
+
+(define_expand "isfinite<mode>2"
+  [(match_operand:SI 0 "register_operand")
+   (match_operand:FMODE 1 "register_operand")]
+  "TARGET_FP && !TARGET_FLOAT_VAX
+   && (alpha_fptm < ALPHA_FPTM_SU || flag_signaling_nans)"
+{
+  alpha_expand_fp_classify (operands[0], operands[1], ALPHA_FPCLASS_FINITE);
+  DONE;
+})
+
+(define_expand "isinf<mode>2"
+  [(match_operand:SI 0 "register_operand")
+   (match_operand:FMODE 1 "register_operand")]
+  "TARGET_FP && !TARGET_FLOAT_VAX
+   && (alpha_fptm < ALPHA_FPTM_SU || flag_signaling_nans)"
+{
+  alpha_expand_fp_classify (operands[0], operands[1], ALPHA_FPCLASS_INF);
+  DONE;
+})
+
+(define_expand "isnan<mode>2"
+  [(match_operand:SI 0 "register_operand")
+   (match_operand:FMODE 1 "register_operand")]
+  "TARGET_FP && !TARGET_FLOAT_VAX
+   && (alpha_fptm < ALPHA_FPTM_SU || flag_signaling_nans)"
+{
+  alpha_expand_fp_classify (operands[0], operands[1], ALPHA_FPCLASS_NAN);
+  DONE;
+})
+
+(define_expand "isnormal<mode>2"
+  [(match_operand:SI 0 "register_operand")
+   (match_operand:FMODE 1 "register_operand")]
+  "TARGET_FP && !TARGET_FLOAT_VAX
+   && (alpha_fptm < ALPHA_FPTM_SU || flag_signaling_nans)"
+{
+  alpha_expand_fp_classify (operands[0], operands[1], ALPHA_FPCLASS_NORMAL);
+  DONE;
 })
 
 (define_expand "cstoretf4"
@@ -3672,6 +3728,71 @@
   "call_pal 0x81"
   [(set_attr "type" "callpal")])
 
+;; Stack protector.  The canary is read from __stack_chk_guard, whose
+;; address is not a valid memory address on its own, so legitimize it
+;; here; only the address, never the canary value itself, is allowed to
+;; live in a pseudo.
+
+(define_expand "stack_protect_set"
+  [(match_operand:DI 0 "memory_operand")
+   (match_operand:DI 1 "memory_operand")]
+  ""
+{
+  if (!memory_operand (operands[1], DImode))
+    operands[1] = replace_equiv_address (operands[1],
+					 copy_addr_to_reg (XEXP (operands[1],
+								 0)));
+  emit_insn (gen_stack_protect_setdi (operands[0], operands[1]));
+  DONE;
+})
+
+;; DO NOT SPLIT THIS PATTERN.  It is important for security reasons that
+;; the canary value does not live beyond the life of this sequence.
+(define_insn "stack_protect_setdi"
+  [(set (match_operand:DI 0 "memory_operand" "=m")
+	(unspec:DI [(match_operand:DI 1 "memory_operand" "m")]
+		   UNSPEC_SSP_SET))
+   (set (match_scratch:DI 2 "=&r") (const_int 0))]
+  ""
+  "ldq %2,%1\;stq %2,%0\;bis $31,$31,%2"
+  [(set_attr "type" "multi")
+   (set_attr "length" "12")])
+
+(define_expand "stack_protect_test"
+  [(match_operand:DI 0 "memory_operand")
+   (match_operand:DI 1 "memory_operand")
+   (match_operand 2)]
+  ""
+{
+  rtx res, ops[4];
+
+  if (!memory_operand (operands[1], DImode))
+    operands[1] = replace_equiv_address (operands[1],
+					 copy_addr_to_reg (XEXP (operands[1],
+								 0)));
+  res = gen_reg_rtx (DImode);
+  emit_insn (gen_stack_protect_testdi (res, operands[0], operands[1]));
+
+  ops[0] = gen_rtx_EQ (VOIDmode, res, const0_rtx);
+  ops[1] = res;
+  ops[2] = const0_rtx;
+  ops[3] = operands[2];
+  alpha_emit_conditional_branch (ops, DImode);
+  DONE;
+})
+
+;; DO NOT SPLIT THIS PATTERN, as above.
+(define_insn "stack_protect_testdi"
+  [(set (match_operand:DI 0 "register_operand" "=&r")
+	(unspec:DI [(match_operand:DI 1 "memory_operand" "m")
+		    (match_operand:DI 2 "memory_operand" "m")]
+		   UNSPEC_SSP_TEST))
+   (clobber (match_scratch:DI 3 "=&r"))]
+  ""
+  "ldq %0,%1\;ldq %3,%2\;xor %0,%3,%0\;bis $31,$31,%3"
+  [(set_attr "type" "multi")
+   (set_attr "length" "16")])
+
 ;; For userland, we load the thread pointer from the TCB.
 ;; For the kernel, we load the per-cpu private value.
 
@@ -4468,7 +4589,7 @@
     emit_move_insn (areg, addr);
   emit_move_insn (aligned_addr, gen_rtx_AND (DImode, areg, GEN_INT (-8)));
 
-  rtx label = gen_label_rtx ();
+  rtx_code_label *label = gen_label_rtx ();
   emit_label (label);
   LABEL_NUSES (label) = 1;
 
@@ -4480,7 +4601,7 @@
 
   rtx label_ref = gen_rtx_LABEL_REF (DImode, label);
   rtx cond = gen_rtx_EQ (DImode, status, const0_rtx);
-  rtx jump = alpha_emit_unlikely_jump (cond, label_ref);
+  rtx_insn *jump = alpha_emit_unlikely_jump (cond, label_ref);
   JUMP_LABEL (jump) = label;
 
   cfun->split_basic_blocks_after_reload = 1;
@@ -4522,7 +4643,7 @@
   get_aligned_mem (operands[0], &aligned_mem, &bitnum);
   if (TARGET_SAFE_BWA)
     {
-      rtx label = gen_label_rtx ();
+      rtx_code_label *label = gen_label_rtx ();
       emit_label (label);
       LABEL_NUSES (label) = 1;
 
@@ -4534,7 +4655,7 @@
       rtx label_ref = gen_rtx_LABEL_REF (DImode, label);
       rtx cond = gen_rtx_EQ (DImode, gen_rtx_SUBREG (DImode, status, 0),
 			     const0_rtx);
-      rtx jump = alpha_emit_unlikely_jump (cond, label_ref);
+      rtx_insn *jump = alpha_emit_unlikely_jump (cond, label_ref);
       JUMP_LABEL (jump) = label;
 
       cfun->split_basic_blocks_after_reload = 1;
@@ -4597,9 +4718,15 @@
 })
 
 
+; Modes for which we implement misaligned accesses with the ldq_u/stq_u
+; and extract/insert/mask instruction sequences.  QImode is excluded as
+; a byte can never be misaligned.
+
+(define_mode_iterator MISALIGN [HI SI DI V8QI V4HI V2SI])
+
 (define_expand "movmisalign<mode>"
-  [(set (match_operand:VEC 0 "nonimmediate_operand")
-        (match_operand:VEC 1 "general_operand"))]
+  [(set (match_operand:MISALIGN 0 "nonimmediate_operand")
+        (match_operand:MISALIGN 1 "general_operand"))]
   ""
 {
   alpha_expand_movmisalign (<MODE>mode, operands);
@@ -5081,6 +5208,20 @@
   "lda %0,0(%1)\t\t!gpdisp!%2"
   [(set_attr "cannot_copy" "true")])
 
+;; Same as *ldgp_er_2, but for the pairs whose first half is the
+;; unspec_volatile *ldgp_er_1.  Both halves of a gpdisp pair have to be
+;; equally deletable: a plain unspec here is removed by DCE as soon as $29
+;; turns out to be unused, and the ldah left behind makes the assembler
+;; complain about a missing lda.
+(define_insn "*ldgp_er_2_v"
+  [(set (match_operand:DI 0 "register_operand" "=r")
+	(unspec_volatile:DI [(match_operand:DI 1 "register_operand" "r")
+			     (match_operand 2 "const_int_operand")]
+			    UNSPECV_LDGP2))]
+  "TARGET_EXPLICIT_RELOCS && TARGET_ABI_OSF"
+  "lda %0,0(%1)\t\t!gpdisp!%2"
+  [(set_attr "cannot_copy" "true")])
+
 (define_insn "*prologue_ldgp_er_2"
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(unspec_volatile:DI [(match_operand:DI 1 "register_operand" "r")
@@ -5213,7 +5354,7 @@
   [(set (match_dup 1)
 	(unspec_volatile:DI [(match_dup 2) (match_dup 3)] UNSPECV_LDGP1))
    (set (match_dup 1)
-	(unspec:DI [(match_dup 1) (match_dup 3)] UNSPEC_LDGP2))]
+	(unspec_volatile:DI [(match_dup 1) (match_dup 3)] UNSPECV_LDGP2))]
 {
   if (prev_nonnote_insn (curr_insn) != XEXP (operands[0], 0))
     emit_insn (gen_rtx_UNSPEC_VOLATILE (VOIDmode, gen_rtvec (1, operands[0]),
@@ -5266,7 +5407,7 @@
   [(set (match_dup 0)
 	(unspec_volatile:DI [(match_dup 1) (match_dup 2)] UNSPECV_LDGP1))
    (set (match_dup 0)
-	(unspec:DI [(match_dup 0) (match_dup 2)] UNSPEC_LDGP2))]
+	(unspec_volatile:DI [(match_dup 0) (match_dup 2)] UNSPECV_LDGP2))]
 {
   operands[0] = pic_offset_table_rtx;
   operands[1] = gen_rtx_REG (Pmode, 26);

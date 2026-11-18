@@ -249,6 +249,7 @@ namespace simd
 
   template <__vectorizable _Tp, __abi_tag _Ap>
     requires (_Ap::_S_nreg == 1)
+      && (!__complex_like<_Tp>)
     class basic_vec<_Tp, _Ap>
     : public _VecBase<_Tp, _Ap>
     {
@@ -296,8 +297,13 @@ namespace simd
       }
 
       [[__gnu__::__always_inline__]]
+      constexpr _DataType&
+      _M_get() noexcept
+      { return _M_data; }
+
+      [[__gnu__::__always_inline__]]
       constexpr const _DataType&
-      _M_get() const
+      _M_get() const noexcept
       { return _M_data; }
 
       [[__gnu__::__always_inline__]]
@@ -443,33 +449,11 @@ namespace simd
 	  static_assert(_Shift < _S_size && -_Shift < _S_size);
 	  if constexpr (_Shift == 0)
 	    return *this;
-#ifdef __SSE2__
-	  else if (!__is_const_known(*this))
-	    {
-	      if constexpr (sizeof(_M_data) == 16 && _Shift > 0)
-		return reinterpret_cast<_DataType>(
-			 __builtin_ia32_psrldqi128(__vec_bit_cast<long long>(_M_data),
-						   _Shift * sizeof(value_type) * 8));
-	      else if constexpr (sizeof(_M_data) == 16 && _Shift < 0)
-		return reinterpret_cast<_DataType>(
-			 __builtin_ia32_pslldqi128(__vec_bit_cast<long long>(_M_data),
-						   -_Shift * sizeof(value_type) * 8));
-	      else if constexpr (sizeof(_M_data) < 16)
-		{
-		  auto __x = reinterpret_cast<__vec_builtin_type_bytes<long long, 16>>(
-			       __vec_zero_pad_to_16(_M_data));
-		  if constexpr (_Shift > 0)
-		    __x = __builtin_ia32_psrldqi128(__x, _Shift * sizeof(value_type) * 8);
-		  else
-		    __x = __builtin_ia32_pslldqi128(__x, -_Shift * sizeof(value_type) * 8);
-		  return _VecOps<_DataType>::_S_extract(__vec_bit_cast<__canon_value_type>(__x));
-		}
-	    }
-#endif
-	  return _S_static_permute(*this, [](int __i) consteval {
-		   int __off = __i + _Shift;
-		   return __off >= _S_size || __off < 0 ? zero_element : __off;
-		 });
+	  else
+	    return _S_static_permute(*this, [](int __i) consteval {
+		     int __off = __i + _Shift;
+		     return __off >= _S_size || __off < 0 ? zero_element : __off;
+		   });
 	}
 
       /** @internal
@@ -1207,14 +1191,15 @@ namespace simd
 	}
 
       template <ranges::contiguous_range _Rg, typename... _Flags>
-	requires __static_sized_range<_Rg, _S_size>
+	requires ranges::__static_sized_range<_Rg>
 	  && __vectorizable<ranges::range_value_t<_Rg>>
 	  && __explicitly_convertible_to<ranges::range_value_t<_Rg>, value_type>
 	[[__gnu__::__always_inline__]]
 	constexpr
 	basic_vec(_Rg&& __range, flags<_Flags...> __flags = {})
-	  : basic_vec(_LoadCtorTag(), __flags.template _S_adjust_pointer<basic_vec>(
-					ranges::data(__range)))
+	requires (ranges::size(__range) == _S_size)
+	: basic_vec(_LoadCtorTag(), __flags.template _S_adjust_pointer<basic_vec>(
+				      ranges::data(__range)))
 	{
 	  static_assert(__loadstore_convertible_to<ranges::range_value_t<_Rg>, value_type,
 						   _Flags...>);
@@ -1746,6 +1731,7 @@ namespace simd
 
   template <__vectorizable _Tp, __abi_tag _Ap>
     requires (_Ap::_S_nreg > 1)
+      && (!__complex_like<_Tp>)
     class basic_vec<_Tp, _Ap>
     : public _VecBase<_Tp, _Ap>
     {
@@ -1776,7 +1762,7 @@ namespace simd
 
       _DataType1 _M_data1;
 
-      static constexpr bool _S_use_bitmask = _Ap::_S_is_bitmask;
+      static constexpr bool _S_use_bitmask = _DataType0::_S_use_bitmask;
 
       static constexpr bool _S_is_partial = _DataType1::_S_is_partial;
 
@@ -1796,13 +1782,23 @@ namespace simd
       }
 
       [[__gnu__::__always_inline__]]
-      constexpr const _DataType0&
-      _M_get_low() const
+      constexpr _DataType0&
+      _M_get_low() noexcept
       { return _M_data0; }
 
       [[__gnu__::__always_inline__]]
+      constexpr const _DataType0&
+      _M_get_low() const noexcept
+      { return _M_data0; }
+
+      [[__gnu__::__always_inline__]]
+      constexpr _DataType1&
+      _M_get_high() noexcept
+      { return _M_data1; }
+
+      [[__gnu__::__always_inline__]]
       constexpr const _DataType1&
-      _M_get_high() const
+      _M_get_high() const noexcept
       { return _M_data1; }
 
       [[__gnu__::__always_inline__]]
@@ -2072,11 +2068,12 @@ namespace simd
 	{}
 
       template <ranges::contiguous_range _Rg, typename... _Flags>
-	requires __static_sized_range<_Rg, _S_size>
+	requires ranges::__static_sized_range<_Rg>
 	  && __vectorizable<ranges::range_value_t<_Rg>>
 	  && __explicitly_convertible_to<ranges::range_value_t<_Rg>, value_type>
 	constexpr
 	basic_vec(_Rg&& __range, flags<_Flags...> __flags = {})
+	requires (ranges::size(__range) == _S_size)
 	: basic_vec(_LoadCtorTag(),
 		    __flags.template _S_adjust_pointer<basic_vec>(ranges::data(__range)))
 	{
@@ -2245,7 +2242,7 @@ namespace simd
 
   // [simd.overview] deduction guide ------------------------------------------
   template <ranges::contiguous_range _Rg, typename... _Ts>
-    requires __static_sized_range<_Rg>
+    requires ranges::__static_sized_range<_Rg>
     basic_vec(_Rg&& __r, _Ts...)
     -> basic_vec<ranges::range_value_t<_Rg>,
 		 __deduce_abi_t<ranges::range_value_t<_Rg>,

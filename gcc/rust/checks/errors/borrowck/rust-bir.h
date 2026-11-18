@@ -21,6 +21,7 @@
 
 #include "rust-bir-place.h"
 #include "rust-bir-visitor.h"
+#include "optional.h"
 
 #include "polonius/rust-polonius-ffi.h"
 #include "rust-tyty-variance-analysis.h"
@@ -75,12 +76,21 @@ struct Function
 class Statement
 {
 public:
+  enum class DropStyle
+  {
+    UNCLASSIFIED,
+    STATIC,
+    DEAD,
+    CONDITIONAL,
+  };
+
   enum class Kind
   {
     ASSIGNMENT,		  // <place> = <expr>
     SWITCH,		  // switch <place>
     RETURN,		  // return
     GOTO,		  // goto
+    DROP,		  // Drop(<place>)
     STORAGE_DEAD,	  // StorageDead(<place>)
     STORAGE_LIVE,	  // StorageLive(<place>)
     USER_TYPE_ASCRIPTION, // UserTypeAscription(<place>, <tyty>)
@@ -91,9 +101,11 @@ private:
   Kind kind;
   // ASSIGNMENT: lhs
   // SWITCH: switch_val
-  // StorageDead/StorageLive: place
+  // DROP/StorageDead/StorageLive: place
   // otherwise: <unused>
   PlaceId place;
+  // DROP: drop classification
+  DropStyle drop_style = DropStyle::UNCLASSIFIED;
   // ASSIGNMENT: rhs
   // otherwise: <unused>
   std::unique_ptr<AbstractExpr> expr;
@@ -102,12 +114,17 @@ private:
   // currently only available when kind is ASSIGNMENT | RETURN
   // FIXME: Add location for other statement kinds
   location_t location;
+  // HIR expression which consumes the RHS of an assignment.  This is used to
+  // attach backend drop-flag updates to the corresponding expression.
+  tl::optional<HirId> move_site;
 
 public:
   static Statement make_assignment (PlaceId place, AbstractExpr *rhs,
-				    location_t location)
+				    location_t location,
+				    tl::optional<HirId> move_site = tl::nullopt)
   {
-    return Statement (Kind::ASSIGNMENT, place, rhs, nullptr, location);
+    return Statement (Kind::ASSIGNMENT, place, rhs, nullptr, location,
+		      move_site);
   }
   static Statement make_switch (PlaceId place)
   {
@@ -118,6 +135,10 @@ public:
     return Statement (Kind::RETURN, INVALID_PLACE, nullptr, nullptr, location);
   }
   static Statement make_goto () { return Statement (Kind::GOTO); }
+  static Statement make_drop (PlaceId place)
+  {
+    return Statement (Kind::DROP, place);
+  }
   static Statement make_storage_dead (PlaceId place)
   {
     return Statement (Kind::STORAGE_DEAD, place);
@@ -140,16 +161,24 @@ private:
   // compelete constructor, used by make_* functions
   Statement (Kind kind, PlaceId place = INVALID_PLACE,
 	     AbstractExpr *rhs = nullptr, TyTy::BaseType *type = nullptr,
-	     location_t location = UNKNOWN_LOCATION)
-    : kind (kind), place (place), expr (rhs), type (type), location (location)
+	     location_t location = UNKNOWN_LOCATION,
+	     tl::optional<HirId> move_site = tl::nullopt)
+    : kind (kind), place (place), expr (rhs), type (type), location (location),
+      move_site (move_site)
   {}
 
 public:
   WARN_UNUSED_RESULT Kind get_kind () const { return kind; }
   WARN_UNUSED_RESULT PlaceId get_place () const { return place; }
+  WARN_UNUSED_RESULT DropStyle get_drop_style () const { return drop_style; }
+  void set_drop_style (DropStyle style) { drop_style = style; }
   WARN_UNUSED_RESULT AbstractExpr &get_expr () const { return *expr; }
   WARN_UNUSED_RESULT TyTy::BaseType *get_type () const { return type; }
   WARN_UNUSED_RESULT location_t get_location () const { return location; }
+  WARN_UNUSED_RESULT const tl::optional<HirId> &get_move_site () const
+  {
+    return move_site;
+  }
 };
 
 struct BasicBlock

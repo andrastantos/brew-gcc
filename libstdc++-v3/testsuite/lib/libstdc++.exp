@@ -65,8 +65,6 @@ load_lib libgloss.exp
 # compiler routines, then ours
 load_gcc_lib target-supports.exp
 load_gcc_lib target-supports-dg.exp
-load_lib prune.exp
-load_lib dg-options.exp
 load_gcc_lib scanasm.exp
 load_gcc_lib scandump.exp
 load_gcc_lib scantree.exp
@@ -75,7 +73,10 @@ load_gcc_lib timeout.exp
 load_gcc_lib timeout-dg.exp
 load_gcc_lib wrapper.exp
 load_gcc_lib target-utils.exp
+load_gcc_lib gcc-defs.exp
 load_gcc_lib dg-test-cleanup.exp
+load_lib prune.exp
+load_lib dg-options.exp
 
 # Useful for debugging.  Pass the name of a variable and the verbosity
 # threshold (number of -v's on the command line).
@@ -118,7 +119,6 @@ proc libstdc++_init { testfile } {
     global flags_file
     global tool_timeout
     global DEFAULT_CXXFLAGS
-    global STATIC_LIBCXXFLAGS
 
     # We set LC_ALL and LANG to C so that we get the same error
     # messages as expected.
@@ -219,15 +219,6 @@ proc libstdc++_init { testfile } {
     }
     v3track v3-sharedlib 3
 
-    set STATIC_LIBCXXFLAGS ""
-    set staticlibdir [lookfor_file $blddir src/.libs/libstdc++.a]
-    if {$staticlibdir != ""} {
-	set staticlibdir [file dirname $staticlibdir]
-	# Some targets use libstdc++.a%s in their specs, so they need a
-	# -B option for uninstalled testing.
-	set STATIC_LIBCXXFLAGS " -B${staticlibdir} "
-    }
-
     # Compute what needs to be added to the existing LD_LIBRARY_PATH.
     if {$gccdir != ""} {
 	set compiler ${gccdir}/xg++
@@ -247,13 +238,14 @@ proc libstdc++_init { testfile } {
 	    }
 	  }
 	}
-
-	set_ld_library_path_env_vars
-	if [info exists env(LD_LIBRARY_PATH)] {
-	  verbose -log "LD_LIBRARY_PATH = $env(LD_LIBRARY_PATH)"
-	}
     } else {
 	set compiler [transform "g++"]
+	append ld_library_path [gcc-set-multilib-library-path $compiler]
+    }
+
+    set_ld_library_path_env_vars
+    if [info exists env(LD_LIBRARY_PATH)] {
+	verbose -log "LD_LIBRARY_PATH = $env(LD_LIBRARY_PATH)"
     }
 
     # Set the default timeout for v3 tests.
@@ -476,7 +468,7 @@ if { [info procs saved-dg-test] == [list] } {
 # These should be adjusted whenever the compiler's default -std is updated
 # or a newer C++ effective target is added.
 set v3_default_std 20
-set v3_max_std 26
+set v3_max_std 29
 
 # Find the minimum standard required by a test, if higher than $v3_default_std.
 proc v3-minimum-std { test } {
@@ -592,7 +584,6 @@ proc v3_target_compile { source dest type options } {
     global cxxvtvflags
     global cxxldflags
     global includes
-    global STATIC_LIBCXXFLAGS
     global tool
 
     lappend options "additional_flags=-fdiagnostics-plain-output"
@@ -606,7 +597,6 @@ proc v3_target_compile { source dest type options } {
     set cxx_final $cxx
     set cxxlibglossflags  [libgloss_link_flags]
     set cxx_final [concat $cxx_final $cxxlibglossflags]
-    set cxx_final [concat $cxx_final $STATIC_LIBCXXFLAGS]
     set cxx_final [concat $cxx_final $cxxflags]
     set cxx_final [concat $cxx_final $cxxvtvflags]
     set cxx_final [concat $cxx_final $includes]
@@ -684,7 +674,6 @@ proc v3_target_compile_as_c { source dest type options } {
     global blddir
     global cc
     global cxxflags
-    global STATIC_LIBCXXFLAGS
     global tool
 
     if { [target_info needs_status_wrapper] != "" && [info exists gluefile] } {
@@ -696,7 +685,6 @@ proc v3_target_compile_as_c { source dest type options } {
     set cc_final $cc
     set cxxlibglossflags [libgloss_link_flags]
     set cc_final [concat $cc_final $cxxlibglossflags]
-    set cc_final [concat $cc_final $STATIC_LIBCXXFLAGS]
     set cc_final [concat $cc_final $cxxflags]
     set cc_final [concat $cc_final $includes]
     regsub -all {\s[-]nostdinc[+][+]} $cc_final "" cc_final
@@ -833,6 +821,7 @@ proc v3-build_support { } {
     # Build the support objects.
     set source_files [list testsuite_abi.cc testsuite_allocator.cc \
 			  testsuite_character.cc testsuite_hooks.cc \
+			  testsuite_semaphore.cc \
 			  io/verified_cmd_line_input.cc \
 			  io/prog_bar.cc performance/time/elapsed_timer.cc ]
     foreach f $source_files {
@@ -842,7 +831,7 @@ proc v3-build_support { } {
 	# do not prevent compilation.
 	# Disable LTO so that ar/ranlib don't need the LTO plugin.
 	if { [v3_target_compile $srcdir/util/$f $object_file "object" \
-		  [list "incdir=$srcdir" "additional_flags=-w -fno-lto -fno-freestanding"]]
+		  [list "additional_flags=-w -fno-lto -fno-freestanding"]]
 	     != "" } {
 	    error "could not compile $f"
 	}
@@ -881,7 +870,7 @@ proc v3-build_support { } {
 	    # Compile with "-w" so that warnings issued by the compiler
 	    # do not prevent compilation.
 	    if { [v3_target_compile $srcdir/util/$f $object_file "sharedlib" \
-	     [list "incdir=$srcdir" "additional_flags=-fno-inline -w -shared -fPIC -DPIC -std=gnu++98 -fno-freestanding"]]
+	     [list "additional_flags=-fno-inline -w -shared -fPIC -DPIC -std=gnu++98 -fno-freestanding"]]
 		 != "" } {
 		error "could not compile $f"
 	    }
@@ -1173,18 +1162,18 @@ proc v3_check_preprocessor_condition { name cond { inc "" } } {
 	"
     set flags "$cxxflags $DEFAULT_CXXFLAGS -Werror"
 
-    return [v3_try_preprocess name $code $flags]
+    return [v3_try_preprocess $name $code $flags]
 }
 
 # Return 1 if libstdc++ defines macro for the current target, 0 otherwise.
 proc check_v3_target_cpp_feature_test { cond } {
+    global v3_max_std
     global cxxflags
     set cxxflags_saved $cxxflags
     # Use the latest standard, so that all feature test macros are defined.
     # We need to do it here, because this check happens before v3-dg-runtest
     # runs its loop to test multiple times with different -std options.
-    # This should be updated when a new -std is added.
-    set cxxflags "$cxxflags -std=gnu++26"
+    set cxxflags "$cxxflags -std=gnu++$v3_max_std"
     set inc "#include <version>"
     set result [v3_check_preprocessor_condition cpp_feature_test "$cond" $inc]
     set cxxflags $cxxflags_saved
@@ -1438,6 +1427,16 @@ proc check_v3_target_nprocs { } {
     }]
 }
 
+# Return 1 if the POSIX Semaphores option or the XSI option is supported
+# for the current target, 0 otherwise.
+proc check_v3_target_posix_or_sysv_semaphore { } {
+    set name "posix_or_sysv_semaphore"
+    set inc "#include <unistd.h>"
+    set cond "_POSIX_SEMAPHORES > 0 || _XOPEN_UNIX > 0"
+    set result [v3_check_preprocessor_condition $name $cond $inc]
+    return $result
+}
+
 # Return 1 if linking with -static-libstdc++ works, 0 otherwise.
 proc check_v3_target_static_libstdcxx { } {
     return [check_v3_target_prop_cached et_static_libstdcxx {
@@ -1630,9 +1629,11 @@ proc check_effective_target_hosted { } {
 
 # Return 1 if std::chrono::tzdb is supported.
 proc check_effective_target_tzdb { } {
-    if {![check_effective_target_cxx11_abi]} {
+    # Check the feature test macro (which depends on hosted and ABI macros).
+    if {![check_v3_target_cpp_feature_test "__cpp_lib_chrono >= 201803L"]} {
 	return 0
     }
+    # Also require that we have tzdata available on-disk or in-memory.
     return [check_v3_target_prop_cached et_tzdb {
 	set cond "defined _GLIBCXX_ZONEINFO_DIR || _GLIBCXX_STATIC_TZDATA"
 	return [v3_check_preprocessor_condition tzdb $cond]
@@ -1640,81 +1641,6 @@ proc check_effective_target_tzdb { } {
 }
 
 set additional_prunes ""
-
-if { [info exists env(GCC_RUNTEST_PARALLELIZE_DIR)] \
-     && [info procs runtest_file_p] != [list] \
-     && [info procs gcc_parallelize_saved_runtest_file_p] == [list] } then {
-    global gcc_runtest_parallelize_counter
-    global gcc_runtest_parallelize_counter_minor
-    global gcc_runtest_parallelize_enable
-    global gcc_runtest_parallelize_dir
-    global gcc_runtest_parallelize_last
-
-    set gcc_runtest_parallelize_counter 0
-    set gcc_runtest_parallelize_counter_minor 0
-    set gcc_runtest_parallelize_enable 1
-    set gcc_runtest_parallelize_dir [getenv GCC_RUNTEST_PARALLELIZE_DIR]
-    set gcc_runtest_parallelize_last 0
-
-    proc gcc_parallel_test_run_p { testcase } {
-	global gcc_runtest_parallelize_counter
-	global gcc_runtest_parallelize_counter_minor
-	global gcc_runtest_parallelize_enable
-	global gcc_runtest_parallelize_dir
-	global gcc_runtest_parallelize_last
-
-	if { $gcc_runtest_parallelize_enable == 0 } {
-	    return 1
-	}
-
-	# Only test the filesystem every 10th iteration
-	incr gcc_runtest_parallelize_counter_minor
-	if { $gcc_runtest_parallelize_counter_minor == 10 } {
-	    set gcc_runtest_parallelize_counter_minor 0
-	}
-	if { $gcc_runtest_parallelize_counter_minor != 1 } {
-	    #verbose -log "gcc_parallel_test_run_p $testcase $gcc_runtest_parallelize_counter $gcc_runtest_parallelize_last"
-	    return $gcc_runtest_parallelize_last
-	}
-
-	set path $gcc_runtest_parallelize_dir/$gcc_runtest_parallelize_counter
-
-	if {![catch {open $path {RDWR CREAT EXCL} 0600} fd]} {
-	    close $fd
-	    set gcc_runtest_parallelize_last 1
-	    #verbose -log "gcc_parallel_test_run_p $testcase $gcc_runtest_parallelize_counter 1"
-	    incr gcc_runtest_parallelize_counter
-	    return 1
-	}
-	set gcc_runtest_parallelize_last 0
-	#verbose -log "gcc_parallel_test_run_p $testcase $gcc_runtest_parallelize_counter 0"
-	incr gcc_runtest_parallelize_counter
-	return 0
-    }
-
-    proc gcc_parallel_test_enable { val } {
-	global gcc_runtest_parallelize_enable
-	set gcc_runtest_parallelize_enable $val
-    }
-
-    rename runtest_file_p gcc_parallelize_saved_runtest_file_p
-    proc runtest_file_p { runtests testcase } {
-	if ![gcc_parallelize_saved_runtest_file_p $runtests $testcase] {
-	    return 0
-	}
-	return [gcc_parallel_test_run_p $testcase]
-    }
-
-} else {
-
-    proc gcc_parallel_test_run_p { testcase } {
-	return 1
-    }
-
-    proc gcc_parallel_test_enable { val } {
-    }
-
-}
 
 # Utility functions, invoked via dg-final.
 

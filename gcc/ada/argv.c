@@ -37,11 +37,6 @@
    gnat_argv are the values as modified by toplev, and these routines
    are accessed from the Osint package.  */
 
-/* Also routines for accessing the environment from the runtime library.
-   Gnat_envp is the original envp value as stored by the binder generated
-   main program, and these routines are accessed from the
-   Ada.Command_Line.Environment package.  */
-
 #ifdef IN_RTS
 #include "runtime.h"
 #include <stdlib.h>
@@ -59,20 +54,10 @@
 extern "C" {
 #endif
 
-/* argc and argv of the main program are saved under gnat_argc and gnat_argv,
-   envp of the main program is saved under gnat_envp.  */
+/* argc and argv of the main program are saved under gnat_argc and gnat_argv */
 
 int gnat_argc = 0;
 char **gnat_argv = NULL;
-char **gnat_envp = NULL;
-
-#if defined (_WIN32) && !defined (RTX)
-/* Note that on Windows environment the environ point to a buffer that could
-   be reallocated if needed. It means that gnat_envp needs to be updated
-   before using gnat_envp to point to the right environment space */
-/* for the environ variable definition */
-#define gnat_envp (environ)
-#endif
 
 int
 __gnat_arg_count (void)
@@ -94,32 +79,6 @@ __gnat_fill_arg (char *a, int i)
 {
   if (gnat_argv != NULL)
     memcpy (a, gnat_argv[i], strlen (gnat_argv[i]));
-}
-
-int
-__gnat_env_count (void)
-{
-  int i;
-
-  for (i = 0; gnat_envp[i]; i++)
-    ;
-  return i;
-}
-
-int
-__gnat_len_env (int env_num)
-{
-  if (gnat_envp != NULL)
-    return strlen (gnat_envp[env_num]);
-  else
-    return 0;
-}
-
-void
-__gnat_fill_env (char *a, int i)
-{
-  if (gnat_envp != NULL)
-    memcpy (a, gnat_envp[i], strlen (gnat_envp[i]));
 }
 
 #ifdef __cplusplus

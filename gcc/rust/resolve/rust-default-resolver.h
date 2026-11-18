@@ -20,6 +20,7 @@
 #ifndef RUST_AST_DEFAULT_RESOLVER_H
 #define RUST_AST_DEFAULT_RESOLVER_H
 
+#include "rust-system.h"
 #include "rust-ast-visitor.h"
 #include "rust-name-resolution-context.h"
 
@@ -44,8 +45,12 @@ public:
   // these nodes create new scopes and ribs - they are often used to declare new
   // variables, such as a for loop's iterator, or a function's arguments
   void visit (AST::BlockExpr &) override;
+  virtual void maybe_prelude_import () {}
   void visit (AST::Module &) override;
   void visit (AST::Function &) override;
+  void visit (AST::LoopExpr &expr) override;
+  void visit (AST::WhileLoopExpr &expr) override;
+  void visit (AST::WhileLetLoopExpr &expr) override;
   void visit (AST::ForLoopExpr &expr) override;
   virtual void visit_if_let_patterns (AST::IfLetExpr &expr);
   void visit (AST::IfLetExpr &expr) override;
@@ -72,6 +77,7 @@ public:
   void visit (AST::Enum &) override;
   void visit (AST::Union &) override;
   void visit (AST::TypeAlias &) override;
+  void visit (AST::TraitAlias &) override;
 
   // Visitors that visit their expression node(s)
   virtual void visit_closure_params (AST::ClosureExpr &);
@@ -89,6 +95,8 @@ protected:
   DefaultResolver (NameResolutionContext &ctx) : ctx (ctx) {}
 
   NameResolutionContext &ctx;
+
+  std::set<NodeId> visited_crates;
 };
 
 } // namespace Resolver2_0

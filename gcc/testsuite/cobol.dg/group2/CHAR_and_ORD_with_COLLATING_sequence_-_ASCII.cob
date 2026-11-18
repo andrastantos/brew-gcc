@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/CHAR_and_ORD_with_COLLATING_sequence_-_ASCII.out" }
         IDENTIFICATION      DIVISION.
         PROGRAM-ID.         prog.

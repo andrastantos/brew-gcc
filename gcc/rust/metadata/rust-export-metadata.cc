@@ -39,78 +39,22 @@ ExportContext::ExportContext () : mappings (Analysis::Mappings::get ()) {}
 ExportContext::~ExportContext () {}
 
 void
-ExportContext::push_module_scope (const HIR::Module &module)
+ExportContext::emit_crate (AST::Crate &c)
 {
-  module_stack.push_back (module);
-}
-
-const HIR::Module &
-ExportContext::pop_module_scope ()
-{
-  rust_assert (!module_stack.empty ());
-  const HIR::Module &poped = module_stack.back ();
-  module_stack.pop_back ();
-  return poped;
-}
-
-void
-ExportContext::emit_trait (const HIR::Trait &trait)
-{
-  // lookup the AST node for this
-  AST::Item *item
-    = mappings.lookup_ast_item (trait.get_mappings ().get_nodeid ()).value ();
-
   std::stringstream oss;
-  AST::Dump dumper (oss);
-  dumper.go (*item);
+  using AST::Dump;
+  AST::Dump dumper (
+    oss,
+    Dump::Configuration{Dump::Configuration::InternalComment::Hide,
+			Dump::Configuration::NodeDescription::Hide,
+			Dump::Configuration::Comment::Hide,
+			Dump::Configuration::Newline::Hide,
+			Dump::Configuration::Indentation::None},
+    {});
+  dumper.process (c);
 
   public_interface_buffer += oss.str ();
 }
-
-void
-ExportContext::emit_function (const HIR::Function &fn)
-{
-  // lookup the AST node for this
-  AST::Item *item
-    = mappings.lookup_ast_item (fn.get_mappings ().get_nodeid ()).value ();
-
-  // is this a CFG macro or not
-  if (item->is_marked_for_strip ())
-    return;
-
-  // FIXME add assertion that item must be a vis_item;
-  AST::VisItem &vis_item = static_cast<AST::VisItem &> (*item);
-
-  // if its a generic function we need to output the full declaration
-  // otherwise we can let people link against this
-
-  std::stringstream oss;
-  AST::Dump dumper (oss);
-  if (!fn.has_generics ())
-    {
-      // FIXME assert that this is actually an AST::Function
-      AST::Function &function = static_cast<AST::Function &> (vis_item);
-
-      std::vector<std::unique_ptr<AST::ExternalItem>> external_items;
-      external_items.emplace_back (
-	static_cast<AST::ExternalItem *> (&function));
-
-      AST::ExternBlock extern_block (get_string_from_abi (Rust::ABI::RUST),
-				     std::move (external_items),
-				     vis_item.get_visibility (), {}, {},
-				     fn.get_locus ());
-
-      dumper.go (extern_block);
-    }
-  else
-    {
-      dumper.go (*item);
-    }
-
-  // store the dump
-  public_interface_buffer += oss.str ();
-}
-
 void
 ExportContext::emit_macro (AST::MacroRulesDefinition &macro)
 {
@@ -127,37 +71,6 @@ ExportContext::get_interface_buffer () const
 {
   return public_interface_buffer;
 }
-
-// implicitly by using HIR nodes we know that these have passed CFG expansion
-// and they exist in the compilation unit
-class ExportVisItems : public HIR::HIRVisItemVisitor
-{
-public:
-  ExportVisItems (ExportContext &context) : ctx (context) {}
-
-  void visit (HIR::Module &) override {}
-  void visit (HIR::ExternCrate &) override {}
-  void visit (HIR::UseDeclaration &) override {}
-  void visit (HIR::TypeAlias &) override {}
-  void visit (HIR::StructStruct &) override {}
-  void visit (HIR::TupleStruct &) override {}
-  void visit (HIR::Enum &) override {}
-  void visit (HIR::Union &) override {}
-  void visit (HIR::ConstantItem &) override {}
-  void visit (HIR::StaticItem &) override {}
-  void visit (HIR::ImplBlock &) override {}
-  void visit (HIR::ExternBlock &) override {}
-
-  void visit (HIR::Trait &trait) override { ctx.emit_trait (trait); }
-
-  void visit (HIR::Function &function) override
-  {
-    ctx.emit_function (function);
-  }
-
-private:
-  ExportContext &ctx;
-};
 
 PublicInterface::PublicInterface (HIR::Crate &crate)
   : crate (crate), mappings (Analysis::Mappings::get ()), context ()
@@ -182,20 +95,10 @@ PublicInterface::ExportTo (HIR::Crate &crate, const std::string &output_path)
 void
 PublicInterface::gather_export_data ()
 {
-  ExportVisItems visitor (context);
-  for (auto &item : crate.get_items ())
-    {
-      bool is_vis_item = item->get_hir_kind () == HIR::Node::BaseKind::VIS_ITEM;
-      if (!is_vis_item)
-	continue;
-
-      HIR::VisItem &vis_item = static_cast<HIR::VisItem &> (*item.get ());
-      if (is_crate_public (vis_item))
-	vis_item.accept_vis (visitor);
-    }
-
-  for (auto &macro : mappings.get_exported_macros ())
-    context.emit_macro (macro);
+  auto crate_num
+    = mappings.crate.lookup_crate_num (crate.get_mappings ().get_nodeid ());
+  auto &ast_crate = mappings.crate.get_ast_crate (crate_num.value ());
+  context.emit_crate (ast_crate);
 }
 
 void
@@ -214,7 +117,8 @@ PublicInterface::write_to_object_file () const
   md5_finish_ctx (&chksm, checksum);
 
   // MAGIC MD5 DLIM  DLIM buffer-size DELIM contents
-  const std::string current_crate_name = mappings.get_current_crate_name ();
+  const std::string current_crate_name
+    = mappings.crate.get_current_crate_name ();
 
   // extern void
   rust_write_export_data (kMagicHeader, sizeof (kMagicHeader));
@@ -256,7 +160,8 @@ PublicInterface::write_to_path (const std::string &path) const
   md5_finish_ctx (&chksm, checksum);
 
   // MAGIC MD5 DLIM  DLIM buffer-size DELIM contents
-  const std::string current_crate_name = mappings.get_current_crate_name ();
+  const std::string current_crate_name
+    = mappings.crate.get_current_crate_name ();
 
   // write to path
   FILE *nfd = fopen (path.c_str (), "wb");
@@ -344,7 +249,7 @@ PublicInterface::is_crate_public (const HIR::VisItem &item)
   const HIR::Visibility &visibility = item.get_visibility ();
 
   bool is_public
-    = visibility.get_vis_type () == HIR::Visibility::VisType::PUBLIC;
+    = visibility.get_vis_type () == HIR::Visibility::VisType::Public;
   bool has_path = !visibility.get_path ().is_error ();
 
   // FIXME this might be pub(crate)
@@ -358,7 +263,8 @@ PublicInterface::expected_metadata_filename ()
 {
   auto &mappings = Analysis::Mappings::get ();
 
-  const std::string current_crate_name = mappings.get_current_crate_name ();
+  const std::string current_crate_name
+    = mappings.crate.get_current_crate_name ();
   return current_crate_name + extension_path;
 }
 

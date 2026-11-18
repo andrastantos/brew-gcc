@@ -233,10 +233,10 @@ static edgeset *ancestor_edges;
 /* Speculative scheduling functions.  */
 static bool check_live_1 (int, rtx);
 static void update_live_1 (int, rtx);
-static bool is_pfree (rtx, int, int);
+static bool is_pfree (rtx_insn *, int, int);
 static bool find_conditional_protection (rtx_insn *, int);
-static bool is_conditionally_protected (rtx, int, int);
-static bool is_prisky (rtx, int, int);
+static bool is_conditionally_protected (rtx_insn *, int, int);
+static bool is_prisky (rtx_insn *, int, int);
 static bool is_exception_free (rtx_insn *, int, int);
 
 static bool sets_likely_spilled (rtx);
@@ -291,6 +291,11 @@ is_cfg_nonregular (void)
 	/* If this function has a computed jump, then we consider the cfg
 	   not well structured.  */
 	if (JUMP_P (insn) && computed_jump_p (insn))
+	  return true;
+
+	/* A shared table's successors cannot be redirected independently
+	   to create loop preheaders or scheduling bookkeeping blocks.  */
+	if (shared_tablejump_p (insn, NULL, NULL))
 	  return true;
 
 	if (!INSN_P (insn))
@@ -1856,7 +1861,7 @@ update_live (rtx_insn *insn, int src)
 /* Turns on the fed_by_spec_load flag for insns fed by load_insn.  */
 
 static void
-set_spec_fed (rtx load_insn)
+set_spec_fed (rtx_insn *load_insn)
 {
   sd_iterator_def sd_it;
   dep_t dep;
@@ -1907,7 +1912,7 @@ find_conditional_protection (rtx_insn *insn, int load_insn_bb)
    Locate the branch by following INSN_FORW_DEPS from insn1.  */
 
 static bool
-is_conditionally_protected (rtx load_insn, int bb_src, int bb_trg)
+is_conditionally_protected (rtx_insn *load_insn, int bb_src, int bb_trg)
 {
   sd_iterator_def sd_it;
   dep_t dep;
@@ -1958,7 +1963,7 @@ is_conditionally_protected (rtx load_insn, int bb_src, int bb_trg)
    load2 anyhow.  */
 
 static bool
-is_pfree (rtx load_insn, int bb_src, int bb_trg)
+is_pfree (rtx_insn *load_insn, int bb_src, int bb_trg)
 {
   sd_iterator_def back_sd_it;
   dep_t back_dep;
@@ -2010,7 +2015,7 @@ is_pfree (rtx load_insn, int bb_src, int bb_trg)
    a compare on load_insn's address).  */
 
 static bool
-is_prisky (rtx load_insn, int bb_src, int bb_trg)
+is_prisky (rtx_insn *load_insn, int bb_src, int bb_trg)
 {
   if (FED_BY_SPEC_LOAD (load_insn))
     return true;
@@ -2085,7 +2090,7 @@ static ds_t new_ready (rtx_insn *, ds_t);
 static bool schedule_more_p (void);
 static const char *rgn_print_insn (const rtx_insn *, int);
 static int rgn_rank (rtx_insn *, rtx_insn *);
-static void compute_jump_reg_dependencies (rtx, regset);
+static void compute_jump_reg_dependencies (rtx_insn *, regset);
 
 /* Functions for speculative scheduling.  */
 static void rgn_add_remove_insn (rtx_insn *, int);
@@ -2335,7 +2340,7 @@ contributes_to_priority (rtx_insn *next, rtx_insn *insn)
    considered as used by this jump in USED.  */
 
 static void
-compute_jump_reg_dependencies (rtx insn ATTRIBUTE_UNUSED,
+compute_jump_reg_dependencies (rtx_insn *insn ATTRIBUTE_UNUSED,
 			       regset used ATTRIBUTE_UNUSED)
 {
   /* Nothing to do here, since we postprocess jumps in
@@ -2618,11 +2623,24 @@ deps_join (class deps_desc *succ_deps, class deps_desc *pred_deps)
   unsigned reg;
   reg_set_iterator rsi;
 
+  /* Registers that PRED has not materialised carry PRED's pending barriers as
+     their sets list, so fold those into the ones SUCC has materialised before
+     the main loop, and into SUCC's own pending list afterwards.  */
+  if (pred_deps->pending_barriers)
+    EXECUTE_IF_AND_COMPL_IN_REG_SET (&succ_deps->reg_last_in_use,
+				     &pred_deps->reg_last_in_use,
+				     0, reg, rsi)
+      {
+	struct deps_reg *succ_rl = &succ_deps->reg_last[reg];
+	succ_rl->sets = concat_INSN_LIST (pred_deps->pending_barriers,
+					  succ_rl->sets);
+      }
+
   /* The reg_last lists are inherited by successor.  */
   EXECUTE_IF_SET_IN_REG_SET (&pred_deps->reg_last_in_use, 0, reg, rsi)
     {
       struct deps_reg *pred_rl = &pred_deps->reg_last[reg];
-      struct deps_reg *succ_rl = &succ_deps->reg_last[reg];
+      struct deps_reg *succ_rl = deps_reg_last (succ_deps, reg);
 
       succ_rl->uses = concat_INSN_LIST (pred_rl->uses, succ_rl->uses);
       succ_rl->sets = concat_INSN_LIST (pred_rl->sets, succ_rl->sets);
@@ -2634,6 +2652,11 @@ deps_join (class deps_desc *succ_deps, class deps_desc *pred_deps)
       succ_rl->clobbers_length += pred_rl->clobbers_length;
     }
   IOR_REG_SET (&succ_deps->reg_last_in_use, &pred_deps->reg_last_in_use);
+
+  /* Registers neither side has materialised keep both pending lists.  */
+  succ_deps->pending_barriers
+    = concat_INSN_LIST (pred_deps->pending_barriers,
+			succ_deps->pending_barriers);
 
   /* Mem read/write lists are inherited by successor.  */
   concat_insn_mem_list (pred_deps->pending_read_insns,

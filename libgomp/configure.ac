@@ -2,7 +2,7 @@
 # aclocal -I ../config && autoconf && autoheader && automake
 
 AC_INIT([GNU Offloading and Multi Processing Runtime Library], 1.0,,[libgomp])
-AC_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS([config.h])
 
 # -------
 # Options
@@ -43,13 +43,10 @@ AM_CONDITIONAL(GENINSRC, test "$enable_generated_files_in_srcdir" = yes)
 #
 # Also, if this library is being configured as part of a cross compiler, the
 # top-level configure script will pass the "real" host as $with_cross_host.
-#
-# Do not delete or change the following two lines.  For why, see
-# http://gcc.gnu.org/ml/libstdc++/2003-07/msg00451.html
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_TARGET
 target_alias=${target_alias-$host_alias}
 
-# Sets up automake.  Must come after AC_CANONICAL_SYSTEM.  Each of the
+# Sets up automake.  Must come after AC_CANONICAL_TARGET.  Each of the
 # following is magically included in AUTOMAKE_OPTIONS in each Makefile.am.
 #  1.9.0:  minimum required version
 #  no-define:  PACKAGE and VERSION will not be #define'd in config.h (a bunch
@@ -144,7 +141,7 @@ AM_CONDITIONAL(BUILD_INFO, test $gcc_cv_prog_makeinfo_modern = "yes")
 
 
 # Configure libtool
-AM_PROG_LIBTOOL
+LT_INIT
 ACX_LT_HOST_FLAGS
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
@@ -159,26 +156,27 @@ FCFLAGS="$FCFLAGS -L."
 # We need gfortran to compile parts of the library
 # We can't use AC_PROG_FC because it expects a fully working gfortran.
 #AC_PROG_FC(gfortran)
-case `echo $GFORTRAN` in
-  -* | no* )
-    FC=no ;;
-  *)
-    set dummy $GFORTRAN; ac_word=$2
-    if test -x "$ac_word"; then
-      FC="$GFORTRAN"
-    else
-      FC=no
-    fi ;;
+# If '--enable-languages=fortran' isn't in effect, the 'GFORTRAN' passed by
+# the top-level build system isn't functional (executable doesn't exist).
+# Catch this case here, and set 'FC=no', so that we don't confuse libtool.
+case ,${enable_languages}, in
+  *,fortran,* )
+    FC=$GFORTRAN
+    ;;
+  * )
+    FC=no
+    ;;
 esac
 AC_PROG_FC(gfortran)
 FCFLAGS="$FCFLAGS -Wall -L../libgfortran"
+
+AM_CONDITIONAL([USE_FORTRAN], [test "$ac_cv_fc_compiler_gnu" = yes])
 
 # For libtool versioning info, format is CURRENT:REVISION:AGE
 libtool_VERSION=1:0:0
 AC_SUBST(libtool_VERSION)
 
 # Check header files.
-AC_STDC_HEADERS
 AC_HEADER_TIME
 ACX_HEADER_STRING
 AC_CHECK_HEADERS(pthread.h unistd.h semaphore.h sys/loadavg.h sys/sysctl.h sys/time.h)
@@ -233,6 +231,11 @@ AC_CHECK_SIZEOF([void *])
 
 m4_include([plugin/configfrag.ac])
 
+if test x"$offload_plugins" != x; then
+  AC_DEFINE(LIBGOMP_OFFLOAD_HOST, 1,
+    [Define to 1 if building libgomp for a offload host])
+fi
+
 # Check for functions needed.
 AC_CHECK_FUNCS(getloadavg clock_gettime strtoull)
 AC_CHECK_FUNCS(aligned_alloc posix_memalign memalign _aligned_malloc)
@@ -254,6 +257,45 @@ case "$host" in
 esac
 
 GCC_LINUX_FUTEX(:)
+
+LIBGOMP_ENABLE(linux-futex-waitv, default, ,
+  [use the Linux futex_waitv system call],
+  permit yes|no|default)
+
+case "$target" in
+  *-linux* | *-uclinux*)
+    if test x$enable_linux_futex != xyes; then
+      if test x$enable_linux_futex_waitv = xyes; then
+	AC_MSG_ERROR([--enable-linux-futex-waitv requires --enable-linux-futex])
+      fi
+      enable_linux_futex_waitv=no
+    else
+      case "$enable_linux_futex_waitv" in
+	default)
+	  enable_linux_futex_waitv=no
+	  AC_LINK_IFELSE(
+	   [AC_LANG_PROGRAM(
+	    [#include <sys/syscall.h>
+	     #include <unistd.h>],
+	    [syscall (SYS_futex_waitv, 0, 0, 0, 0, 0);])],
+	    [enable_linux_futex_waitv=yes],
+	    [enable_linux_futex_waitv=no])
+	  ;;
+	yes)
+	  AC_LINK_IFELSE(
+	   [AC_LANG_PROGRAM(
+	    [#include <sys/syscall.h>
+	     #include <unistd.h>],
+	    [syscall (SYS_futex_waitv, 0, 0, 0, 0, 0);])],[],
+	    [AC_MSG_ERROR([SYS_futex_waitv required for --enable-linux-futex-waitv])])
+	  ;;
+      esac
+    fi
+    ;;
+  *)
+    enable_linux_futex_waitv=no
+    ;;
+esac
 
 # Check for pthread_{,attr_}[sg]etaffinity_np.
 AC_LINK_IFELSE(
@@ -325,7 +367,7 @@ GCC_CHECK_TLS
 GCC_CHECK_EMUTLS
 
 # See what sort of export controls are available.
-LIBGOMP_CHECK_ATTRIBUTE_VISIBILITY
+GCC_CHECK_ATTRIBUTE_VISIBILITY
 LIBGOMP_CHECK_ATTRIBUTE_DLLEXPORT
 LIBGOMP_CHECK_ATTRIBUTE_ALIAS
 LIBGOMP_ENABLE_SYMVERS
@@ -364,6 +406,19 @@ CFLAGS="$save_CFLAGS $XCFLAGS"
 # Check for __sync_val_compare_and_swap, but only after the target has
 # had a chance to set XCFLAGS.
 LIBGOMP_CHECK_SYNC_BUILTINS
+
+# If offloading is enabled, both offload hosts and accelerators are required to support
+# __sync_* builtins, to simplify architectural assumptions between both sides
+if test x$libgomp_cv_have_sync_builtins = xno; then
+  # We require accelerator targets to support __sync_* builtins.
+  if test x$libgomp_offloaded_only = xyes; then
+    AC_MSG_ERROR([accelerator targets require __sync_val_compare_and_swap to build libgomp.])
+  fi
+  # Same for offload hosts.
+  if test x"$offload_plugins" != x; then
+    AC_MSG_ERROR([offload hosts require __sync_val_compare_and_swap to build libgomp.])
+  fi
+fi
 
 XCFLAGS="$XCFLAGS$XPCFLAGS"
 
@@ -409,8 +464,6 @@ else
 fi
 AC_SUBST(link_gomp)
 
-AM_CONDITIONAL([USE_FORTRAN], [test "$ac_cv_fc_compiler_gnu" = yes])
-
 # ??? 2006-01-24: Paulo committed to asking autoconf folk to document
 # and export AC_COMPUTE_INT.  If that happens, then we'll need to remove
 # the underscore here and update the PREREQ.  If it doesn't, then we'll
@@ -423,20 +476,20 @@ for i in $config_path; do
   fi
 done
 
-_AC_COMPUTE_INT([sizeof (__INTPTR_TYPE__)], [INTPTR_T_KIND])
-_AC_COMPUTE_INT([sizeof (__int128)], [OMP_INT128_SIZE],,[OMP_INT128_SIZE=0])
-_AC_COMPUTE_INT([2*sizeof (__INTPTR_TYPE__)], [OMP_DEPEND_KIND],,
-		[OMP_DEPEND_KIND=0])
-_AC_COMPUTE_INT([sizeof (omp_lock_t)], [OMP_LOCK_SIZE],,
+AC_COMPUTE_INT([INTPTR_T_KIND], [sizeof (__INTPTR_TYPE__)])
+AC_COMPUTE_INT([OMP_INT128_SIZE], [sizeof (__int128)],,[OMP_INT128_SIZE=0])
+AC_COMPUTE_INT([OMP_DEPEND_KIND], [2*sizeof (__INTPTR_TYPE__)],,
+	       [OMP_DEPEND_KIND=0])
+AC_COMPUTE_INT([OMP_LOCK_SIZE], [sizeof (omp_lock_t)],,
   [AC_MSG_ERROR([unsupported system, cannot find sizeof (omp_lock_t)])])
-_AC_COMPUTE_INT([__alignof (omp_lock_t)], [OMP_LOCK_ALIGN])
-_AC_COMPUTE_INT([sizeof (omp_nest_lock_t)], [OMP_NEST_LOCK_SIZE])
-_AC_COMPUTE_INT([__alignof (omp_nest_lock_t)], [OMP_NEST_LOCK_ALIGN])
-_AC_COMPUTE_INT([sizeof (omp_lock_25_t)], [OMP_LOCK_25_SIZE],,
+AC_COMPUTE_INT([OMP_LOCK_ALIGN], [__alignof (omp_lock_t)])
+AC_COMPUTE_INT([OMP_NEST_LOCK_SIZE], [sizeof (omp_nest_lock_t)])
+AC_COMPUTE_INT([OMP_NEST_LOCK_ALIGN], [__alignof (omp_nest_lock_t)])
+AC_COMPUTE_INT([OMP_LOCK_25_SIZE], [sizeof (omp_lock_25_t)],,
   [AC_MSG_ERROR([unsupported system, cannot find sizeof (omp_lock_25_t)])])
-_AC_COMPUTE_INT([__alignof (omp_lock_25_t)], [OMP_LOCK_25_ALIGN])
-_AC_COMPUTE_INT([sizeof (omp_nest_lock_25_t)], [OMP_NEST_LOCK_25_SIZE])
-_AC_COMPUTE_INT([__alignof (omp_nest_lock_25_t)], [OMP_NEST_LOCK_25_ALIGN])
+AC_COMPUTE_INT([OMP_LOCK_25_ALIGN], [__alignof (omp_lock_25_t)])
+AC_COMPUTE_INT([OMP_NEST_LOCK_25_SIZE], [sizeof (omp_nest_lock_25_t)])
+AC_COMPUTE_INT([OMP_NEST_LOCK_25_ALIGN], [__alignof (omp_nest_lock_25_t)])
 
 # If the lock fits in an integer, then arrange for Fortran to use that
 # integer.  If it doesn't, then arrange for Fortran to use a pointer.

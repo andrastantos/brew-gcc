@@ -10,7 +10,7 @@
 /* { dg-skip-if "" { brew-*-* } "*" "" } */
 
 /* TODO (PR analyzer/112528): remove need for this.  */
-/* { dg-additional-options "--param analyzer-max-enodes-per-program-point=200 --param analyzer-bb-explosion-factor=50" } */
+/* { dg-additional-options "--param analyzer-max-enodes-per-program-point=200 --param analyzer-supernode-explosion-factor=50" } */
 
 /* Minimal replacement of system headers.  */
 

@@ -1,3 +1,1711 @@
+2026-11-16  Andrew Stubbs  <ams@baylibre.com>
+
+	* plugin/plugin-gcn.c (struct isa_occupancy): New.
+	(isa_occupancy): New.
+	(kernel_waves_per_cu): New.
+	(run_kernel): Use kernel_waves_per_cu to limit threads/workers.
+
+2026-11-12  Tobias Burnus  <tburnus@baylibre.com>
+
+	* omp.h.in: Add omp::allocator::user_mem template.
+	* libgomp.texi (Memory allocation): Add example.
+	(Impl. status): Mark as implemented.
+	* testsuite/libgomp.c++/user_mem.C: New test.
+
+2026-11-10  Waffl3x  <waffl3x@baylibre.com>
+
+	* libgomp.texi: Document allocate directive support in C++.
+	* testsuite/libgomp.c/allocate-4.c: Move to...
+	* testsuite/libgomp.c-c++-common/allocate-4.c: ...here.
+	* testsuite/libgomp.c/allocate-5.c: Move to...
+	* testsuite/libgomp.c-c++-common/allocate-5.c: ...here.
+	* testsuite/libgomp.c/allocate-6.c: Move to...
+	* testsuite/libgomp.c-c++-common/allocate-6.c: ...here.
+	* testsuite/libgomp.c/allocate-7.c: Move to...
+	* testsuite/libgomp.c-c++-common/allocate-7.c: ...here, disable.
+	* testsuite/libgomp.c-c++-common/uses_allocators-1.c: Remove sorry.
+	* testsuite/libgomp.c++/allocate-2.C: New test.
+
+2026-11-10  Waffl3x  <waffl3x@baylibre.com>
+
+	* testsuite/libgomp.c/allocate-7.c: _Alignof to alignof.
+
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Use AC_CANONICAL_TARGET instead of
+	AC_CANONICAL_SYSTEM.
+
+2026-11-09  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (Implementation Status, OpenMP routines): Change
+	references from TR15 to OpenMP 6.1.
+
+2026-11-09  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* testsuite/libgomp.c-c++-common/teams-nteams-icv-1.c: Change from
+	invalid ICV setting on the device to setting it on the host.
+
+2026-11-07  Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	* plugin/plugin-gcn.c (allocate_session_kernargs): Use
+	'kernargs_size' instead of 'sizeof (struct kernargs)'.
+	* testsuite/libgomp.c-c++-common/kernel-launch-many-vars.c: New test.
+
+2026-11-04  Tobias Burnus  <tburnus@baylibre.com>
+
+	* icv-device.c (omp_set_teams_thread_limit): Add comment.
+	* libgomp.map (OMP_6.0): Add
+	omp_{s,g}et_device_{num_teams,teams_thread_limit}.
+	* libgomp.texi: Add some more @refs related to new new routines.
+	(Device Information Routines): Document new routines.
+	(6.0 Impl. Status): Mark them as implemented.
+	* omp.h.in: Add prototypes for them.
+	* omp_lib.f90.in: Add iterface for them.
+	* omp_lib.h.in: Likewise.
+	* target.c (gomp_get_offload_icv_item): Add usage comment.
+	(gomp_copy_back_icvs): Return gomp_offload_icvs instead of void.
+	(gomp_copy_icvs_to_device): New.
+	(GOMP_target_ext): Remove gomp_copy_back_icvs.
+	(omp_set_device_num_teams, omp_get_device_num_teams,
+	omp_set_device_teams_thread_limit,
+	omp_get_device_teams_thread_limit): New.
+	* testsuite/libgomp.c-c++-common/icv-5.c: Change from invalid ICV
+	setting on the device to setting it on the host.
+	* testsuite/libgomp.c-c++-common/icv-6.c: Likewise.
+	* testsuite/libgomp.fortran/icv-6.f90: Likewise.
+	* testsuite/libgomp.c-c++-common/omp-device-num-teams-thread-limit-1.c:
+	New test.
+	* testsuite/libgomp.fortran/omp-device-num-teams-thread-limit-1.f90:
+	New test.
+
+2026-11-04  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_CONFIG_HEADER with AC_CONFIG_HEADERS.
+
+2026-11-03  Matthew Malcomson  <mmalcomson@nvidia.com>
+
+	* configure: Regenerate
+
+2026-11-03  Matthew Malcomson  <mmalcomson@nvidia.com>
+
+	PR libgomp/119588
+	* libgomp.h (struct gomp_team): Add fields for communication
+	at team start time.  New `ti` member, new `ppv` member, new
+	`reused` boolean.
+	(struct gomp_thread): Add new `exit` boolean.
+	* team.c (gomp_thread_start): Initialise thread-local data using
+	members stored on team.
+	(get_last_team): Set `team->reused` member when reusing.
+	(gomp_new_team): Unset `team->reused` member when creating new
+	team.
+	(gomp_team_start): Primary thread stores data on team structure
+	instead of copying that data to each secondary threads
+	gomp_thread structure.  Skip re-calculation of places on a
+	reused team when inputs are the same.
+	(gomp_init_team_state): New function.
+	(gomp_thread_start_data): New `team_id`, `active_level`,
+	`place_partition_off`, `place_partition_len`, and `team`
+	members.  Remove the `fn`, `fn_data`, `num_teams`, `team_num`,
+	`ts`, and `task` members.
+
+2026-11-03  Matthew Malcomson  <mmalcomson@nvidia.com>
+
+	* testsuite/libgomp.c/artificial-team-pause.c: New test.
+	* testsuite/libgomp.c/barrier-copyprivate-task.c: New test.
+	* testsuite/libgomp.c/barrier-nested-team-id.c: New test.
+	* testsuite/libgomp.c/barrier-task-reduction.c: New test.
+	* testsuite/libgomp.c/barrier-tree-flush.c: New test.
+	* testsuite/libgomp.c/barrier-tree-task.c: New test.
+	* testsuite/libgomp.c/barrier-workshare-task.c: New test.
+	* testsuite/libgomp.c/cancel-late-arrival-1.c: New test.
+	* testsuite/libgomp.c/cancel-late-arrival-2.c: New test.
+	* testsuite/libgomp.c/cancel-next-epoch-wrap.c: New test.
+	* testsuite/libgomp.c/team-held-pause.c: New test.
+	* testsuite/libgomp.c/team-held-pthread-exit.c: New test.
+
+2026-11-03  Matthew Malcomson  <mmalcomson@nvidia.com>
+
+	* barrier.c (GOMP_barrier): Pass barrier ID argument.
+	(GOMP_barrier_ext): Likewise.
+	(GOMP_barrier_cancel): Likewise.
+	(GOMP_barrier_cancel_ext): Likewise.
+	* config/gcn/bar.c (gomp_barrier_wait_end): Add unused barrier ID
+	argument.
+	(gomp_barrier_wait): Take and pass barrier ID argument.
+	(gomp_barrier_wait_last): Likewise.
+	(gomp_team_barrier_wait_end): Likewise.  Pass barrier and increment
+	arguments to gomp_barrier_handle_tasks.
+	(gomp_team_barrier_wait): Take and pass barrier ID argument.
+	(gomp_team_barrier_wait_final): Likewise.
+	(gomp_team_barrier_wait_cancel_end): Likewise.  Pass barrier and
+	increment arguments to gomp_barrier_handle_tasks.
+	(gomp_team_barrier_wait_cancel): Take and pass barrier ID argument.
+	* config/gcn/bar.h (gomp_barrier_init): Add unused extra allocation
+	argument.
+	(gomp_barrier_extra_alloc): New function.
+	(gomp_barrier_wait): Add barrier ID argument.
+	(gomp_barrier_wait_last): Likewise.
+	(gomp_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait): Likewise.
+	(gomp_team_barrier_wait_final): Likewise.
+	(gomp_team_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait_cancel): Likewise.
+	(gomp_team_barrier_wait_cancel_end): Likewise.
+	(gomp_barrier_wait_start): Likewise.
+	(gomp_barrier_wait_cancel_start): Likewise.
+	(gomp_barrier_wait_final_start): Likewise.
+	(gomp_team_barrier_done): Add unused increment argument.
+	(gomp_barrier_has_completed): Take barrier and increment arguments.
+	(gomp_barrier_can_hold): New function.
+	(gomp_team_barrier_wake_on_increment): New function.
+	(gomp_team_barrier_done_final): New function.
+	* config/gcn/team.c (gomp_gcn_enter_kernel): Initialise prev_barrier.
+	(gomp_thread_start): Pass barrier ID argument to
+	gomp_team_barrier_wait_final.
+	* config/linux/bar.c (gomp_barrier_wait_end): Add unused barrier ID
+	argument.
+	(gomp_barrier_wait): Take and pass barrier ID argument.
+	(gomp_barrier_wait_last): Likewise.
+	(gomp_team_barrier_wait_end): Likewise.  Pass barrier and increment
+	arguments to gomp_barrier_handle_tasks.
+	(gomp_team_barrier_wait): Take and pass barrier ID argument.
+	(gomp_team_barrier_wait_final): Likewise.
+	(gomp_team_barrier_wait_cancel_end): Likewise.  Pass barrier and
+	increment arguments to gomp_barrier_handle_tasks.
+	(gomp_team_barrier_wait_cancel): Take and pass barrier ID argument.
+	* config/linux/bar.h (gomp_barrier_init): Add unused extra
+	allocation argument.
+	(gomp_barrier_wait): Add barrier ID argument.
+	(gomp_barrier_wait_last): Likewise.
+	(gomp_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait): Likewise.
+	(gomp_team_barrier_wait_final): Likewise.
+	(gomp_team_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait_cancel): Likewise.
+	(gomp_team_barrier_wait_cancel_end): Likewise.
+	(gomp_barrier_wait_start): Likewise.
+	(gomp_barrier_wait_cancel_start): Likewise.
+	(gomp_barrier_wait_final_start): Likewise.
+	(gomp_team_barrier_done): Add unused increment argument.
+	(gomp_barrier_has_completed): Take barrier and increment arguments.
+	(gomp_barrier_can_hold): New function.
+	(gomp_team_barrier_wake_on_increment): New function.
+	(gomp_team_barrier_done_final): New function.
+	(gomp_barrier_extra_alloc): New function.
+	* config/linux/futex_waitv/bar.c: New file.
+	* config/linux/futex_waitv/bar.h: New file.
+	* config/linux/futex_waitv/futex_waitv.h: New file.
+	* config/linux/futex_waitv/simple-bar.h: New file.
+	* config/linux/wait.h (do_spin): Use spin_count.
+	* config/nvptx/bar.c (gomp_barrier_wait_end): Add unused barrier ID
+	argument.
+	(gomp_barrier_wait): Take and pass barrier ID argument.
+	(gomp_barrier_wait_last): Add unused barrier ID argument.
+	(gomp_team_barrier_wait_end): Take barrier ID argument.  Pass barrier
+	and increment arguments to gomp_barrier_handle_tasks.
+	(gomp_team_barrier_wait): Take and pass barrier ID argument.
+	(gomp_team_barrier_wait_final): Likewise.
+	(gomp_team_barrier_wait_cancel_end): Take barrier ID argument.  Pass
+	barrier and increment arguments to gomp_barrier_handle_tasks.
+	(gomp_team_barrier_wait_cancel): Take and pass barrier ID argument.
+	* config/nvptx/bar.h (gomp_barrier_init): Add unused extra
+	allocation argument.
+	(gomp_barrier_extra_alloc): New function.
+	(gomp_barrier_wait): Add barrier ID argument.
+	(gomp_barrier_wait_last): Likewise.
+	(gomp_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait): Likewise.
+	(gomp_team_barrier_wait_final): Likewise.
+	(gomp_team_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait_cancel): Likewise.
+	(gomp_team_barrier_wait_cancel_end): Likewise.
+	(gomp_barrier_wait_start): Likewise.
+	(gomp_barrier_wait_cancel_start): Likewise.
+	(gomp_barrier_wait_final_start): Likewise.
+	(gomp_team_barrier_done): Add unused increment argument.
+	(gomp_barrier_has_completed): Take barrier and increment arguments.
+	(gomp_barrier_can_hold): New function.
+	(gomp_team_barrier_wake_on_increment): New function.
+	(gomp_team_barrier_done_final): New function.
+	* config/nvptx/team.c (gomp_nvptx_main): Initialise prev_barrier.
+	(gomp_thread_start): Pass barrier ID argument
+	to gomp_team_barrier_wait_final.
+	* config/posix/bar.c (gomp_barrier_init): Add unused extra
+	allocation argument.
+	(gomp_barrier_wait): Take and pass barrier ID argument.
+	(gomp_team_barrier_wait_end): Likewise.  Pass barrier and increment
+	arguments to gomp_barrier_handle_tasks.
+	(gomp_team_barrier_wait_cancel_end): Likewise.
+	(gomp_team_barrier_wait): Take and pass barrier ID argument.
+	(gomp_team_barrier_wait_cancel): Likewise.
+	* config/posix/bar.h (gomp_barrier_init): Add extra allocation
+	argument.
+	(gomp_barrier_extra_alloc): New function.
+	(gomp_barrier_wait): Add barrier ID argument.
+	(gomp_team_barrier_wait): Likewise.
+	(gomp_team_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait_cancel): Likewise.
+	(gomp_team_barrier_wait_cancel_end): Likewise.
+	(gomp_barrier_wait_start): Likewise.
+	(gomp_barrier_wait_cancel_start): Likewise.
+	(gomp_team_barrier_wait_final): Likewise.
+	(gomp_barrier_wait_last): Likewise.
+	(gomp_team_barrier_done): Add unused increment argument.
+	(gomp_barrier_has_completed): Take barrier and increment arguments.
+	(gomp_barrier_can_hold): New function.
+	(gomp_team_barrier_wake_on_increment): New function.
+	(gomp_team_barrier_done_final): New function.
+	* config/posix/pool.h (gomp_get_thread_pool): Initialise
+	prev_barrier.
+	* config/posix/simple-bar.h (gomp_simple_barrier_init): Pass extra
+	allocation argument.
+	(gomp_simple_barrier_reinit): Rename local argument and pass through.
+	(gomp_simple_barrier_wait): Pass dummy barrier ID argument.
+	(gomp_simple_barrier_wait_last): Likewise.
+	* config/rtems/bar.h (gomp_barrier_init): Add unused extra
+	allocation argument.
+	(gomp_barrier_extra_alloc): New function.
+	(gomp_barrier_wait): Add barrier ID argument.
+	(gomp_barrier_wait_last): Likewise.
+	(gomp_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait): Likewise.
+	(gomp_team_barrier_wait_final): Likewise.
+	(gomp_team_barrier_wait_end): Likewise.
+	(gomp_team_barrier_wait_cancel): Likewise.
+	(gomp_team_barrier_wait_cancel_end): Likewise.
+	(gomp_barrier_wait_start): Likewise.
+	(gomp_barrier_wait_cancel_start): Likewise.
+	(gomp_barrier_wait_final_start): Likewise.
+	(gomp_team_barrier_done): Add unused increment argument.
+	(gomp_barrier_has_completed): Take barrier and increment arguments.
+	(gomp_barrier_can_hold): New function.
+	(gomp_team_barrier_wake_on_increment): New function.
+	(gomp_team_barrier_done_final): New function.
+	* configure: Regenerate.
+	* configure.ac: Check for SYS_futex_waitv definition.  Add
+	--enable-linux-futex-waitv handling and futex_waitv link check.
+	* configure.tgt: Add linux_path and use linux/futex_waitv in config_path
+	when futex_waitv is enabled.
+	* env.c (gomp_barrier_request): New variable.
+	(gomp_forkjoin_barrier_request): Likewise.
+	(parse_barrier_choice): New function.
+	(omp_display_env): Display GOMP_BARRIER_TYPE and
+	GOMP_FORKJOIN_BARRIER_TYPE.
+	(initialize_env): Parse GOMP_BARRIER_TYPE and
+	GOMP_FORKJOIN_BARRIER_TYPE.
+	* libgomp.h: Include limits.h.
+	(gomp_assert): New macro.
+	(struct gomp_barrier_extra_alloc_needs): New structure.
+	(enum gomp_barrier_type): New enum.
+	(gomp_barrier_request): New declaration.
+	(gomp_forkjoin_barrier_request): Likewise.
+	(spin_count): New function.
+	(struct gomp_thread_pool): Add prev_barrier member.
+	(gomp_barrier_handle_tasks): Add barrier and increment arguments.
+	* libgomp.texi (GOMP_BARRIER_TYPE): Document.
+	(GOMP_FORKJOIN_BARRIER_TYPE): Likewise.
+	* single.c (GOMP_single_copy_start): Pass barrier ID argument.
+	(GOMP_single_copy_end): Likewise.
+	* task.c (gomp_barrier_handle_tasks): Take barrier and increment
+	arguments.  Load thr->ts.team atomically and return early when it no
+	longer matches the barrier being handled.  Pass increment argument to
+	barrier completion helpers.
+	(GOMP_taskgroup_end): Pass barrier ID argument.
+	(GOMP_workshare_task_reduction_unregister): Likewise.
+	* team.c (gomp_release_held_threads): New function.
+	(gomp_thread_start): Pass barrier ID arguments.  Avoid the second pool
+	barrier when the team barrier can hold secondary threads.
+	(get_last_team): Add assertions for cached team barrier state.
+	(gomp_new_team): Allocate aligned barrier extra storage as part of the
+	team allocation and pass it to gomp_barrier_init.
+	(gomp_free_thread): Release held threads and adjust pool barrier use.
+	(gomp_barrier_wait_n): New function.
+	(gomp_team_start): Track new and exiting threads, use pool barrier to
+	handle these if there are any, avoid pool barrier if none and
+	`gomp_barrier_can_hold` is true.
+	(gomp_team_end): Pass barrier ID arguments, release nested-team
+	threads explicitly, cache held top-level team barriers, and add
+	assertions before freeing or caching teams.
+	(gomp_pause_host): Release held threads and adjust pool barrier use.
+	* testsuite/lib/libgomp.exp
+	(check_effective_target_linux_futex_waitv): New effective target.
+	* testsuite/libgomp-site-extra.exp.in (libgomp_config_path): New
+	variable.
+	* testsuite/libgomp.c++/task-reduction-20.C: New test.
+	* testsuite/libgomp.c++/task-reduction-21.C: New test.
+	* testsuite/libgomp.c-c++-common/gomp-barrier-type-env-auto.c: New
+	test.
+	* testsuite/libgomp.c-c++-common/gomp-barrier-type-env-flat.c: New
+	test.
+	* testsuite/libgomp.c-c++-common/gomp-barrier-type-env-mixed-1.c: New
+	test.
+	* testsuite/libgomp.c-c++-common/gomp-barrier-type-env-mixed-2.c: New
+	test.
+	* testsuite/libgomp.c-c++-common/gomp-barrier-type-env-mixed-3.c: New
+	test.
+	* testsuite/libgomp.c-c++-common/gomp-barrier-type-env-mixed-4.c: New
+	test.
+	* testsuite/libgomp.c-c++-common/gomp-barrier-type-env-unset.c: New
+	test.
+	* testsuite/libgomp.c-c++-common/gomp-barrier-type-env.c: New test.
+	* testsuite/libgomp.c/barrier_generation_overflow.c: New test.
+	* testsuite/libgomp.c/barrier-switch-1.c: New test.
+	* testsuite/libgomp.c/cancel_in_implicit_barrier.c: New test.
+	* testsuite/libgomp.c/cancel_in_implicit_barrier_while_primary_waiting.c:
+	New test.
+	* testsuite/libgomp.c/cancel_incr_wraparound.c: New test.
+	* testsuite/libgomp.c/futex_waitv_overflow.c: New test.
+	* testsuite/libgomp.c/primary-thread-tasking.c: New test.
+	* work.c (gomp_work_share_end): Pass barrier ID argument.
+	(gomp_work_share_end_cancel): Pass barrier ID argument.
+
+2026-11-03  Matthew Malcomson  <mmalcomson@nvidia.com>
+
+	* config/gcn/bar.c (gomp_team_barrier_wait_end): Inline
+	increment check.
+	(gomp_team_barrier_wait_cancel_end): Inline increment check.
+	* config/gcn/bar.h (gomp_barrier_state_is_incremented): Remove
+	function.
+	(gomp_barrier_has_completed): Perform via equality check.
+	* config/linux/bar.c (gomp_team_barrier_wait_end): Inline
+	increment check.
+	(gomp_team_barrier_wait_cancel_end): Inline increment check.
+	* config/linux/bar.h (gomp_barrier_state_is_incremented): Remove
+	function.
+	(gomp_barrier_has_completed): Perform via equality check.
+	* config/nvptx/bar.h (gomp_barrier_state_is_incremented): Remove
+	function.
+	(gomp_barrier_has_completed): Perform via equality check.
+	* config/posix/bar.c (gomp_team_barrier_wait_end): Inline
+	increment check.
+	(gomp_team_barrier_wait_cancel_end): Inline increment check.
+	* config/posix/bar.h (gomp_barrier_state_is_incremented): Remove
+	function.
+	(gomp_barrier_has_completed): Perform via equality check.
+	* config/rtems/bar.h (gomp_barrier_state_is_incremented): Remove
+	function.
+	(gomp_barrier_has_completed): Perform via equality check.
+
+2026-11-03  Andrew Stubbs  <ams@baylibre.com>
+
+	PR target/128366
+	* config/gcn/team.c (gomp_gcn_enter_kernel): Use size_t to find the
+	start of the team_arena.
+	* plugin/plugin-gcn.c (configure_ephemeral_memories): Use size_t for
+	actual_arena_total_size.
+
+2026-11-02  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR libfortran/127893
+	* testsuite/libgomp.fortran/unit-cache-1.f90: New test.
+
+2026-10-30  Andrew Stubbs  <ams@baylibre.com>
+
+	* libgomp.texi (AMD Radeon (GCN)): Document stack size rounding.
+	* plugin/plugin-gcn.c (init_environment_variables): Round stack_size
+	up to an odd multiple of 4 kiB.
+
+2026-10-30  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* plugin/Makefrag.am (libgomp_plugin_nvptx_la_LINK)
+	(libgomp_plugin_gcn_la_LINK): Set, to use...
+	(libgomp_plugin_LINK): ... this new variable.
+	* Makefile.am (LINK): Cross-reference it.
+	* Makefile.in: Regenerate.
+
+2026-10-29  Andrew Stubbs  <ams@baylibre.com>
+
+	* plugin/plugin-gcn.c (drain_queue): Execute placeholder entries
+	with the queue lock held.
+
+2026-10-27  Tobias Burnus  <tburnus@baylibre.com>
+
+	* fortran.c (omp_get_gprivate_limit_): Add.
+	* libgomp-plugin.h (GOMP_OFFLOAD_get_gprivate_limit): Add.
+	* libgomp.h (struct gomp_device_descr): Add get_gprivate_limit_func.
+	* libgomp.map: Add omp_get_gprivate_limit_.
+	* libgomp.texi (omp_get_gprivate_limit): Document new routine.
+	* omp.h.in (omp_access_t, omp_get_gprivate_limit): Add.
+	* omp_lib.f90.in (omp_access_kind, omp_get_gprivate_limit): Add.
+	* omp_lib.h.in (omp_access_kind, omp_get_gprivate_limit): Add.
+	* plugin/plugin-gcn.c (GOMP_OFFLOAD_get_gprivate_limit): Add.
+	* plugin/plugin-nvptx.c (GOMP_OFFLOAD_get_gprivate_limit): Add.
+	* target.c (omp_get_gprivate_limit): Add.
+	* testsuite/libgomp.c-c++-common/gprivate-1.c: New test.
+	* testsuite/libgomp.fortran/gprivate-1.f90: New test.
+
+2026-10-26  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* acinclude.m4 (LIBGOMP_CHECK_LINKER_FEATURES): Update AC_PROG_LD to LT_PATH_LD.
+	* configure: Regenerate.
+
+2026-10-23  Thomas Schwinge  <thomas@codesourcery.com>
+	    Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* testsuite/libgomp.fortran/reverse-offload-5.f90: For NVIDIA GPU
+	code offloading, shorten timeout to 10 s.
+
+2026-10-23  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR c++/127559
+	* testsuite/libgomp.c++/target-lambda-6.C: Un-XFAIL.
+
+2026-10-23  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR c++/127559
+	* testsuite/libgomp.c++/target-lambda-5.C: Enhance testing.
+	* testsuite/libgomp.c++/target-lambda-6.C: Likewise.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* configure: Regenerate.
+	* configure.ac: Drop AC_HEADER_STDC.
+
+2026-10-17  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/127559
+	* testsuite/libgomp.c++/target-lambda-5.C: New test.
+	* testsuite/libgomp.c++/target-lambda-6.C: New test.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+
+2026-10-16  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR libgomp/41418
+	* configure.ac (FC): Set to 'no' if '--enable-languages=fortran'
+	isn't in effect.
+	* configure: Regenerate.
+
+2026-10-12  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127723
+	* testsuite/libgomp.fortran/nestedfn5.f90: Fix testcase: safelen
+	must be constant.
+
+2026-10-09  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127723
+	* libgomp.texi (OpenMP 6.1 Impl. Status): Link to Bugzilla
+	for the pending 'scaled' modifer to the 'simdlen' clause.
+
+2026-10-08  John David Anglin  <danglin@gcc.gnu.org>
+
+	* testsuite/libgomp.c++/target-std__cmath.C: Skip on hppa*-*-hpux*.
+
+2026-09-30  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 6.0 Impl. Status): Set 'local' clause to 'Y'.
+
+2026-09-26  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (Impl. Status): Mark optional const bool
+	expr for inarguable clauses as implemented for Fortran.
+
+2026-09-26  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (Impl.Status): Mark 'omp groupprivate' as
+	partially supported.
+	* testsuite/libgomp.fortran/groupprivate-1.f90: New test.
+	* testsuite/libgomp.fortran/groupprivate-2.f90: New test.
+
+2026-09-25  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR tree-optimization/127053
+	* testsuite/libgomp.graphite/force-parallel-8.c:
+	'dg-additional-options -fno-expensive-optimizations'.
+
+2026-09-25  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR lto/127589
+	* testsuite/libgomp.c/cmplxint-target-1.c: New test.
+	* testsuite/libgomp.c/cmplxint128-target-1.c: New test.
+	* testsuite/libgomp.c/dfp-target-1.c: New test.
+	* testsuite/libgomp.c/float16-target-1.c: New test.
+	* testsuite/libgomp.c/float16-target-2.c: New test.
+
+2026-09-24  Jakub Jelinek  <jakub@redhat.com>
+
+	* alloc.c (gomp_aligned_alloc): Check for overflows in the
+	_aligned_malloc case and in the last fallback.
+
+2026-09-22  Chung-Lin Tang  <cltang@baylibre.com>
+
+	* testsuite/libgomp.c-c++-common/declare-target-local-1.c: New test.
+	* testsuite/libgomp.c-c++-common/declare-target-local-2.c: New test.
+	* testsuite/libgomp.c-c++-common/declare-target-local-3.c: New test.
+	* testsuite/libgomp.c-c++-common/declare-target-local-4.c: New test.
+	* testsuite/libgomp.fortran/declare-target-local-1.f90: New test.
+
+2026-09-21  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 5.2 Impl. Status): Mark comma between
+	directive name and first clause as implemented in Fortran.
+
+2026-09-11  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (omp_control_tool): Add example interface for calling
+	the tool with a passed argument from Fortran
+
+2026-09-10  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127273
+	* testsuite/libgomp.c/usm_env_handling-1-self.c: Remove 'dg-ice'.
+
+2026-09-09  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/122205
+	* testsuite/libgomp.c/usm_env_handling-2.c: Improve debug printf.
+	* testsuite/libgomp.c/usm_env_handling-1.c: likewise; add
+	'#ifdef USE_SELF_MAPS'.
+	* testsuite/libgomp.c/usm_env_handling-1-self.c: New test.
+	* testsuite/libgomp.c/usm_env_handling-2-self.c: New test.
+	* testsuite/libgomp.c/usm_env_handling-3-self.c: New test.
+
+2026-09-08  Chung-Lin Tang  <cltang@baylibre.com>
+
+	PR middle-end/122205
+	* testsuite/libgomp.c/omp_target_is_present.c: Adjust tests for self_maps.
+	* testsuite/libgomp.c-c++-common/requires-8.c: New test.
+	* testsuite/libgomp.fortran/requires-2.f90: New test.
+
+2026-09-07  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 6.0 implementation status): Mark
+	'need_device_addr' as supported.
+	(GOMP_RUNTIME_USM): Improve wording of the unsupported part.
+
+2026-09-07  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 6.0 Impl Status): Mark underscore
+	variant of multi-word directive names as supported by Fortran.
+
+2026-09-07  Andrew Stubbs  <ams@baylibre.com>
+
+	* config/gcn/time.c (omp_get_wtime): Use "=Sg".
+
+2026-09-07  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/126964
+	* testsuite/libgomp.oacc-fortran/host_data-5.F90: Expect no copy
+	of a span normalized dummy passed to a dummy without a descriptor.
+
+2026-09-04  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/127186
+	* libgomp.texi (GOMP_RUNTIME_USM): Update caveat section.
+	* target.c (gomp_target_enter_exit_data_usm): Handle GOMP_MAP_ATTACH.
+	* testsuite/libgomp.c/usm_env_handling-3.c: New test.
+
+2026-09-02  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/127186
+	* target.c (GOMP_target_ext): Fix comment related to
+	GOMP_RUNTIME_USM.
+	* testsuite/libgomp.c/usm_env_handling-2.c: New test.
+
+2026-09-01  Tobias Burnus  <tburnus@baylibre.com>
+
+	* target.c (gomp_load_image_to_device): With shared memory, do not
+	add 'link' variables to the splay tree.
+	(GOMP_target_update_ext): For OFFLOAD_CAP_SHARED_MEM, still call
+	gomp_update unless requires self_maps/USM is set.
+	(gomp_update): For OFFLOAD_CAP_SHARED_MEM, only handle global
+	static variables (other than 'link').
+	(GOMP_target_ext, GOMP_target_data_ext): For OFFLOAD_CAP_SHARED_MEM
+	without 'requires self_maps/USM', abort with a 'sorry' for
+	global static variables other than 'link' as the MAP clause would
+	otherwise be ignored.
+	(gomp_target_enter_exit_data_usm): New; handle global static variables
+	other than 'link' with OFFLOAD_CAP_SHARED_MEM.
+	(GOMP_target_enter_exit_data): Call it in that case, unless there
+	is a 'requires self_maps/USM'.
+	* testsuite/libgomp.c/usm_env_handling-1.c: New test.
+
+2026-09-01  supers1ngular  <supers1ngular@baylibre.com>
+
+	* env.c (enum gomp_runtime_usm_t): New variable.
+	(parse_rt_usm): New function to parse environment variable.
+	(initialize_env): Enforce default 'disabled'.
+	* libgomp.h (struct gomp_team_state): Whitespace.
+	(enum gomp_device_num): Ditto.
+	(enum gomp_runtime_usm_t): New enum.
+	(gomp_init_device): Update signature.
+	* libgomp.texi: Add relevant documentation.
+	* oacc-init.c (acc_init_1): Update function call.
+	(goacc_attach_host_thread_to_device): Whitespace.
+	(acc_init): Ditto.
+	(acc_set_device_type): Update function call.
+	(acc_set_device_num): Ditto.
+	(get_property_any): Ditto.
+	(goacc_restore_bind): Whitespace.
+	* target.c (resolve_device): Update function call.
+	(gomp_load_image_to_device): Allow copying if the device
+	capability is set.
+	(gomp_init_device): Update signature, and add capability logic.
+	Also add a debugging output.
+	(gomp_page_locked_host_alloc): Update function call.
+
+2026-08-20  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* config/gcn/teams.c (GOMP_distribute_static_worksharing_start):
+	Update comment.
+	* config/nvptx/teams.c (GOMP_distribute_static_worksharing_start):
+	Likewise.
+	* loop.c (GOMP_loop_static_worksharing_start): Likewise.
+	* teams.c (GOMP_distribute_static_worksharing_start): Likewise.
+	* testsuite/libgomp.c-c++-common/for-static-3.c: Use
+	-fopenmp-ompt=extended instead of -fopenmp-ompt-detailed.
+
+2026-08-17  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/53800
+	* testsuite/libgomp.oacc-fortran/host_data-5.F90: Update the
+	privatization notes for the packing of a TARGET dummy.
+
+2026-08-14  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR libgomp/41418
+	* configure.ac (FC): Revert ealier changes; just set to '"$GFORTRAN"'.
+	(USE_FORTRAN): Conditionalize on '--enable-languages=fortran' being in
+	effect.
+	* configure: Regenerate.
+
+2026-08-10  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* loop.c (GOMP_loop_static_worksharing_start,
+	GOMP_loop_static_worksharing_end): Update comments.
+
+2026-08-05  Tobias Burnus  <tburnus@baylibre.com>
+
+	Revert:
+	2026-08-05  Jakub Jelinek  <jakub@redhat.com>
+
+	* testsuite/libgomp.c++/allocate-1.C: Replace [: in OpenMP or OpenACC
+	pragmas or attributes with [ : and :] with : ].
+	* testsuite/libgomp.c++/baseptrs-3.C: Likewise.
+	* testsuite/libgomp.c++/baseptrs-5.C: Likewise.
+	* testsuite/libgomp.c++/class-array-1.C: Likewise.
+	* testsuite/libgomp.c++/examples-4/target_data-5.C: Likewise.
+	* testsuite/libgomp.c++/lvalue-tofrom-2.C: Likewise.
+	* testsuite/libgomp.c++/pr101544-1.C: Likewise.
+	* testsuite/libgomp.c++/pr108286.C: Likewise.
+	* testsuite/libgomp.c++/reduction-10.C: Likewise.
+	* testsuite/libgomp.c++/reduction-11.C: Likewise.
+	* testsuite/libgomp.c++/reduction-12.C: Likewise.
+	* testsuite/libgomp.c++/reduction-5.C: Likewise.
+	* testsuite/libgomp.c++/reduction-6.C: Likewise.
+	* testsuite/libgomp.c++/reduction-7.C: Likewise.
+	* testsuite/libgomp.c++/reduction-8.C: Likewise.
+	* testsuite/libgomp.c++/reduction-9.C: Likewise.
+	* testsuite/libgomp.c++/target-18.C: Likewise.
+	* testsuite/libgomp.c++/target-19.C: Likewise.
+	* testsuite/libgomp.c++/target-2.C: Likewise.
+	* testsuite/libgomp.c++/target-22.C: Likewise.
+	* testsuite/libgomp.c++/target-23.C: Likewise.
+	* testsuite/libgomp.c++/target-9.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-100.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-101.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-12.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-2003.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-30.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-300.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-32.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-33.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-41.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-60.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-61.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-62.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-80.C: Likewise.
+	* testsuite/libgomp.c++/target-flex-81.C: Likewise.
+	* testsuite/libgomp.c++/target-has-device-addr-7.C: Likewise.
+	* testsuite/libgomp.c++/target-in-reduction-1.C: Likewise.
+	* testsuite/libgomp.c++/target-in-reduction-2.C: Likewise.
+	* testsuite/libgomp.c++/target-lambda-1.C: Likewise.
+	* testsuite/libgomp.c++/target-lambda-3.C: Likewise.
+	* testsuite/libgomp.c++/target-map-class-1.C: Likewise.
+	* testsuite/libgomp.c++/target-std__array-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__bitset-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__deque-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__flat_map-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__flat_multimap-concurrent.C:
+	Likewise.
+	* testsuite/libgomp.c++/target-std__flat_multiset-concurrent.C:
+	Likewise.
+	* testsuite/libgomp.c++/target-std__flat_set-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__forward_list-concurrent.C:
+	Likewise.
+	* testsuite/libgomp.c++/target-std__list-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__map-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__multimap-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__multiset-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__set-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__span-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__unordered_map-concurrent.C:
+	Likewise.
+	* testsuite/libgomp.c++/target-std__unordered_multimap-concurrent.C:
+	Likewise.
+	* testsuite/libgomp.c++/target-std__unordered_multiset-concurrent.C:
+	Likewise.
+	* testsuite/libgomp.c++/target-std__unordered_set-concurrent.C:
+	Likewise.
+	* testsuite/libgomp.c++/target-std__valarray-1.C: Likewise.
+	* testsuite/libgomp.c++/target-std__valarray-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-std__vector-concurrent.C: Likewise.
+	* testsuite/libgomp.c++/target-this-3.C: Likewise.
+	* testsuite/libgomp.c++/target-this-4.C: Likewise.
+	* testsuite/libgomp.c++/target-virtual-1.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-11.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-12.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-13.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-17.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-18.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-19.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-4.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-5.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-6.C: Likewise.
+	* testsuite/libgomp.c++/task-reduction-7.C: Likewise.
+	* testsuite/libgomp.c++/taskloop-reduction-2.C: Likewise.
+	* testsuite/libgomp.c++/taskloop-reduction-3.C: Likewise.
+	* testsuite/libgomp.c++/taskloop-reduction-4.C: Likewise.
+	* testsuite/libgomp.c-c++-common/allocate-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/allocate-3.c: Likewise.
+	* testsuite/libgomp.c-c++-common/baseptrs-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/dispatch-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/dispatch-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/interop-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/matrix-omp-target-teams-distribute-parallel-for-1.c:
+	Likewise.
+	* testsuite/libgomp.c-c++-common/ptr-attach-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/ptr-attach-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/refcount-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/struct-elem-4.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-has-device-addr-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-implicit-map-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-implicit-map-5.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-in-reduction-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-in-reduction-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-map-iterators-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-map-iterators-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-map-iterators-3.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-map-zlas-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-update-iterators-1.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-update-iterators-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/target-update-iterators-3.c: Likewise.
+	* testsuite/libgomp.c-c++-common/task-reduction-11.c: Likewise.
+	* testsuite/libgomp.c-c++-common/task-reduction-12.c: Likewise.
+	* testsuite/libgomp.c-c++-common/task-reduction-16.c: Likewise.
+	* testsuite/libgomp.c-c++-common/task-reduction-3.c: Likewise.
+	* testsuite/libgomp.c-c++-common/task-reduction-7.c: Likewise.
+	* testsuite/libgomp.c-c++-common/task-reduction-9.c: Likewise.
+	* testsuite/libgomp.c-c++-common/taskloop-reduction-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/teams-nteams-icv-1.c: Likewise.
+	* testsuite/libgomp.oacc-c-c++-common/deep-copy-1.c: Likewise.
+	* testsuite/libgomp.oacc-c-c++-common/deep-copy-16.c: Likewise.
+	* testsuite/libgomp.oacc-c-c++-common/deep-copy-3.c: Likewise.
+	* testsuite/libgomp.oacc-c-c++-common/deep-copy-4.c: Likewise.
+	* testsuite/libgomp.oacc-c-c++-common/deep-copy-5.c: Likewise.
+	* testsuite/libgomp.oacc-c-c++-common/deep-copy-6.c: Likewise.
+	* testsuite/libgomp.oacc-c-c++-common/deep-copy-7.c: Likewise.
+	* testsuite/libgomp.oacc-c-c++-common/deep-copy-8.c: Likewise.
+
+2026-07-30  Sebastian Galindo  <sebastian.galindo143@gmail.com>
+	    Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* libgomp.map (GOACC_2.5): Export GOACC_init, GOACC_shutdown, and
+	GOACC_set_device.
+	* libgomp_g.h (GOACC_init): Declare.
+	(GOACC_shutdown): Likewise.
+	(GOACC_set_device): Likewise.
+	* oacc-init.c (GOACC_DIRECTIVE_DEVICE_MASK): New macro for
+	supported device types.
+	(acc_init_1): Accept explicit device number argument.
+	(acc_shutdown_1): Shut down a single device or all devices of a
+	type.
+	(goacc_attach_host_thread_to_device): Whitespace fix.
+	(GOACC_init): New entry point for init directive.
+	(GOACC_shutdown): New entry point for shutdown directive.
+	(GOACC_set_device): New entry point for set directive.
+	(acc_init): Pass default device number to acc_init_1.
+	(acc_shutdown): Pass default device number to acc_shutdown_1.
+	(acc_set_device_num): Whitespace fix.
+	(goacc_restore_bind): Whitespace fix.
+	(goacc_lazy_initialize): Pass default device number to acc_init_1.
+	* testsuite/libgomp.oacc-fortran/init-1.f90: New test.
+	* testsuite/libgomp.oacc-fortran/lib-1-directives.f90: New test.
+	* testsuite/libgomp.oacc-fortran/lib-4-directives.f90: New test.
+	* testsuite/libgomp.oacc-fortran/lib-5-directives.f90: New test.
+	* testsuite/libgomp.oacc-fortran/lib-5-init.f90: New test.
+	* testsuite/libgomp.oacc-fortran/set-1.f90: New test.
+	* testsuite/libgomp.oacc-fortran/shutdown-1.f90: New test.
+
+2026-07-29  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* testsuite/libgomp.c/target-device-type-1.c: Adjust.
+	* testsuite/libgomp.c/target-device-type-2.c: Likewise.
+
+2026-07-29  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* testsuite/libgomp.c++/static-aggr-constructor-destructor-1.C:
+	Simplify offload tree dump scanning.
+	* testsuite/libgomp.c++/static-aggr-constructor-destructor-2.C:
+	Likewise.
+	* testsuite/libgomp.c-c++-common/target-is-initial-host-2.c:
+	Likewise.
+	* testsuite/libgomp.c-c++-common/target-is-initial-host.c:
+	Likewise.
+	* testsuite/libgomp.fortran/target-is-initial-host-2.f90:
+	Likewise.
+	* testsuite/libgomp.fortran/target-is-initial-host.f: Likewise.
+	* testsuite/libgomp.fortran/target-is-initial-host.f90: Likewise.
+
+2026-07-22  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* target.c (gomp_target_init): Fix OpenMP reverse offload
+	capability checking.
+
+2026-07-22  Tobias Burnus  <tburnus@baylibre.com>
+	    Andrew Stubbs  <ams@baylibre.com>
+	    supers1ngular  <supers1ngular@baylibre.com>
+
+	* libgomp-plugin.h (GOMP_OFFLOAD_CAP_APU_SHARED_MEM,
+	GOMP_OFFLOAD_CAP_UNIFIED_ADDR, GOMP_OFFLOAD_CAP_REV_OFFLOAD): Add.
+	(GOMP_OFFLOAD_get_dev_caps): New prototype.
+	(GOMP_OFFLOAD_get_num_devices): Remove requirement argument.
+	* libgomp.h (struct gomp_device_descr): Add get_dev_caps_func.
+	* libgomp.texi (nvptx, AMD Radeon): Update for by-device
+	USM support.
+	* oacc-host.c (host_get_num_devices,
+	host_openacc_get_property): Update call.
+	* oacc-init.c (resolve_device, acc_init_1, acc_shutdown_1,
+	goacc_attach_host_thread_to_device, acc_get_num_devices,
+	acc_set_device_num, get_property_any): Likewise.
+	* plugin/plugin-gcn.c (is_integrated_apu): Remove.
+	(GOMP_OFFLOAD_get_caps): Mark unified address and
+	reverse offload as supported.
+	(GOMP_OFFLOAD_get_dev_caps): New.
+	(GOMP_OFFLOAD_get_num_devices): Remove requirements arg.
+	* plugin/plugin-nvptx.c (using_usm): Init with -1.
+	(GOMP_OFFLOAD_get_caps): Mark unified address and
+	reverse offload as supported.
+	(GOMP_OFFLOAD_get_dev_caps): New.
+	(GOMP_OFFLOAD_get_num_devices): Remove requirements arg.
+	(GOMP_OFFLOAD_is_accessible_ptr): Check for using_usm > 0.
+	* target.c (gomp_load_plugin_for_device): Load get_dev_caps.
+	(gomp_target_init): Change to by-device capabilities, skip
+	only those devices not devices types that do not support a
+	capability.
+
+2026-07-20  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* config/gcn/teams.c (GOMP_distribute_static_worksharing_dispatch):
+	Update signature and comment.
+	* config/nvptx/teams.c (GOMP_distribute_static_worksharing_dispatch):
+	Likewise.
+	* libgomp_g.h (GOMP_loop_static_worksharing_dispatch,
+	GOMP_distribute_static_worksharing_dispatch): Update prototypes.
+	* loop.c (GOMP_loop_static_worksharing_dispatch): Update signature
+	and comment.
+	* teams.c (GOMP_distribute_static_worksharing_dispatch): Likewise.
+	* testsuite/libgomp.c-c++-common/for-static-3.c: Update scan-dump
+	pattern.
+
+2026-07-20  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* libgomp.map: Add GOMP_scope_start_with_end and GOMP_scope_end.
+	* libgomp_g.h (GOMP_scope_start_with_end): Declare.
+	(GOMP_scope_end): Likewise.
+	* scope.c (GOMP_scope_start_with_end): New function.
+	(GOMP_scope_end): New stub.
+
+2026-07-17  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 5.1 Impl Status): Mark device_type on vars
+	in declare target as 'P'.
+
+2026-07-17  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* libgomp.map: Add GOMP_has_masked_thread_num_with_end.
+	* libgomp.texi: Document it.
+	* libgomp_g.h (GOMP_has_masked_thread_num_with_end): Declare.
+	* parallel.c (GOMP_has_masked_thread_num_with_end): New function.
+
+2026-07-16  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* config/gcn/teams.c (GOMP_distribute_static_worksharing_dispatch): Add
+	niter, start, incr, chunk_size, and istart parameters (unused).
+	* config/nvptx/teams.c (GOMP_distribute_static_worksharing_dispatch):
+	Likewise.
+	* libgomp_g.h (GOMP_loop_static_worksharing_dispatch): Update prototype.
+	(GOMP_distribute_static_worksharing_dispatch): Likewise.
+	* loop.c (GOMP_loop_static_worksharing_dispatch): Add niter, start,
+	incr, chunk_size, and istart parameters (unused).
+	* teams.c (GOMP_distribute_static_worksharing_dispatch): Likewise.
+	* testsuite/libgomp.c-c++-common/for-static-3.c: Update scan pattern
+	to match new arguments.
+
+2026-07-16  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR fortran/126279
+	* target.c (copy_firstprivate_data): After storing  users_allocators'
+	allocator, shift the offset by its storage size to avoid overriding.
+	* testsuite/libgomp.fortran/uses_allocators-1.f90: Use kind c_size_t
+	instead of kind 8 for 32bit compatibility.
+	* testsuite/libgomp.fortran/uses_allocators-4.f90: Update expected
+	tree dump.
+	* testsuite/libgomp.fortran/uses_allocators-7.f90: Extend testcase now
+	that user-defined allocators are supported by uses_allocators.
+
+2026-07-16  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* testsuite/libgomp.c/target-device-type-3.c: Repair offload tree
+	dump scanning.
+
+2026-07-16  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR libgomp/125877
+	* config/linux/numa.c (gomp_get_numa_distance): Move 'lineptr'
+	initialization earlier, robustify 'getline' call, avoid double
+	'free'.
+
+2026-07-16  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* testsuite/libgomp.c/target-device-type-1.c (f): Map 'x'.
+	* testsuite/libgomp.c/target-device-type-2.c (f): Likewise.
+
+2026-07-15  Tobias Burnus  <tburnus@baylibre.com>
+
+	* testsuite/libgomp.c-c++-common/uses_allocators-10.c: New test.
+
+2026-07-15  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR c/122748
+	* libgomp.texi (Implementation status): Mark two
+	uses_allocators items and C23 support as 'Y';
+	remove outdated remark regarding a deprecation warning.
+	(Memory Management Routines): Move omp_free after
+	omp_realloc; add commented @menu entries for new
+	TR15 routines.
+	(nvptx): Update @uref to point to a better webpage.
+
+2026-07-15  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (Implementations status): Mark 'device_type'
+	clause on target as implemented.
+	* testsuite/libgomp.c/target-device-type-3.c: New test.
+
+2026-07-14  Tobias Burnus  <tburnus@baylibre.com>
+
+	* error.c (GOMP_error): When passing msglen == (size_t) -2,
+	do not show 'error directive encountered:' in the message.
+	* libgomp.texi (Implementation Status): Mark target + device_type
+	as partially implemented.
+	* testsuite/libgomp.c/target-device-type-1.c: New test.
+	* testsuite/libgomp.c/target-device-type-2.c: New test.
+
+2026-07-14  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/125877
+	* config/linux/numa.c (gomp_get_numa_distance): Avoid data race issue
+	during initalization and handle non-contiguous node numbering.
+
+2026-07-13  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP Implementation Status): Change section
+	name from TR14 to TR15 and add TR15 additions.
+
+2026-07-09  Paul-Antoine Arras  <parras@baylibre.com>
+	    Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* config/gcn/teams.c (GOMP_distribute_static_worksharing): Add
+	long niter parameter (unused).
+	(GOMP_distribute_static_worksharing_start): Likewise.
+	* config/nvptx/teams.c (GOMP_distribute_static_worksharing):
+	Likewise.
+	(GOMP_distribute_static_worksharing_start): Likewise.
+	* libgomp.texi: Update function signatures; fix real/imaginary
+	description; document niter parameter.
+	* libgomp_g.h (GOMP_loop_static_worksharing): Update prototype.
+	(GOMP_distribute_static_worksharing): Likewise.
+	* loop.c (GOMP_loop_static_worksharing): Add long niter parameter
+	(unused).
+	(GOMP_loop_static_worksharing_start): Likewise.
+	* teams.c (GOMP_distribute_static_worksharing): Likewise.
+	(GOMP_distribute_static_worksharing_start): Likewise.
+	* testsuite/libgomp.c-c++-common/for-static-1.c: Update scan
+	pattern to match niter argument.
+	* testsuite/libgomp.c-c++-common/for-static-2.c: Likewise.
+	* testsuite/libgomp.c-c++-common/for-static-3.c: Likewise.
+
+2026-07-09  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* config/gcn/teams.c (GOMP_distribute_static_worksharing_start,
+	GOMP_distribute_static_worksharing_dispatch,
+	GOMP_distribute_static_worksharing_end): New functions.
+	* config/nvptx/teams.c (GOMP_distribute_static_worksharing_start,
+	GOMP_distribute_static_worksharing_dispatch,
+	GOMP_distribute_static_worksharing_end): Likewise.
+	* libgomp.map (GOMP_6.0.2): Export new entry points.
+	* libgomp_g.h: Add prototypes for GOMP_loop_static_worksharing,
+	GOMP_loop_static_worksharing_start, GOMP_loop_static_worksharing_dispatch,
+	GOMP_loop_static_worksharing_end, GOMP_has_masked_thread_num,
+	GOMP_masked_end, GOMP_single_start_with_end, GOMP_single_end,
+	GOMP_distribute_static_worksharing_start,
+	GOMP_distribute_static_worksharing_dispatch, and
+	GOMP_distribute_static_worksharing_end.
+	* loop.c (GOMP_loop_static_worksharing): Move here from parallel.c.
+	(GOMP_loop_static_worksharing_start): New function.
+	(GOMP_loop_static_worksharing_dispatch): New stub.
+	(GOMP_loop_static_worksharing_end): New stub.
+	(GOMP_has_masked_thread_num): Move here from parallel.c.
+	(GOMP_masked_end): New stub.
+	* parallel.c (GOMP_loop_static_worksharing): Move to loop.c.
+	(GOMP_has_masked_thread_num): Move to loop.c.
+	* single.c (GOMP_single_start_with_end): New function.
+	(GOMP_single_end): New stub.
+	(GOMP_single_copy_start): Fix trailing whitespace.
+	* teams.c (GOMP_distribute_static_worksharing_start): New function.
+	(GOMP_distribute_static_worksharing_dispatch): New stub.
+	(GOMP_distribute_static_worksharing_end): New stub.
+	* testsuite/libgomp.c-c++-common/for-static-1.c: New test.
+	* testsuite/libgomp.c-c++-common/for-static-2.c: New test.
+	* testsuite/libgomp.c-c++-common/for-static-3.c: New test.
+	* testsuite/libgomp.c-c++-common/for-static.h: New test.
+
+2026-07-09  Martin Jambor  <mjambor@suse.cz>
+
+	PR ipa/125207
+	* testsuite/libgomp.c/ipcp-cb-spec1.c (test): Rework.
+
+2026-07-02  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* config/nvptx/allocator.c [PTX < 4.1]: Fix build.
+	* config/nvptx/team.c [PTX < 4.1]: Disable the whole
+	'__nvptx_lowlat_pool' machinery.
+
+2026-06-30  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* config.h.in: Regenerate.
+	* configure.ac [x$libgomp_cv_have_sync_builtins = xno]: Fix check.
+	* configure: Regenerate.
+	* allocator.c (omp_init_allocator, gomp_map_omp_init_allocator)
+	[!HAVE_SYNC_BUILTINS]: Fix build.
+	* testsuite/libgomp.c-c++-common/uses_allocators-2.c: Fix for C++ testing.
+	* testsuite/libgomp.c-c++-common/uses_allocators-9.c: Likewise.
+	* testsuite/libgomp.fortran/dep-uses-allocators.f90: Remove
+	obsolete "sorry, unimplemented: [...]" diagnostic check.
+	* testsuite/libgomp.fortran/uses_allocators-7.f90: XFAIL one
+	'scan-tree-dump-times' check.
+
+2026-06-30  Chung-Lin Tang  <cltang@baylibre.com>
+
+	* allocator.c (struct omp_allocator_data): Always enable 'memkind' field
+	for configurations with offloading. Adjust comments assuming
+	HAVE_SYNC_BUILTINS for all offload host/accelerators.
+	(gomp_init_allocator_data): New function, created from omp_init_allocator
+	logic.
+	(omp_init_allocator): Adjust to use gomp_init_allocator_data.
+	(gomp_map_omp_init_allocator): New function to call
+	gomp_init_allocator_data for uses_allocators clauses.
+	* config/gcn/allocator.c (gcn_memspace_validate): Add comments.
+	* config/nvptx/allocator.c (nvptx_memspace_alloc): Add PTX >= v4.1
+	preprocessor symbol check.
+	(nvptx_memspace_calloc): Likewise.
+	(nvptx_memspace_free): Likewise.
+	(nvptx_memspace_realloc): Likewise.
+	(nvptx_memspace_validate): Add comments.
+	* configure.ac: Require offload hosts and accelerator targets to support
+	__sync_* builtins.
+	* configure: Regenerate.
+	* libgomp-plugin.h (GOMP_OFFLOAD_memspace_validate): New declaration.
+	* libgomp.h (gomp_omp_allocator_data_size): New declaration.
+	(memspace_validate_func): New plugin hook in struct gomp_device_descr.
+	(gomp_map_omp_init_allocator): New declaration.
+	* oacc-host.c (host_dispatch): Init .memspace_validate_func = NULL.
+	* plugin/plugin-gcn.c (GOMP_OFFLOAD_memspace_validate): New function.
+	* plugin/plugin-nvptx.c (GOMP_OFFLOAD_memspace_validate): New function.
+	* target.c (gomp_map_vars_internal): Implement GOMP_MAP_USES_ALLOCATORS
+	map kind.
+	(calculate_firstprivate_requirements): Likewise.
+	(copy_firstprivate_data): Likewise.
+	(gomp_load_plugin_for_device): Add DLSYM_OPT of memspace_validate_func
+	hook.
+	* testsuite/libgomp.c++/uses_allocators-1.C: Moved from
+	../gcc/testsuite/g++.dg/gomp/uses_allocators-1.C.
+	* testsuite/libgomp.c-c++-common/uses_allocators-1.c: Moved from
+	../gcc/testsuite/c-c++-common/gomp/uses_allocators-1.c.
+	* testsuite/libgomp.c-c++-common/uses_allocators-2.c: Moved from
+	../gcc/testsuite/c-c++-common/gomp/uses_allocators-2.c.
+	* testsuite/libgomp.c-c++-common/uses_allocators-4.c: Moved from
+	../gcc/testsuite/c-c++-common/gomp/uses_allocators-4.c.
+	* testsuite/libgomp.c-c++-common/uses_allocators-7.c: Moved from
+	../gcc/testsuite/c-c++-common/gomp/uses_allocators-7.c.
+	* testsuite/libgomp.c-c++-common/uses_allocators-8.c: Moved from
+	../gcc/testsuite/c-c++-common/gomp/uses_allocators-8.c.
+	* testsuite/libgomp.c-c++-common/uses_allocators-3.c: New test.
+	* testsuite/libgomp.c-c++-common/uses_allocators-5.c: New test.
+	* testsuite/libgomp.c-c++-common/uses_allocators-6.c: New test.
+	* testsuite/libgomp.c-c++-common/uses_allocators-9.c: New test.
+	* testsuite/libgomp.fortran/uses_allocators-1.f90: New test.
+	* testsuite/libgomp.fortran/uses_allocators-2.f90:
+	Rename from uses_allocators_1.f90.
+	* testsuite/libgomp.fortran/uses_allocators-3.f90:
+	Rename from uses_allocators_2.f90.
+	* testsuite/libgomp.fortran/uses_allocators-4.f90: New test.
+	* testsuite/libgomp.fortran/uses_allocators-5.f90: New test.
+	* testsuite/libgomp.fortran/uses_allocators-6.f90: New test.
+	* testsuite/libgomp.fortran/uses_allocators-7.f90: Adjust test.
+	* testsuite/libgomp.fortran/uses_allocators-8.f90: New test.
+	* testsuite/libgomp.fortran/uses_allocators_1.f90:
+	Renamed to uses_allocators-2.f90 and deleted.
+	* testsuite/libgomp.fortran/uses_allocators_2.f90:
+	Renamed to uses_allocators-3.f90 and deleted.
+	* testsuite/libgomp.c++/c++.exp (check_effective_target_c): Add.
+	(check_effective_target_c++): Add.
+	* testsuite/libgomp.c/c.exp (check_effective_target_c): Add.
+	(check_effective_target_c++): Add.
+
+2026-06-30  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR libgomp/125877
+	* config/linux/numa.c (gomp_get_numa_distance): Gracefully handle
+	failure to open Linux sysfs file for NUMA node.
+
+2026-06-30  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR libgomp/125877
+	* plugin/plugin-nvptx.c (nvptx_open_device): Initialize 'numa_node'.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* acinclude.m4: Replace AC_TRY_LINK with AC_LINK_IFELSE.  Replace
+	AC_TRY_COMPILE with AC_COMPILE_IFELSE.  Replace AC_HELP_STRING with
+	AS_HELP_STRING.  Replace AC_TRY_RUN with AC_RUN_IFELSE.
+	* configure: Regenerate.
+	* configure.ac: Replace AM_PROG_LIBTOOL with LT_INIT.  Replace
+	AC_STDC_HEADERS with AC_HEADER_STDC.  Replace _AC_COMPUTE_INT with
+	AC_COMPUTE_INT.
+
+2026-06-28  Gerald Pfeifer  <gerald@pfeifer.com>
+
+	* libgomp.texi (nvptx): Update NVIDIA CUDA link.
+
+2026-06-25  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* libgomp.texi (Implementing MASKED and MASTER construct): Fix
+	@end smallexample.
+	(Implementing FOR construct): Likewise.
+
+2026-06-25  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* libgomp.texi (Implementing MASKED and MASTER construct): Update
+	pseudocode; describe GOMP_has_masked_thread_num.
+	(Implementing ATOMIC construct): Fix stale function names; note
+	exclusivity to explicit atomic constructs.
+	(Implementing BARRIER construct): Document GOMP_barrier_ext and
+	GOMP_barrier_cancel_ext; describe the kind parameter.
+	(Implementing REDUCTION clause): Document GOMP_reduction_start and
+	GOMP_reduction_end.
+	(Implementing FOR construct): Document GOMP_loop_static_worksharing
+	and GOMP_distribute_static_worksharing.
+
+2026-06-25  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* libgomp_g.h (GOMP_reduction_start, GOMP_reduction_end): Sort
+	correctly.
+
+2026-06-24  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* atomic.c (GOMP_reduction_start): New function.
+	(GOMP_reduction_end): New function.
+	* libgomp.map (GOMP_6.0.2): Export GOMP_reduction_start and
+	GOMP_reduction_end.
+	* libgomp_g.h (GOMP_reduction_start): New declaration.
+	(GOMP_reduction_end): New declaration.
+
+2026-06-24  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* barrier.c (GOMP_barrier_ext): New function.
+	(GOMP_barrier_cancel_ext): Likewise.
+	* libgomp_g.h (GOMP_barrier_ext): Declare.
+	(GOMP_barrier_cancel_ext): Likewise.
+	* libgomp.map (GOMP_6.0.2): Add GOMP_barrier_ext and
+	GOMP_barrier_cancel_ext.
+	* testsuite/libgomp.c/barrier-1.c: Update GOMP_barrier_ext calls to pass
+	GOMP_BARRIER_EXPLICIT.
+
+2026-06-24  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* config/gcn/teams.c (GOMP_distribute_static_worksharing): New
+	function.
+	* config/nvptx/teams.c (GOMP_distribute_static_worksharing): Likewise.
+	* libgomp.map (GOMP_6.0.2): Export GOMP_loop_static_worksharing and
+	GOMP_distribute_static_worksharing.
+	* libgomp_g.h (GOMP_loop_static_worksharing): New declaration.
+	(GOMP_distribute_static_worksharing): Likewise.
+	* parallel.c (GOMP_loop_static_worksharing): New function.
+	* teams.c (GOMP_distribute_static_worksharing): Likewise.
+
+2026-06-24  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* libgomp.map (GOMP_6.0.2): New symbol version. Export
+	GOMP_has_masked_thread_num.
+	* libgomp_g.h (GOMP_has_masked_thread_num): New declaration.
+	* parallel.c (GOMP_has_masked_thread_num): New function.
+
+2026-06-24  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/125940
+	* Makefile.am (libgomp_la_SOURCES): Add numa.c.
+	* Makefile.in: Regenerate.
+	* affinity.c (gomp_get_current_numa_node,
+	gomp_get_numa_distance): Move to ...
+	* numa.c: ... this new file.
+	* config/linux/affinity.c (gomp_get_current_numa_node,
+	gomp_get_numa_distance): Move to ...
+	* config/linux/numa.c: ... this new file.
+
+2026-06-24  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/125951
+	* target.c (omp_get_device_distances): Handle omp_default_device
+	in the fallback code.
+
+2026-06-22  Tobias Burnus  <tburnus@baylibre.com>
+
+	* config/gcn/teams.c (omp_get_num_teams_dim,
+	omp_get_team_num_dim): New functions.
+	* config/nvptx/teams.c (omp_get_num_teams_dim,
+	omp_get_team_num_dim): Likewise.
+	* fortran.c (omp_get_supported_active_team_dims_,
+	omp_get_supported_active_league_dims_): Likewise.
+	* icv.c (omp_get_thread_limit_dim): Likewise.
+	* libgomp-plugin.h (GOMP_OFFLOAD_get_numa_node): Remove spurious
+	const of 'const int' function return type.
+	(GOMP_OFFLOAD_supported_teams_dim,
+	GOMP_OFFLOAD_supported_threads_dim): Declare.
+	* libgomp.h (struct gomp_device_descr): Add supported_teams_dim_func
+	and supported_threads_dim_func members.
+	* libgomp.map (OMP_6.1): Add new OpenMP routines.
+	* libgomp.texi (Multidimensional Support Routines): Add new section.
+	(omp_get_device_distances): Fix chapter of spec reference.
+	* omp.h.in (omp_get_num_threads_dim, omp_get_thread_num_dim,
+	omp_get_thread_limit_dim, omp_get_supported_active_team_dims,
+	omp_get_supported_active_league_dims, omp_get_supported_teams_dim,
+	omp_get_supported_threads_dim, omp_get_num_teams_dim,
+	omp_get_team_num_dim, omp_get_device_distances): Declare.
+	* omp_lib.f90.in: Likewise.
+	* omp_lib.h.in: Likewise.
+	* parallel.c (omp_get_num_threads_dim,
+	omp_get_thread_num_dim): New functions.
+	* plugin/plugin-gcn.c (limit_worker_threads): Add comment.
+	(GOMP_OFFLOAD_supported_teams_dim,
+	GOMP_OFFLOAD_supported_threads_dim): New functions.
+	* plugin/plugin-nvptx.c (GOMP_OFFLOAD_supported_teams_dim,
+	GOMP_OFFLOAD_supported_threads_dim): New functions.
+	(nvptx_adjust_launch_bounds): Add comment.
+	* target.c (omp_get_supported_active_team_dims,
+	omp_get_supported_active_league_dims,
+	omp_get_supported_teams_dim,
+	omp_get_supported_threads_dim): New functions.
+	(gomp_load_plugin_for_device): dlsym added functions.
+	* teams.c (omp_get_num_teams_dim,
+	omp_get_team_num_dim): New functions.
+	* testsuite/libgomp.c/multi-dim-routines.c: New test.
+	* testsuite/libgomp.fortran/multi-dim-routines-2.F90: New test.
+	* testsuite/libgomp.fortran/multi-dim-routines.F90: New test.
+
+2026-06-19  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/125877
+	* affinity.c (gomp_get_current_numa_node,
+	gomp_get_numa_distance): New functions.
+	* config/linux/affinity.c (gomp_get_current_numa_node,
+	gomp_get_numa_distance): Likewise.
+	* libgomp-plugin.h (GOMP_OFFLOAD_get_numa_node): Declare.
+	* libgomp.h (gomp_get_current_numa_node,
+	gomp_get_numa_distance): Declare.
+	(struct gomp_device_descr): Add get_numa_node_func.
+	* libgomp.map (OMP_6.1): Add.
+	* libgomp.texi (omp_get_device_distances): Add routine.
+	* omp.h.in (omp_get_device_distances): Declare.
+	* omp_lib.f90.in (omp_get_device_distances): Add interface.
+	* omp_lib.h.in (omp_get_device_distances): Likewise.
+	* plugin/cuda-lib.def (cuDeviceGetPCIBusId): Add.
+	* plugin/plugin-gcn.c (struct agent_info): Add numa_node.
+	(GOMP_OFFLOAD_get_numa_node): New.
+	* plugin/plugin-nvptx.c (struct ptx_device): Add numa_node.
+	(GOMP_OFFLOAD_get_numa_node): New.
+	* target.c (omp_get_device_distances): New function.
+	(gomp_load_plugin_for_device): Load get_numa_node symbol.
+	* testsuite/libgomp.c/omp-get-device-distances.c: New test.
+	* testsuite/libgomp.fortran/omp-get-device-distances.f90: New test.
+
+2026-06-18  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* config/accel/target-indirect.h (GOMP_INDIRECT_ADDR_MAP)
+	(GOMP_INDIRECT_ADDR_HMAP): Prototype.
+	* config/gcn/team.c: Adjust.
+	* config/nvptx/team.c: Likewise.
+
+2026-06-18  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* config/accel/target-indirect.h: New.
+	* config/accel/target-indirect.c: Adjust.
+	* config/gcn/team.c: Likewise.
+	* config/nvptx/team.c: Likewise.
+
+2026-06-18  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* target-indirect.c: '#include "libgomp.h"'.
+
+2026-06-18  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* libgomp_g.h (GOMP_target_map_indirect_ptr): Sort correctly.
+
+2026-06-18  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* libgomp_g.h (GOMP_atomic_start, GOMP_atomic_end): Sort correctly.
+
+2026-06-18  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* oacc-init.c (acc_init, acc_shutdown, acc_get_num_devices)
+	(acc_set_device_type, acc_get_device_type, acc_get_device_num)
+	(acc_set_device_num, acc_get_property, acc_get_property_string)
+	(acc_on_device): Drop 'ialias'es.
+
+2026-06-18  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* config/nvptx/oacc-parallel.c: Move...
+	* config/accel/oacc-parallel.c: ... here.
+
+2026-06-12  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* config/linux/allocator.c: De-duplicate '#define _GNU_SOURCE'.
+
+2026-06-12  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* plugin/plugin-gcn.c: '#define _GNU_SOURCE'.
+	* plugin/Makefrag.am (libgomp_plugin_gcn_la_CPPFLAGS): Don't add
+	'-D_GNU_SOURCE'.
+	* Makefile.in: Regenerate.
+
+2026-06-12  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR target/101484
+	* configure.tgt [GCN] (XCFLAGS): Don't add '-Wno-error=array-bounds'.
+
+2026-06-12  Lipeng Zhu  <lipeng.zhu@intel.com>
+
+	PR testsuite/113005
+	* testsuite/libgomp.fortran/rwlock_1.f90: Enlarge buffer size of
+	'file_name' handling 5 instead of 3 digit I/O unit numbers.
+
+2026-06-11  Thomas Koenig  <tkoenig@gcc.gnu.org>
+
+	PR fortran/30438
+	PR fortran/28004
+	* testsuite/libgomp.fortran/alloc-1.F90: Shut up -Wunused-but-set-variable.
+	* testsuite/libgomp.fortran/alloc-12.f90: Likewise.
+
+2026-06-10  Chung-Lin Tang  <cltang@baylibre.com>
+
+	PR fortran/122910
+	* testsuite/libgomp.fortran/pr122910.f90: New test.
+
+2026-06-09  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (GCN): Mention ROCR_VISIBLE_DEVICES.
+
+2026-06-07  Kwok Cheung Yeung  <kcyeung@baylibre.com>
+	    Andrew Stubbs   <ams@baylibre.com>
+	    Sandra Loosemore  <sloosemore@baylibre.com>
+
+	* testsuite/libgomp.fortran/target-update-iterators-1.f90: New.
+	* testsuite/libgomp.fortran/target-update-iterators-2.f90: New.
+	* testsuite/libgomp.fortran/target-update-iterators-3.f90: New.
+
+2026-06-07  Kwok Cheung Yeung  <kcyeung@baylibre.com>
+	    Andrew Stubbs  <ams@baylibre.com>
+	    Sandra Loosemore  <sloosemore@baylibre.com>
+
+	* target.c (kind_to_name): Handle GOMP_MAP_STRUCT and
+	GOMP_MAP_STRUCT_UNORD.
+	(gomp_add_map): New.
+	(gomp_merge_iterator_maps): Expand fields of a struct mapping
+	breadth-first.
+	* testsuite/libgomp.fortran/target-map-iterators-1.f90: New.
+	* testsuite/libgomp.fortran/target-map-iterators-2.f90: New.
+	* testsuite/libgomp.fortran/target-map-iterators-3.f90: New.
+
+2026-06-02  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* oacc-parallel.c (GOACC_parallel_keyed): Use gomp_alloca instead
+	of alloca.
+	* target.c (GOMP_target): Likewise.
+	(GOMP_target_ext): Likewise.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/gcn/simple-bar.h: Fix typos.
+	* config/linux/futex.h: Likewise.
+	* config/nvptx/bar.c (gomp_team_barrier_cancel): Likewise.
+	* config/nvptx/bar.h (gomp_team_barrier_wake): Likewise.
+	* config/nvptx/simple-bar.h: Likewise.
+	* config/posix/sem.c: Likewise.
+	* config/posix/sem.h: Likewise.
+	* config/posix/simple-bar.h: Likewise.
+
+2026-06-01  Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	* oacc-mem.c (goacc_enter_datum): Assert that tgt_offset of the
+	newly-mapped variable is zero.
+
+2026-06-01  Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	* plugin/plugin-gcn.c (struct kernel_dispatch): Store
+	hsa_signal_t, rather than a uint64_t, so that we don't rely on
+	knowledge of the contents of hsa_signal_t.
+	(create_kernel_dispatch): Rename...
+	(prepare_kernel_dispatch): ... to this, as it no longer creates
+	a kernel dispatch.  The allocation that would've created it is
+	hoisted...
+	(run_kernel): ... here, as an automatic variable.  Move logic
+	that copies the fields of kernel_dispatch...
+	(populate_packet_from_dispatch): ... into this standalone
+	function, to make it clearer.
+	(release_kernel_dispatch): Rename....
+	(cleanup_kernel_dispatch): ... to this, don't free 'shadow'.
+
+2026-06-01  Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	* libgomp-plugin.h (GOMP_OFFLOAD_run, GOMP_OFFLOAD_exec)
+	(GOMP_OFFLOAD_async_run, GOMP_OFFLOAD_openacc_async_exec): Pass
+	session in place of target variable table and devices.
+	(struct gomp_offload_session): New.
+	(GOMP_OFFLOAD_session_size): New
+	(GOMP_OFFLOAD_check_session_struct): New.
+	(GOMP_OFFLOAD_session_boilerplate): New.
+	(GOMP_OFFLOAD_session_start): New.
+	(GOMP_OFFLOAD_session_allocate_target_var_table): New.
+	(GOMP_OFFLOAD_session_set_target_var_table): New.
+	* libgomp.h (struct gomp_target_task): Add offload_session
+	field.
+	(struct gomp_device_descr): Add offload session management
+	functions.
+	(gomp_offload_session_new): New.
+	(goacc_map_vars): Add SESSION to signature
+	* oacc-host.c (struct gomp_offload_session): Define, for host
+	offload fallback case.
+	(host_session_size): New.  Implements GOMP_OFFLOAD_session_size.
+	(host_session_start): New.  Implements
+	GOMP_OFFLOAD_session_start.
+	(host_session_set_target_var_table): New.  Implements
+	GOMP_OFFLOAD_session_set_target_var_table.
+	(host_run): Adjust to match GOMP_OFFLOAD_run.
+	(host_openacc_exec): Adjust to match GOMP_OFFLOAD_openacc_exec.
+	(host_openacc_async_exec): Adjust to match
+	GOMP_OFFLOAD_openacc_async_exec.
+	* oacc-mem.c (acc_map_data): Adjust call to goacc_map_vars.
+	(goacc_enter_datum): Ditto.
+	(goacc_enter_data_internal): Ditto.
+	* oacc-parallel.c (GOACC_parallel_keyed): Allocate and pass
+	offload session.
+	(GOACC_data_start): Adjust call to goacc_map_vars.
+	* plugin/plugin-gcn.c (struct kernel_dispatch): Remove
+	kernarg_cache_node.
+	(struct kernargs): Add a flexible array member for the target
+	variable table.
+	(struct kernel_launch): Store an offload session rather than
+	target var. table pointer.
+	(print_kernel_dispatch): Receive kernargs as parameter.
+	(struct gomp_offload_session): Define.
+	(init_session): New.
+	(GOMP_OFFLOAD_session_start): Implement, using init_session.
+	(release_session): New.
+	(alloc_kernargs_on_agent): Rename to...
+	(allocate_session_kernargs): ... this, store result in
+	passed-in SESSION, and allocate extra room for target variable
+	table (rounding it up to nearest multiple of 64 pointers).
+	(GOMP_OFFLOAD_session_allocate_target_var_table): Implement
+	using the previous function.
+	(GOMP_OFFLOAD_session_set_target_var_table): Ditto.
+	(create_kernel_dispatch): Remove kernarg allocation, instead
+	receiving it as an argument.
+	(release_kernel_dispatch): Receive kernargs as an argument,
+	don't release them.
+	(run_kernel): Adjust to use sessions.
+	(destroy_module): Ditto.
+	(GOMP_OFFLOAD_load_image): Ditto.
+	(execute_queue_entry): Adjust to match changed struct
+	kernel_launch.
+	(queue_push_launch): Ditto.
+	(gcn_exec): Receive and pass along session.
+	(GOMP_OFFLOAD_run): Ditto.
+	(GOMP_OFFLOAD_async_run): Ditto.
+	(GOMP_OFFLOAD_openacc_exec): Ditto.
+	(GOMP_OFFLOAD_openacc_async_exec): Ditto.
+	* plugin/plugin-nvptx.c (struct gomp_offload_session): Define.
+	(GOMP_OFFLOAD_session_start): Implement.
+	(GOMP_OFFLOAD_session_set_target_var_table): Implement.
+	(GOMP_OFFLOAD_openacc_exec): Adjust to receive session.
+	(GOMP_OFFLOAD_openacc_async_exec): Ditto.
+	(GOMP_OFFLOAD_run): Ditto.
+	* target.c (gomp_get_tvt_size): Extract helper from...
+	(gomp_map_vars_internal): ... here.  Receive SESSION, iff doing
+	target offload.  Use a target variable table on the host
+	allocated by GOMP_OFFLOAD_session_allocate_target_var_table if
+	possible, or call GOMP_OFFLOAD_session_set_target_var_table with
+	an allocated device pointer otherwise.
+	(gomp_map_vars): Update to pass along session.
+	(goacc_map_vars): Ditto.
+	(GOMP_target): Allocate and pass along session.
+	(GOMP_target_ext): Ditto.
+	(gomp_target_data_fallback): Adjust call to gomp_map_vars.
+	(GOMP_target_data): Ditto.
+	(GOMP_target_data_ext): Ditto.
+	(GOMP_target_enter_exit_data): Ditto.
+	(gomp_target_task_fn): Start and pass along session, the storage
+	for which is allocated by gomp_create_target_task.
+	(DLSYM2): Rename from DLSYM, adding a new parameter for the
+	variable to populate, akin to DLSYM_OPT.
+	(DLSYM): Delegate to DLSYM2.
+	(gomp_load_plugin_for_device): Populate session-related fields.
+	* task.c (gomp_create_target_task): Allocate enough storage for
+	an offload session.
+	* testsuite/libgomp.c-c++-common/gcn-kernel-launch-no-tvt-alloc.c: New test.
+	* testsuite/libgomp.c-c++-common/gcn-kernel-launch-tvt-alloc.c: New test.
+
+2026-06-01  Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	* libgomp.h (struct gomp_thread_start_data): New struct.  Holds
+	thread-independent parameters needed to initialize current
+	thread.
+	(struct gomp_team): On GCN, add thr_start_data field, that holds
+	a gomp_thread_start_data to be used in each thread.
+	(struct gomp_thread): Add start_data field, that points to
+	thread initialization parameters.
+	* config/gcn/team.c (gomp_team_start): Move thread
+	initialization steps into ...
+	(gomp_prep_our_thread): this new function, such that it reads
+	from a gomp_thread_start_data object.
+	(gomp_thread_start): Call the above to initialize our thread.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* configure: Regenerate.
+	* acinclude.m4: Fix typos.
+	* env.c (parse_places_var): Likewise.
+	(parse_stacksize): Likewise.
+	(parse_wait_policy): Likewise.
+	(parse_affinity): Likewise.
+	(initialize_env): Likewise.
+	* libgomp.h (struct target_mem_desc): Likewise.
+	* plugin/build-target-indirect-htab.h: Likewise.
+	* plugin/plugin-gcn.c (struct hsa_runtime_fn_info): Likewise.
+	(struct hip_runtime_fn_info): Likewise.
+	(limit_worker_threads): Likewise.
+	(max_isa_vgprs): Likewise.
+	(GOMP_OFFLOAD_get_name): Likewise.
+	* plugin/plugin-nvptx.c (GOMP_OFFLOAD_get_name): Likewise.
+	* target.c (gomp_map_vars_internal): Likewise.
+	(GOMP_target_ext): Likewise.
+
+2026-05-29  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR c/122892
+	* allocator.c (_Static_assert): Add asserts for the values of
+	GOMP_OMP_PREDEF_ALLOC_CGROUP and GOMP_OMP_PREDEF_ALLOC_PTEAM.
+
+2026-05-27  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (Foreign-runtime support for AMD GPUs,
+	Foreign-runtime support for Nvdia GPUs): Fix vendor
+	value to match compiler not GPU vendor.
+	* plugin/plugin-gcn.c (GOMP_OFFLOAD_get_interop_int,
+	GOMP_OFFLOAD_get_interop_str): Return 5/"gnu" as ipr_vendor.
+	* plugin/plugin-nvptx.c (GOMP_OFFLOAD_get_interop_int,
+	GOMP_OFFLOAD_get_interop_str): Likewise.
+	* testsuite/libgomp.c/append-args-fr.h: Updated expected
+	value.
+	* testsuite/libgomp.c/interop-cuda-full.c: Likewise.
+	* testsuite/libgomp.c/interop-fr-1.c: Likewise.
+	* testsuite/libgomp.c/interop-hip.h: Likewise.
+	* testsuite/libgomp.fortran/interop-hip.h: Likewise.
+
+2026-05-21  Martin Jambor  <mjambor@suse.cz>
+
+	* testsuite/libgomp.c/ipcp-cb-spec1.c: Set lower param
+	ipa-cp-eval-threshold.
+
+2026-05-19  Paul-Antoine Arras  <parras@baylibre.com>
+	    Chung-Lin Tang  <cltang@baylibre.com>
+	    Sandra Loosemore  <sloosemore@baylibre.com>
+
+	* testsuite/libgomp.c++/target-map-multi-1.C: New test.
+	* testsuite/libgomp.c-c++-common/target-map-iterators-6.c: New test.
+	* testsuite/libgomp.c-c++-common/target-map-multi-1.c: New test.
+	* testsuite/libgomp.c-c++-common/target-map-multi-2.c: New test.
+	* testsuite/libgomp.c-c++-common/target-map-multi-3.c: New test.
+	* testsuite/libgomp.c-c++-common/target-map-multi-4.c: New test.
+	* testsuite/libgomp.fortran/target-map-multi-1.f90: New test.
+	* testsuite/libgomp.fortran/target-map-multi-2.f90: New test.
+	* testsuite/libgomp.fortran/target-map-multi-3.f90: New test.
+	* testsuite/libgomp.fortran/target-map-multi-4.f90: New test.
+	* testsuite/libgomp.fortran/target-map-multi-5.f90: New test.
+
+2026-05-16  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* env.c (initialize_env): Check GOMP_DEFAULT_STACKSIZE for
+	non-zero.
+
+2026-05-13  H.J. Lu  <hjl.tools@gmail.com>
+
+	* libgomp.texi: the Add missing closing brace.
+
+2026-05-13  Tobias Burnus  <tburnus@baylibre.com>
+
+	* env.c (omp_control_tool): Stub implementation for omp_control_tool.
+	* fortran.c (omp_control_tool_, omp_control_tool_8_): Add.
+	* libgomp.map (OMP_6.0): Add for omp_control_tool*.
+	* libgomp.texi (Tool Control Routine): Add for omp_control_tool.
+	(OpenMP 6.0): Mark omp_pause_stop_tool as implemented.
+	* omp.h.in (omp_pause_resource_t): Add omp_pause_stop_tool.
+	(omp_control_tool_result_t): Add.
+	(omp_control_tool_t): Add.
+	* omp_lib.f90.in (omp_lib_kinds): Add omp_pause_stop_tool and
+	omp_control_tool/omp_control_tool_result parameters.
+	(omp_lib): Add omp_control_tool interface.
+	* omp_lib.h.in: Add omp_pause_stop_tool and
+	omp_control_tool/omp_control_tool_result parameters; add
+	omp_control_tool interface.
+	* testsuite/libgomp.c/omp-control-tools-1.c: New test.
+	* testsuite/libgomp.fortran/omp-control-tools-1.f: New test.
+	* testsuite/libgomp.fortran/omp-control-tools-1.f90: New test.
+
+2026-05-05  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* Makefile.in: Regenerate.
+	* acinclude.m4: Delete LIGOMP_CHECK_ATTRIBUTE_VISIBILITY.
+	* aclocal.m4: Regenerate.
+	* configure: Likewise.
+	* configure.ac: Use GCC_CHECK_ATTRIBUTE_VISIBILITY instead of
+	LIGOMP_CHECK_ATTRIBUTE_VISIBILITY.
+	* testsuite/Makefile.in: Regenerate.
+
+2026-04-28  Tobias Burnus  <tburnus@baylibre.com>
+
+	* testsuite/libgomp.fortran/map-subarray-6.f90: Fix, extend, and
+	robustify.
+
 2026-04-17  Thomas Schwinge  <tschwinge@baylibre.com>
 
 	* testsuite/libgomp.c/declare-variant-3-sm50.c: New.

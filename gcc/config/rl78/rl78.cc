@@ -746,8 +746,8 @@ need_to_save (unsigned int regno)
 }
 
 /* We use this to wrap all emitted insns in the prologue.  */
-static rtx
-F (rtx x)
+static rtx_insn *
+F (rtx_insn *x)
 {
   RTX_FRAME_RELATED_P (x) = 1;
   return x;
@@ -1474,11 +1474,9 @@ rl78_expand_prologue (void)
 	 smaller to move SP into AX and perform the subtraction there.  */
       if (fs > 254 * 3)
 	{
-	  rtx insn;
-
 	  emit_move_insn (ax, sp);
 	  emit_insn (gen_subhi3 (ax, ax, GEN_INT (fs)));
-	  insn = F (emit_move_insn (sp, ax));
+	  rtx_insn *insn = F (emit_move_insn (sp, ax));
 	  add_reg_note (insn, REG_FRAME_RELATED_EXPR,
 			gen_rtx_SET (sp, gen_rtx_PLUS (HImode, sp,
 						       GEN_INT (-fs))));
@@ -2443,7 +2441,7 @@ post-reload optimizers could operate on the real registers, but when I
 tried that there were some issues building the target libraries.
 
 During devirtualization, a simple register move optimizer is run.  It
-would be better to run a full CSE/propogation pass on it though, but
+would be better to run a full CSE/propagation pass on it though, but
 that has not yet been attempted.
 
  */
@@ -2931,7 +2929,8 @@ gen_and_emit_move (rtx to, rtx from, rtx_insn *where, bool before)
 	     cf. compiling gcc.dg/pr44545.c.  */
 	  if (note != NULL_RTX)
 	    {
-	      add_reg_note (move, REG_EH_REGION, XEXP (note, 0));
+	      add_reg_note (as_a <rtx_insn *> (move), REG_EH_REGION,
+			    XEXP (note, 0));
 	      remove_note (where, note);
 	    }
 
@@ -3672,7 +3671,7 @@ rl78_alloc_physical_registers (void)
 {
   /* During most of the compile, gcc is dealing with virtual
      registers.  At this point, we need to assign physical registers
-     to the vitual ones, and copy in/out as needed.  */
+     to the virtual ones, and copy in/out as needed.  */
 
   rtx_insn *insn, *curr;
   enum attr_valloc valloc_method;
@@ -3824,7 +3823,7 @@ rl78_alloc_physical_registers (void)
    encounter when scanning backwards) triggers a REG_DEAD note if the
    reg was previously in DEAD[].  */
 static void
-rl78_note_reg_uses (char *dead, rtx s, rtx insn)
+rl78_note_reg_uses (char *dead, rtx s, rtx_insn *insn)
 {
   const char *fmt;
   int i, r;
@@ -3886,7 +3885,7 @@ rl78_note_reg_uses (char *dead, rtx s, rtx insn)
 
 /* Like the previous function, but scan for SETs instead.  */
 static void
-rl78_note_reg_set (char *dead, rtx d, rtx insn)
+rl78_note_reg_set (char *dead, rtx d, rtx_insn *insn)
 {
   int r, i;
   bool is_dead;
@@ -4185,7 +4184,7 @@ set_origin (rtx pat, rtx_insn * insn, int * origins, int * age)
    C.  If B is a virtual register or memory, this is a big win on its
    own.  If B turns out to be unneeded after this, it's a bigger win.
    For each register, we try to determine where it's value originally
-   came from, if it's propogated purely through moves (and not
+   came from, if it's propagated purely through moves (and not
    computes).  The ORIGINS[] array has the regno for the "origin" of
    the value in the [regno] it's indexed by.  */
 static void
@@ -4303,7 +4302,7 @@ rl78_remove_unused_sets (void)
     }
 }
 
-/* This is the top of the devritualization pass.  */
+/* This is the top of the devirtualization pass.  */
 static void
 rl78_reorg (void)
 {
@@ -4732,7 +4731,7 @@ rl78_insert_attributes (tree decl, tree *attributes ATTRIBUTE_UNUSED)
     {
       tree type = TREE_TYPE (decl);
       tree attr = TYPE_ATTRIBUTES (type);
-      int q = TYPE_QUALS_NO_ADDR_SPACE (type) | ENCODE_QUAL_ADDR_SPACE (ADDR_SPACE_FAR);
+      auto q = TYPE_QUALS (type).with_as (ADDR_SPACE_FAR);
 
       TREE_TYPE (decl) = build_type_attribute_qual_variant (type, attr, q);
     }

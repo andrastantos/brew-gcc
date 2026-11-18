@@ -90,7 +90,6 @@ gimple_range_ssa_p (tree exp)
 {
   if (exp && TREE_CODE (exp) == SSA_NAME &&
       !SSA_NAME_IS_VIRTUAL_OPERAND (exp) &&
-      !SSA_NAME_OCCURS_IN_ABNORMAL_PHI (exp) &&
       value_range::supports_type_p (TREE_TYPE (exp)))
     return exp;
   return NULL_TREE;
@@ -182,7 +181,7 @@ protected:
   bool range_of_call (vrange &r, gcall *call, fur_source &src);
   bool range_of_cond_expr (vrange &r, gassign* cond, fur_source &src);
   bool range_of_address (prange &r, gimple *s, fur_source &src);
-  bool range_from_readonly_var (vrange &r, gimple *stmt);
+  bool range_from_readonly_var (vrange &r, gimple *stmt, fur_source &src);
   bool range_of_phi (vrange &r, gphi *phi, fur_source &src);
   void range_of_ssa_name_with_loop_info (vrange &, tree, class loop *, gphi *,
 					 fur_source &src);

@@ -334,8 +334,7 @@ package body Ghost is
 
             --  Local variables
 
-            Subp_Decl : Node_Id;
-            Subp_Id   : Entity_Id;
+            Subp_Id : Entity_Id;
 
          --  Start of processing for Is_OK_Declaration
 
@@ -398,17 +397,13 @@ package body Ghost is
                   elsif Is_Predicate_Function (Subp_Id) then
                      return True;
 
-                  else
-                     Subp_Decl :=
-                       Original_Node (Unit_Declaration_Node (Subp_Id));
+                  --  The original context is an expression function that
+                  --  has been split into a spec and a body. The context is
+                  --  OK as long as the initial declaration is Ghost.
 
-                     --  The original context is an expression function that
-                     --  has been split into a spec and a body. The context is
-                     --  OK as long as the initial declaration is Ghost.
-
-                     if Nkind (Subp_Decl) = N_Expression_Function then
-                        return Is_Ghost_Declaration (Subp_Decl);
-                     end if;
+                  elsif Is_Expression_Function (Subp_Id) then
+                     return Is_Ghost_Declaration
+                             (Original_Node (Unit_Declaration_Node (Subp_Id)));
                   end if;
 
                --  Otherwise this is either an internal body or an internal
@@ -633,8 +628,15 @@ package body Ghost is
 
             if Nkind (Stmt) = N_Assignment_Statement then
                if Is_Ghost_Assignment (Stmt) then
-                  Check_Assignment_Levels
-                    (Get_Enclosing_Ghost_Entity (Name (Stmt)));
+                  --  No Id is present when checking the context of the
+                  --  Initialized attribute that can only appear in ghost
+                  --  context. However we do not need to check the assertion
+                  --  levels in this case.
+
+                  if Present (Id) then
+                     Check_Assignment_Levels
+                       (Get_Enclosing_Ghost_Entity (Name (Stmt)));
+                  end if;
                   return True;
                end if;
 
@@ -642,7 +644,15 @@ package body Ghost is
 
             elsif Nkind (Stmt) = N_Procedure_Call_Statement then
                if Is_Ghost_Procedure_Call (Stmt) then
-                  Check_Procedure_Call_Policies (Get_Subprogram_Entity (Stmt));
+                  --  No Id is present when checking the context of the
+                  --  Initialized attribute that can only appear in ghost
+                  --  context. However we do not need to check the policies nor
+                  --  the assertion levels in this case.
+
+                  if Present (Id) then
+                     Check_Procedure_Call_Policies
+                       (Get_Subprogram_Entity (Stmt));
+                  end if;
                   return True;
                end if;
 
@@ -810,7 +820,12 @@ package body Ghost is
          --  Local variables
 
          Applic_Policy : Ghost_Mode_Type := Ghost_Config.Ghost_Mode;
+         Asp_Entity : Entity_Id := Empty;
+         Asp_Entity_Level : Entity_Id := Empty;
          Ghost_Region  : constant Node_Id := Ghost_Config.Current_Region;
+         Region_Level    : constant Entity_Id :=
+           Ghost_Config.Ghost_Mode_Assertion_Level;
+         Id_Level  : constant Entity_Id := Ghost_Assertion_Level (Id);
 
       --  Start of processing for Check_Ghost_Policy
 
@@ -849,13 +864,12 @@ package body Ghost is
             Error_Msg_NE ("\& used # with ghost policy `Ignore`", Ref, Id);
          end if;
 
-         --  A ghost entity E shall not be referenced within an aspect
-         --  specification [(including an aspect-specifying pragma)] which
-         --  specifies an aspect of an entity that is either non-ghost or not
-         --  assertion-level-dependent on E except in the following cases the
-         --  specified aspect is either Global, Depends, Refined_Global,
-         --  Refined_Depends, Initializes, Refined_State, or Iterable (SPARK RM
-         --  6.9(14)).
+         --  If the assertion policy applicable to the declaration of a Ghost
+         --  entity is Ignore, then the assertion policy applicable to any
+         --  reference to that entity shall be Ignore except if the reference
+         --  occurs in an aspect specification for the aspects Global, Depends,
+         --  Refined_Global, Refined_Depends, Initializes, or Refined_State
+         --  (SPARK RM 6.9(18)).
 
          if No (Ghost_Region)
            or else (Nkind (Ghost_Region) = N_Pragma
@@ -877,6 +891,49 @@ package body Ghost is
             Error_Msg_NE ("\& declared # with ghost policy `Ignore`", Ref, Id);
             Error_Msg_Sloc := Sloc (Ref);
             Error_Msg_NE ("\& used # with ghost policy `Check`", Ref, Id);
+         end if;
+
+         --  A ghost entity E shall not be referenced within an aspect
+         --  specification [(including an aspect-specifying pragma)] which
+         --  specifies an aspect of an entity that is either non-ghost or not
+         --  assertion-level-dependent on E except in the following cases the
+         --  specified aspect is either Global, Depends, Refined_Global,
+         --  Refined_Depends, Initializes, Refined_State, or Iterable (SPARK RM
+         --  6.9(14)).
+
+         if No (Region_Level)
+           or else No (Id_Level)
+           or else Nkind (Ghost_Region) /= N_Pragma
+           or else No (Corresponding_Aspect (Ghost_Region))
+         then
+            return;
+         end if;
+
+         Asp_Entity := Entity (Corresponding_Aspect (Ghost_Region));
+
+         if Present (Asp_Entity) then
+            Asp_Entity_Level := Ghost_Assertion_Level (Asp_Entity);
+         end if;
+
+         --  The level of the aspect should be compatible with the identifier
+         --  unless it is already compatible with entity attached to the
+         --  aspect. This is because if that entity is ignored then also all of
+         --  the aspects attached to it are also ignored.
+
+         if not Is_Assertion_Level_Dependent (Region_Level, Id_Level)
+           and then
+             (No (Asp_Entity)
+              or else No (Asp_Entity_Level)
+              or else
+                not Is_Assertion_Level_Dependent (Asp_Entity_Level, Id_Level))
+         then
+            Error_Msg_N (Assertion_Level_Error_Msg, Ref);
+            Error_Msg_Name_1 := Chars (Id_Level);
+            Error_Msg_NE ("\& has assertion level %", Ref, Id);
+            Error_Msg_Name_1 := Chars (Region_Level);
+            Error_Msg_NE ("\& is used within a region with %", Ref, Id);
+            Error_Msg_Name_1 := Chars (Region_Level);
+            Error_Msg_NE ("\assertion level of & should depend on %", Ref, Id);
          end if;
       end Check_Ghost_Policy;
 
@@ -1025,56 +1082,47 @@ package body Ghost is
       end if;
    end Check_Ghost_Context_In_Generic_Association;
 
-   -----------------------------------
-   -- Check_Valid_Ghost_Declaration --
-   -----------------------------------
+   -----------------------------
+   -- Check_Ghost_Equality_Op --
+   -----------------------------
 
-   procedure Check_Valid_Ghost_Declaration (N : Node_Id) is
-      procedure Check_Valid_Assertion_Level (Id : Entity_Id; Ref : Node_Id);
-      --  Check that the the assertion level of the declared entity is
-      --  compatible with assertion level of the ghost region.
-
-      ---------------------------------
-      -- Check_Valid_Assertion_Level --
-      ---------------------------------
-
-      procedure Check_Valid_Assertion_Level (Id : Entity_Id; Ref : Node_Id) is
-         Id_Level     : constant Entity_Id := Ghost_Assertion_Level (Id);
-         Region_Level : constant Entity_Id :=
-           Ghost_Config.Ghost_Mode_Assertion_Level;
-      begin
-         --  This check is not applied for generic isntantiations
-
-         if Is_Generic_Instance (Id) then
-            return;
-         end if;
-
-         if not Is_Assertion_Level_Dependent (Id_Level, Region_Level) then
-            Error_Msg_Sloc := Sloc (Ref);
-
-            Error_Msg_N (Assertion_Level_Error_Msg, Ref);
-            Error_Msg_Name_1 := Chars (Id_Level);
-            Error_Msg_NE ("\& has assertion level %", Ref, Id);
-            Error_Msg_Name_1 := Chars (Region_Level);
-            Error_Msg_NE ("\& is declared within a region with %", Ref, Id);
-            Error_Msg_Name_1 := Chars (Region_Level);
-            Error_Msg_NE ("\assertion level of & should depend on %", Ref, Id);
-         end if;
-      end Check_Valid_Assertion_Level;
-
-      --  Local variables
-
-      Id : constant Entity_Id := Defining_Entity (N);
-
-   --  Start of processing for Check_Valid_Ghost_Declaration
+   procedure Check_Ghost_Equality_Op (Eq_Op : Entity_Id; Typ : Entity_Id) is
+      Underlying : constant Entity_Id := Underlying_Type (Typ);
    begin
-      if not Is_Ghost_Entity (Id) or else Ghost_Config.Ghost_Mode = None
+      if not Is_Ghost_Entity (Eq_Op) then
+         return;
+      end if;
+
+      --  Look through any private view to get the underlying record type,
+      --  since a limited private type whose full view is a non-limited record
+      --  does not have "only limited views" and must be checked.
+
+      if No (Underlying)
+        or else not Is_Record_Type (Underlying)
+        or else Is_Limited_Record (Underlying)
       then
          return;
       end if;
 
-      Check_Valid_Assertion_Level (Id, N);
-   end Check_Valid_Ghost_Declaration;
+      if not Is_Ghost_Entity (Typ) then
+         Error_Msg_N ("incompatible primitive equaility operation", Eq_Op);
+
+         Error_Msg_N ("\equality operation is defined as ghost", Eq_Op);
+
+         Error_Msg_Sloc := Sloc (Typ);
+         Error_Msg_N ("\but applied to a non-ghost record type #", Eq_Op);
+      elsif Ghost_Assertion_Level (Eq_Op) /= Ghost_Assertion_Level (Typ) then
+         Error_Msg_N (Assertion_Level_Error_Msg, Eq_Op);
+
+         Error_Msg_Name_1 := Chars (Ghost_Assertion_Level (Eq_Op));
+         Error_Msg_N ("\equality operator declared with %", Eq_Op);
+
+         Error_Msg_Name_1 := Chars (Ghost_Assertion_Level (Typ));
+         Error_Msg_Sloc := Sloc (Typ);
+         Error_Msg_NE ("\record type & declared # with %", Eq_Op, Typ);
+         Error_Msg_N ("\& should have the same assertion level", Eq_Op);
+      end if;
+   end Check_Ghost_Equality_Op;
 
    ---------------------------------------------
    -- Check_Ghost_Formal_Procedure_Or_Package --
@@ -1430,6 +1478,57 @@ package body Ghost is
          end if;
       end if;
    end Check_Ghost_Type;
+
+   -----------------------------------
+   -- Check_Valid_Ghost_Declaration --
+   -----------------------------------
+
+   procedure Check_Valid_Ghost_Declaration (N : Node_Id) is
+      procedure Check_Valid_Assertion_Level (Id : Entity_Id; Ref : Node_Id);
+      --  Check that the the assertion level of the declared entity is
+      --  compatible with assertion level of the ghost region.
+
+      ---------------------------------
+      -- Check_Valid_Assertion_Level --
+      ---------------------------------
+
+      procedure Check_Valid_Assertion_Level (Id : Entity_Id; Ref : Node_Id) is
+         Id_Level     : constant Entity_Id := Ghost_Assertion_Level (Id);
+         Region_Level : constant Entity_Id :=
+           Ghost_Config.Ghost_Mode_Assertion_Level;
+      begin
+         --  This check is not applied for generic isntantiations
+
+         if Is_Generic_Instance (Id) then
+            return;
+         end if;
+
+         if not Is_Assertion_Level_Dependent (Id_Level, Region_Level) then
+            Error_Msg_Sloc := Sloc (Ref);
+
+            Error_Msg_N (Assertion_Level_Error_Msg, Ref);
+            Error_Msg_Name_1 := Chars (Id_Level);
+            Error_Msg_NE ("\& has assertion level %", Ref, Id);
+            Error_Msg_Name_1 := Chars (Region_Level);
+            Error_Msg_NE ("\& is declared within a region with %", Ref, Id);
+            Error_Msg_Name_1 := Chars (Region_Level);
+            Error_Msg_NE ("\assertion level of & should depend on %", Ref, Id);
+         end if;
+      end Check_Valid_Assertion_Level;
+
+      --  Local variables
+
+      Id : constant Entity_Id := Defining_Entity (N);
+
+   --  Start of processing for Check_Valid_Ghost_Declaration
+   begin
+      if not Is_Ghost_Entity (Id) or else Ghost_Config.Ghost_Mode = None
+      then
+         return;
+      end if;
+
+      Check_Valid_Assertion_Level (Id, N);
+   end Check_Valid_Ghost_Declaration;
 
    ----------------------
    -- Get_Ghost_Aspect --
@@ -2026,7 +2125,7 @@ package body Ghost is
 
       Check_Ghost_Completion (Prev_Id => Spec_Id, Compl_Id => Body_Id);
 
-      --  Mark the body as its formals as Ghost
+      --  Mark the body and its formals as Ghost
 
       Mark_Ghost_Declaration_Or_Body (N, Policy, Level);
 
@@ -2034,6 +2133,36 @@ package body Ghost is
 
       Install_Ghost_Region (Policy, N, Level);
    end Mark_And_Set_Ghost_Body;
+
+   ----------------------------------------------------
+   -- Mark_And_Set_Ghost_Body_Of_Expression_Function --
+   ----------------------------------------------------
+
+   procedure Mark_And_Set_Ghost_Body_Of_Expression_Function
+     (N       : Node_Id;
+      Spec_Id : Entity_Id)
+   is
+      Level : constant Entity_Id := Ghost_Assertion_Level (Spec_Id);
+
+      Policy : Name_Id;
+
+   begin
+      if Is_Checked_Ghost_Entity (Spec_Id) then
+         Policy := Name_Check;
+      elsif Is_Ignored_Ghost_Entity (Spec_Id) then
+         Policy := Name_Ignore;
+      else
+         Policy := No_Name;
+      end if;
+
+      --  Mark the body and its formals as Ghost
+
+      Mark_Ghost_Declaration_Or_Body (N, Policy, Level);
+
+      --  Install the appropriate Ghost region
+
+      Install_Ghost_Region (Policy, N, Level);
+   end Mark_And_Set_Ghost_Body_Of_Expression_Function;
 
    -----------------------------------
    -- Mark_And_Set_Ghost_Completion --

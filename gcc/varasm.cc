@@ -53,7 +53,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "debug.h"
 #include "common/common-target.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "asan.h"
 #include "rtl-iter.h"
@@ -61,7 +60,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "alloc-pool.h"
 #include "toplev.h"
 #include "opts.h"
-#include "asan.h"
 #include "recog.h"
 #include "gimple-expr.h"
 
@@ -963,7 +961,7 @@ mergeable_constant_section (machine_mode mode,
 			    unsigned HOST_WIDE_INT align,
 			    unsigned int flags)
 {
-  /* If the mode is unknown (BLK or VOID), then return a non mergable section.  */
+  /* If the mode is unknown (BLK or VOID), then return a non mergeable section.  */
   if (mode == BLKmode || mode == VOIDmode)
     return readonly_data_section;
   unsigned HOST_WIDE_INT size;
@@ -1752,8 +1750,9 @@ assemble_asm (tree asm_str)
 	}
       constraints = XALLOCAVEC (const char *, noutputs + ninputs);
       ops = XALLOCAVEC (rtx, noutputs + ninputs);
-      memset (&recog_data, 0, sizeof (recog_data));
       recog_data.n_operands = ninputs + noutputs;
+      recog_data.n_dups = 0;
+      recog_data.n_alternatives = 0;
       recog_data.is_asm = true;
       reload_completed = 0;
       cse_not_expected = 1;
@@ -1857,8 +1856,11 @@ assemble_asm (tree asm_str)
 	    recog_data.n_alternatives += (*p++ == ',');
 	}
       for (i = 0; i < recog_data.n_operands; i++)
-	recog_data.operand_type[i]
-	  = recog_data.constraints[i][0] == '=' ? OP_OUT : OP_IN;
+	{
+	  recog_data.operand_type[i]
+	    = recog_data.constraints[i][0] == '=' ? OP_OUT : OP_IN;
+	  recog_data.is_operator[i] = false;
+	}
       reload_completed = 1;
       constrain_operands (1, ALL_ALTERNATIVES);
       if (which_alternative < 0)
@@ -4494,7 +4496,7 @@ recompute_pool_offsets (struct rtx_constant_pool *pool)
    Emit referenced deferred strings.  */
 
 static void
-mark_constants_in_pattern (rtx insn)
+mark_constants_in_pattern (rtx_insn *insn)
 {
   subrtx_iterator::array_type array;
   FOR_EACH_SUBRTX (iter, array, PATTERN (insn), ALL)
@@ -4543,7 +4545,7 @@ mark_constants (rtx_insn *insn)
       int i, n = seq->len ();
       for (i = 0; i < n; ++i)
 	{
-	  rtx subinsn = seq->element (i);
+	  rtx_insn *subinsn = seq->insn (i);
 	  if (INSN_P (subinsn))
 	    mark_constants_in_pattern (subinsn);
 	}
@@ -5530,9 +5532,12 @@ output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align,
      Otherwise, break and ensure SIZE is the size written.  */
   switch (code)
     {
+    case ENUMERAL_TYPE:
+      if (BITINT_TYPE_P (TREE_TYPE (exp)))
+	goto do_bitint;
+      /* FALLTHRU */
     case BOOLEAN_TYPE:
     case INTEGER_TYPE:
-    case ENUMERAL_TYPE:
     case POINTER_TYPE:
     case REFERENCE_TYPE:
     case OFFSET_TYPE:
@@ -5564,6 +5569,7 @@ output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align,
       break;
 
     case BITINT_TYPE:
+    do_bitint:
       if (TREE_CODE (exp) != INTEGER_CST)
 	error ("initializer for %<_BitInt(%d)%> value is not an integer "
 	       "constant", TYPE_PRECISION (TREE_TYPE (exp)));
@@ -6681,10 +6687,7 @@ assemble_alias (tree decl, tree target)
   TREE_USED (decl) = 1;
 
   /* Allow aliases to aliases.  */
-  if (TREE_CODE (decl) == FUNCTION_DECL)
-    cgraph_node::get_create (decl)->alias = true;
-  else
-    varpool_node::get_create (decl)->alias = true;
+  symtab_node::get_create (decl)->alias = true;
 
   /* If the target has already been emitted, we don't have to queue the
      alias.  This saves a tad of memory.  */
@@ -6836,7 +6839,7 @@ finish_tm_clone_pairs (void)
   if (tm_clone_hash == NULL)
     return;
 
-  /* We need a determenistic order for the .tm_clone_table, otherwise
+  /* We need a deterministic order for the .tm_clone_table, otherwise
      we will get bootstrap comparison failures, so dump the hash table
      to a vector, sort it, and dump the vector.  */
 
@@ -6932,10 +6935,7 @@ make_decl_one_only (tree decl, tree comdat_group)
 
   TREE_PUBLIC (decl) = 1;
 
-  if (VAR_P (decl))
-    symbol = varpool_node::get_create (decl);
-  else
-    symbol = cgraph_node::get_create (decl);
+  symbol = symtab_node::get_create (decl);
 
   if (SUPPORTS_ONE_ONLY)
     {
@@ -7907,7 +7907,7 @@ default_binds_local_p_3 (const_tree exp, bool shlib, bool weak_dominate,
   /* Weakrefs may not bind locally, even though the weakref itself is always
      static and therefore local.  Similarly, the resolver for ifunc functions
      might resolve to a non-local function.
-     FIXME: We can resolve the weakref case more curefuly by looking at the
+     FIXME: We can resolve the weakref case more carefully by looking at the
      weakref alias.  */
   if (lookup_attribute ("weakref", DECL_ATTRIBUTES (exp))
       || (!targetm.ifunc_ref_local_ok ()

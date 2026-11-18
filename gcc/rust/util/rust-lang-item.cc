@@ -55,6 +55,9 @@ const BiMap<std::string, LangItem::Kind> Rust::LangItem::lang_items = {{
   {"RangeTo", Kind::RANGE_TO},
   {"RangeInclusive", Kind::RANGE_INCLUSIVE},
   {"RangeToInclusive", Kind::RANGE_TO_INCLUSIVE},
+  {"range_inclusive_new", Kind::RANGE_INCLUSIVE_NEW},
+  {"coerce_unsized", Kind::COERCE_UNSIZED},
+  {"dispatch_from_dyn", Kind::DISPATCH_FROM_DYN},
   {"phantom_data", Kind::PHANTOM_DATA},
   {"fn", Kind::FN},
   {"fn_mut", Kind::FN_MUT},
@@ -62,7 +65,10 @@ const BiMap<std::string, LangItem::Kind> Rust::LangItem::lang_items = {{
   {"fn_once_output", Kind::FN_ONCE_OUTPUT},
   {"copy", Kind::COPY},
   {"clone", Kind::CLONE},
+  {"drop", Kind::DROP},
   {"sized", Kind::SIZED},
+  {"freeze", Kind::FREEZE},
+  {"unsize", Kind::UNSIZE},
   {"sync", Kind::SYNC},
   {"slice_alloc", Kind::SLICE_ALLOC},
   {"slice_u8_alloc", Kind::SLICE_U8_ALLOC},
@@ -91,6 +97,9 @@ const BiMap<std::string, LangItem::Kind> Rust::LangItem::lang_items = {{
   {"slice_u8", Kind::SLICE_U8},
   {"slice", Kind::SLICE},
   {"str", Kind::STR},
+  // NOTE: CStr is not present in Rust 1.49, and is only backported for
+  // compilation of Rust for Linux with a patched core lib.
+  {"CStr", Kind::CSTR},
   {"f32_runtime", Kind::F32_RUNTIME},
   {"f64_runtime", Kind::F64_RUNTIME},
 
@@ -119,6 +128,37 @@ const BiMap<std::string, LangItem::Kind> Rust::LangItem::lang_items = {{
   {"discriminant_kind", Kind::DISCRIMINANT_KIND},
   {"discriminant_type", Kind::DISCRIMINANT_TYPE},
   {"manually_drop", Kind::MANUALLY_DROP},
+  {"drop_in_place", Kind::DROP_IN_PLACE},
+
+  {"exchange_malloc", Kind::EXCHANGE_MALLOC},
+  {"owned_box", Kind::OWNED_BOX},
+  {"oom", Kind::OOM},
+  {"alloc_layout", Kind::ALLOC_LAYOUT},
+  {"box_free", Kind::BOX_FREE},
+  {"maybe_uninit", Kind::MAYBE_UNINIT},
+
+  {"unsafe_cell", Kind::UNSAFE_CELL},
+
+  {"future_trait", Kind::FUTURE_TRAIT},
+  {"poll", Kind::POLL},
+  {"Ready", Kind::READY},
+  {"Pending", Kind::PENDING},
+  {"generator", Kind::GENERATOR},
+  {"generator_state", Kind::GENERATOR_STATE},
+
+  {"va_list", Kind::VA_LIST},
+  {"pin", Kind::PIN},
+  {"unpin", Kind::UNPIN},
+
+  {"panic", Kind::PANIC},
+  {"panic_info", Kind::PANIC_INFO},
+  {"panic_location", Kind::PANIC_LOCATION},
+  {"panic_bounds_check", Kind::PANIC_BOUNDS_CHECK},
+  {"panic_str", Kind::PANIC_STR},
+  {"align_offset", Kind::ALIGN_OFFSET},
+  {"new_unchecked", Kind::NEW_UNCHECKED},
+  {"from_generator", Kind::FROM_GENERATOR},
+  {"get_context", Kind::GET_CONTEXT},
 }};
 
 tl::optional<LangItem::Kind>

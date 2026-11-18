@@ -868,10 +868,7 @@ simplify_using_ranges::simplify_bit_ops_using_ranges
    a known value range VR.
 
    If there is one and only one value which will satisfy the
-   conditional, then return that value.  Else return NULL.
-
-   If signed overflow must be undefined for the value to satisfy
-   the conditional, then set *STRICT_OVERFLOW_P to true.  */
+   conditional, then return that value.  Else return NULL.  */
 
 static tree
 test_for_singularity (enum tree_code cond_code, tree op0,
@@ -891,9 +888,6 @@ test_for_singularity (enum tree_code cond_code, tree op0,
 	{
 	  tree one = build_int_cst (TREE_TYPE (op0), 1);
 	  max = fold_build2 (MINUS_EXPR, TREE_TYPE (op0), max, one);
-	  /* Signal to compare_values_warnv this expr doesn't overflow.  */
-	  if (EXPR_P (max))
-	    suppress_warning (max, OPT_Woverflow);
 	}
     }
   else if (cond_code == GE_EXPR || cond_code == GT_EXPR)
@@ -905,9 +899,6 @@ test_for_singularity (enum tree_code cond_code, tree op0,
 	{
 	  tree one = build_int_cst (TREE_TYPE (op0), 1);
 	  min = fold_build2 (PLUS_EXPR, TREE_TYPE (op0), min, one);
-	  /* Signal to compare_values_warnv this expr doesn't overflow.  */
-	  if (EXPR_P (min))
-	    suppress_warning (min, OPT_Woverflow);
 	}
     }
 
@@ -1218,6 +1209,20 @@ simplify_using_ranges::simplify_compare_using_ranges_1 (tree_code &cond_code, tr
 	    }
 	}
     }
+  // If OP0 >= OP1 and the relation between them is VREL_LE (or vice
+  // versa), we know OP0 == OP1.
+  else if ((cond_code == LE_EXPR || cond_code == GE_EXPR)
+	   && gimple_range_ssa_p (op0)
+	   && gimple_range_ssa_p (op1))
+    {
+      relation_kind rel = query->relation ().query (stmt, op0, op1);
+      if (relation_intersect (cond_code == LE_EXPR ? VREL_LE : VREL_GE, rel)
+	  == VREL_EQ)
+	{
+	  cond_code = EQ_EXPR;
+	  happened = true;
+	}
+    }
   // Try to simplify casted conditions.
   if (simplify_casted_compare (cond_code, op0, op1))
     happened = true;
@@ -1359,7 +1364,8 @@ simplify_using_ranges::simplify_switch_using_ranges (gswitch *stmt)
       // Add case label to the keep list.
       cases.safe_push (x);
       // Remove case_range from needing to be handled by the default.
-      case_range.invert ();
+      if (!case_range.invert ())
+	return false;
       default_range.intersect (case_range);
     }
 
@@ -1561,7 +1567,7 @@ simplify_using_ranges::simplify_float_conversion_using_ranges
 
   /* The code below doesn't work for large/huge _BitInt, nor is really
      needed for those, bitint lowering does use ranges already.  */
-  if (TREE_CODE (TREE_TYPE (rhs1)) == BITINT_TYPE
+  if (BITINT_TYPE_P (TREE_TYPE (rhs1))
       && TYPE_MODE (TREE_TYPE (rhs1)) == BLKmode)
     return false;
   /* First check if we can use a signed type in place of an unsigned.  */
@@ -1812,7 +1818,7 @@ simplify_using_ranges::simplify (gimple_stmt_iterator *gsi)
 	      cmp_var = rhs1;
 	    }
 
-	  /* If we could not find two-vals or the optimzation is invalid as
+	  /* If we could not find two-vals or the optimization is invalid as
 	     in divide by zero, new_rhs1 / new_rhs will be NULL_TREE.  */
 	  if (new_rhs1 && new_rhs2)
 	    {

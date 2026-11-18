@@ -63,7 +63,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "rtx-vector-builder.h"
 #include "gimple.h"
 #include "gimple-ssa.h"
-#include "gimplify.h"
 #include "bbitmap.h"
 
 struct target_rtl default_target_rtl;
@@ -541,14 +540,29 @@ gen_rtx_CONST_INT (machine_mode mode ATTRIBUTE_UNUSED, HOST_WIDE_INT arg)
   return *slot;
 }
 
+/* Return a CONST_INT, CONST_POLY_INT, or CONST_VECTOR containing the given
+   value.  In the case of a vector, the value will be duplicated.  */
+
 rtx
 gen_int_mode (poly_int64 c, machine_mode mode)
 {
-  c = trunc_int_for_mode (c, mode);
+  machine_mode s_mode = (VECTOR_MODE_P (mode) ? GET_MODE_INNER (mode) : mode);
+  rtx val;
+
+  c = trunc_int_for_mode (c, s_mode);
   if (c.is_constant ())
-    return GEN_INT (c.coeffs[0]);
-  unsigned int prec = GET_MODE_PRECISION (as_a <scalar_mode> (mode));
-  return immed_wide_int_const (poly_wide_int::from (c, prec, SIGNED), mode);
+    val = GEN_INT (c.coeffs[0]);
+  else
+    {
+      unsigned int prec = GET_MODE_PRECISION (as_a <scalar_mode> (s_mode));
+      val = immed_wide_int_const (poly_wide_int::from (c, prec, SIGNED),
+				  s_mode);
+    }
+
+  if (VECTOR_MODE_P (mode))
+    val = gen_const_vec_duplicate (mode, val);
+
+  return val;
 }
 
 /* CONST_DOUBLEs might be created from pairs of integers, or from
@@ -1960,11 +1974,12 @@ get_mem_align_offset (rtx mem, unsigned int align)
 /* Given REF (a MEM) and T, either the type of X or the expression
    corresponding to REF, set the memory attributes.  OBJECTP is nonzero
    if we are making a new object of this type.  BITPOS is nonzero if
-   there is an offset outstanding on T that will be applied later.  */
+   there is an offset outstanding on T that will be applied later.
+   MAY_STORE_P is true when REF can be the destination of a store.  */
 
 void
 set_mem_attributes_minus_bitpos (rtx ref, tree t, int objectp,
-				 poly_int64 bitpos)
+				 poly_int64 bitpos, bool may_store_p)
 {
   poly_int64 apply_bitpos = 0;
   tree type;
@@ -2060,7 +2075,8 @@ set_mem_attributes_minus_bitpos (rtx ref, tree t, int objectp,
 	t = TREE_OPERAND (t, 0);
 
       /* Note whether this expression can trap.  */
-      MEM_NOTRAP_P (ref) = !tree_could_trap_p (t);
+      MEM_NOTRAP_P (ref)
+	= !(may_store_p ? lhs_could_trap_p (t) : tree_could_trap_p (t));
 
       base = get_base_address (t);
       if (base)
@@ -2192,9 +2208,9 @@ set_mem_attributes_minus_bitpos (rtx ref, tree t, int objectp,
 }
 
 void
-set_mem_attributes (rtx ref, tree t, int objectp)
+set_mem_attributes (rtx ref, tree t, int objectp, bool may_store_p)
 {
-  set_mem_attributes_minus_bitpos (ref, t, objectp, 0);
+  set_mem_attributes_minus_bitpos (ref, t, objectp, 0, may_store_p);
 }
 
 /* Set the alias set of MEM to SET.  */
@@ -2331,13 +2347,12 @@ change_address_1 (rtx memref, machine_mode mode, rtx addr, int validate,
   return new_rtx;
 }
 
-/* Like change_address_1 with VALIDATE nonzero, but we are not saying in what
-   way we are changing MEMREF, so we only preserve the alias set.  */
+/* Version of change_address that takes a validate parameter.  */
 
-rtx
-change_address (rtx memref, machine_mode mode, rtx addr)
+static rtx
+change_address (rtx memref, machine_mode mode, rtx addr, int validate)
 {
-  rtx new_rtx = change_address_1 (memref, mode, addr, 1, false);
+  rtx new_rtx = change_address_1 (memref, mode, addr, validate, false);
   machine_mode mmode = GET_MODE (new_rtx);
   class mem_attrs *defattrs;
 
@@ -2363,6 +2378,24 @@ change_address (rtx memref, machine_mode mode, rtx addr)
   return new_rtx;
 }
 
+/* Like change_address_1 with VALIDATE nonzero, but we are not saying in what
+   way we are changing MEMREF, so we only preserve the alias set.  */
+
+rtx
+change_address (rtx memref, machine_mode mode, rtx addr)
+{
+  return change_address (memref, mode, addr, true);
+}
+
+/* Like change_address_1 with VALIDATE zero, but we are not saying in what
+   way we are changing MEMREF, so we only preserve the alias set.  */
+
+rtx
+change_address_nv (rtx memref, machine_mode mode, rtx addr)
+{
+  return change_address (memref, mode, addr, false);
+}
+
 /* Return a memory reference like MEMREF, but with its mode changed
    to MODE and its address offset by OFFSET bytes.  If VALIDATE is
    nonzero, the memory address is forced to be valid.
@@ -2382,7 +2415,7 @@ adjust_address_1 (rtx memref, machine_mode mode, poly_int64 offset,
 {
   rtx addr = XEXP (memref, 0);
   rtx new_rtx;
-  scalar_int_mode address_mode;
+  machine_mode address_mode;
   class mem_attrs attrs (*get_mem_attrs (memref)), *defattrs;
   unsigned HOST_WIDE_INT max_align;
 #ifdef POINTERS_EXTEND_UNSIGNED
@@ -2416,7 +2449,10 @@ adjust_address_1 (rtx memref, machine_mode mode, poly_int64 offset,
   /* Convert a possibly large offset to a signed value within the
      range of the target address space.  */
   address_mode = get_address_mode (memref);
-  offset = trunc_int_for_mode (offset, address_mode);
+  if (!VECTOR_MODE_P (address_mode))
+    offset = trunc_int_for_mode (offset, address_mode);
+  else
+    offset = trunc_int_for_mode (offset, GET_MODE_INNER (address_mode));
 
   if (adjust_address)
     {
@@ -2607,7 +2643,7 @@ address_reload_context::emit_autoinc (rtx value, poly_int64 inc_amount)
 {
   /* Since we're going to call recog, and might be called within recog,
      we need to ensure we save and restore recog_data.  */
-  recog_data_saver recog_save;
+  recog_state_saver recog_save;
 
   /* REG or MEM to be copied and incremented.  */
   rtx incloc = XEXP (value, 0);
@@ -2958,8 +2994,8 @@ unshare_all_rtl_again (rtx_insn *insn)
       {
 	reset_used_flags (PATTERN (p));
 	reset_used_flags (REG_NOTES (p));
-	if (CALL_P (p))
-	  reset_used_flags (CALL_INSN_FUNCTION_USAGE (p));
+	if (auto call = dyn_cast<rtx_call_insn *> (p))
+	  reset_used_flags (CALL_INSN_FUNCTION_USAGE (call));
       }
 
   /* Make sure that virtual stack slots are not shared.  */
@@ -2995,7 +3031,7 @@ unshare_all_rtl (void)
    Recursively does the same for subexpressions.  */
 
 static void
-verify_rtx_sharing (rtx orig, rtx insn)
+verify_rtx_sharing (rtx orig, rtx_insn *insn)
 {
   rtx x = orig;
   int i;
@@ -3103,13 +3139,13 @@ verify_rtx_sharing (rtx orig, rtx insn)
 /* Reset used-flags for INSN.  */
 
 static void
-reset_insn_used_flags (rtx insn)
+reset_insn_used_flags (rtx_insn *insn)
 {
   gcc_assert (INSN_P (insn));
   reset_used_flags (PATTERN (insn));
   reset_used_flags (REG_NOTES (insn));
-  if (CALL_P (insn))
-    reset_used_flags (CALL_INSN_FUNCTION_USAGE (insn));
+  if (auto call = dyn_cast<rtx_call_insn *> (insn))
+    reset_used_flags (CALL_INSN_FUNCTION_USAGE (call));
 }
 
 /* Go through all the RTL insn bodies and clear all the USED bits.  */
@@ -3123,31 +3159,31 @@ reset_all_used_flags (void)
     if (INSN_P (p))
       {
 	rtx pat = PATTERN (p);
-	if (GET_CODE (pat) != SEQUENCE)
-	  reset_insn_used_flags (p);
-	else
+	if (rtx_sequence *seq = dyn_cast<rtx_sequence *> (pat))
 	  {
 	    gcc_assert (REG_NOTES (p) == NULL);
-	    for (int i = 0; i < XVECLEN (pat, 0); i++)
+	    for (int i = 0; i < seq->len (); i++)
 	      {
-		rtx insn = XVECEXP (pat, 0, i);
+		rtx_insn *insn = seq->insn (i);
 		if (INSN_P (insn))
 		  reset_insn_used_flags (insn);
 	      }
 	  }
+	else
+	  reset_insn_used_flags (p);
       }
 }
 
 /* Verify sharing in INSN.  */
 
 static void
-verify_insn_sharing (rtx insn)
+verify_insn_sharing (rtx_insn *insn)
 {
   gcc_assert (INSN_P (insn));
   verify_rtx_sharing (PATTERN (insn), insn);
   verify_rtx_sharing (REG_NOTES (insn), insn);
-  if (CALL_P (insn))
-    verify_rtx_sharing (CALL_INSN_FUNCTION_USAGE (insn), insn);
+  if (auto call = dyn_cast<rtx_call_insn *> (insn))
+    verify_rtx_sharing (CALL_INSN_FUNCTION_USAGE (call), call);
 }
 
 /* Go through all the RTL insn bodies and check that there is no unexpected
@@ -3166,15 +3202,15 @@ verify_rtl_sharing (void)
     if (INSN_P (p))
       {
 	rtx pat = PATTERN (p);
-	if (GET_CODE (pat) != SEQUENCE)
-	  verify_insn_sharing (p);
-	else
-	  for (int i = 0; i < XVECLEN (pat, 0); i++)
+	if (rtx_sequence *seq = dyn_cast<rtx_sequence *> (pat))
+	  for (int i = 0; i < seq->len (); i++)
 	      {
-		rtx insn = XVECEXP (pat, 0, i);
+		rtx_insn *insn = seq->insn (i);
 		if (INSN_P (insn))
 		  verify_insn_sharing (insn);
 	      }
+	else
+	  verify_insn_sharing (p);
       }
 
   reset_all_used_flags ();
@@ -3193,9 +3229,9 @@ unshare_all_rtl_in_chain (rtx_insn *insn)
       {
 	PATTERN (insn) = copy_rtx_if_shared (PATTERN (insn));
 	REG_NOTES (insn) = copy_rtx_if_shared (REG_NOTES (insn));
-	if (CALL_P (insn))
-	  CALL_INSN_FUNCTION_USAGE (insn)
-	    = copy_rtx_if_shared (CALL_INSN_FUNCTION_USAGE (insn));
+	if (auto call = dyn_cast<rtx_call_insn *> (insn))
+	  CALL_INSN_FUNCTION_USAGE (call)
+	    = copy_rtx_if_shared (CALL_INSN_FUNCTION_USAGE (call));
       }
 }
 
@@ -3521,12 +3557,26 @@ get_first_nonnote_insn (void)
 	  continue;
       else
 	{
+	  rtx_sequence *seq;
 	  if (NONJUMP_INSN_P (insn)
-	      && GET_CODE (PATTERN (insn)) == SEQUENCE)
-	    insn = as_a <rtx_sequence *> (PATTERN (insn))->insn (0);
+	      && (seq = dyn_cast<rtx_sequence *> (PATTERN (insn))))
+	    insn = seq->insn (0);
 	}
     }
 
+  return insn;
+}
+
+/* Return the first nonnote, nondebug insn emitted in current sequence or
+   current function.  This routine follows get_first_nonnote_insn into a
+   leading SEQUENCE.  */
+
+rtx_insn *
+get_first_nonnote_nondebug_insn (void)
+{
+  rtx_insn *insn = get_first_nonnote_insn ();
+  while (insn && (NOTE_P (insn) || DEBUG_INSN_P (insn)))
+    insn = next_insn (insn);
   return insn;
 }
 
@@ -3586,9 +3636,9 @@ next_insn (rtx_insn *insn)
   if (insn)
     {
       insn = NEXT_INSN (insn);
-      if (insn && NONJUMP_INSN_P (insn)
-	  && GET_CODE (PATTERN (insn)) == SEQUENCE)
-	insn = as_a <rtx_sequence *> (PATTERN (insn))->insn (0);
+      if (insn && NONJUMP_INSN_P (insn))
+	if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (PATTERN (insn)))
+	  insn = seq->insn (0);
     }
 
   return insn;
@@ -3796,10 +3846,8 @@ prev_real_insn (rtx_insn *insn)
    SEQUENCEs.  */
 
 rtx_insn *
-next_real_nondebug_insn (rtx uncast_insn)
+next_real_nondebug_insn (rtx_insn *insn)
 {
-  rtx_insn *insn = safe_as_a <rtx_insn *> (uncast_insn);
-
   while (insn)
     {
       insn = NEXT_INSN (insn);
@@ -4003,7 +4051,7 @@ try_split (rtx pat, rtx_insn *trial, int last)
       if (JUMP_P (insn))
 	{
 	  if (JUMP_P (trial))
-	    CROSSING_JUMP_P (insn) = CROSSING_JUMP_P (trial);
+	    set_crossing_jump (insn, CROSSING_JUMP_P (trial));
 	  mark_jump_label (PATTERN (insn), insn, 0);
 	  njumps++;
 	  if (probability.initialized_p ()
@@ -4022,20 +4070,23 @@ try_split (rtx pat, rtx_insn *trial, int last)
 
   /* If we are splitting a CALL_INSN, look for the CALL_INSN
      in SEQ and copy any additional information across.  */
-  if (CALL_P (trial))
+  if (auto call_trial = dyn_cast<rtx_call_insn *> (trial))
     {
       for (insn = insn_last; insn ; insn = PREV_INSN (insn))
-	if (CALL_P (insn))
+	if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	  {
 	    gcc_assert (call_insn == NULL_RTX);
 	    call_insn = insn;
 
 	    /* Add the old CALL_INSN_FUNCTION_USAGE to whatever the
 	       target may have explicitly specified.  */
-	    rtx *p = &CALL_INSN_FUNCTION_USAGE (insn);
+	    rtx *p = &CALL_INSN_FUNCTION_USAGE (call);
 	    while (*p)
 	      p = &XEXP (*p, 1);
-	    *p = CALL_INSN_FUNCTION_USAGE (trial);
+	    *p = CALL_INSN_FUNCTION_USAGE (call_trial);
+
+	    /* Preserve the ABI information from the original call.  */
+	    CALL_INSN_ABI_ID (call) = CALL_INSN_ABI_ID (call_trial);
 
 	    /* If the old call was a sibling call, the new one must
 	       be too.  */
@@ -4226,6 +4277,7 @@ make_call_insn_raw (rtx pattern)
   INSN_CODE (insn) = -1;
   REG_NOTES (insn) = NULL;
   CALL_INSN_FUNCTION_USAGE (insn) = NULL;
+  CALL_INSN_ABI_ID (insn) = 0;
   INSN_LOCATION (insn) = curr_insn_location ();
   BLOCK_FOR_INSN (insn) = NULL;
 
@@ -4262,28 +4314,27 @@ link_insn_into_chain (rtx_insn *insn, rtx_insn *prev, rtx_insn *next)
   if (prev != NULL)
     {
       SET_NEXT_INSN (prev) = insn;
-      if (NONJUMP_INSN_P (prev) && GET_CODE (PATTERN (prev)) == SEQUENCE)
-	{
-	  rtx_sequence *sequence = as_a <rtx_sequence *> (PATTERN (prev));
+      if (NONJUMP_INSN_P (prev))
+	if (rtx_sequence *sequence
+	    = dyn_cast <rtx_sequence *> (PATTERN (prev)))
 	  SET_NEXT_INSN (sequence->insn (sequence->len () - 1)) = insn;
-	}
     }
   if (next != NULL)
     {
       SET_PREV_INSN (next) = insn;
-      if (NONJUMP_INSN_P (next) && GET_CODE (PATTERN (next)) == SEQUENCE)
-	{
-	  rtx_sequence *sequence = as_a <rtx_sequence *> (PATTERN (next));
+      if (NONJUMP_INSN_P (next))
+	if (rtx_sequence *sequence
+	    = dyn_cast <rtx_sequence *> (PATTERN (next)))
 	  SET_PREV_INSN (sequence->insn (0)) = insn;
-	}
     }
 
-  if (NONJUMP_INSN_P (insn) && GET_CODE (PATTERN (insn)) == SEQUENCE)
-    {
-      rtx_sequence *sequence = as_a <rtx_sequence *> (PATTERN (insn));
-      SET_PREV_INSN (sequence->insn (0)) = prev;
-      SET_NEXT_INSN (sequence->insn (sequence->len () - 1)) = next;
-    }
+  if (NONJUMP_INSN_P (insn))
+    if (rtx_sequence *sequence
+	= dyn_cast <rtx_sequence *> (PATTERN (insn)))
+      {
+	SET_PREV_INSN (sequence->insn (0)) = prev;
+	SET_NEXT_INSN (sequence->insn (sequence->len () - 1)) = next;
+      }
 }
 
 /* Add INSN to the end of the doubly-linked list.
@@ -4447,11 +4498,10 @@ remove_insn (rtx_insn *insn)
   if (prev)
     {
       SET_NEXT_INSN (prev) = next;
-      if (NONJUMP_INSN_P (prev) && GET_CODE (PATTERN (prev)) == SEQUENCE)
-	{
-	  rtx_sequence *sequence = as_a <rtx_sequence *> (PATTERN (prev));
+      if (NONJUMP_INSN_P (prev))
+	if (rtx_sequence *sequence
+	    = dyn_cast <rtx_sequence *> (PATTERN (prev)))
 	  SET_NEXT_INSN (sequence->insn (sequence->len () - 1)) = next;
-	}
     }
   else
     {
@@ -4470,11 +4520,10 @@ remove_insn (rtx_insn *insn)
   if (next)
     {
       SET_PREV_INSN (next) = prev;
-      if (NONJUMP_INSN_P (next) && GET_CODE (PATTERN (next)) == SEQUENCE)
-	{
-	  rtx_sequence *sequence = as_a <rtx_sequence *> (PATTERN (next));
+      if (NONJUMP_INSN_P (next))
+	if (rtx_sequence *sequence
+	    = dyn_cast <rtx_sequence *> (PATTERN (next)))
 	  SET_PREV_INSN (sequence->insn (0)) = prev;
-	}
     }
   else
     {
@@ -4509,7 +4558,7 @@ remove_insn (rtx_insn *insn)
 /* Append CALL_FUSAGE to the CALL_INSN_FUNCTION_USAGE for CALL_INSN.  */
 
 void
-add_function_usage_to (rtx call_insn, rtx call_fusage)
+add_function_usage_to (rtx_insn *call_insn, rtx call_fusage)
 {
   gcc_assert (call_insn && CALL_P (call_insn));
 
@@ -5512,7 +5561,7 @@ gen_use (rtx x)
    have no meaning for INSN.  */
 
 rtx
-set_for_reg_notes (rtx insn)
+set_for_reg_notes (rtx_insn *insn)
 {
   rtx pat, reg;
 
@@ -5551,7 +5600,7 @@ set_for_reg_notes (rtx insn)
    note of this type already exists, remove it first.  */
 
 rtx
-set_unique_reg_note (rtx insn, enum reg_note kind, rtx datum)
+set_unique_reg_note (rtx_insn *insn, enum reg_note kind, rtx datum)
 {
   rtx note = find_reg_note (insn, kind, NULL_RTX);
 
@@ -5593,7 +5642,7 @@ set_unique_reg_note (rtx insn, enum reg_note kind, rtx datum)
     {
     case REG_EQUAL:
     case REG_EQUIV:
-      df_notes_rescan (as_a <rtx_insn *> (insn));
+      df_notes_rescan (insn);
       break;
     default:
       break;
@@ -5604,7 +5653,7 @@ set_unique_reg_note (rtx insn, enum reg_note kind, rtx datum)
 
 /* Like set_unique_reg_note, but don't do anything unless INSN sets DST.  */
 rtx
-set_dst_reg_note (rtx insn, enum reg_note kind, rtx datum, rtx dst)
+set_dst_reg_note (rtx_insn *insn, enum reg_note kind, rtx datum, rtx dst)
 {
   rtx set = set_for_reg_notes (insn);
 
@@ -6615,7 +6664,7 @@ emit_copy_of_insn_after (rtx_insn *insn, rtx_insn *after)
 
     case JUMP_INSN:
       new_rtx = emit_jump_insn_after (copy_insn (PATTERN (insn)), after);
-      CROSSING_JUMP_P (new_rtx) = CROSSING_JUMP_P (insn);
+      set_crossing_jump (new_rtx, CROSSING_JUMP_P (insn));
       break;
 
     case DEBUG_INSN:
@@ -6627,6 +6676,7 @@ emit_copy_of_insn_after (rtx_insn *insn, rtx_insn *after)
       if (CALL_INSN_FUNCTION_USAGE (insn))
 	CALL_INSN_FUNCTION_USAGE (new_rtx)
 	  = copy_insn (CALL_INSN_FUNCTION_USAGE (insn));
+      CALL_INSN_ABI_ID (new_rtx) = CALL_INSN_ABI_ID (insn);
       SIBLING_CALL_P (new_rtx) = SIBLING_CALL_P (insn);
       RTL_CONST_CALL_P (new_rtx) = RTL_CONST_CALL_P (insn);
       RTL_PURE_CALL_P (new_rtx) = RTL_PURE_CALL_P (insn);
@@ -7086,6 +7136,18 @@ complete_seq (const uint8_t *seq, rtx *operands)
 {
   rtx_expander (seq, operands).expand_seq ();
   return end_sequence ();
+}
+
+/* Note in the dump file that WHAT, which names a define_split or a
+   define_peephole2 and where it came from, is being applied.  genemit.cc
+   emits a call to this rather than the test and the fprintf, so that the
+   dump is written out once instead of once per pattern.  */
+
+void
+note_split (const char *what)
+{
+  if (dump_file)
+    fprintf (dump_file, "Splitting with %s\n", what);
 }
 
 /* Initialize fields of rtl_data related to stack alignment.  */

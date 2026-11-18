@@ -349,7 +349,8 @@ gfc_copy_expr (gfc_expr *p)
 	  if (p->representation.string
 	      && p->ts.kind == gfc_default_character_kind)
 	    q->value.character.string
-	      = gfc_char_to_widechar (q->representation.string);
+	      = gfc_char_to_widechar (q->representation.string,
+				      p->representation.length);
 	  else
 	    {
 	      s = gfc_get_wide_string (p->value.character.length + 1);
@@ -1193,7 +1194,7 @@ is_CFI_desc (gfc_symbol *sym, gfc_expr *e)
       && e && e->expr_type == EXPR_VARIABLE)
     sym = e->symtree->n.sym;
 
-  if (sym && sym->attr.dummy
+  if (sym && sym->attr.dummy && sym->ns && sym->ns->proc_name
       && sym->ns->proc_name->attr.is_bind_c
       && (sym->attr.pointer
 	  || sym->attr.allocatable
@@ -1222,7 +1223,8 @@ is_subref_array (gfc_expr * e)
 
   sym = e->symtree->n.sym;
 
-  if (sym->attr.subref_array_pointer)
+  if (sym->attr.subref_array_pointer
+      || gfc_is_span_addressed_dummy (sym))
     return true;
 
   seen_array = false;
@@ -2049,15 +2051,16 @@ find_inquiry_ref (gfc_expr *p, gfc_expr **newp)
 	  else if (tmp->expr_type == EXPR_CONSTANT)
 	    *newp = gfc_get_int_expr (gfc_default_integer_kind,
 				      NULL, tmp->value.character.length);
-	  else if (gfc_init_expr_flag
-		   && tmp->ts.u.cl->length->symtree->n.sym->attr.pdt_len)
-	    *newp = gfc_pdt_find_component_copy_initializer (tmp->symtree->n
-							     .sym,
-							     tmp->ts.u.cl
-							     ->length->symtree
-							     ->n.sym->name);
 	  else
-	    goto cleanup;
+	    {
+	      gfc_expr *kind_expr;
+	      kind_expr = gfc_get_int_expr (gfc_default_integer_kind, NULL,
+					    tmp->ts.kind);
+	      *newp = gfc_simplify_len (tmp, kind_expr);
+	      if (*newp)
+		break;
+	      goto cleanup;
+	    }
 
 	  break;
 
@@ -2162,16 +2165,26 @@ simplify_const_ref (gfc_expr *p)
       switch (p->ref->type)
 	{
 	case REF_ARRAY:
+	  /* <type/kind spec>, parameter :: x(<int>) = scalar_expr
+	     will generate this.  */
+	  if (p->expr_type != EXPR_ARRAY)
+	    {
+	      if (p->ref->u.ar.type == AR_ELEMENT)
+		{
+		  int dim;
+		  for (dim = 0; dim < p->ref->u.ar.dimen; dim++)
+		    if (!p->ref->u.ar.start[dim]
+			|| p->ref->u.ar.start[dim]->expr_type != EXPR_CONSTANT)
+		      return true;
+		}
+
+	      remove_subobject_ref (p, NULL);
+	      break;
+	    }
+
 	  switch (p->ref->u.ar.type)
 	    {
 	    case AR_ELEMENT:
-	      /* <type/kind spec>, parameter :: x(<int>) = scalar_expr
-		 will generate this.  */
-	      if (p->expr_type != EXPR_ARRAY)
-		{
-		  remove_subobject_ref (p, NULL);
-		  break;
-		}
 	      if (!find_array_element (p->value.constructor, &p->ref->u.ar, &cons))
 		return false;
 
@@ -3403,7 +3416,7 @@ gfc_check_init_expr (gfc_expr *e)
       break;
 
     case EXPR_STRUCTURE:
-      t = e->ts.is_iso_c ? true : false;
+      t = e->ts.is_iso_c;
       if (t)
 	break;
 
@@ -3994,6 +4007,24 @@ gfc_check_type_spec_parms (gfc_expr *expr1, gfc_expr *expr2,
 }
 
 
+/* Used by the backend to decide when and where a hidden PDT should be
+   passed to a PDT dummy.  */
+
+bool gfc_pdt_requires_hidden_arg (gfc_symbol *arg)
+{
+  if (IS_PDT (arg)
+      && (arg->attr.allocatable || arg->attr.pointer))
+    return true;
+
+  if (IS_CLASS_PDT (arg)
+      && (CLASS_DATA (arg)->attr.allocatable
+	  || CLASS_DATA (arg)->attr.class_pointer))
+    return true;
+
+  return false;
+}
+
+
 /* Given an assignable expression and an arbitrary expression, make
    sure that the assignment can take place.  Only add a call to the intrinsic
    conversion routines, when allow_convert is set.  When this assign is a
@@ -4403,16 +4434,6 @@ gfc_check_pointer_assign (gfc_expr *lvalue, gfc_expr *rvalue,
       const char *name;
 
       attr = gfc_expr_attr (rvalue);
-      if (!((rvalue->expr_type == EXPR_NULL)
-	    || (rvalue->expr_type == EXPR_FUNCTION && attr.proc_pointer)
-	    || (rvalue->expr_type == EXPR_VARIABLE && attr.proc_pointer)
-	    || (rvalue->expr_type == EXPR_VARIABLE
-		&& attr.flavor == FL_PROCEDURE)))
-	{
-	  gfc_error ("Invalid procedure pointer assignment at %L",
-		     &rvalue->where);
-	  return false;
-	}
 
       if (rvalue->expr_type == EXPR_VARIABLE && !attr.proc_pointer)
 	{
@@ -4441,6 +4462,18 @@ gfc_check_pointer_assign (gfc_expr *lvalue, gfc_expr *rvalue,
 		  }
 	    }
 	}
+
+      if (!((rvalue->expr_type == EXPR_NULL)
+	    || (rvalue->expr_type == EXPR_FUNCTION && attr.proc_pointer)
+	    || (rvalue->expr_type == EXPR_VARIABLE && attr.proc_pointer)
+	    || (rvalue->expr_type == EXPR_VARIABLE
+		&& attr.flavor == FL_PROCEDURE)))
+	{
+	  gfc_error ("Invalid procedure pointer assignment at %L",
+		     &rvalue->where);
+	  return false;
+	}
+
       if (attr.abstract)
 	{
 	  gfc_error ("Abstract interface %qs is invalid "
@@ -4537,6 +4570,8 @@ gfc_check_pointer_assign (gfc_expr *lvalue, gfc_expr *rvalue,
 
 	  name = s2->name;
 	}
+      else if (rvalue->expr_type == EXPR_NULL && !rvalue->symtree)
+	return true;
       else
 	{
 	  s2 = rvalue->symtree->n.sym;
@@ -4732,6 +4767,11 @@ gfc_check_pointer_assign (gfc_expr *lvalue, gfc_expr *rvalue,
     lvalue->symtree->n.sym->attr.subref_array_pointer = 1;
 
   attr = gfc_expr_attr (rvalue);
+
+  /* The elements of a pointer function result may be spaced by more than
+     the element size.  */
+  if (rvalue->expr_type == EXPR_FUNCTION && rvalue->rank > 0 && attr.pointer)
+    lvalue->symtree->n.sym->attr.subref_array_pointer = 1;
 
   if (rvalue->expr_type == EXPR_FUNCTION && !attr.pointer)
     {
@@ -4988,7 +5028,7 @@ gfc_check_assign_symbol (gfc_symbol *sym, gfc_component *comp, gfc_expr *rvalue)
       if (flag)
 	{
 	  gfc_error ("The component %qs at %L of derived type %qs has "
-		     "paramterized type or array length parameters, which is "
+		     "parameterized type or array length parameters, which is "
 		     "not compatible with a default initializer",
 		      comp->name, &comp->initializer->where, sym->name);
 	  return false;
@@ -6102,7 +6142,7 @@ gfc_expr_check_typed (gfc_expr* e, gfc_namespace* ns, bool strict)
   check_typed_ns = ns;
   error_found = gfc_traverse_expr (e, NULL, &expr_check_typed_help, 0);
 
-  return error_found ? false : true;
+  return !error_found;
 }
 
 
@@ -6407,8 +6447,8 @@ gfc_is_simply_contiguous (gfc_expr *expr, bool strict, bool permit_element)
       if (expr->ts.type == BT_UNKNOWN)
 	return true;
       else
-	return (gfc_variable_attr (expr, NULL).contiguous
-		|| gfc_variable_attr (expr, NULL).allocatable);
+	return (gfc_variable_attr (expr).contiguous
+		|| gfc_variable_attr (expr).allocatable);
     }
 
   if (expr->expr_type == EXPR_FUNCTION)
@@ -6448,13 +6488,25 @@ gfc_is_simply_contiguous (gfc_expr *expr, bool strict, bool permit_element)
   if (!permit_element && expr->rank == 0)
     return false;
 
+  sym = expr->symtree->n.sym;
+  const gfc_typespec *prev_ts = &sym->ts;
   for (ref = expr->ref; ref; ref = ref->next)
     {
       if (ar)
 	return false; /* Array shall be last part-ref.  */
 
       if (ref->type == REF_COMPONENT)
-	part_ref  = ref;
+	{
+	  /* If the reference is to a class container's _data component, keep
+	     part_ref pointing to the class container, so that the attributes of
+	     both the class container and its _data component can be queried
+	     from part_ref.  */
+	  if (!(prev_ts->type == BT_CLASS
+		&& prev_ts->u.derived->attr.is_class
+		&& strcmp (ref->u.c.component->name, "_data") == 0))
+	    part_ref  = ref;
+	  prev_ts = &ref->u.c.component->ts;
+	}
       else if (ref->type == REF_SUBSTRING)
 	return false;
       else if (ref->type == REF_INQUIRY)
@@ -6463,26 +6515,35 @@ gfc_is_simply_contiguous (gfc_expr *expr, bool strict, bool permit_element)
 	ar = &ref->u.ar;
     }
 
-  sym = expr->symtree->n.sym;
   if ((part_ref
        && part_ref->u.c.component
        && !part_ref->u.c.component->attr.contiguous
        && IS_POINTER (part_ref->u.c.component))
       || (!part_ref
-	  && expr->ts.type != BT_CLASS
 	  && !sym->attr.contiguous
-	  && (sym->attr.pointer
-	      || (sym->as && sym->as->type == AS_ASSUMED_RANK)
-	      || (sym->as && sym->as->type == AS_ASSUMED_SHAPE))))
+	  /* Associate names may be associated with a simply contiguous target
+	     without having the contiguous attribute set.  Skip them here, and
+	     handle them below.  */
+	  && !sym->attr.associate_var
+	  && (IS_POINTER (sym)
+	      || (sym->ts.type == BT_CLASS
+		  && sym->ts.u.derived->attr.is_class
+		  && CLASS_DATA (sym)->as
+		  && (CLASS_DATA (sym)->as->type == AS_ASSUMED_RANK
+		      || CLASS_DATA (sym)->as->type == AS_ASSUMED_SHAPE))
+	      || (sym->as
+		  && (sym->as->type == AS_ASSUMED_RANK
+		      || sym->as->type == AS_ASSUMED_SHAPE)))))
     return false;
 
   /* An associate variable may point to a non-contiguous target.  */
-  if (ar && ar->type == AR_FULL
+  if (!part_ref
       && sym->attr.associate_var && !sym->attr.contiguous
       && sym->assoc
-      && sym->assoc->target)
-    return gfc_is_simply_contiguous (sym->assoc->target, strict,
-				     permit_element);
+      && sym->assoc->target
+      && !gfc_is_simply_contiguous (sym->assoc->target, strict,
+				    permit_element))
+    return false;
 
   if (!ar || ar->type == AR_FULL)
     return true;
@@ -6498,6 +6559,13 @@ gfc_is_simply_contiguous (gfc_expr *expr, bool strict, bool permit_element)
 
       if (ar->dimen_type[i] == DIMEN_ELEMENT)
 	{
+	  /* An extent of one does not hurt as long as we aren't strict.  */
+	  if (ar->as  && ar->as->lower[i] && ar->as->upper[i]
+	      && ar->start[i]
+	      && gfc_dep_compare_expr (ar->as->lower[i], ar->as->upper[i]) == 0
+	      && gfc_dep_compare_expr (ar->as->lower[i], ar->start[i]) == 0)
+	    continue;
+
 	  colon = false;
 	  continue;
 	}
@@ -7115,10 +7183,16 @@ gfc_pdt_find_component_copy_initializer (gfc_symbol *sym, const char *name)
 bool has_parameterized_comps (gfc_symbol * der_type)
 {
   bool parameterized_comps = false;
+
+  if (!der_type->attr.pdt_type && !der_type->attr.pdt_comp)
+    return false;
+
   for (gfc_component *c = der_type->components; c; c = c->next)
     if (c->attr.pdt_array || c->attr.pdt_string)
       parameterized_comps = true;
-    else if (IS_PDT (c) && strcmp (der_type->name, c->ts.u.derived->name))
-      parameterized_comps = has_parameterized_comps (c->ts.u.derived);
+    else if (IS_PDT (c) && strcmp (der_type->name, c->ts.u.derived->name)
+	     && has_parameterized_comps (c->ts.u.derived))
+      parameterized_comps = true;
+
   return parameterized_comps;
 }

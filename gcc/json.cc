@@ -18,6 +18,7 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define INCLUDE_STRING
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -418,21 +419,37 @@ object::get (const char *key) const
 }
 
 /* Set value of KEY within this object to a JSON
-   string value based on UTF8_VALUE.  */
+   string value based on UTF8_VALUE.
+   Return a borrowed ptr to the new json::string.  */
 
-void
+const json::string *
 object::set_string (const char *key, const char *utf8_value)
 {
-  set (key, new json::string (utf8_value));
+  json::string *str = new json::string (utf8_value);
+  set (key, str);
+  return str;
+}
+
+/* As above, but taking a std::string.  */
+
+const json::string *
+object::set_string (const char *key, std::string utf8_value)
+{
+  json::string *str = new json::string (utf8_value.c_str ());
+  set (key, str);
+  return str;
 }
 
 /* Set value of KEY within this object to a JSON
-   integer value based on V.  */
+   integer value based on V.
+   Return a borrowed ptr to the new json::integer_number.  */
 
-void
+const json::integer_number *
 object::set_integer (const char *key, long v)
 {
-  set (key, new json::integer_number (v));
+  json::integer_number *js_int = new json::integer_number (v);
+  set (key, js_int);
+  return js_int;
 }
 
 /* Set value of KEY within this object to a JSON
@@ -572,11 +589,16 @@ array::append (value *v)
   m_elements.safe_push (v);
 }
 
-void
+/* Append UTF8_VALUE to this array, returning a borrowed pointer to the
+   new json::string.  */
+
+const json::string *
 array::append_string (const char *utf8_value)
 {
   gcc_assert (utf8_value);
-  append (new json::string (utf8_value));
+  auto js_str = new json::string (utf8_value);
+  append (js_str);
+  return js_str;
 }
 
 /* class json::float_number, a subclass of json::value, wrapping a double.  */
@@ -692,18 +714,15 @@ namespace selftest {
 /* Verify that JV->print () prints EXPECTED_JSON.  */
 
 void
-assert_print_eq (const location &loc,
-		 const json::value &jv,
-		 bool formatted,
-		 const char *expected_json)
+assert_json_print_eq (const location &loc,
+		      const json::value &jv,
+		      bool formatted,
+		      const char *expected_json)
 {
   pretty_printer pp;
   jv.print (&pp, formatted);
   ASSERT_STREQ_AT (loc, expected_json, pp_formatted_text (&pp));
 }
-
-#define ASSERT_PRINT_EQ(JV, FORMATTED, EXPECTED_JSON)	\
-  assert_print_eq (SELFTEST_LOCATION, JV, FORMATTED, EXPECTED_JSON)
 
 /* Verify that object::get works as expected.  */
 
@@ -729,13 +748,15 @@ test_writing_objects ()
 
   /* This test relies on json::object writing out key/value pairs
      in key-insertion order.  */
-  ASSERT_PRINT_EQ (obj, true,
-		   "{\"foo\": \"bar\",\n"
-		   " \"baz\": \"quux\",\n"
-		   " \"\\\"\\\\\\b\\f\\n\\r\\t\": \"value for awkward key\"}");
-  ASSERT_PRINT_EQ (obj, false,
-		   "{\"foo\": \"bar\", \"baz\": \"quux\""
-		   ", \"\\\"\\\\\\b\\f\\n\\r\\t\": \"value for awkward key\"}");
+  ASSERT_JSON_PRINT_EQ
+    (obj, true,
+     "{\"foo\": \"bar\",\n"
+     " \"baz\": \"quux\",\n"
+     " \"\\\"\\\\\\b\\f\\n\\r\\t\": \"value for awkward key\"}");
+  ASSERT_JSON_PRINT_EQ
+    (obj, false,
+     "{\"foo\": \"bar\", \"baz\": \"quux\""
+     ", \"\\\"\\\\\\b\\f\\n\\r\\t\": \"value for awkward key\"}");
 }
 
 /* Verify that JSON arrays are written correctly.  */
@@ -744,17 +765,17 @@ static void
 test_writing_arrays ()
 {
   array arr;
-  ASSERT_PRINT_EQ (arr, true, "[]");
+  ASSERT_JSON_PRINT_EQ (arr, true, "[]");
 
   arr.append (new json::string ("foo"));
-  ASSERT_PRINT_EQ (arr, true, "[\"foo\"]");
+  ASSERT_JSON_PRINT_EQ (arr, true, "[\"foo\"]");
 
   arr.append_string ("bar");
-  ASSERT_PRINT_EQ (arr, true,
-		   "[\"foo\",\n"
-		   " \"bar\"]");
-  ASSERT_PRINT_EQ (arr, false,
-		   "[\"foo\", \"bar\"]");
+  ASSERT_JSON_PRINT_EQ (arr, true,
+			"[\"foo\",\n"
+			" \"bar\"]");
+  ASSERT_JSON_PRINT_EQ (arr, false,
+			"[\"foo\", \"bar\"]");
 }
 
 /* Verify that JSON numbers are written correctly.  */
@@ -762,20 +783,20 @@ test_writing_arrays ()
 static void
 test_writing_float_numbers ()
 {
-  ASSERT_PRINT_EQ (float_number (0), true, "0");
-  ASSERT_PRINT_EQ (float_number (42), true, "42");
-  ASSERT_PRINT_EQ (float_number (-100), true, "-100");
-  ASSERT_PRINT_EQ (float_number (123456789), true, "1.23457e+08");
+  ASSERT_JSON_PRINT_EQ (float_number (0), true, "0");
+  ASSERT_JSON_PRINT_EQ (float_number (42), true, "42");
+  ASSERT_JSON_PRINT_EQ (float_number (-100), true, "-100");
+  ASSERT_JSON_PRINT_EQ (float_number (123456789), true, "1.23457e+08");
 }
 
 static void
 test_writing_integer_numbers ()
 {
-  ASSERT_PRINT_EQ (integer_number (0), true, "0");
-  ASSERT_PRINT_EQ (integer_number (42), true, "42");
-  ASSERT_PRINT_EQ (integer_number (-100), true, "-100");
-  ASSERT_PRINT_EQ (integer_number (123456789), true, "123456789");
-  ASSERT_PRINT_EQ (integer_number (-123456789), true, "-123456789");
+  ASSERT_JSON_PRINT_EQ (integer_number (0), true, "0");
+  ASSERT_JSON_PRINT_EQ (integer_number (42), true, "42");
+  ASSERT_JSON_PRINT_EQ (integer_number (-100), true, "-100");
+  ASSERT_JSON_PRINT_EQ (integer_number (123456789), true, "123456789");
+  ASSERT_JSON_PRINT_EQ (integer_number (-123456789), true, "-123456789");
 }
 
 /* Verify that JSON strings are written correctly.  */
@@ -784,16 +805,17 @@ static void
 test_writing_strings ()
 {
   string foo ("foo");
-  ASSERT_PRINT_EQ (foo, true, "\"foo\"");
+  ASSERT_JSON_PRINT_EQ (foo, true, "\"foo\"");
 
   string contains_quotes ("before \"quoted\" after");
-  ASSERT_PRINT_EQ (contains_quotes, true, "\"before \\\"quoted\\\" after\"");
+  ASSERT_JSON_PRINT_EQ (contains_quotes, true,
+			"\"before \\\"quoted\\\" after\"");
 
   const char data[] = {'a', 'b', 'c', 'd', '\0', 'e', 'f'};
   string not_terminated (data, 3);
-  ASSERT_PRINT_EQ (not_terminated, true, "\"abc\"");
+  ASSERT_JSON_PRINT_EQ (not_terminated, true, "\"abc\"");
   string embedded_null (data, sizeof data);
-  ASSERT_PRINT_EQ (embedded_null, true, "\"abcd\\0ef\"");
+  ASSERT_JSON_PRINT_EQ (embedded_null, true, "\"abcd\\0ef\"");
 }
 
 /* Verify that JSON literals are written correctly.  */
@@ -801,12 +823,12 @@ test_writing_strings ()
 static void
 test_writing_literals ()
 {
-  ASSERT_PRINT_EQ (literal (JSON_TRUE), true, "true");
-  ASSERT_PRINT_EQ (literal (JSON_FALSE), true, "false");
-  ASSERT_PRINT_EQ (literal (JSON_NULL), true, "null");
+  ASSERT_JSON_PRINT_EQ (literal (JSON_TRUE), true, "true");
+  ASSERT_JSON_PRINT_EQ (literal (JSON_FALSE), true, "false");
+  ASSERT_JSON_PRINT_EQ (literal (JSON_NULL), true, "null");
 
-  ASSERT_PRINT_EQ (literal (true), true, "true");
-  ASSERT_PRINT_EQ (literal (false), true, "false");
+  ASSERT_JSON_PRINT_EQ (literal (true), true, "true");
+  ASSERT_JSON_PRINT_EQ (literal (false), true, "false");
 }
 
 /* Verify that nested values are formatted correctly when written.
@@ -836,18 +858,18 @@ test_formatting ()
 
   /* This test relies on json::object writing out key/value pairs
      in key-insertion order.  */
-  ASSERT_PRINT_EQ (obj, true,
-		   ("{\"str\": \"bar\",\n"
-		    " \"child\": {\"grandchild\": {\"arr\": [0,\n"
-		    "                                  1,\n"
-		    "                                  2],\n"
-		    "                          \"int\": 1066},\n"
-		    "           \"int\": 1776},\n"
-		    " \"int\": 42}"));
-  ASSERT_PRINT_EQ (obj, false,
-		   ("{\"str\": \"bar\", \"child\": {\"grandchild\":"
-		    " {\"arr\": [0, 1, 2], \"int\": 1066},"
-		    " \"int\": 1776}, \"int\": 42}"));
+  ASSERT_JSON_PRINT_EQ (obj, true,
+			("{\"str\": \"bar\",\n"
+			 " \"child\": {\"grandchild\": {\"arr\": [0,\n"
+			 "                                  1,\n"
+			 "                                  2],\n"
+			 "                          \"int\": 1066},\n"
+			 "           \"int\": 1776},\n"
+			 " \"int\": 42}"));
+  ASSERT_JSON_PRINT_EQ (obj, false,
+			("{\"str\": \"bar\", \"child\": {\"grandchild\":"
+			 " {\"arr\": [0, 1, 2], \"int\": 1066},"
+			 " \"int\": 1776}, \"int\": 42}"));
 }
 
 /* Helper function for reporting failure of JSON comparisons.  */
@@ -1021,8 +1043,8 @@ test_comparisons ()
   obj_4.set_integer ("year", 1066);
   obj_4.set_string ("foo", "bar");
   ASSERT_JSON_EQ (obj_2, obj_4);
-  ASSERT_PRINT_EQ (obj_2, false, "{\"foo\": \"bar\", \"year\": 1066}");
-  ASSERT_PRINT_EQ (obj_4, false, "{\"year\": 1066, \"foo\": \"bar\"}");
+  ASSERT_JSON_PRINT_EQ (obj_2, false, "{\"foo\": \"bar\", \"year\": 1066}");
+  ASSERT_JSON_PRINT_EQ (obj_4, false, "{\"year\": 1066, \"foo\": \"bar\"}");
 
   /* Arrays.  */
 

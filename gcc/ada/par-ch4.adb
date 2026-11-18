@@ -35,23 +35,33 @@ package body Ch4 is
    --  Attributes that cannot have arguments
 
    Is_Parameterless_Attribute : constant Attribute_Set :=
-     (Attribute_Base         |
-      Attribute_Body_Version |
-      Attribute_Class        |
-      Attribute_External_Tag |
-      Attribute_Img          |
-      Attribute_Loop_Entry   |
-      Attribute_Old          |
-      Attribute_Result       |
-      Attribute_Stub_Type    |
-      Attribute_Version      |
-      Attribute_Type_Key     => True,
-      others                 => False);
-   --  This map contains True for parameterless attributes that return a string
-   --  or a type. For those attributes, a left parenthesis after the attribute
-   --  should not be analyzed as the beginning of a parameters list because it
-   --  may denote a slice operation (X'Img (1 .. 2)) or a type conversion
-   --  (X'Class (Y)).
+     (Attribute_Base              |
+      Attribute_Body_Version      |
+      Attribute_Class             |
+      Attribute_Constant_Indexing |
+      Attribute_Constructor       |
+      Attribute_Default_Iterator  |
+      Attribute_Destructor        |
+      Attribute_External_Tag      |
+      Attribute_Img               |
+      Attribute_Integer_Literal   |
+      Attribute_Loop_Entry        |
+      Attribute_Old               |
+      Attribute_Real_Literal      |
+      Attribute_Result            |
+      Attribute_String_Literal    |
+      Attribute_Stub_Type         |
+      Attribute_Type_Key          |
+      Attribute_Variable_Indexing |
+      Attribute_Version           => True,
+      others                      => False);
+   --  This map contains True for parameterless attributes that return a value
+   --  or a type or correspond to subprogram-valued aspects. For those, a left
+   --  parenthesis after the attribute should not be analyzed as the beginning
+   --  of an arguments list because it may denote an indexing, slice operation
+   --  (such as X'Img (1 .. 2)), type conversion (such as X'Class (Y)), or
+   --  be the actual parameters for a subprogram call (such as for generalized
+   --  indexing).
 
    --  Note: Loop_Entry is in this list because, although it can take an
    --  optional argument (the loop name), we can't distinguish that at parse
@@ -482,12 +492,7 @@ package body Ch4 is
          elsif Token = Tok_Identifier then
             Attr_Name := Token_Name;
 
-            --  Attribute Unsigned_Base_Range temporarily disabled
-
-            if not Is_Attribute_Name (Attr_Name)
-              or else (Attr_Name = Name_Unsigned_Base_Range
-                         and then not Debug_Flag_Dot_U)
-            then
+            if not Is_Attribute_Name (Attr_Name) then
                if Apostrophe_Should_Be_Semicolon then
                   Expr_Form := EF_Name;
                   return Name_Node;
@@ -531,6 +536,12 @@ package body Ch4 is
 
             elsif Token = Tok_Mod and then Ada_Version >= Ada_95 then
                Attr_Name := Name_Mod;
+
+            elsif Token = Tok_At then
+               Attr_Name := Name_At;
+
+               Error_Msg_GNAT_Extension
+                 ("attribute At", Token_Ptr, Is_Core_Extension => False);
 
             elsif Apostrophe_Should_Be_Semicolon then
                Expr_Form := EF_Name;
@@ -2140,19 +2151,19 @@ package body Ch4 is
    end P_Expression;
 
    --  This function is identical to the normal P_Expression, except that it
-   --  also permits the appearance of a case, conditional, or quantified
+   --  also permits the appearance of a conditional, quantified, or declare
    --  expression if the call immediately follows a left paren, and followed
    --  by a right parenthesis. These forms are allowed if these conditions
    --  are not met, but an error message will be issued.
 
    function P_Expression_If_OK return Node_Id is
    begin
-      --  Case of conditional, case or quantified expression
+      --  Case of conditional, quantified, or declare expression
 
       if Token in Tok_Case | Tok_If | Tok_For | Tok_Declare then
          return P_Unparen_Cond_Expr_Etc;
 
-      --  Normal case, not case/conditional/quantified expression
+      --  Normal case: not a conditional, quantified, or declare expression
 
       else
          return P_Expression;
@@ -2660,7 +2671,7 @@ package body Ch4 is
          end;
       end if;
 
-      --  If all extensions are enabled and we have a deep delta aggregate
+      --  If core extensions are enabled and we have a deep delta aggregate
       --  whose type is an array type with an element type that is a
       --  record type, then we can encounter legal things like
       --    with delta (Some_Index_Expression).Some_Component
@@ -2673,7 +2684,7 @@ package body Ch4 is
         and then Prev_Token = Tok_Right_Paren
         and then Serious_Errors_Detected = 0
         and then Inside_Delta_Aggregate
-        and then All_Extensions_Allowed
+        and then Core_Extensions_Allowed
       then
          if Token = Tok_Dot then
             Node2 := New_Node (N_Selected_Component, Token_Ptr);

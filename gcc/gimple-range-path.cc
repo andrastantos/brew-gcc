@@ -33,9 +33,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-cfg.h"
 #include "gimple-iterator.h"
 
-// Internal construct to help facilitate debugging of solver.
-#define DEBUG_SOLVER (dump_file && (param_threader_debug == THREADER_DEBUG_ALL))
-
 path_range_query::path_range_query (gimple_ranger &ranger,
 				    const vec<basic_block> &path,
 				    const bitmap_head *dependencies,
@@ -156,7 +153,12 @@ path_range_query::internal_range_of_expr (vrange &r, tree name, gimple *stmt)
       return true;
     }
 
+  // We can be called from match.pd or elsewhere, with a context statement
+  // that can be anywhere on the path.  Since we can only compute ranges
+  // mid flight at the current path position, check that's the case,
+  // otherwise fall through to the global range.
   if (stmt
+      && gimple_bb (stmt) == curr_bb ()
       && range_defined_in_block (r, name, gimple_bb (stmt)))
     {
       if (TREE_CODE (name) == SSA_NAME)
@@ -200,7 +202,11 @@ path_range_query::reset_path (const vec<basic_block> &path,
 			      const bitmap_head *dependencies)
 {
   gcc_checking_assert (path.length () > 1);
-  m_path = path.copy ();
+
+  // Use truncate/safe_splice instead of copy() to avoid repeated mallocs here.
+  m_path.truncate (0);
+  m_path.safe_splice (path);
+
   m_pos = m_path.length () - 1;
   m_undefined_path = false;
   m_cache.clear ();
@@ -256,6 +262,10 @@ path_range_query::ssa_range_in_phi (vrange &r, gphi *phi)
   basic_block bb = gimple_bb (phi);
   basic_block prev = prev_bb ();
   edge e_in = find_edge (prev, bb);
+  // The incoming edge the path supplies is never abnormal, so the
+  // argument on it is a valid value for the PHI result even when the
+  // result occurs in an abnormal PHI.
+  gcc_checking_assert (!(e_in->flags & EDGE_ABNORMAL));
   tree arg = PHI_ARG_DEF_FROM_EDGE (phi, e_in);
   // Avoid using the cache for ARGs defined in this block, as
   // that could create an ordering problem.
@@ -286,6 +296,11 @@ path_range_query::ssa_range_in_phi (vrange &r, gphi *phi)
 bool
 path_range_query::range_defined_in_block (vrange &r, tree name, basic_block bb)
 {
+  // Ranges can only be calculated at the current path position, both
+  // while pre-computing the cache and when answering questions at the
+  // path exit afterwards.
+  gcc_assert (bb == curr_bb ());
+
   gimple *def_stmt = SSA_NAME_DEF_STMT (name);
   basic_block def_bb = gimple_bb (def_stmt);
 
@@ -309,7 +324,7 @@ path_range_query::range_defined_in_block (vrange &r, tree name, basic_block bb)
   if (bb && POINTER_TYPE_P (TREE_TYPE (name)))
     infer_oracle ().maybe_adjust_range (r, name, bb);
 
-  if (DEBUG_SOLVER && (bb || !r.varying_p ()))
+  if (DEBUG_PATH_RANGER && (bb || !r.varying_p ()))
     {
       fprintf (dump_file, "range_defined_in_block (BB%d) for ", bb ? bb->index : -1);
       print_generic_expr (dump_file, name, TDF_SLIM);
@@ -401,7 +416,7 @@ path_range_query::compute_ranges_in_block (basic_block bb)
 
   if (m_resolve && relations_may_be_invalidated (e))
     {
-      if (DEBUG_SOLVER)
+      if (DEBUG_PATH_RANGER)
 	fprintf (dump_file,
 		 "Resetting relations as they may be invalidated in %d->%d.\n",
 		 e->src->index, e->dest->index);
@@ -425,7 +440,7 @@ path_range_query::compute_ranges_in_block (basic_block bb)
 	    r.intersect (cached_range);
 
 	  m_cache.set_range (name, r);
-	  if (DEBUG_SOLVER)
+	  if (DEBUG_PATH_RANGER)
 	    {
 	      fprintf (dump_file, "edge_range_p for ");
 	      print_generic_expr (dump_file, name, TDF_SLIM);
@@ -447,20 +462,19 @@ path_range_query::compute_ranges_in_block (basic_block bb)
 void
 path_range_query::adjust_for_non_null_uses (basic_block bb)
 {
+  // If there are no pointer exit dependencies with an inferred range, there's
+  // nothing to do.
+  if (m_pointer_exit_dependencies.is_empty ()
+      || !infer_oracle ().has_range_p (bb))
+    return;
+
   prange r;
-  bitmap_iterator bi;
-  unsigned i;
 
-  EXECUTE_IF_SET_IN_BITMAP (m_exit_dependencies, 0, i, bi)
+  for (tree name : m_pointer_exit_dependencies)
     {
-      tree name = ssa_name (i);
-
-      if (!POINTER_TYPE_P (TREE_TYPE (name)))
-	continue;
-
       if (get_cache (r, name))
 	{
-	  if (r.nonzero_p ())
+	  if (!r.contains_zero_p ())
 	    continue;
 	}
       else
@@ -482,6 +496,62 @@ path_range_query::add_to_exit_dependencies (tree name, bitmap dependencies)
   return false;
 }
 
+// Add to DEPENDENCIES the operands used to define NAME along PATH,
+// and push the new ones onto WORKLIST.
+
+void
+path_range_query::add_dependencies_of (tree name,
+				       const vec<basic_block> &path,
+				       bitmap dependencies,
+				       vec<tree> &worklist)
+{
+  gimple *def_stmt = SSA_NAME_DEF_STMT (name);
+  if (SSA_NAME_IS_DEFAULT_DEF (name)
+      || !path.contains (gimple_bb (def_stmt)))
+    return;
+
+  if (gphi *phi = dyn_cast <gphi *> (def_stmt))
+    {
+      for (size_t i = 0; i < gimple_phi_num_args (phi); ++i)
+	{
+	  edge e = gimple_phi_arg_edge (phi, i);
+	  tree arg = gimple_phi_arg (phi, i)->def;
+
+	  if (TREE_CODE (arg) == SSA_NAME
+	      && path.contains (e->src)
+	      && bitmap_set_bit (dependencies, SSA_NAME_VERSION (arg)))
+	    worklist.safe_push (arg);
+	}
+    }
+  else if (gassign *ass = dyn_cast <gassign *> (def_stmt))
+    {
+      tree ssa[3];
+      unsigned count = gimple_range_ssa_names (ssa, 3, ass);
+      for (unsigned j = 0; j < count; ++j)
+	if (add_to_exit_dependencies (ssa[j], dependencies))
+	  worklist.safe_push (ssa[j]);
+    }
+}
+
+// Close DEPENDENCIES along PATH over add_dependencies_of.
+
+void
+path_range_query::close_dependencies (const vec<basic_block> &path,
+				      bitmap dependencies)
+{
+  auto_vec<tree> worklist (bitmap_count_bits (dependencies));
+  bitmap_iterator bi;
+  unsigned i;
+  EXECUTE_IF_SET_IN_BITMAP (dependencies, 0, i, bi)
+    {
+      tree name = ssa_name (i);
+      worklist.quick_push (name);
+    }
+
+  while (!worklist.is_empty ())
+    add_dependencies_of (worklist.pop (), path, dependencies, worklist);
+}
+
 // Compute the exit dependencies to PATH.  These are essentially the
 // SSA names used to calculate the final conditional along the path.
 
@@ -492,49 +562,12 @@ path_range_query::compute_exit_dependencies (bitmap dependencies)
   basic_block exit = m_path[0];
   bitmap_copy (dependencies, gori_ssa ()->imports (exit));
 
-  auto_vec<tree> worklist (bitmap_count_bits (dependencies));
-  bitmap_iterator bi;
-  unsigned i;
-  EXECUTE_IF_SET_IN_BITMAP (dependencies, 0, i, bi)
-    {
-      tree name = ssa_name (i);
-      worklist.quick_push (name);
-    }
-
   // ...and add any operands used to define these imports.
-  while (!worklist.is_empty ())
-    {
-      tree name = worklist.pop ();
-      gimple *def_stmt = SSA_NAME_DEF_STMT (name);
-      if (SSA_NAME_IS_DEFAULT_DEF (name)
-	  || !m_path.contains (gimple_bb (def_stmt)))
-	continue;
+  close_dependencies (m_path, dependencies);
 
-      if (gphi *phi = dyn_cast <gphi *> (def_stmt))
-	{
-	  for (size_t i = 0; i < gimple_phi_num_args (phi); ++i)
-	    {
-	      edge e = gimple_phi_arg_edge (phi, i);
-	      tree arg = gimple_phi_arg (phi, i)->def;
-
-	      if (TREE_CODE (arg) == SSA_NAME
-		  && m_path.contains (e->src)
-		  && bitmap_set_bit (dependencies, SSA_NAME_VERSION (arg)))
-		worklist.safe_push (arg);
-	    }
-	}
-      else if (gassign *ass = dyn_cast <gassign *> (def_stmt))
-	{
-	  tree ssa[3];
-	  unsigned count = gimple_range_ssa_names (ssa, 3, ass);
-	  for (unsigned j = 0; j < count; ++j)
-	    if (add_to_exit_dependencies (ssa[j], dependencies))
-	      worklist.safe_push (ssa[j]);
-	}
-    }
   // Exported booleans along the path, may help conditionals.
   if (m_resolve)
-    for (i = 0; i < m_path.length (); ++i)
+    for (unsigned i = 0; i < m_path.length (); ++i)
       {
 	basic_block bb = m_path[i];
 	tree name;
@@ -554,7 +587,7 @@ path_range_query::compute_exit_dependencies (bitmap dependencies)
 void
 path_range_query::compute_ranges (const bitmap_head *dependencies)
 {
-  if (DEBUG_SOLVER)
+  if (DEBUG_PATH_RANGER)
     fprintf (dump_file, "\n==============================================\n");
 
   if (dependencies)
@@ -562,13 +595,31 @@ path_range_query::compute_ranges (const bitmap_head *dependencies)
   else
     compute_exit_dependencies (m_exit_dependencies);
 
-  if (m_resolve)
-    {
-      path_oracle *p = get_path_oracle ();
-      p->reset_path (&(m_ranger.relation ()));
-    }
+  // The oracle carries state from any previously solved path, so it has
+  // to be reset even in non-resolving mode.
+  path_oracle *p = get_path_oracle ();
+  p->reset_path (&(m_ranger.relation ()));
 
-  if (DEBUG_SOLVER)
+  // Collect the pointer exit dependencies once per path.
+  m_pointer_exit_dependencies.truncate (0);
+  {
+    bitmap_iterator bi;
+    unsigned i;
+    EXECUTE_IF_SET_IN_BITMAP (m_exit_dependencies, 0, i, bi)
+      {
+	tree name = ssa_name (i);
+	if (POINTER_TYPE_P (TREE_TYPE (name)))
+	  {
+	    // Querying the infer oracle here is what populates its
+	    // per-block summaries, so that adjust_for_non_null_uses can
+	    // skip a block with no inferred range in it at all.
+	    infer_oracle ().has_range_p (entry_bb (), name);
+	    m_pointer_exit_dependencies.safe_push (name);
+	  }
+      }
+  }
+
+  if (DEBUG_PATH_RANGER)
     {
       fprintf (dump_file, "path_range_query: compute_ranges for path: ");
       for (unsigned i = m_path.length (); i > 0; --i)
@@ -594,7 +645,7 @@ path_range_query::compute_ranges (const bitmap_head *dependencies)
       move_next ();
     }
 
-  if (DEBUG_SOLVER)
+  if (DEBUG_PATH_RANGER)
     {
       get_path_oracle ()->dump (dump_file);
       dump (dump_file);

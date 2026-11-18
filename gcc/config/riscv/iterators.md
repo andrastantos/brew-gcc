@@ -207,6 +207,9 @@
 ;; This code iterator allows signed and unsigned widening multiplications
 ;; to use the same template.
 (define_code_iterator any_extend [sign_extend zero_extend])
+
+(define_code_iterator cond_extend [sign_extend (zero_extend "!TARGET_ZALASR")])
+
 (define_code_attr extend_name [
   (sign_extend "extend") (zero_extend "zero_extend")
 ])
@@ -217,6 +220,11 @@
 (define_code_iterator zero_is_neutral_op [plus minus ior xor ashift lshiftrt
 					  ashiftrt rotatert rotate])
 (define_code_iterator zero_is_neutral_op_c [plus ior xor])
+
+;; Iterator for all the basic binary operations that have W forms except
+;; shifts/rotates.  Shifts/rotates have mismatched operand modes and
+;; thus are painful to handle in a single pattern
+(define_code_iterator sext_w_binop [plus minus mult div udiv])
 
 ;; These code iterators allow unsigned and signed extraction to be generated
 ;; from the same template.
@@ -243,6 +251,7 @@
 ;; This code iterator allows ior and xor instructions to be generated
 ;; from the same template.
 (define_code_iterator any_or [ior xor])
+(define_code_iterator oxp [ior xor plus])
 
 ;; This code iterator allows unsigned and signed division to be generated
 ;; from the same template.
@@ -265,8 +274,11 @@
 (define_code_iterator any_le [le leu])
 (define_code_iterator any_eq [eq ne])
 
+;; Maps GT/GTU to LE/LE.
+(define_code_attr gt_to_le [(gt "le") (gtu "leu")])
+
 ;; Iterators for conditions we can emit a sCC against 0 or a reg directly
-(define_code_iterator scc_0  [eq ne gt gtu])
+(define_code_iterator scc_0  [any_eq any_gt any_lt])
 
 ; atomics code iterator
 (define_code_iterator any_atomic [plus ior xor and])
@@ -316,8 +328,9 @@
 ;; <su> is like <u>, but the signed form expands to "s" rather than "".
 (define_code_attr su [(sign_extend "s") (zero_extend "u")])
 
-;; eq expand to "c" and ne expand to "s".
+;; eq expand to "c" and ne expand to "s" and it inversion
 (define_code_attr cs [(eq "c") (ne "s")])
+(define_code_attr sc [(eq "s") (ne "c")])
 
 ;; <optab> expands to the name of the optab for a particular code.
 (define_code_attr optab [(ashift "ashl")
@@ -357,6 +370,8 @@
 			 (zero_extract "zero_extract")
 			 (fix "fix_trunc")
 			 (unsigned_fix "fixuns_trunc")])
+
+(define_code_attr any_eq_inv [(eq "ne") (ne "eq")])
 
 (define_code_attr bit_optab [(ior "bset")
 			     (xor "binv")])

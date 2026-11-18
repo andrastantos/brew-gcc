@@ -1054,7 +1054,7 @@ CNU(RTS_CONTROL_ENABLE, "Enable RTS flow ctrl")
 
 */
 
-#if defined (__FreeBSD__) || defined (__linux__) || defined (__DragonFly__)
+#if defined (__FreeBSD__) || defined (__DragonFly__)
 # define PTY_Library "-lutil"
 #else
 # define PTY_Library ""
@@ -1771,7 +1771,17 @@ CNS(MAX_tv_sec, "")
    --  Sizes (in bytes) of the components of struct timespec.
    --  The tv_sec field is the same as in struct timeval.
 */
-#define SIZEOF_tv_nsec (sizeof (ts.tv_nsec))
+
+/**
+ ** On GNU libc, this accounts for an anonymous padding field in some cases
+ ** (https://sourceware.org/glibc/wiki/Y2038ProofnessDesign#struct_timespec)
+ ** and also ensures that the sizes of the Ada record and C struct match.
+ **/
+#if defined (__GLIBC__)
+# define SIZEOF_tv_nsec (sizeof (ts) - sizeof (ts.tv_sec))
+#else
+# define SIZEOF_tv_nsec (sizeof (ts.tv_nsec))
+#endif
 CND(SIZEOF_tv_nsec, "tv_nsec");
 }
 

@@ -61,6 +61,11 @@ package Ghost is
    --  Check that if Actual contains references to ghost entities, generic
    --  formal parameter Formal is ghost (SPARK RM 6.9(13)).
 
+   procedure Check_Ghost_Equality_Op (Eq_Op : Entity_Id; Typ : Entity_Id);
+   --  A user-defined primitive equality operation on a
+   --  non-ghost record type shall not be ghost, unless the
+   --  record type has only limited views. (SPARK RM 6.9(23))
+
    procedure Check_Ghost_Formal_Procedure_Or_Package
      (N          : Node_Id;
       Actual     : Entity_Id;
@@ -177,6 +182,15 @@ package Ghost is
    --      Spec_Id is a Ghost entity.
    --
    --    * The body appears within a Ghost region
+   --
+   --  Install the Ghost mode of the body. This routine starts a Ghost region
+   --  and must be used with routine Restore_Ghost_Region.
+
+   procedure Mark_And_Set_Ghost_Body_Of_Expression_Function
+     (N       : Node_Id;
+      Spec_Id : Entity_Id);
+   --  Mark the subprogram body N generated for an expression function Spec_Id
+   --  that is not a completion as Ghost when Spec_Id is a Ghost entity.
    --
    --  Install the Ghost mode of the body. This routine starts a Ghost region
    --  and must be used with routine Restore_Ghost_Region.

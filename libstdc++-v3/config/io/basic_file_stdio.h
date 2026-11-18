@@ -39,7 +39,7 @@
 #include <bits/c++config.h>
 #include <bits/c++io.h>  // for __c_lock and __c_file
 #include <bits/move.h>   // for swap
-#include <ios>
+#include <bits/ios_base.h>     // For ios_base declarations.
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -62,6 +62,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     public:
       __basic_file(__c_lock* __lock = 0) throw ();
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wc++11-extensions"
+      __basic_file(const __basic_file&) = delete;
+      __basic_file& operator=(const __basic_file&) = delete;
+#pragma GCC diagnostic pop
+
 #if __cplusplus >= 201103L
       __basic_file(__basic_file&& __rv, __c_lock* = 0) noexcept
       : _M_cfile(__rv._M_cfile), _M_cfile_created(__rv._M_cfile_created)
@@ -69,9 +75,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	__rv._M_cfile = nullptr;
 	__rv._M_cfile_created = false;
       }
-
-      __basic_file& operator=(const __basic_file&) = delete;
-      __basic_file& operator=(__basic_file&&) = delete;
 
       void
       swap(__basic_file& __f) noexcept

@@ -28,6 +28,18 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 extern int associated (const gfc_array_void *, const gfc_array_void *);
 export_proto(associated);
 
+/* If the stride is not set, use the element length.  */
+static inline index_type
+stride_in_bytes (const gfc_array_void *desc, int n)
+{
+  index_type span = GFC_DESCRIPTOR_SPAN (desc);
+
+  if (span == 0)
+    span = GFC_DESCRIPTOR_SIZE (desc);
+
+  return GFC_DESCRIPTOR_STRIDE (desc, n) * span;
+}
+
 int
 associated (const gfc_array_void *pointer, const gfc_array_void *target)
 {
@@ -37,8 +49,12 @@ associated (const gfc_array_void *pointer, const gfc_array_void *target)
     return 0;
   if (GFC_DESCRIPTOR_DATA (pointer) != GFC_DESCRIPTOR_DATA (target))
     return 0;
-  if (GFC_DESCRIPTOR_SPAN (pointer) != GFC_DESCRIPTOR_SPAN (target))
+
+  /* Require that the storage sequences are the same.  */
+  if (GFC_DESCRIPTOR_SIZE (pointer) != GFC_DESCRIPTOR_SIZE (target)
+      && GFC_DESCRIPTOR_SPAN (pointer) != GFC_DESCRIPTOR_SPAN (target))
     return 0;
+
   if (GFC_DESCRIPTOR_DTYPE (pointer).type != GFC_DESCRIPTOR_DTYPE (target).type)
     return 0;
   rank = GFC_DESCRIPTOR_RANK (pointer);
@@ -51,7 +67,8 @@ associated (const gfc_array_void *pointer, const gfc_array_void *target)
 
       if (extent != GFC_DESCRIPTOR_EXTENT(target,n))
         return 0;
-      if (GFC_DESCRIPTOR_STRIDE(pointer,n) != GFC_DESCRIPTOR_STRIDE(target,n) && extent != 1)
+      if (stride_in_bytes (pointer, n) != stride_in_bytes (target, n)
+	  && extent != 1)
         return 0;
       if (extent <= 0)
 	return 0;

@@ -561,8 +561,7 @@ Common Var(warn_auto_profile) Warning
 Warn about problems with auto-profile data.
 
 Wuse-after-free
-Common Var(warn_use_after_free) Warning
-Warn for uses of pointers to deallocated storage.
+Common Alias(Wuse-after-free=, 1, 0) Warning
 
 Wuse-after-free=
 Common Joined RejectNegative UInteger Var(warn_use_after_free) Warning IntegerRange(0, 3)
@@ -697,7 +696,7 @@ Warn if dereferencing a NULL pointer may lead to erroneous or undefined behavior
 
 Wunsafe-loop-optimizations
 Common Ignore Warning
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 Wmissing-noreturn
 Common Warning Alias(Wsuggest-attribute=noreturn)
@@ -781,12 +780,12 @@ Common Joined RejectNegative UInteger Var(warn_strict_aliasing) Warning
 Warn about code which might break strict aliasing rules.
 
 Wstrict-overflow
-Common Warning
-Warn about optimizations that assume that signed overflow is undefined.
+Common Ignore Warning
+Does nothing.  Preserved for backward compatibility.
 
 Wstrict-overflow=
-Common Joined RejectNegative UInteger Var(warn_strict_overflow) Warning
-Warn about optimizations that assume that signed overflow is undefined.
+Common Ignore Joined RejectNegative UInteger Warning
+Does nothing.  Preserved for backward compatibility.
 
 Wsuggest-attribute=cold
 Common Var(warn_suggest_attribute_cold) Warning
@@ -855,7 +854,7 @@ Warn about maybe uninitialized automatic variables.
 
 Wunreachable-code
 Common Ignore Warning
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 Wunused
 Common Var(warn_unused) Init(0) Warning
@@ -931,6 +930,10 @@ Warn when a vector operation is compiled outside the SIMD.
 Wtsan
 Common Var(warn_tsan) Init(1) Warning
 Warn about unsupported features in ThreadSanitizer.
+
+Wzero-init-padding-bits=
+Common Joined RejectNegative Enum(zero_init_padding_bits_kind) Var(warn_zero_init_padding_bits) Init(ZERO_INIT_PADDING_BITS_STANDARD) Warning
+-Wzero-init-padding-bits=[standard|unions|all]	Warn about initializers that might not zero padding bits.
 
 Xassembler
 Driver Separate
@@ -1131,19 +1134,19 @@ Enable static analysis pass.
 
 fargument-alias
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 fargument-noalias
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 fargument-noalias-global
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 fargument-noalias-anything
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 fsanitize=
 Common Driver Joined
@@ -1703,6 +1706,10 @@ fdump-unnumbered-links
 Common Var(flag_dump_unnumbered_links)
 Suppress output of previous and next insn numbers in debugging dumps.
 
+fduplicate-switch-dispatch
+Common Var(flag_duplicate_switch_dispatch) Optimization
+Give eligible predecessors of a loop switch their own copy of the table branch.
+
 fdwarf2-cfi-asm
 Common Var(flag_dwarf2_cfi_asm) Init(HAVE_GAS_CFI_DIRECTIVE)
 Enable CFI tables via GAS assembler directives.
@@ -1935,7 +1942,7 @@ Use STB_GNU_UNIQUE if supported by the assembler.
 
 floop-flatten
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 floop-nest-optimize
 Common Var(flag_loop_nest_optimize) Optimization
@@ -2035,12 +2042,12 @@ EnumValue
 Enum(stack_reuse_level) String(none) Value(SR_NONE)
 
 ftree-loop-if-convert
-Common Var(flag_tree_loop_if_convert) Init(-1) Optimization
-Convert conditional jumps in innermost loops to branchless equivalents.
+Common Ignore
+Does nothing.  Preserved for backward compatibility.
 
 ftree-loop-if-convert-stores
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 ; -finhibit-size-directive inhibits output of .size for ELF.
 ; This is used only for compiling crtstuff.c,
@@ -2222,11 +2229,11 @@ Reduce stack alignment on call sites if possible.
 
 fipa-matrix-reorg
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 fipa-struct-reorg
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 fipa-vrp
 Common Var(flag_ipa_vrp) Optimization
@@ -2398,7 +2405,7 @@ Common Var(flag_malloc_dce,2) Init(2) Optimization
 Allow removal of malloc and free pairs when allocated block is unused.
 
 fmalloc-dce=
-Common Joined RejectNegative UInteger Var(flag_malloc_dse) Optimization IntegerRange(0, 2)
+Common Joined RejectNegative UInteger Var(flag_malloc_dce) Optimization IntegerRange(0, 2)
 
 fmem-report
 Common Var(mem_report)
@@ -2499,6 +2506,25 @@ fomit-frame-pointer
 Common Var(flag_omit_frame_pointer) Optimization
 When possible do not generate stack frames.
 
+fopenmp-ompt
+Common Alias(fopenmp-ompt=,basic) RejectNegative
+
+fopenmp-ompt=
+Common Joined RejectNegative Enum(ompt_level) Var(flag_openmp_ompt) Init(OMP_OMPT_LEVEL_MINIMAL)
+Control how much detail GCC reports to an OMPT tool.
+
+Enum
+Name(ompt_level) Type(int)
+
+EnumValue
+Enum(ompt_level) String(minimal) Value(OMP_OMPT_LEVEL_MINIMAL)
+
+EnumValue
+Enum(ompt_level) String(basic) Value(OMP_OMPT_LEVEL_BASIC)
+
+EnumValue
+Enum(ompt_level) String(extended) Value(OMP_OMPT_LEVEL_EXTENDED)
+
 fopenmp-target-simd-clone
 Common Alias(fopenmp-target-simd-clone=,any,none)
 
@@ -2545,7 +2571,7 @@ If neither case applies, generate table-based CRC.
 
 foptimize-register-move
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 foptimize-sibling-calls
 Common Var(flag_optimize_sibling_calls) Optimization
@@ -2771,7 +2797,7 @@ Return small aggregates in registers.
 
 fregmove
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 flifetime-dse
 Common Var(flag_lifetime_dse,2) Init(2) Optimization
@@ -3384,8 +3410,8 @@ Common Var(flag_tree_vrp) Init(0) Optimization
 Perform Value Range Propagation on trees.
 
 fsplit-paths
-Common Var(flag_split_paths) Init(0) Optimization
-Split paths leading to loop backedges.
+Common Ignore
+Does nothing.  Preserved for backward compatibility.
 
 funconstrained-commons
 Common Var(flag_unconstrained_commons) Optimization
@@ -3552,7 +3578,7 @@ Enables the dynamic vectorizer cost model.  Preserved for backward compatibility
 
 ftree-vect-loop-version
 Common Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 ftree-scev-cprop
 Common Var(flag_tree_scev_cprop) Init(1) Optimization

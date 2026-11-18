@@ -40,7 +40,7 @@ struct GTY(()) real_value {
   /* Use the same underlying type for all bit-fields, so as to make
      sure they're packed together, otherwise REAL_VALUE_TYPE_SIZE will
      be miscomputed.  */
-  unsigned int /* ENUM_BITFIELD (real_value_class) */ cl : 2;
+  unsigned int /* enum real_value_class */ cl : 2;
   /* 1 if number is decimal floating point.  */
   unsigned int decimal : 1;
   /* 1 if number is negative.  */
@@ -223,6 +223,7 @@ public:
 
   bool decimal_p () const { return m_format && m_format->b == 10; }
   bool can_represent_integral_type_p (tree type) const;
+  bool can_represent_range_value_p (const class irange *) const;
 
 private:
   const real_format *m_format;
@@ -541,6 +542,9 @@ extern void real_copysign (REAL_VALUE_TYPE *, const REAL_VALUE_TYPE *);
 /* Check whether the real constant value given is an integer.  */
 extern bool real_isinteger (const REAL_VALUE_TYPE *, format_helper);
 extern bool real_isinteger (const REAL_VALUE_TYPE *, HOST_WIDE_INT *);
+
+/* Check whether the real constant value given is an odd integer.  */
+extern bool real_isoddinteger (const REAL_VALUE_TYPE *, format_helper);
 
 /* Calculate nextafter (X, Y) in format FMT.  */
 extern bool real_nextafter (REAL_VALUE_TYPE *, format_helper,

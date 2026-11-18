@@ -116,7 +116,7 @@ sel_print_rtl (rtx x)
 
 /* Dump insn INSN honoring FLAGS.  */
 void
-dump_insn_rtx_1 (rtx insn, int flags)
+dump_insn_rtx_1 (rtx_insn *insn, int flags)
 {
   int all;
 
@@ -146,7 +146,7 @@ dump_insn_rtx_1 (rtx insn, int flags)
 
 /* Dump INSN with default flags.  */
 void
-dump_insn_rtx (rtx insn)
+dump_insn_rtx (rtx_insn *insn)
 {
   dump_insn_rtx_1 (insn, dump_insn_rtx_flags);
 }
@@ -154,7 +154,7 @@ dump_insn_rtx (rtx insn)
 
 /* Dump INSN to stderr.  */
 DEBUG_FUNCTION void
-debug_insn_rtx (rtx insn)
+debug_insn_rtx (rtx_insn *insn)
 {
   switch_dump (stderr);
   dump_insn_rtx_1 (insn, debug_insn_rtx_flags);
@@ -539,14 +539,14 @@ dump_insn_vector (rtx_vec_t succs)
 static void
 print_hard_reg_set (FILE *file, const char *prefix, HARD_REG_SET set)
 {
-  int i;
+  unsigned int i;
 
   fprintf (file, "%s{ ", prefix);
-  for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-    {
-      if (TEST_HARD_REG_BIT (set, i))
-	fprintf (file, "%d ", i);
-    }
+
+  hard_reg_set_iterator hrsi;
+  EXECUTE_IF_SET_IN_HARD_REG_SET (set, 0, i, hrsi)
+    fprintf (file, "%d ", i);
+
   fprintf (file, "}\n");
 }
 

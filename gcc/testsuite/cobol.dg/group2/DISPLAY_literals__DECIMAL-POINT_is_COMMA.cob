@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/DISPLAY_literals__DECIMAL-POINT_is_COMMA.out" }
 
        IDENTIFICATION   DIVISION.

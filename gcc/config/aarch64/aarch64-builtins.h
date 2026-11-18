@@ -23,50 +23,46 @@ enum aarch64_type_qualifiers
   /* T foo.  */
   qualifier_none = 0x0,
   /* unsigned T foo.  */
-  qualifier_unsigned = 0x1, /* 1 << 0  */
+  qualifier_unsigned = 1 << 0,
   /* const T foo.  */
-  qualifier_const = 0x2, /* 1 << 1  */
+  qualifier_const = 1 << 1,
   /* T *foo.  */
-  qualifier_pointer = 0x4, /* 1 << 2  */
+  qualifier_pointer = 1 << 2,
   /* const T *foo.  */
-  qualifier_const_pointer = 0x6,
+  qualifier_const_pointer = qualifier_const | qualifier_pointer,
   /* Used when expanding arguments if an operand could
      be an immediate.  */
-  qualifier_immediate = 0x8, /* 1 << 3  */
-  qualifier_maybe_immediate = 0x10, /* 1 << 4  */
+  qualifier_immediate = 1 << 3,
+  qualifier_maybe_immediate = 1 << 4,
   /* void foo (...).  */
-  qualifier_void = 0x20, /* 1 << 5  */
+  qualifier_void = 1 << 5,
   /* 1 << 6 is now unused */
   /* Some builtins should use the T_*mode* encoded in a simd_builtin_datum
      rather than using the type of the operand.  */
-  qualifier_map_mode = 0x80, /* 1 << 7  */
-  /* qualifier_pointer | qualifier_map_mode  */
-  qualifier_pointer_map_mode = 0x84,
-  /* qualifier_const | qualifier_pointer | qualifier_map_mode  */
-  qualifier_const_pointer_map_mode = 0x86,
+  qualifier_map_mode = 1 << 7,
+  qualifier_pointer_map_mode = qualifier_pointer | qualifier_map_mode,
+  qualifier_const_pointer_map_mode
+  = qualifier_const | qualifier_pointer_map_mode,
   /* Polynomial types.  */
-  qualifier_poly = 0x100,
+  qualifier_poly = 1 << 8,
   /* Lane indices - must be in range, and flipped for bigendian.  */
-  qualifier_lane_index = 0x200,
-  /* Lane indices for single lane structure loads and stores.  */
-  qualifier_struct_load_store_lane_index = 0x400,
+  qualifier_lane_index = 1 << 9,
   /* Lane indices selected in pairs. - must be in range, and flipped for
      bigendian.  */
-  qualifier_lane_pair_index = 0x800,
+  qualifier_lane_pair_index = 1 << 11,
   /* Lane indices selected in quadtuplets. - must be in range, and flipped for
      bigendian.  */
-  qualifier_lane_quadtup_index = 0x1000,
+  qualifier_lane_quadtup_index = 1 << 12,
   /* Modal FP types.  */
-  qualifier_modal_float = 0x2000,
+  qualifier_modal_float = 1 << 13,
 };
 
-#define ENTRY(E, M, Q, G) E,
 enum aarch64_simd_type
 {
+#define DEF_SIMD_TYPE(NAME, ...) NAME,
 #include "aarch64-simd-builtin-types.def"
   ARM_NEON_H_TYPES_LAST
 };
-#undef ENTRY
 
 struct aarch64_simd_type_info
 {
@@ -110,5 +106,11 @@ struct GTY(()) aarch64_simd_type_info_trees
 
 extern const aarch64_simd_type_info aarch64_simd_types[];
 extern aarch64_simd_type_info_trees aarch64_simd_types_trees[];
+extern tree aarch64_simd_tuple_types[ARM_NEON_H_TYPES_LAST][3];
+
+/* Shared with the pragma-based builtin folders, which do the same
+   lo-to-high-form rewriting for the families they have taken over.  */
+extern tree aarch64_v128_highpart_src_reg (const_tree);
+extern tree aarch64_build_vector_cst (const_tree, tree);
 
 #endif

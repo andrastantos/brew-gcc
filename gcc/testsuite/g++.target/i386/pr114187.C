@@ -9,5 +9,6 @@ double sumxy_p(P2d p) {
     return p.x + p.y;
 }
 
-/* { dg-final { scan-assembler-not "movq" } } */
+/* No move between GPR and XMM.  */
+/* { dg-final { scan-assembler-not "movq\[ \t%\]*r" } } */
 /* { dg-final { scan-assembler-not "xchg" } } */

@@ -166,6 +166,22 @@ materialize_cgraph (void)
   timevar_pop (lto_timer);
 }
 
+/* Stream out all the linemap sections so they are available for LTRANS.  */
+
+static void
+stream_out_linemaps (const char *filename)
+{
+  const auto file = lto_obj_file_open (filename, true);
+  if (!file)
+    fatal_error (input_location, "%<lto_obj_file_open()%> failed");
+  lto_set_current_out_file (file);
+  lto_copy_linemaps ();
+  free (const_cast<char *> (file->filename));
+  lto_set_current_out_file (nullptr);
+  lto_obj_file_close (file);
+  free (file);
+}
+
 /* Actually stream out ENCODER into TEMP_FILENAME.  */
 
 static void
@@ -265,7 +281,7 @@ stream_out_partitions (char *temp_filename, int blen, int min, int max,
 	      wait_for_child ();
 	    else
 	      {
-		/* There are no free tokens, lets do the job outselves.  */
+		/* There are no free tokens, lets do the job ourselves.  */
 		stream_out_partitions_1 (temp_filename, blen, min, max);
 		return;
 	      }
@@ -357,6 +373,12 @@ lto_wpa_write_files (void)
       sets_per_worker = (n_sets + lto_parallelism - 1) / lto_parallelism;
     }
 
+  /* Write out all the linemaps since they will be needed during LTRANS.  */
+  sprintf (temp_filename + blen, "%u.o", n_sets);
+  const auto linemap_filename = xstrdup (temp_filename);
+  stream_out_linemaps (linemap_filename);
+
+  /* Write out the partitions.  */
   for (i = 0; i < n_sets; i++)
     {
       ltrans_partition part = ltrans_partitions[i];
@@ -428,6 +450,8 @@ lto_wpa_write_files (void)
   if (ltrans_output_list_stream == NULL)
     fatal_error (input_location,
 		 "opening LTRANS output list %s: %m", ltrans_output_list);
+  fprintf (ltrans_output_list_stream, "0\n%s\n", linemap_filename);
+  free (linemap_filename);
   for (i = 0; i < n_sets; i++)
     {
       unsigned int len = strlen (temp_filenames[i]);
@@ -458,23 +482,29 @@ static void
 offload_handle_link_vars (void)
 {
 #ifdef ACCEL_COMPILER
+  size_t i;
   varpool_node *var;
+  auto_vec <varpool_node *>temp_link_vars;
   FOR_EACH_VARIABLE (var)
     if (lookup_attribute ("omp declare target link",
 			  DECL_ATTRIBUTES (var->decl)))
-      {
-	tree type = build_pointer_type (TREE_TYPE (var->decl));
-	tree link_ptr_var = build_decl (UNKNOWN_LOCATION, VAR_DECL,
+      temp_link_vars.safe_push (var);
+  FOR_EACH_VEC_ELT (temp_link_vars, i, var)
+    {
+      tree type = build_pointer_type (TREE_TYPE (var->decl));
+      tree link_ptr_var = build_decl (UNKNOWN_LOCATION, VAR_DECL,
 					clone_function_name (var->decl,
 							     "linkptr"), type);
-	TREE_USED (link_ptr_var) = 1;
-	TREE_STATIC (link_ptr_var) = 1;
-	TREE_PUBLIC (link_ptr_var) = TREE_PUBLIC (var->decl);
-	DECL_ARTIFICIAL (link_ptr_var) = 1;
-	SET_DECL_ASSEMBLER_NAME (link_ptr_var, DECL_NAME (link_ptr_var));
-	SET_DECL_VALUE_EXPR (var->decl, build_simple_mem_ref (link_ptr_var));
-	DECL_HAS_VALUE_EXPR_P (var->decl) = 1;
-      }
+      TREE_USED (link_ptr_var) = 1;
+      TREE_STATIC (link_ptr_var) = 1;
+      TREE_PUBLIC (link_ptr_var) = TREE_PUBLIC (var->decl);
+      DECL_ARTIFICIAL (link_ptr_var) = 1;
+      SET_DECL_ASSEMBLER_NAME (link_ptr_var, DECL_NAME (link_ptr_var));
+      SET_DECL_VALUE_EXPR (var->decl, build_simple_mem_ref (link_ptr_var));
+      DECL_HAS_VALUE_EXPR_P (var->decl) = 1;
+      varpool_node::finalize_decl (link_ptr_var);
+      varpool_node::get (link_ptr_var)->force_output = var->force_output;
+    }
 #endif
 }
 
@@ -589,7 +619,7 @@ do_whole_program_analysis (void)
 
   /* Collect a last time - in lto_wpa_write_files we may end up forking
      with the idea that this doesn't increase memory usage.  So we
-     absoultely do not want to collect after that.  */
+     absolutely do not want to collect after that.  */
   ggc_collect ();
 
   timevar_start (TV_PHASE_STREAM_OUT);
@@ -666,8 +696,6 @@ lto_main (void)
 
   if (!seen_error ())
     {
-      offload_handle_link_vars ();
-
       /* If WPA is enabled analyze the whole call graph and create an
 	 optimization plan.  Otherwise, read in all the function
 	 bodies and continue with optimization.  */

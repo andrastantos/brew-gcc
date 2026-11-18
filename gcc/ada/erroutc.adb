@@ -145,9 +145,7 @@ package body Erroutc is
          K := Keep;
 
          loop
-            Errors.Table (D).Deleted := True;
-
-            Decrease_Error_Msg_Count (Errors.Table (D));
+            Delete_Error_Msg (D);
 
             --  Substitute shorter of the two error messages
 
@@ -275,43 +273,227 @@ package body Erroutc is
       end if;
    end Debug_Output;
 
+   ------------------------------
+   -- Filter_And_Delete_Errors --
+   ------------------------------
+
+   procedure Filter_And_Delete_Errors is
+      E : Error_Msg_Id;
+   begin
+      E := First_Error_Msg;
+      while E /= No_Error_Msg loop
+         if Filter (E) then
+            Delete_Error_Msg (E);
+         end if;
+
+         E := Errors.Table (E).Next;
+      end loop;
+   end Filter_And_Delete_Errors;
+
+   -----------------------------
+   -- Delete_Duplicate_Errors --
+   -----------------------------
+
+   procedure Delete_Duplicate_Errors is
+      Cur : Error_Msg_Id;
+      Nxt : Error_Msg_Id;
+      F   : Error_Msg_Id;
+   begin
+      Cur := First_Error_Msg;
+      while Cur /= No_Error_Msg loop
+         Nxt := Errors.Table (Cur).Next;
+
+         F := Nxt;
+         while F /= No_Error_Msg
+           and then Errors.Table (F).Sptr.Ptr = Errors.Table (Cur).Sptr.Ptr
+         loop
+            Check_Duplicate_Message (Cur, F);
+            F := Errors.Table (F).Next;
+         end loop;
+
+         Cur := Nxt;
+      end loop;
+   end Delete_Duplicate_Errors;
+
+   ----------------------
+   -- Delete_Error_Msg --
+   ----------------------
+
+   procedure Delete_Error_Msg (E : Error_Msg_Id) is
+   begin
+      if not Errors.Table (E).Deleted then
+         Errors.Table (E).Deleted := True;
+         Decrease_Error_Msg_Count (Errors.Table (E));
+      end if;
+   end Delete_Error_Msg;
+
+   --------------------------------
+   -- Delete_Error_Msgs_In_Range --
+   --------------------------------
+
+   procedure Delete_Error_Msgs_In_Range (From : Source_Ptr; To : Source_Ptr) is
+
+      function Error_in_Range (E : Error_Msg_Id) return Boolean;
+      --  Returns True for a message that is to be purged. Also adjusts
+      --  error counts appropriately.
+
+      procedure Delete_Errors is new Filter_And_Delete_Errors (Error_in_Range);
+
+      --------------------
+      -- Error_in_Range --
+      --------------------
+
+      function Error_in_Range (E : Error_Msg_Id) return Boolean
+      is (E /= No_Error_Msg
+          and then Errors.Table (E).Sptr.Ptr > From
+          and then Errors.Table (E).Sptr.Ptr < To);
+
+   --  Start of processing for Delete_Error_Msgs_In_Range
+
+   begin
+      Delete_Errors;
+   end Delete_Error_Msgs_In_Range;
+
+   ----------------------------------------
+   -- Delete_Error_And_Continuation_Msgs --
+   ----------------------------------------
+
+   procedure Delete_Error_And_Continuation_Msgs (E : Error_Msg_Id) is
+      F : Error_Msg_Id;
+   begin
+      Delete_Error_Msg (E);
+
+      --  If this is a continuation, delete previous parts of message
+
+      F := E;
+      while Errors.Table (F).Msg_Cont loop
+         F := Errors.Table (F).Prev;
+         exit when F = No_Error_Msg;
+         Delete_Error_Msg (F);
+      end loop;
+
+      --  Delete any following continuations
+
+      F := E;
+      loop
+         F := Errors.Table (F).Next;
+         exit when F = No_Error_Msg;
+         exit when not Errors.Table (F).Msg_Cont;
+         Delete_Error_Msg (F);
+      end loop;
+   end Delete_Error_And_Continuation_Msgs;
+
+   -----------
+   -- dedit --
+   -----------
+
+   procedure dedit (Id : Edit_Id) is
+      E : Edit_Type renames Edits.Table (Id);
+   begin
+      w ("    Edit, Id = ", Int (Id));
+      w ("      Next          = ", Int (E.Next));
+      w ("      Text          = ",
+        (if E.Text /= null then E.Text.all else "<>"));
+      w ("      Span          = ", To_String (E.Span));
+   end dedit;
+
+   ----------
+   -- dfix --
+   ----------
+
+   procedure dfix (Id : Fix_Id) is
+      F : Fix_Type renames Fixes.Table (Id);
+      E_Id : Edit_Id := F.Edits;
+   begin
+      w ("  Fix, Id = ", Int (Id));
+      w ("    Next          = ", Int (F.Next));
+      w ("    Description   = ",
+        (if F.Description /= null then F.Description.all else "<>"));
+      while E_Id /= No_Edit loop
+         dedit (E_Id);
+         E_Id := Edits.Table (E_Id).Next;
+      end loop;
+   end dfix;
+
+   ----------
+   -- dloc --
+   ----------
+
+   procedure dloc (Id : Labeled_Span_Id) is
+      L : Labeled_Span_Type renames Locations.Table (Id);
+   begin
+      if L.Is_Primary then
+         w ("  Primary location, Id = ", Int (Id));
+      else
+         w ("  Secondary location, Id = ", Int (Id));
+      end if;
+      w ("    Label         = ",
+        (if L.Label /= null then L.Label.all else "<>"));
+      w ("    Span          = ", To_String (L.Span));
+      w ("    Is_Region     = ", L.Is_Region);
+      w ("    Next          = ", Int (L.Next));
+   end dloc;
+
    ----------
    -- dmsg --
    ----------
 
    procedure dmsg (Id : Error_Msg_Id) is
       E : Error_Msg_Object renames Errors.Table (Id);
+      Loc_Id : Labeled_Span_Id := E.Locations;
+      F_Id : Fix_Id := E.Fixes;
 
    begin
       w ("Dumping error message, Id = ", Int (Id));
-      w ("  Text               = ", E.Text.all);
-      w ("  Next               = ", Int (E.Next));
-      w ("  Prev               = ", Int (E.Prev));
-      w ("  Sfile              = ", Int (E.Sfile));
+      w ("  Text                = ", E.Text.all);
+      w ("  Next                = ", Int (E.Next));
+      w ("  Prev                = ", Int (E.Prev));
+      w ("  Sfile               = ", Int (E.Sfile));
 
       Write_Str
-        ("  Sptr               = ");
-      Write_Location (E.Sptr.Ptr);  --  ??? Do not write the full span for now
+        ("  Sptr                = ");
+      Write_Location (E.Sptr.Ptr);
       Write_Eol;
+      w ("  Span                = ", To_String (E.Sptr));
 
       Write_Str
-        ("  Optr               = ");
+        ("  Optr                = ");
       Write_Location (E.Optr.Ptr);
       Write_Eol;
+      w ("  Opan                = ", To_String (E.Optr));
 
       Write_Str
-        ("  Insertion_Sloc     = ");
+        ("  Insertion_Sloc      = ");
       Write_Location (E.Insertion_Sloc);
       Write_Eol;
 
-      w ("  Line               = ", Int (E.Line));
-      w ("  Col                = ", Int (E.Col));
-      w ("  Kind               = ", E.Kind'Img);
-      w ("  Warn_Err           = ", E.Warn_Err'Img);
-      w ("  Warn_Chr           = '" & E.Warn_Chr & ''');
-      w ("  Uncond             = ", E.Uncond);
-      w ("  Msg_Cont           = ", E.Msg_Cont);
-      w ("  Deleted            = ", E.Deleted);
+      while Loc_Id /= No_Labeled_Span loop
+         dloc (Loc_Id);
+         Loc_Id := Locations.Table (Loc_Id).Next;
+      end loop;
+
+      while Loc_Id /= No_Labeled_Span loop
+         dloc (Loc_Id);
+         Loc_Id := Locations.Table (Loc_Id).Next;
+      end loop;
+
+      while F_Id /= No_Fix loop
+         dfix (F_Id);
+         F_Id := Fixes.Table (F_Id).Next;
+      end loop;
+
+      w ("  Line                = ", Int (E.Line));
+      w ("  Col                 = ", Int (E.Col));
+      w ("  Kind                = ", E.Kind'Img);
+      w ("  Warn_Err            = ", E.Warn_Err'Img);
+      w ("  Warn_Chr            = '" & E.Warn_Chr & ''');
+      w ("  Uncond              = ", E.Uncond);
+      w ("  Compile_Time_Pragma = ", E.Compile_Time_Pragma);
+      w ("  Msg_Cont            = ", E.Msg_Cont);
+      w ("  Deleted             = ", E.Deleted);
+      w ("  Switch              = ", E.Switch'Img);
+      w ("  Diag_Id             = ", E.Id'Img);
+      w ("  Restriction         = ", E.Restriction'Img);
 
       Write_Eol;
    end dmsg;
@@ -513,6 +695,32 @@ package body Erroutc is
          E := No_Error_Msg;
       end if;
    end Next_Continuation_Msg;
+
+   ----------------------
+   -- Insert_Error_Msg --
+   ----------------------
+
+   procedure Insert_Error_Msg
+     (Msg      : Error_Msg_Id;
+      Prev_Msg : Error_Msg_Id;
+      Next_Msg : Error_Msg_Id)
+   is
+   begin
+      Errors.Table (Msg).Prev := Prev_Msg;
+      Errors.Table (Msg).Next := Next_Msg;
+
+      if Prev_Msg = No_Error_Msg then
+         First_Error_Msg := Msg;
+      else
+         Errors.Table (Prev_Msg).Next := Msg;
+      end if;
+
+      if Next_Msg = No_Error_Msg then
+         Last_Error_Msg := Msg;
+      else
+         Errors.Table (Next_Msg).Prev := Msg;
+      end if;
+   end Insert_Error_Msg;
 
    ----------------------
    -- Primary_Location --
@@ -1240,56 +1448,6 @@ package body Erroutc is
       end loop;
    end Prescan_Message;
 
-   --------------------
-   -- Purge_Messages --
-   --------------------
-
-   procedure Purge_Messages (From : Source_Ptr; To : Source_Ptr) is
-      E : Error_Msg_Id;
-
-      function To_Be_Purged (E : Error_Msg_Id) return Boolean;
-      --  Returns True for a message that is to be purged. Also adjusts
-      --  error counts appropriately.
-
-      ------------------
-      -- To_Be_Purged --
-      ------------------
-
-      function To_Be_Purged (E : Error_Msg_Id) return Boolean is
-      begin
-         if E /= No_Error_Msg
-           and then Errors.Table (E).Sptr.Ptr > From
-           and then Errors.Table (E).Sptr.Ptr < To
-         then
-            Decrease_Error_Msg_Count (Errors.Table (E));
-
-            return True;
-
-         else
-            return False;
-         end if;
-      end To_Be_Purged;
-
-   --  Start of processing for Purge_Messages
-
-   begin
-      while To_Be_Purged (First_Error_Msg) loop
-         First_Error_Msg := Errors.Table (First_Error_Msg).Next;
-      end loop;
-
-      E := First_Error_Msg;
-      while E /= No_Error_Msg loop
-         while To_Be_Purged (Errors.Table (E).Next) loop
-            Errors.Table (Errors.Table (E).Next).Deleted := True;
-
-            Errors.Table (E).Next :=
-              Errors.Table (Errors.Table (E).Next).Next;
-         end loop;
-
-         E := Errors.Table (E).Next;
-      end loop;
-   end Purge_Messages;
-
    ----------------
    -- Same_Error --
    ----------------
@@ -1555,46 +1713,6 @@ package body Erroutc is
    ----------------------------
 
    procedure Set_Msg_Insertion_Name is
-      procedure Replace_With_Attribute_Definition;
-      --  This procedure handles direct attribute definition names of the form:
-      --    'D' Prefix_Name "_" Attribute_Name "_Att"
-      --  Specifically, it replace the current Namet.Global_Name_Buffer with an
-      --  all lowercase string of the prefix, and a tick attribute; at this
-      --  stage there is no way to recognize more than an ending attribute ???
-      --
-      --  Note that, at this point, it is not possible to restore the original
-      --  casing thus lowercase is default.a
-
-      procedure Replace_With_Attribute_Definition is
-         First   : constant Integer := 2;
-         Last    : constant Integer := Name_Len - 4;
-         Att_Buf : Bounded_String (Max_Length => Name_Len - 7);
-      begin
-         Until_Tick :
-         for J in First .. Last loop
-
-            --  J could be at the position separating the prefix from the
-            --  attribute name.
-
-            if Name_Buffer (J) = '_' then
-               Att_Buf.Length := 0;
-               Append (Att_Buf, Name_Buffer (J + 1 .. Last));
-               Set_Casing (Att_Buf, All_Lower_Case);
-               if Is_Direct_Attribute_Definition_Name (Name_Find (Att_Buf))
-               then
-                  Name_Buffer (J) := ''';
-                  exit Until_Tick;
-               end if;
-            end if;
-         end loop Until_Tick;
-
-         --  Remove prefix 'D' and suffix "_Att"
-
-         Name_Buffer (1 .. Last - 1) := Name_Buffer (2 .. Last);
-         Name_Len := Last - 1;
-         Set_Casing (All_Lower_Case);
-      end Replace_With_Attribute_Definition;
-
    begin
       if Error_Msg_Name_1 = No_Name then
          null;
@@ -1640,13 +1758,7 @@ package body Erroutc is
          --  Else output with surrounding quotes in proper casing mode
 
          else
-            if Name_Buffer (1) = 'D'
-              and then Name_Buffer (Name_Len - 3 .. Name_Len) = "_Att"
-            then
-               Replace_With_Attribute_Definition;
-            else
-               Set_Casing (Identifier_Casing (Flag_Source));
-            end if;
+            Set_Casing (Identifier_Casing (Flag_Source));
 
             Set_Msg_Quote;
             Set_Msg_Name_Buffer;
@@ -2072,6 +2184,87 @@ package body Erroutc is
       return False;
    end Sloc_In_Range;
 
+   ------------------
+   -- To_File_Name --
+   ------------------
+
+   function To_File_Name (Sptr : Source_Ptr) return String is
+      Sfile    : constant Source_File_Index := Get_Source_File_Index (Sptr);
+      Ref_Name : constant File_Name_Type    :=
+        (if Full_Path_Name_For_Brief_Errors then Full_Ref_Name (Sfile)
+         else Reference_Name (Sfile));
+
+   begin
+      return Get_Name_String (Ref_Name);
+   end To_File_Name;
+
+   ---------------
+   -- To_String --
+   ---------------
+
+   function To_String (Sptr : Source_Ptr) return String is
+      function Line_To_String (Sptr : Source_Ptr) return String;
+      --  Converts the logical line number of the Sptr to a string.
+
+      function Column_To_String (Sptr : Source_Ptr) return String;
+      --  Converts the column number of the Sptr to a string. Column values
+      --  less than 10 are prefixed with a 0.
+
+      --------------------
+      -- Line_To_String --
+      --------------------
+
+      function Line_To_String (Sptr : Source_Ptr) return String is
+         Line    : constant Logical_Line_Number :=
+           Get_Logical_Line_Number (Sptr);
+         Img_Raw : constant String := Int'Image (Int (Line));
+
+      begin
+         return Img_Raw (Img_Raw'First + 1 .. Img_Raw'Last);
+      end Line_To_String;
+
+      ----------------------
+      -- Column_To_String --
+      ----------------------
+
+      function Column_To_String (Sptr : Source_Ptr) return String is
+         Col     : constant Column_Number := Get_Column_Number (Sptr);
+         Img_Raw : constant String := Int'Image (Int (Col));
+
+      begin
+         return
+           (if Col < 10 then "0" else "")
+           & Img_Raw (Img_Raw'First + 1 .. Img_Raw'Last);
+      end Column_To_String;
+
+      --  Start of processing for To_String
+   begin
+      return
+        To_File_Name (Sptr)
+        & ":"
+        & Line_To_String (Sptr)
+        & ":"
+        & Column_To_String (Sptr);
+   end To_String;
+
+   ---------------
+   -- To_String --
+   ---------------
+
+   function To_String (Span : Source_Span) return String is
+   begin
+      return
+        "[" & To_String (Span.First) & " .. " & To_String (Span.Last) & "]";
+   end To_String;
+
+   ---------------------------
+   -- Warning_Is_Suppressed --
+   ---------------------------
+
+   function Warning_Is_Suppressed
+     (Loc : Source_Ptr; Msg : String_Ptr; Tag : String := "") return Boolean
+   is (Warning_Specifically_Suppressed (Loc, Msg, Tag) /= No_String);
+
    -------------------------------------
    -- Warning_Specifically_Suppressed --
    -------------------------------------
@@ -2152,6 +2345,29 @@ package body Erroutc is
          return No_String;
       end if;
    end Warnings_Suppressed;
+
+   --------------------------------------
+   -- Write_All_Errors_In_Brief_Format --
+   --------------------------------------
+
+   procedure Write_All_Errors_In_Brief_Format is
+      E : Error_Msg_Id;
+   begin
+      Set_Standard_Error;
+
+      E := First_Error_Msg;
+      while E /= No_Error_Msg loop
+         if not Errors.Table (E).Deleted then
+            Output_Msg_Location (E);
+            Output_Msg_Text (E);
+            Write_Eol;
+         end if;
+
+         E := Errors.Table (E).Next;
+      end loop;
+
+      Set_Standard_Output;
+   end Write_All_Errors_In_Brief_Format;
 
    -------------------------
    -- Write_Error_Summary --
@@ -2246,5 +2462,29 @@ package body Erroutc is
       Write_Eol;
       Set_Standard_Output;
    end Write_Error_Summary;
+
+   ----------------------
+   -- Write_Max_Errors --
+   ----------------------
+
+   procedure Write_Max_Errors is
+   begin
+      if Maximum_Messages /= 0 then
+         if Warnings_Detected >= Maximum_Messages then
+            Set_Standard_Error;
+            Write_Line ("maximum number of warnings output");
+            Write_Line ("any further warnings suppressed");
+            Set_Standard_Output;
+         end if;
+
+         --  If too many errors print message
+
+         if Total_Errors_Detected >= Maximum_Messages then
+            Set_Standard_Error;
+            Write_Line ("fatal error: maximum number of errors detected");
+            Set_Standard_Output;
+         end if;
+      end if;
+   end Write_Max_Errors;
 
 end Erroutc;

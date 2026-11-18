@@ -270,6 +270,29 @@ GOMP_cancel (int which, bool do_cancel)
   gomp_team_barrier_cancel (team);
   return true;
 }
+
+/* Return true if the current thread number equals TID.
+   Used to implement the masked construct's filter clause.  */
+
+bool
+GOMP_has_masked_thread_num (int tid)
+{
+  return tid == gomp_thread ()->ts.team_id;
+}
+
+/* OMPT variant enabled by -fopenmp-ompt.  */
+
+bool
+GOMP_has_masked_thread_num_with_end (int tid)
+{
+  return tid == gomp_thread ()->ts.team_id;
+}
+
+/* Stub for OMPT callback enabled by -fopenmp-ompt.  */
+
+void
+GOMP_masked_end (void)
+{}
 
 /* The public OpenMP API for thread and team related inquiries.  */
 
@@ -281,9 +304,25 @@ omp_get_num_threads (void)
 }
 
 int
+omp_get_num_threads_dim (int dim)
+{
+  if (dim == 0)
+    return omp_get_num_threads ();
+  return 1;
+}
+
+int
 omp_get_thread_num (void)
 {
   return gomp_thread ()->ts.team_id;
+}
+
+int
+omp_get_thread_num_dim (int dim)
+{
+  if (dim == 0)
+    return omp_get_thread_num ();
+  return 0;
 }
 
 /* This wasn't right for OpenMP 2.5.  Active region used to be non-zero
@@ -334,7 +373,9 @@ omp_get_active_level (void)
 }
 
 ialias (omp_get_num_threads)
+ialias (omp_get_num_threads_dim)
 ialias (omp_get_thread_num)
+ialias (omp_get_thread_num_dim)
 ialias (omp_in_parallel)
 ialias (omp_get_level)
 ialias (omp_get_ancestor_thread_num)

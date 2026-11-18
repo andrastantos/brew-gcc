@@ -148,7 +148,6 @@ static constexpr cp_feature_info cp_feature_table[] =
   { "cxx_relaxed_constexpr", cxx14 },
   { "cxx_return_type_deduction", cxx14 },
   { "cxx_variable_templates", cxx14 },
-  { "modules", &flag_modules },
 };
 
 /* Register C++ language features for __has_{feature,extension}.  */
@@ -227,6 +226,7 @@ cp_tree_size (enum tree_code code)
     case PRECONDITION_STMT:	return sizeof (tree_exp);
     case POSTCONDITION_STMT:	return sizeof (tree_exp);
     case TU_LOCAL_ENTITY:	return sizeof (tree_tu_local_entity);
+    case REQUIRES_EXPR:		return sizeof (tree_requires_expr);
     default:
       switch (TREE_CODE_CLASS (code))
 	{
@@ -572,6 +572,9 @@ names_builtin_p (const char *name)
   switch (C_RID_CODE (id))
     {
     case RID_ADDRESSOF:
+    case RID_BUILTIN_BITREVERSEG:
+    case RID_BUILTIN_BSWAPG:
+    case RID_BUILTIN_CLMULG:
     case RID_BUILTIN_CONVERTVECTOR:
     case RID_BUILTIN_HAS_ATTRIBUTE:
     case RID_BUILTIN_SHUFFLE:
@@ -620,6 +623,7 @@ cp_common_init_ts (void)
   MARK_TS_TYPED (LAMBDA_EXPR);
   MARK_TS_TYPED (TYPE_ARGUMENT_PACK);
   MARK_TS_TYPED (TRAIT_EXPR);
+  MARK_TS_TYPED (REQUIRES_EXPR);
 
   /* Random new trees.  */
   MARK_TS_COMMON (BASELINK);
@@ -645,7 +649,6 @@ cp_common_init_ts (void)
   MARK_TS_TYPE_NON_COMMON (TEMPLATE_TYPE_PARM);
   MARK_TS_TYPE_NON_COMMON (TYPE_PACK_EXPANSION);
   MARK_TS_TYPE_NON_COMMON (PACK_INDEX_TYPE);
-  MARK_TS_TYPE_NON_COMMON (META_TYPE);
   MARK_TS_TYPE_NON_COMMON (SPLICE_SCOPE);
 
   /* Statements.  */
@@ -715,7 +718,6 @@ cp_common_init_ts (void)
   MARK_TS_EXP (DISJ_CONSTR);
   MARK_TS_EXP (ATOMIC_CONSTR);
   MARK_TS_EXP (NESTED_REQ);
-  MARK_TS_EXP (REQUIRES_EXPR);
   MARK_TS_EXP (SIMPLE_REQ);
   MARK_TS_EXP (TYPE_REQ);
 
@@ -742,5 +744,12 @@ cp_handle_option (size_t scode, const char *arg, HOST_WIDE_INT value,
 
   return c_common_handle_option (scode, arg, value, kind, loc, handlers);
 }
+
+/* Like cp_type_quals, but returns a qualifier set.  Will become unnecessary
+   once the C++ FE supports named address spaces.  */
+
+qualifier_set
+cp_type_quals_as_set (const_tree type)
+{ return { cp_type_quals (type) }; }
 
 #include "gt-cp-cp-objcp-common.h"

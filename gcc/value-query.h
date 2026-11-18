@@ -75,10 +75,15 @@ public:
   virtual bool range_on_entry (vrange &r, basic_block bb, tree expr);
   virtual bool range_on_exit (vrange &r, basic_block bb, tree expr);
 
+  // Indicate that NAME should be considered for a range update.
+  virtual void update_range_info (tree name);
+  // Provide a specific range update to NAME.
   virtual void update_range_info (tree name, const vrange &r);
+  // Reset range information for NAME.
+  virtual void reset_range_info (tree name);
 
   inline class relation_oracle &relation () const  { return *m_relation; }
-  void create_relation_oracle (bool do_trans_p = true);
+  void create_relation_oracle ();
   void destroy_relation_oracle ();
 
   inline class infer_range_oracle &infer_oracle () const { return *m_infer; }
@@ -90,6 +95,8 @@ public:
   void create_gori (int not_executable_flag = 0, int sw_max_edges = INT_MAX);
   void destroy_gori ();
 
+  // Return TRUE if this path query can be a current_range_query.
+  virtual bool active_query_compatible_p () { return true; }
   virtual void dump (FILE *);
 
 protected:
@@ -133,6 +140,10 @@ get_range_query (const struct function *fun)
 {
   return (fun && fun->x_range_query) ? fun->x_range_query : &global_ranges;
 }
+
+// Provide a way to change the current range query if it is valid, return
+// the previous query.
+range_query *set_range_query (struct function *fun, range_query *q);
 
 // Query the global range of NAME in function F.  Default to cfun.
 extern void gimple_range_global (vrange &v, tree name,

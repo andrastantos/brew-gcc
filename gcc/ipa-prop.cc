@@ -21,6 +21,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "system.h"
 #include "coretypes.h"
 #include "backend.h"
+#include "target.h"
 #include "rtl.h"
 #include "tree.h"
 #include "gimple.h"
@@ -63,6 +64,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "lto-streamer.h"
 #include "attribs.h"
 #include "attr-callback.h"
+#include "callback-info.h"
 
 /* Function summary where the parameter infos are actually stored. */
 ipa_node_params_t *ipa_node_params_sum = NULL;
@@ -83,7 +85,7 @@ struct ipa_vr_ggc_hash_traits : public ggc_cache_remove <ipa_vr *>
     {
       // This never get called, except in the verification code, as
       // ipa_get_value_range() calculates the hash itself.  This
-      // function is mostly here for completness' sake.
+      // function is mostly here for completeness' sake.
       value_range vr;
       p->get_vrange (vr);
       inchash::hash hstate;
@@ -148,7 +150,7 @@ ipa_vr::ipa_vr ()
 }
 
 ipa_vr::ipa_vr (const vrange &r)
-  : m_storage (ggc_alloc_vrange_storage (r)),
+  : m_storage (ggc_alloc_vrange_storage (r, false /* shared_p */)),
     m_type (r.type ())
 {
 }
@@ -177,7 +179,7 @@ ipa_vr::equal_p (const ipa_vr &o) const
 void
 ipa_vr::get_vrange (value_range &r) const
 {
-  r.set_type (m_type);
+  r.set_range_class (m_type);
   m_storage->get_vrange (r, m_type);
 }
 
@@ -320,7 +322,7 @@ noted_fnptr_hasher::equal (noted_fnptr_store *v1,
 }
 
 
-/* Structore holding the information that all stores to OFFSET of a particular
+/* Structure holding the information that all stores to OFFSET of a particular
    record type RECTYPE was storing a pointer to specific function or that there
    were multiple such functions. */
 
@@ -806,7 +808,7 @@ ipa_set_ancestor_jf (struct ipa_jump_func *jfunc, HOST_WIDE_INT offset,
   jfunc->value.ancestor.keep_null = keep_null;
 }
 
-/* Get IPA BB information about the given BB.  FBI is the context of analyzis
+/* Get IPA BB information about the given BB.  FBI is the context of analysis
    of this function body.  */
 
 static struct ipa_bb_info *
@@ -918,7 +920,7 @@ check_stmt_for_type_change (ao_ref *ao ATTRIBUTE_UNUSED, tree vdef, void *data)
 
 /* See if ARG is PARAM_DECl describing instance passed by pointer
    or reference in FUNCTION.  Return false if the dynamic type may change
-   in between beggining of the function until CALL is invoked.
+   in between beginning of the function until CALL is invoked.
 
    Generally functions are not allowed to change type of such instances,
    but they call destructors.  We assume that methods cannot destroy the THIS
@@ -929,10 +931,10 @@ static bool
 param_type_may_change_p (tree function, tree arg, gimple *call)
 {
   /* Pure functions cannot do any changes on the dynamic type;
-     that require writting to memory.  */
+     that require writing to memory.  */
   if (flags_from_decl_or_type (function) & (ECF_PURE | ECF_CONST))
     return false;
-  /* We need to check if we are within inlined consturctor
+  /* We need to check if we are within inlined constructor
      or destructor (ideally we would have way to check that the
      inline cdtor is actually working on ARG, but we don't have
      easy tie on this, so punt on all non-pure cdtors.
@@ -977,7 +979,7 @@ param_type_may_change_p (tree function, tree arg, gimple *call)
    returned by get_ref_base_and_extent, as is the offset.
 
    This is helper function for detect_type_change and detect_type_change_ssa
-   that does the heavy work which is usually unnecesary.  */
+   that does the heavy work which is usually unnecessary.  */
 
 static bool
 detect_type_change_from_memory_writes (ipa_func_body_info *fbi, tree arg,
@@ -1107,7 +1109,7 @@ find_dominating_aa_status (struct ipa_func_body_info *fbi, basic_block bb,
 }
 
 /* Get AA status structure for the given BB and parameter with INDEX.  Allocate
-   structures and/or intialize the result with a dominating description as
+   structures and/or initialize the result with a dominating description as
    necessary.  */
 
 static struct ipa_param_aa_status *
@@ -1247,8 +1249,8 @@ parm_ref_data_pass_through_p (struct ipa_func_body_info *fbi, int index,
   bool modified = false;
   ao_ref refd;
 
-  /* It's unnecessary to calculate anything about memory contnets for a const
-     function because it is not goin to use it.  But do not cache the result
+  /* It's unnecessary to calculate anything about memory contents for a const
+     function because it is not going to use it.  But do not cache the result
      either.  Also, no such calculations for non-pointers.  */
   if (!gimple_vuse (call)
       || !POINTER_TYPE_P (TREE_TYPE (parm)))
@@ -1276,6 +1278,174 @@ parm_ref_data_pass_through_p (struct ipa_func_body_info *fbi, int index,
   return !modified;
 }
 
+/* Fallback for ipa_load_from_parm_agg when OP is a 1-byte integral (char)
+   load whose byte offset is unknown (for example due to a variable ARRAY_REF
+   index or pointer arithmetic from a parameter).  Use get_base_address to
+   strip component references down to a MEM_REF and walk backwards through
+   pointer adjustments, copies, conversions and PHI nodes using a worklist and
+   a visited set of SSA_NAME versions, verifying that every reachable path
+   originates from the same function parameter.  If so, record *OFFSET_P as
+   -1 and set *UNKNOWN_OFFSET_P to true.  */
+
+static bool
+ipa_load_from_parm_agg_unknown_offset (struct ipa_func_body_info *fbi,
+				       vec<ipa_param_descriptor, va_gc>
+					 *descriptors,
+				       gimple *stmt, tree op, int *index_p,
+				       HOST_WIDE_INT *offset_p,
+				       poly_int64 *size_p, bool *by_ref_p,
+				       bool *guaranteed_unmodified,
+				       bool *unknown_offset_p)
+{
+  /* Currently we only work on STRING_CST when evaluating unknown-offset
+     conditions, so we do not record other cases (such as by-value
+     aggregates or general constructors).
+     TODO: Support general constructors.  */
+  tree type = TREE_TYPE (op);
+  if (TREE_CODE (type) != INTEGER_TYPE
+      || TYPE_PRECISION (type) != BITS_PER_UNIT)
+    return false;
+
+  tree base = get_base_address (op);
+  if (!base || TREE_CODE (base) != MEM_REF)
+    return false;
+
+  tree start_ptr = TREE_OPERAND (base, 0);
+  if (TREE_CODE (start_ptr) != SSA_NAME)
+    return false;
+
+  bool null_invalid_p
+    = ((fbi && fbi->node
+	? opt_for_fn (fbi->node->decl, flag_delete_null_pointer_checks)
+	: flag_delete_null_pointer_checks)
+       && !targetm.addr_space.zero_address_valid
+	     (TYPE_ADDR_SPACE (TREE_TYPE (base))));
+
+  /* Walk backwards through pointer adjustments, copies, conversions and PHIs,
+     verifying that all reachable definitions originate from the same function
+     parameter.  Since BASE is dereferenced at STMT and POINTER_PLUS_EXPR,
+     same-address-space conversions and PHIs preserve null provenance,
+     integer_zerop operands cannot reach a valid dereference when
+     NULL_INVALID_P holds and can be skipped (FOUND_INDEX < 0 still ensures
+     at least one parameter path exists).  */
+  auto_vec<tree, 8> worklist;
+  hash_set<int_hash<unsigned, 0>> visited;
+  visited.add (SSA_NAME_VERSION (start_ptr));
+  worklist.quick_push (start_ptr);
+
+  int found_index = -1;
+  tree parm_ptr = NULL_TREE;
+  bool saw_phi = false;
+  int steps = 0;
+
+  while (!worklist.is_empty ())
+    {
+      tree ptr = worklist.pop ();
+      if (SSA_NAME_IS_DEFAULT_DEF (ptr))
+	{
+	  tree parm = SSA_NAME_VAR (ptr);
+	  if (!parm || TREE_CODE (parm) != PARM_DECL)
+	    return false;
+	  int index = ipa_get_param_decl_index_1 (descriptors, parm);
+	  if (index < 0
+	      || (found_index != -1 && found_index != index))
+	    return false;
+	  found_index = index;
+	  parm_ptr = ptr;
+	  continue;
+	}
+
+      if (++steps > param_ipa_jump_function_lookups)
+	return false;
+
+      gimple *def = SSA_NAME_DEF_STMT (ptr);
+      if (gphi *phi = dyn_cast <gphi *> (def))
+	{
+	  saw_phi = true;
+	  unsigned int n = gimple_phi_num_args (phi);
+	  for (unsigned int i = 0; i < n; i++)
+	    {
+	      tree arg = gimple_phi_arg_def (phi, i);
+	      if (null_invalid_p && integer_zerop (arg))
+		continue;
+	      if (TREE_CODE (arg) != SSA_NAME)
+		return false;
+	      if (!visited.add (SSA_NAME_VERSION (arg)))
+		worklist.safe_push (arg);
+	    }
+	}
+      else if (is_gimple_assign (def))
+	{
+	  enum tree_code rhs_code = gimple_assign_rhs_code (def);
+	  tree rhs1 = gimple_assign_rhs1 (def);
+	  if (rhs_code == POINTER_PLUS_EXPR
+	      || rhs_code == SSA_NAME
+	      || (CONVERT_EXPR_CODE_P (rhs_code)
+		  && POINTER_TYPE_P (TREE_TYPE (ptr))
+		  && POINTER_TYPE_P (TREE_TYPE (rhs1))))
+	    {
+	      if (null_invalid_p && integer_zerop (rhs1))
+		continue;
+	      if (TREE_CODE (rhs1) != SSA_NAME)
+		return false;
+	      if (!visited.add (SSA_NAME_VERSION (rhs1)))
+		worklist.safe_push (rhs1);
+	    }
+	  else if (rhs_code == ADDR_EXPR)
+	    {
+	      tree inner = get_base_address (TREE_OPERAND (rhs1, 0));
+	      if (!inner || TREE_CODE (inner) != MEM_REF)
+		return false;
+	      tree next = TREE_OPERAND (inner, 0);
+	      if (null_invalid_p && integer_zerop (next))
+		continue;
+	      if (TREE_CODE (next) != SSA_NAME)
+		return false;
+	      if (!visited.add (SSA_NAME_VERSION (next)))
+		worklist.safe_push (next);
+	    }
+	  else
+	    {
+	      int index = load_from_unmodified_param (fbi, descriptors, def);
+	      if (index < 0
+		  || (found_index != -1 && found_index != index))
+		return false;
+	      found_index = index;
+	      parm_ptr = ptr;
+	    }
+	}
+      else
+	return false;
+    }
+
+  if (found_index < 0)
+    return false;
+
+  /* When a PHI was crossed (for instance a pointer induction variable in a
+     loop), a store to ptr + 1 in a previous iteration aliases *ptr in the
+     next iteration even though both share the same SSA_NAME base, so check
+     preservation of the whole pointed-to object via
+     parm_ref_data_pass_through_p.  */
+  bool data_preserved
+    = (gimple_vuse (stmt)
+       ? (saw_phi
+	  ? parm_ref_data_pass_through_p (fbi, found_index, stmt, parm_ptr)
+	  : parm_ref_data_preserved_p (fbi, found_index, stmt, op))
+       : false);
+  if (!data_preserved && !guaranteed_unmodified)
+    return false;
+
+  *index_p = found_index;
+  *offset_p = -1;
+  *by_ref_p = true;
+  if (size_p)
+    *size_p = BITS_PER_UNIT;
+  if (guaranteed_unmodified)
+    *guaranteed_unmodified = data_preserved;
+  *unknown_offset_p = true;
+  return true;
+}
+
 /* Return true if we can prove that OP is a memory reference loading
    data from an aggregate passed as a parameter.
 
@@ -1284,6 +1454,10 @@ parm_ref_data_pass_through_p (struct ipa_func_body_info *fbi, int index,
    load in STMT.  If GUARANTEED_UNMODIFIED is not NULL, it will return true even
    if it cannot prove the value has not been modified, in that case it will
    store false to *GUARANTEED_UNMODIFIED, otherwise it will store true there.
+
+   If UNKNOWN_OFFSET_P is non-NULL, also accept 1-byte integral (char) loads at
+   unknown (variable) offsets through a parameter pointer; in that case store
+   true to *UNKNOWN_OFFSET_P and -1 to *OFFSET_P.
 
    INFO and PARMS_AINFO describe parameters of the current function (but the
    latter can be NULL), STMT is the load statement.  If function returns true,
@@ -1299,84 +1473,96 @@ ipa_load_from_parm_agg (struct ipa_func_body_info *fbi,
 			vec<ipa_param_descriptor, va_gc> *descriptors,
 			gimple *stmt, tree op, int *index_p,
 			HOST_WIDE_INT *offset_p, poly_int64 *size_p,
-			bool *by_ref_p, bool *guaranteed_unmodified)
+			bool *by_ref_p, bool *guaranteed_unmodified,
+			bool *unknown_offset_p)
 {
   int index;
   HOST_WIDE_INT size;
   bool reverse;
-  tree base = get_ref_base_and_extent_hwi (op, offset_p, &size, &reverse);
 
-  if (!base
-      || (*offset_p / BITS_PER_UNIT) > UINT_MAX)
-    return false;
+  if (unknown_offset_p)
+    *unknown_offset_p = false;
 
   /* We can not propagate across volatile loads.  */
   if (TREE_THIS_VOLATILE (op))
     return false;
 
-  if (DECL_P (base))
+  tree base = get_ref_base_and_extent_hwi (op, offset_p, &size, &reverse);
+
+  if (base && (*offset_p / BITS_PER_UNIT) <= UINT_MAX)
     {
-      int index = ipa_get_param_decl_index_1 (descriptors, base);
-      if (index >= 0
-	  && parm_preserved_before_stmt_p (fbi, index, stmt, op))
+      if (DECL_P (base))
 	{
-	  *index_p = index;
-	  *by_ref_p = false;
-	  if (size_p)
-	    *size_p = size;
-	  if (guaranteed_unmodified)
-	    *guaranteed_unmodified = true;
-	  return true;
+	  int index = ipa_get_param_decl_index_1 (descriptors, base);
+	  if (index >= 0
+	      && parm_preserved_before_stmt_p (fbi, index, stmt, op))
+	    {
+	      *index_p = index;
+	      *by_ref_p = false;
+	      if (size_p)
+		*size_p = size;
+	      if (guaranteed_unmodified)
+		*guaranteed_unmodified = true;
+	      return true;
+	    }
+	  return false;
 	}
-      return false;
+
+      if (TREE_CODE (base) == MEM_REF
+	  && TREE_CODE (TREE_OPERAND (base, 0)) == SSA_NAME
+	  && integer_zerop (TREE_OPERAND (base, 1)))
+	{
+	  if (SSA_NAME_IS_DEFAULT_DEF (TREE_OPERAND (base, 0)))
+	    {
+	      tree parm = SSA_NAME_VAR (TREE_OPERAND (base, 0));
+	      index = ipa_get_param_decl_index_1 (descriptors, parm);
+	    }
+	  else
+	    {
+	      /* This branch catches situations where a pointer parameter is
+		 not a gimple register, for example:
+
+		 void hip7(S*) (struct S * p)
+		 {
+		 void (*<T2e4>) (struct S *) D.1867;
+		 struct S * p.1;
+
+		 <bb 2>:
+		 p.1_1 = p;
+		 D.1867_2 = p.1_1->f;
+		 D.1867_2 ();
+		 gdp = &p;
+	      */
+
+	      gimple *def = SSA_NAME_DEF_STMT (TREE_OPERAND (base, 0));
+	      index = load_from_unmodified_param (fbi, descriptors, def);
+	    }
+
+	  if (index >= 0)
+	    {
+	      bool data_preserved = parm_ref_data_preserved_p (fbi, index, stmt,
+							       op);
+	      if (!data_preserved && !guaranteed_unmodified)
+		return false;
+
+	      *index_p = index;
+	      *by_ref_p = true;
+	      if (size_p)
+		*size_p = size;
+	      if (guaranteed_unmodified)
+		*guaranteed_unmodified = data_preserved;
+	      return true;
+	    }
+	}
     }
 
-  if (TREE_CODE (base) != MEM_REF
-	   || TREE_CODE (TREE_OPERAND (base, 0)) != SSA_NAME
-	   || !integer_zerop (TREE_OPERAND (base, 1)))
+  if (!unknown_offset_p)
     return false;
 
-  if (SSA_NAME_IS_DEFAULT_DEF (TREE_OPERAND (base, 0)))
-    {
-      tree parm = SSA_NAME_VAR (TREE_OPERAND (base, 0));
-      index = ipa_get_param_decl_index_1 (descriptors, parm);
-    }
-  else
-    {
-      /* This branch catches situations where a pointer parameter is not a
-	 gimple register, for example:
-
-	 void hip7(S*) (struct S * p)
-	 {
-	 void (*<T2e4>) (struct S *) D.1867;
-	 struct S * p.1;
-
-	 <bb 2>:
-	 p.1_1 = p;
-	 D.1867_2 = p.1_1->f;
-	 D.1867_2 ();
-	 gdp = &p;
-      */
-
-      gimple *def = SSA_NAME_DEF_STMT (TREE_OPERAND (base, 0));
-      index = load_from_unmodified_param (fbi, descriptors, def);
-    }
-
-  if (index >= 0)
-    {
-      bool data_preserved = parm_ref_data_preserved_p (fbi, index, stmt, op);
-      if (!data_preserved && !guaranteed_unmodified)
-	return false;
-
-      *index_p = index;
-      *by_ref_p = true;
-      if (size_p)
-	*size_p = size;
-      if (guaranteed_unmodified)
-	*guaranteed_unmodified = data_preserved;
-      return true;
-    }
-  return false;
+  return ipa_load_from_parm_agg_unknown_offset (fbi, descriptors, stmt, op,
+						index_p, offset_p, size_p,
+						by_ref_p, guaranteed_unmodified,
+						unknown_offset_p);
 }
 
 /* If STMT is an assignment that loads a value from a parameter declaration,
@@ -1908,7 +2094,7 @@ build_agg_jump_func_from_list (struct ipa_known_agg_contents_list *list,
 
       if (list->value.pass_through.formal_id >= 0)
 	{
-	  /* Content value is derived from some formal paramerter.  */
+	  /* Content value is derived from some formal parameter.  */
 	  if (list->value.offset >= 0)
 	    item.jftype = IPA_JF_LOAD_AGG;
 	  else
@@ -2012,7 +2198,7 @@ analyze_agg_content_value (struct ipa_func_body_info *fbi,
 	   __x_MOD_foo (&parm.6, b_31(D));
 
 	 The aggregate function describing parm.6.dim[0].stride is encoded as a
-	 PASS-THROUGH jump function with ASSERT_EXPR operation whith operand 1
+	 PASS-THROUGH jump function with ASSERT_EXPR operation with operand 1
 	 (the constant from the PHI node).  */
 
       if (gimple_phi_num_args (phi) != 2
@@ -2277,7 +2463,7 @@ determine_known_aggregate_parts (struct ipa_func_body_info *fbi,
 	{
 	  dom_vuse = get_continuation_for_phi (phi, &r, true,
 					       fbi->aa_walk_budget,
-					       &visited, false, NULL, NULL);
+					       &visited, NULL, NULL);
 	  continue;
 	}
 
@@ -2374,7 +2560,7 @@ ipa_get_callee_param_type (struct cgraph_edge *e, int i)
    ipa_vr_hash_table or allocate it in GC memory.  */
 
 static ipa_vr *
-ipa_get_value_range (const vrange &tmp)
+ipa_get_value_range_1 (const vrange &tmp)
 {
   inchash::hash hstate;
   inchash::add_vrange (tmp, hstate);
@@ -2386,6 +2572,34 @@ ipa_get_value_range (const vrange &tmp)
   ipa_vr *vr = new (ggc_alloc<ipa_vr> ()) ipa_vr (tmp);
   *slot = vr;
   return vr;
+}
+
+/* Wrapper around ipa_get_value_range_1 which will remove any local pointer
+   information from prange.  */
+
+static ipa_vr *
+ipa_get_value_range (const vrange &tmp)
+{
+  /* A points-to that names something only invariant within the caller --
+     the address of one of its locals, say -- must not travel to the callee.
+     Same restriction as ipa_record_return_value_range_1; see PR125857.
+     Drop just the points-to rather than the whole range, as the bounds and
+     the bitmask remain valid.  */
+  if (is_a <prange> (tmp))
+    {
+      prange pr = as_a <prange> (tmp);
+      if (pr.clear_function_local_addr ())
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    {
+	      fprintf (dump_file, "Dropping function-local address from ");
+	      tmp.dump (dump_file);
+	      fprintf (dump_file, "\n");
+	    }
+	}
+      return ipa_get_value_range_1 (pr);
+    }
+  return ipa_get_value_range_1 (tmp);
 }
 
 /* Assign to JF a pointer to a range just like TMP but either fetch a
@@ -2480,18 +2694,6 @@ skip_a_safe_conversion_op (tree t)
   return t;
 }
 
-/* Initializes ipa_edge_args summary of CBE given its callback-carrying edge.
-   This primarily means allocating the correct amount of jump functions.  */
-
-static inline void
-init_callback_edge_summary (struct cgraph_edge *cbe, tree attr)
-{
-  ipa_edge_args *cb_args = ipa_edge_args_sum->get_create (cbe);
-  size_t jf_vec_length = callback_num_args(attr);
-  vec_safe_grow_cleared (cb_args->jump_functions,
-			 jf_vec_length, true);
-}
-
 /* Compute jump function for all arguments of callsite CS and insert the
    information in the jump_functions array in the ipa_edge_args corresponding
    to this callsite.  */
@@ -2503,7 +2705,8 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
   ipa_node_params *info = ipa_node_params_sum->get (cs->caller);
   ipa_edge_args *args = ipa_edge_args_sum->get_create (cs);
   gcall *call = cs->call_stmt;
-  int n, arg_num = gimple_call_num_args (call);
+  callback_info *ci = callback_info_sum->get (cs);
+  int n, arg_num = callback_call_num_args_summary (call, ci);
   bool useful_context = false;
 
   if (arg_num == 0 || args->jump_functions)
@@ -2512,8 +2715,6 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
   if (flag_devirtualize)
     vec_safe_grow_cleared (args->polymorphic_call_contexts, arg_num, true);
 
-  if (gimple_call_internal_p (call))
-    return;
   if (ipa_func_spec_opts_forbid_analysis_p (cs->caller))
     return;
 
@@ -2521,7 +2722,17 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
   for (n = 0; n < arg_num; n++)
     {
       struct ipa_jump_func *jfunc = ipa_get_ith_jump_func (args, n);
-      tree arg = gimple_call_arg (call, n);
+      tree arg;
+      if (cs->callback)
+	{
+	  gcc_assert (cs->callee->assume_function);
+	  int remapped_idx = ci->arg_mapping[n];
+	  if (remapped_idx == ARG_MAPPING_UNKNOWN_IDX)
+	    continue;
+	  arg = gimple_call_arg (call, remapped_idx);
+	}
+      else
+	arg = gimple_call_arg (call, n);
       tree param_type = ipa_get_callee_param_type (cs, n);
       if (flag_devirtualize && POINTER_TYPE_P (TREE_TYPE (arg)))
 	{
@@ -2543,8 +2754,7 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
 	      || vr.varying_p ()
 	      || vr.undefined_p ())
 	    {
-	      bool strict_overflow = false;
-	      if (tree_single_nonzero_warnv_p (arg, &strict_overflow))
+	      if (tree_single_nonzero_p (arg))
 		vr.set_nonzero (TREE_TYPE (arg));
 	      else
 		vr.set_varying (TREE_TYPE (arg));
@@ -2608,11 +2818,11 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
 		  /* Argument is a pointer to a function. Look for a callback
 		     attribute describing this argument.  */
 		  tree callback_attr
-		    = lookup_attribute (CALLBACK_ATTR_IDENT,
+		    = lookup_attribute ("callback_only",
 					DECL_ATTRIBUTES (cs->callee->decl));
 		  for (; callback_attr;
 		       callback_attr
-		       = lookup_attribute (CALLBACK_ATTR_IDENT,
+		       = lookup_attribute ("callback_only",
 					   TREE_CHAIN (callback_attr)))
 		    if (callback_get_fn_index (callback_attr) == n)
 		      break;
@@ -2632,16 +2842,14 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
 		    }
 
 		  /* If a callback attribute describing this pointer is found,
-			   create a callback edge to the pointee function to
+		     create a callback edge to the pointee function to
 		     allow for further optimizations.  */
 		  if (callback_attr)
 		    {
 		      cgraph_node *kernel_node
 			= cgraph_node::get_create (pointee);
-		      unsigned callback_id = n;
 		      cgraph_edge *cbe
-			= cs->make_callback (kernel_node, callback_id);
-		      init_callback_edge_summary (cbe, callback_attr);
+			= cs->make_callback (kernel_node, n, callback_attr);
 		      callback_edges.safe_push (cbe);
 		    }
 		}
@@ -2717,12 +2925,12 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
 	  cgraph_edge *callback_edge = callback_edges[j];
 	  ipa_edge_args *cb_summary
 	    = ipa_edge_args_sum->get_create (callback_edge);
-	  auto_vec<int> arg_mapping
-	    = callback_get_arg_mapping (callback_edge, cs);
+	  callback_info *ci = callback_info_sum->get (callback_edge);
+	  auto_vec<int> &arg_mapping = ci->arg_mapping;
 	  unsigned i;
 	  for (i = 0; i < arg_mapping.length (); i++)
 	    {
-	      if (arg_mapping[i] == -1)
+	      if (arg_mapping[i] == ARG_MAPPING_UNKNOWN_IDX)
 		continue;
 	      class ipa_jump_func *src
 		= ipa_get_ith_jump_func (args, arg_mapping[i]);
@@ -3219,6 +3427,19 @@ ipa_analyze_call_uses (struct ipa_func_body_info *fbi, gcall *call)
 {
   tree target = gimple_call_fn (call);
 
+  /* Internal .ASSUME call.  Create a callback edge to its body, calculate its
+     jump functions and return.  This is done here as the main creation route in
+     ipa_compute_jump_functions_for_edge doesn't analyze call statements.  */
+  if (callback_ifn_assume_call_p (call))
+    {
+      tree callee_decl = TREE_OPERAND (gimple_call_arg (call, 0), 0);
+      cgraph_node *target = cgraph_node::get_create (callee_decl);
+      cgraph_edge *cbei
+	= cgraph_edge::make_callback_internal (fbi->node, target, call);
+      ipa_compute_jump_functions_for_edge (fbi, cbei);
+      return;
+    }
+
   if (!target
       || (TREE_CODE (target) != SSA_NAME
           && !virtual_method_call_p (target)))
@@ -3349,7 +3570,7 @@ ipa_single_noted_fnptr_in_record (tree rec_type, unsigned fld_offset)
 }
 
 /* Free the hash table storing the information about function pointers stored
-   to a particular position in record typed strucutres.  */
+   to a particular position in record typed structures.  */
 
 void
 ipa_free_noted_fnptr_calls ()
@@ -3596,6 +3817,7 @@ ipa_analyze_node (struct cgraph_node *node)
 
   ipa_check_create_node_params ();
   ipa_check_create_edge_args ();
+  callback_info_sum_t::check_create_info_sum ();
   info = ipa_node_params_sum->get_create (node);
 
   if (info->analysis_done)
@@ -3731,12 +3953,27 @@ update_jump_functions_after_inlining (struct cgraph_edge *cs,
 	      src = ipa_get_ith_jump_func (top, dst_fid);
 	      if (src->type == IPA_JF_CONST)
 		{
-		  if (item->jftype == IPA_JF_PASS_THROUGH
-		      && item->value.pass_through.operation == NOP_EXPR)
+		  if (item->jftype == IPA_JF_PASS_THROUGH)
 		    {
-		      item->jftype = IPA_JF_CONST;
-		      item->value.constant = src->value.constant.value;
-		      continue;
+		      if (item->value.pass_through.operation == NOP_EXPR)
+			{
+			  item->jftype = IPA_JF_CONST;
+			  item->value.constant = src->value.constant.value;
+			  continue;
+			}
+		      tree cst = ipa_get_jf_arith_result
+				   (item->value.pass_through.operation,
+				    src->value.constant.value,
+				    item->value.pass_through.operand,
+				    item->value.pass_through.op_type);
+		      cst = ipacp_value_safe_for_type (item->type, cst);
+		      if (cst)
+			{
+			  item->jftype = IPA_JF_CONST;
+			  item->value.constant
+			    = unshare_expr_without_location (cst);
+			  continue;
+			}
 		    }
 		}
 	      else if (src->type == IPA_JF_PASS_THROUGH
@@ -3836,8 +4073,25 @@ update_jump_functions_after_inlining (struct cgraph_edge *cs,
 		item->offset -= dst->value.ancestor.offset;
 	    }
 
-	  if (src->type == IPA_JF_PASS_THROUGH
-	      && src->value.pass_through.operation == NOP_EXPR)
+	  if (src->type == IPA_JF_CONST)
+	    {
+	      tree parm_type = ipa_get_callee_param_type (e, i);
+	      tree cst = ipa_get_jf_ancestor_result (dst,
+						     ipa_get_jf_constant (src));
+	      if (cst && parm_type)
+		cst = ipacp_value_safe_for_type (parm_type, cst);
+	      if (cst)
+		{
+		  dst->type = IPA_JF_CONST;
+		  dst->value.constant.value
+		    = unshare_expr_without_location (cst);
+		  ipa_zap_jf_refdesc (dst);
+		}
+	      else
+		ipa_set_jf_unknown (dst);
+	    }
+	  else if (src->type == IPA_JF_PASS_THROUGH
+		   && src->value.pass_through.operation == NOP_EXPR)
 	    {
 	      dst->value.ancestor.formal_id = src->value.pass_through.formal_id;
 	      dst->value.ancestor.agg_preserved &=
@@ -4024,7 +4278,7 @@ ipa_make_edge_direct_to_target (struct cgraph_edge *ie, tree target,
 	  /* Member pointer call that goes through a VMT lookup.  */
 	  if ((sii && sii->member_ptr)
 	      /* Or if target is not an invariant expression and we do not
-		 know if it will evaulate to function at runtime.
+		 know if it will evaluate to function at runtime.
 		 This can happen when folding through &VAR, where &VAR
 		 is IP invariant, but VAR itself is not.
 
@@ -4248,23 +4502,77 @@ find_constructor_constant_at_offset (tree constructor, HOST_WIDE_INT req_offset)
    NULL. */
 
 tree
-ipa_find_agg_cst_from_init (tree scalar, HOST_WIDE_INT offset, bool by_ref)
+ipa_find_agg_cst_from_init (tree scalar, HOST_WIDE_INT offset, bool by_ref, tree type)
 {
+  if (!scalar || scalar == error_mark_node)
+    return NULL_TREE;
+
   if (by_ref)
     {
       if (TREE_CODE (scalar) != ADDR_EXPR)
-	return NULL;
+	return NULL_TREE;
       scalar = TREE_OPERAND (scalar, 0);
     }
 
-  if (!VAR_P (scalar)
-      || !is_global_var (scalar)
-      || !TREE_READONLY (scalar)
-      || !DECL_INITIAL (scalar)
-      || TREE_CODE (DECL_INITIAL (scalar)) != CONSTRUCTOR)
-    return NULL;
+  poly_int64 byte_offset = 0;
+  scalar = get_addr_base_and_unit_offset (scalar, &byte_offset);
+  if (!scalar)
+    return NULL_TREE;
 
-  return find_constructor_constant_at_offset (DECL_INITIAL (scalar), offset);
+  if (!CONSTANT_CLASS_P (scalar)
+      && TREE_CODE (scalar) != CONST_DECL
+      && !(VAR_P (scalar) && TREE_READONLY (scalar)))
+    return NULL_TREE;
+
+  poly_offset_int bit_off
+    = poly_offset_int (byte_offset) * BITS_PER_UNIT + offset;
+  poly_int64 const_bit_off;
+  if (!bit_off.to_shwi (&const_bit_off)
+      || !const_bit_off.is_constant (&offset)
+      || offset < 0)
+    return NULL_TREE;
+
+  if (type && is_gimple_reg_type (type))
+    {
+      if (!TYPE_SIZE (type) || !tree_fits_uhwi_p (TYPE_SIZE (type)))
+	return NULL_TREE;
+      unsigned HOST_WIDE_INT size = tree_to_uhwi (TYPE_SIZE (type));
+      if (size == 0)
+	return NULL_TREE;
+
+      tree ctor = NULL_TREE;
+      tree from_decl = NULL_TREE;
+      if (VAR_P (scalar) || TREE_CODE (scalar) == CONST_DECL)
+	{
+	  ctor = ctor_for_folding (scalar);
+	  if (ctor == error_mark_node)
+	    return NULL_TREE;
+	  from_decl = scalar;
+	}
+      else
+	ctor = scalar;
+
+      tree res = (ctor
+		  ? fold_ctor_reference (type, ctor, offset, size, from_decl)
+		  : build_zero_cst (type));
+      if (res && is_gimple_ip_invariant (res))
+	return res;
+      return NULL_TREE;
+    }
+
+  if (VAR_P (scalar) || TREE_CODE (scalar) == CONST_DECL)
+    {
+      tree ctor = ctor_for_folding (scalar);
+      if (!ctor || ctor == error_mark_node)
+	return NULL_TREE;
+      if (TREE_CODE (ctor) == CONSTRUCTOR)
+	return find_constructor_constant_at_offset (ctor, offset);
+      if (offset == 0
+	  && is_gimple_reg_type (TREE_TYPE (ctor))
+	  && is_gimple_ip_invariant (ctor))
+	return ctor;
+    }
+  return NULL_TREE;
 }
 
 /* Retrieve value from AGG_JFUNC for the given OFFSET or return NULL if there
@@ -4389,7 +4697,9 @@ try_make_edge_direct_simple_call (struct cgraph_edge *ie,
     {
       if (scalar)
 	target = ipa_find_agg_cst_from_init (scalar, sii->offset, sii->by_ref);
-      if (!target && sii->guaranteed_unmodified)
+      if (!target
+	  && (sii->guaranteed_unmodified
+	      || (sii->by_ref && ipa_points_to_readonly_memory_p (scalar))))
 	target = ipa_find_agg_cst_from_jfunc_items (&jfunc->agg, new_root_info,
 						    new_root, sii->offset,
 						    sii->by_ref);
@@ -4738,7 +5048,7 @@ combine_controlled_uses_counters (int c, int d)
     return c + d - 1;
 }
 
-/* Propagate number of controlled users from CS->caleee to the new root of the
+/* Propagate number of controlled users from CS->callee to the new root of the
    tree of inlined nodes.  */
 
 static void
@@ -5135,7 +5445,7 @@ ipa_duplicate_jump_function (cgraph_edge *src, cgraph_edge *dst,
 }
 
 /* Method invoked when an edge is duplicated.  Copy ipa_edge_args and adjust
-   reference count data strucutres accordingly.  */
+   reference count data structures accordingly.  */
 
 void
 ipa_edge_args_sum_t::duplicate (cgraph_edge *src, cgraph_edge *dst,
@@ -5152,6 +5462,18 @@ ipa_edge_args_sum_t::duplicate (cgraph_edge *src, cgraph_edge *dst,
       new_args->jump_functions = NULL;
       return;
     }
+
+  if (src->has_callback && dst->callback)
+    {
+      gcc_assert (src->caller == dst->caller);
+      tree attr = callback_fetch_attr_by_edge (dst, src);
+      unsigned arg_count = callback_num_args (attr);
+      vec_safe_grow_cleared (new_args->jump_functions, arg_count, true);
+      /* Duplication of jump functions is handled separately for callback
+	 pairs.  */
+      return;
+    }
+
   vec_safe_grow_cleared (new_args->jump_functions,
 			 old_args->jump_functions->length (), true);
 
@@ -5212,6 +5534,7 @@ ipa_register_cgraph_hooks (void)
 {
   ipa_check_create_node_params ();
   ipa_check_create_edge_args ();
+  callback_info_sum_t::check_create_info_sum ();
 
   function_insertion_hook_holder =
       symtab->add_cgraph_insertion_hook (&ipa_add_new_function, NULL);
@@ -5330,7 +5653,7 @@ ipa_write_jump_function (struct output_block *ob,
   int i, count;
   int flag = 0;
 
-  /* ADDR_EXPRs are very comon IP invariants; save some streamer data
+  /* ADDR_EXPRs are very common IP invariants; save some streamer data
      as well as WPA memory by handling them specially.  */
   if (jump_func->type == IPA_JF_CONST
       && TREE_CODE (jump_func->value.constant.value) == ADDR_EXPR)
@@ -6118,7 +6441,7 @@ useful_ipcp_transformation_info_p (ipcp_transformation *ts)
   return false;
 }
 
-/* Write into OB IPA-CP transfromation summary TS describing NODE.  */
+/* Write into OB IPA-CP transformation summary TS describing NODE.  */
 
 void
 write_ipcp_transformation_info (output_block *ob, cgraph_node *node,
@@ -6408,7 +6731,8 @@ ipcp_modif_dom_walker::before_dom_children (basic_block bb)
 	continue;
 
       if (!ipa_load_from_parm_agg (m_fbi, m_descriptors, stmt, rhs, &index,
-				   &bit_offset, &size, &by_ref))
+				   &bit_offset, &size, &by_ref)
+	  || (bit_offset % BITS_PER_UNIT) != 0)
 	continue;
       unsigned unit_offset = bit_offset / BITS_PER_UNIT;
       ipa_argagg_value_list avl (m_ts);
@@ -6477,7 +6801,11 @@ ipcp_get_aggregate_const (struct function *func, tree parm, bool by_ref,
   cgraph_node *node = cgraph_node::get (func->decl);
   ipcp_transformation *ts = ipcp_get_transformation_summary (node);
 
-  if (!ts || !ts->m_agg_values)
+  if (!ts
+      || !ts->m_agg_values
+      || bit_offset < 0
+      || (bit_offset % BITS_PER_UNIT) != 0
+      || (HOST_WIDE_INT) (bit_offset / BITS_PER_UNIT) > UINT_MAX)
     return NULL_TREE;
 
   int index = ts->get_param_index (func->decl, parm);
@@ -6598,68 +6926,11 @@ ipcp_update_vr (struct cgraph_node *node, ipcp_transformation *ts)
 		}
 	      set_range_info (ddef, tmp);
 
-	      if (POINTER_TYPE_P (TREE_TYPE (parm))
-		  && opt_for_fn (node->decl, flag_ipa_bit_cp))
+	      if (dump_file && (INTEGRAL_TYPE_P (TREE_TYPE (parm))
+				|| POINTER_TYPE_P (TREE_TYPE (parm))))
 		{
 		  irange_bitmask bm = tmp.get_bitmask ();
-		  unsigned tem = bm.mask ().to_uhwi ();
-		  unsigned HOST_WIDE_INT bitpos = bm.value ().to_uhwi ();
-		  unsigned align = tem & -tem;
-		  unsigned misalign = bitpos & (align - 1);
-
-		  if (align > 1)
-		    {
-		      if (dump_file)
-			{
-			  fprintf (dump_file,
-				   "Adjusting mask for param %u to ", i);
-			  print_hex (bm.mask (), dump_file);
-			  fprintf (dump_file, "\n");
-			}
-
-		      if (dump_file)
-			fprintf (dump_file,
-				 "Adjusting align: %u, misalign: %u\n",
-				 align, misalign);
-
-		      unsigned old_align, old_misalign;
-		      struct ptr_info_def *pi = get_ptr_info (ddef);
-		      bool old_known = get_ptr_info_alignment (pi, &old_align,
-							       &old_misalign);
-
-		      if (old_known && old_align > align)
-			{
-			  if (dump_file)
-			    {
-			      fprintf (dump_file,
-				       "But alignment was already %u.\n",
-				       old_align);
-			      if ((old_misalign & (align - 1)) != misalign)
-				fprintf (dump_file,
-					 "old_misalign (%u) and misalign "
-					 "(%u) mismatch\n",
-					 old_misalign, misalign);
-			    }
-			  continue;
-			}
-
-		      if (dump_file
-			  && old_known
-			  && ((misalign & (old_align - 1)) != old_misalign))
-			fprintf (dump_file,
-				 "old_misalign (%u) and misalign (%u) "
-				 "mismatch\n",
-				 old_misalign, misalign);
-
-		      set_ptr_info_alignment (pi, align, misalign);
-		    }
-		}
-	      else if (dump_file && INTEGRAL_TYPE_P (TREE_TYPE (parm)))
-		{
-		  irange &r = as_a<irange> (tmp);
-		  irange_bitmask bm = r.get_bitmask ();
-		  unsigned prec = TYPE_PRECISION (TREE_TYPE (parm));
-		  if (wi::ne_p (bm.mask (), wi::shwi (-1, prec)))
+		  if (!bm.unknown_p ())
 		    {
 		      fprintf (dump_file,
 			       "Adjusting mask for param %u to ", i);

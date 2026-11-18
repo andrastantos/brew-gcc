@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-Ofast -msse2 -fdump-rtl-x86_cse" } */
+/* { dg-options "-Ofast -msse2" } */
 
 typedef __attribute__((__vector_size__(8))) float V;
 V v;
@@ -14,4 +14,4 @@ foo()
   v /= f;
 }
 
-/* { dg-final { scan-rtl-dump {\(const_double:SF 0.0 \[0x0.0p\+0\]\)} "x86_cse" { target { ! ia32 } } } } */
+/* { dg-final { scan-assembler-times {movabsq[ \t]+\$4575657222473777152,[ \t]+%rax} 1 { target { ! ia32 } } } } */

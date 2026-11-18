@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
 
        ID DIVISION.
        PROGRAM-ID. prog.

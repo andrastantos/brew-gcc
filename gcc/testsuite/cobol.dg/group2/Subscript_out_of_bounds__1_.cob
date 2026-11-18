@@ -1,3 +1,4 @@
+      *> Do not edit this generated file.  See README.txt
        *> { dg-do run }
        *> { dg-xfail-run-if "" { *-*-* }  }
        *> { dg-output-file "group2/Subscript_out_of_bounds__1_.out" }

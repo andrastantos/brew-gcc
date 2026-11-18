@@ -180,7 +180,7 @@ AC_DEFUN([LIBAT_WORDSIZE],[
   AC_CACHE_CHECK([for the word size],[libat_cv_wordsize],
     [AC_COMPUTE_INT(libat_cv_wordsize,
       [sizeof(word)], [typedef int word __attribute__((mode(word)));],
-      AC_ERROR([Could not determine word size.]))])
+      AC_MSG_ERROR([Could not determine word size.]))])
   AC_DEFINE_UNQUOTED(WORDSIZE, $libat_cv_wordsize,
     [The word size in bytes of the machine.])
 ])
@@ -193,12 +193,12 @@ AC_DEFUN([LIBAT_CHECK_IFUNC], [
 		 libat_cv_have_ifunc, [
   save_CFLAGS="$CFLAGS"
   CFLAGS="$CFLAGS -Werror"
-  AC_TRY_LINK([
+  AC_LINK_IFELSE([AC_LANG_PROGRAM([[
     int foo_alt(void) { return 0; }
     typedef int F (void);
     F *foo_sel(void) { return foo_alt; }
-    int foo(void) __attribute__((ifunc("foo_sel")));],
-    [return foo();], libat_cv_have_ifunc=yes, libat_cv_have_ifunc=no)])
+    int foo(void) __attribute__((ifunc("foo_sel")));]],
+    [[return foo();]])], libat_cv_have_ifunc=yes, libat_cv_have_ifunc=no)])
   LIBAT_DEFINE_YESNO([HAVE_IFUNC], [$libat_cv_have_ifunc],
       [Define to 1 if the target supports __attribute__((ifunc(...))).])
 ])
@@ -206,29 +206,16 @@ AC_DEFUN([LIBAT_CHECK_IFUNC], [
 dnl ----------------------------------------------------------------------
 dnl This whole bit snagged from libitm.
 
-dnl Check whether the target supports hidden visibility.
-AC_DEFUN([LIBAT_CHECK_ATTRIBUTE_VISIBILITY], [
-  AC_CACHE_CHECK([whether the target supports hidden visibility],
-		 libat_cv_have_attribute_visibility, [
-  save_CFLAGS="$CFLAGS"
-  CFLAGS="$CFLAGS -Werror"
-  AC_TRY_COMPILE([void __attribute__((visibility("hidden"))) foo(void) { }],
-		 [], libat_cv_have_attribute_visibility=yes,
-		 libat_cv_have_attribute_visibility=no)
-  CFLAGS="$save_CFLAGS"])
-  if test $libat_cv_have_attribute_visibility = yes; then
-    AC_DEFINE(HAVE_ATTRIBUTE_VISIBILITY, 1,
-      [Define to 1 if the target supports __attribute__((visibility(...))).])
-  fi])
-
 dnl Check whether the target supports dllexport
 AC_DEFUN([LIBAT_CHECK_ATTRIBUTE_DLLEXPORT], [
   AC_CACHE_CHECK([whether the target supports dllexport],
 		 libat_cv_have_attribute_dllexport, [
   save_CFLAGS="$CFLAGS"
   CFLAGS="$CFLAGS -Werror"
-  AC_TRY_COMPILE([void __attribute__((dllexport)) foo(void) { }],
-		 [], libat_cv_have_attribute_dllexport=yes,
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+		 [[void __attribute__((dllexport)) foo(void) { }]],
+		 [[]])],
+		 libat_cv_have_attribute_dllexport=yes,
 		 libat_cv_have_attribute_dllexport=no)
   CFLAGS="$save_CFLAGS"])
   if test $libat_cv_have_attribute_dllexport = yes; then
@@ -240,10 +227,11 @@ dnl Check whether the target supports symbol aliases.
 AC_DEFUN([LIBAT_CHECK_ATTRIBUTE_ALIAS], [
   AC_CACHE_CHECK([whether the target supports symbol aliases],
 		 libat_cv_have_attribute_alias, [
-  AC_TRY_LINK([
+  AC_LINK_IFELSE([AC_LANG_PROGRAM([[
 void foo(void) { }
-extern void bar(void) __attribute__((alias("foo")));],
-    [bar();], libat_cv_have_attribute_alias=yes, libat_cv_have_attribute_alias=no)])
+extern void bar(void) __attribute__((alias("foo")));]],
+    [[bar();]])],
+    libat_cv_have_attribute_alias=yes, libat_cv_have_attribute_alias=no)])
   if test $libat_cv_have_attribute_alias = yes; then
     AC_DEFINE(HAVE_ATTRIBUTE_ALIAS, 1,
       [Define to 1 if the target supports __attribute__((alias(...))).])
@@ -262,7 +250,7 @@ dnl See docs/html/17_intro/configury.html#enable for documentation.
 dnl
 m4_define([LIBAT_ENABLE],[dnl
 m4_define([_g_switch],[--enable-$1])dnl
-m4_define([_g_help],[AC_HELP_STRING(_g_switch$3,[$4 @<:@default=$2@:>@])])dnl
+m4_define([_g_help],[AS_HELP_STRING(_g_switch$3,[$4 @<:@default=$2@:>@])])dnl
  AC_ARG_ENABLE($1,_g_help,
   m4_bmatch([$5],
    [^permit ],
@@ -312,7 +300,7 @@ AC_DEFUN([LIBAT_CHECK_LINKER_FEATURES], [
   # by now (in libtool), but require it now just to be safe...
   test -z "$SECTION_LDFLAGS" && SECTION_LDFLAGS=''
   test -z "$OPT_LDFLAGS" && OPT_LDFLAGS=''
-  AC_REQUIRE([AC_PROG_LD])
+  AC_REQUIRE([LT_PATH_LD])
   AC_REQUIRE([AC_PROG_AWK])
 
   # The name set by libtool depends on the version of libtool.  Shame on us
@@ -323,7 +311,7 @@ AC_DEFUN([LIBAT_CHECK_LINKER_FEATURES], [
   # set (hence we're using an older libtool), then set it.
   if test x${with_gnu_ld+set} != xset; then
     if test x${ac_cv_prog_gnu_ld+set} != xset; then
-      # We got through "ac_require(ac_prog_ld)" and still not set?  Huh?
+      # We got through "ac_require(lt_path_ld)" and still not set?  Huh?
       with_gnu_ld=no
     else
       with_gnu_ld=$ac_cv_prog_gnu_ld
@@ -372,14 +360,14 @@ AC_DEFUN([LIBAT_CHECK_LINKER_FEATURES], [
     # .eh_frame and now some of the glibc sections for iconv).
     # Bzzzzt.  Thanks for playing, maybe next time.
     AC_MSG_CHECKING([for ld that supports -Wl,--gc-sections])
-    AC_TRY_RUN([
+    AC_RUN_IFELSE([AC_LANG_SOURCE([[
      int main(void)
      {
        try { throw 1; }
        catch (...) { };
        return 0;
      }
-    ], [ac_sectionLDflags=yes],[ac_sectionLDflags=no], [ac_sectionLDflags=yes])
+    ]])], [ac_sectionLDflags=yes],[ac_sectionLDflags=no], [ac_sectionLDflags=yes])
     if test "$ac_test_CFLAGS" = set; then
       CFLAGS="$ac_save_CFLAGS"
     else
@@ -455,7 +443,7 @@ if test x$enable_symvers = xsun ; then
     *)
       # Unlikely to work.
       AC_MSG_WARN([=== You have requested Sun symbol versioning, but])
-      AC_MSG_WARN([=== you are not targetting Solaris 2.])
+      AC_MSG_WARN([=== you are not targeting Solaris 2.])
       AC_MSG_WARN([=== Symbol versioning will be disabled.])
       enable_symvers=no
       ;;
@@ -467,7 +455,8 @@ if test $enable_symvers != no; then
   AC_MSG_CHECKING([for shared libgcc])
   ac_save_CFLAGS="$CFLAGS"
   CFLAGS=' -lgcc_s'
-  AC_TRY_LINK(, [return 0;], libat_shared_libgcc=yes, libat_shared_libgcc=no)
+  AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [[return 0;]])],
+		 [libat_shared_libgcc=yes], [libat_shared_libgcc=no])
   CFLAGS="$ac_save_CFLAGS"
   if test $libat_shared_libgcc = no; then
     cat > conftest.c <<EOF
@@ -482,7 +471,8 @@ changequote([,])dnl
     rm -f conftest.c conftest.so
     if test x${libat_libgcc_s_suffix+set} = xset; then
       CFLAGS=" -lgcc_s$libat_libgcc_s_suffix"
-      AC_TRY_LINK(, [return 0;], libat_shared_libgcc=yes)
+      AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [[return 0;]])],
+		     [libat_shared_libgcc=yes],[])
       CFLAGS="$ac_save_CFLAGS"
     fi
   fi

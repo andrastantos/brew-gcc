@@ -55,6 +55,11 @@
 #include <arm_sve.h>
 #endif
 
+/** @namespace std::experimental::parallelism_v2
+ *  @ingroup ts_simd
+ */
+_GLIBCXX_SIMD_BEGIN_NAMESPACE
+
 /** @ingroup ts_simd
  * @{
  */
@@ -78,7 +83,6 @@
  * Variable names:
  * __k: mask object (vector- or bitmask)
  */
-_GLIBCXX_SIMD_BEGIN_NAMESPACE
 
 #if !_GLIBCXX_SIMD_X86INTRIN
 using __m128  [[__gnu__::__vector_size__(16)]] = float;
@@ -604,16 +608,14 @@ template <size_t _Bytes>
   __int_for_sizeof()
   {
     static_assert(_Bytes > 0);
-    if constexpr (_Bytes == sizeof(int))
-      return int();
-    else if constexpr (_Bytes == sizeof(_SChar))
-      return _SChar();
-    else if constexpr (_Bytes == sizeof(short))
-      return short();
-    else if constexpr (_Bytes == sizeof(long))
-      return long();
-    else if constexpr (_Bytes == sizeof(_LLong))
-      return _LLong();
+    if constexpr (_Bytes == sizeof(int32_t))
+      return int32_t();
+    else if constexpr (_Bytes == sizeof(int8_t))
+      return int8_t();
+    else if constexpr (_Bytes == sizeof(int16_t))
+      return int16_t();
+    else if constexpr (_Bytes == sizeof(int64_t))
+      return int64_t();
   #ifdef __SIZEOF_INT128__
     else if constexpr (_Bytes == sizeof(__int128))
       return __int128();
@@ -1512,7 +1514,7 @@ template <>
 template <typename _Tp, size_t _Np, typename = void>
   struct __vector_type_n {};
 
-// substition failure for 0-element case
+// substitution failure for 0-element case
 template <typename _Tp>
   struct __vector_type_n<_Tp, 0, void> {};
 
@@ -2477,7 +2479,8 @@ template <typename _Tp, size_t _Bytes>
     static constexpr size_t _S_VBytes = _Bytes <= 16 ? 16 : _Bytes <= 32 ? 32 : 64;
 
     using type [[__gnu__::__vector_size__(_S_VBytes)]]
-      = conditional_t<is_integral_v<_Tp>, long long int, _Tp>;
+      = conditional_t<is_integral_v<_Tp>, long long int,
+		      conditional_t<is_same_v<_Tp, long double>, double, _Tp> >;
   };
 #endif // _GLIBCXX_SIMD_HAVE_SSE
 

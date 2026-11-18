@@ -37,8 +37,8 @@ includebits_DATA = std.cc std.compat.cc
 # The manifest to be installed uses the relative path between install dirs.
 libstdc++.modules.json: libstdc++.modules.json.in
 	relpath=$$($(toplevel_srcdir)/contrib/relpath.sh \
-		   $(abspath $(toolexeclibdir)) \
-		   $(abspath $(includebitsdir))) && \
+		    $(toolexeclibdir) \
+		    $(includebitsdir)) && \
 	sed "s,@MODPATH@,$$relpath," $< > $@
 
 # The uninstalled manifest uses the relative path to builddir.
@@ -54,10 +54,16 @@ std.cc: std.cc.in std-clib.cc.in
 std.compat.cc: std.compat.cc.in std-clib.cc.in
 	cat $^ > $@
 
+# Empty file used in case std.cc or std.compat.cc fails to compile.
+empty.cc:
+	echo > $@
+
 # Also put the interface units in the build-includes bits directory.
 stamp-modules-bits: $(includebits_DATA)
 	@-mkdir -p $(top_builddir)/include/bits
-	-cd $(top_builddir)/include/bits && $(LN_S) $(abspath $?) . 2>/dev/null
+	-for f in $(includebits_DATA); do \
+	  $(LN_S) $(abs_builddir)/$$f $(top_builddir)/include/bits; \
+	done 2>/dev/null
 	@$(STAMP) $@
 
 all-local: stamp-module-manifest stamp-modules-bits
@@ -98,33 +104,29 @@ MODULES_FLAGS = -isystem ${glibcxx_srcdir}/include/backward -fmodules \
 	-Wno-unknown-pragmas
 
 # These go into libmodulesconvenience.la and are linked into libstdc++
-std.lo: std.cc
+std.lo: std.cc empty.cc
 	if ! $(LTCXXCOMPILE) $(MODULES_FLAGS) -c $< ; then \
 	  echo "Cannot compile std module" >&2; \
 	  echo "Module initialization function will be missing" >&2; \
-	  echo > $<.tmp && mv $<.tmp $< && \
-	  $(LTCXXCOMPILE) $(MODULES_FLAGS) -c $< ; \
+	  $(LTCXXCOMPILE) $(MODULES_FLAGS) -c empty.cc -o $@; \
 	fi
-std.o: std.cc
+std.o: std.cc empty.cc
 	if ! $(CXXCOMPILE) $(MODULES_FLAGS) -c $< ; then \
 	  echo "Cannot compile std module" >&2; \
 	  echo "Module initialization function will be missing" >&2; \
-	  echo > $<.tmp && mv $<.tmp $< && \
-	  $(CXXCOMPILE) $(MODULES_FLAGS) -c $< ; \
+	  $(CXXCOMPILE) $(MODULES_FLAGS) -c empty.cc -o $@; \
 	fi
-std.compat.lo: std.compat.cc std.lo
+std.compat.lo: std.compat.cc std.lo empty.cc
 	if ! $(LTCXXCOMPILE) $(MODULES_FLAGS) -c $< ; then \
 	  echo "Cannot compile std.compat module" >&2; \
 	  echo "Module initialization function will be missing" >&2; \
-	  echo > $<.tmp && mv $<.tmp $< && \
-	  $(LTCXXCOMPILE) $(MODULES_FLAGS) -c $< ; \
+	  $(LTCXXCOMPILE) $(MODULES_FLAGS) -c empty.cc -o $@; \
 	fi
-std.compat.o: std.compat.cc std.o
+std.compat.o: std.compat.cc std.o empty.cc
 	if ! $(CXXCOMPILE) $(MODULES_FLAGS) -c $< ; then \
 	  echo "Cannot compile std.compat module" >&2; \
 	  echo "Module initialization function will be missing" >&2; \
-	  echo > $<.tmp && mv $<.tmp $< && \
-	  $(CXXCOMPILE) $(MODULES_FLAGS) -c $< ; \
+	  $(CXXCOMPILE) $(MODULES_FLAGS) -c empty.cc -o $@; \
 	fi
 
 # AM_CXXFLAGS needs to be in each subdirectory so that it can be

@@ -38,6 +38,13 @@ check_inner_attribute (const AST::Attribute &attribute)
   if (Attributes::valid_outer_attribute (result.name))
     rust_error_at (attribute.get_locus (),
 		   "attribute cannot be used at crate level");
+
+  if (result.name == Values::Attributes::NEEDS_ALLOCATOR)
+    {
+      rust_warning_at (attribute.get_locus (), 0,
+		       "%<#[%s]%> is not implemented yet and has no effect",
+		       attribute.as_string ().c_str ());
+    }
 }
 
 /**
@@ -347,36 +354,85 @@ target_feature (const AST::Attribute &attribute)
     }
 }
 
+static void
+used (const AST::Attribute &attribute)
+{
+  auto is_invalid = false;
+  if (attribute.has_attr_input ())
+    {
+      switch (attribute.get_attr_input ().get_attr_input_type ())
+	{
+	case AST::AttrInput::TOKEN_TREE:
+	  {
+	    auto input = static_cast<const AST::DelimTokenTree &> (
+			   attribute.get_attr_input ())
+			   .parse_to_meta_item ();
+
+	    for (const auto &item : input->get_items ())
+	      {
+		if (item->as_string () != "compiler"
+		    && item->as_string () != "linker")
+		  is_invalid = true;
+	      }
+	  }
+
+	  break;
+	case AST::AttrInput::EXPR:
+	case AST::AttrInput::LITERAL:
+	case AST::AttrInput::META_ITEM:
+	  is_invalid = true;
+	  break;
+	}
+    }
+
+  if (is_invalid)
+    {
+      rust_error_at (attribute.get_locus (),
+		     "malformed %<used%> attribute input");
+      rust_inform (attribute.get_locus (),
+		   "must be of the form: %<#[used(compiler)]%> or "
+		   "%<#[used(linker)]%>");
+    }
+}
+
 void
-no_mangle (const AST::Attribute &attribute)
+expect_no_input (const AST::Attribute &attribute)
 {
   if (attribute.has_attr_input ())
     {
-      rust_error_at (attribute.get_locus (), ErrorCode::E0754,
-		     "malformed %<no_mangle%> attribute input");
-      rust_inform (attribute.get_locus (),
-		   "must be of the form: %<#[no_mangle]%>");
+      std::string attr_name = attribute.get_path ().as_string ();
+      rust_error_at (attribute.get_locus (), "malformed %<%s%> attribute input",
+		     attr_name.c_str ());
+      rust_inform (attribute.get_locus (), "must be of the form: %<#[%s]%>",
+		   attr_name.c_str ());
     }
 }
 
 } // namespace handlers
 
 const std::unordered_map<std::string, std::function<void (AST::Attribute &)>>
-  attribute_checking_handlers
-  = {{Attrs::DOC, handlers::doc},
-     {Attrs::DEPRECATED, handlers::deprecated},
-     {Attrs::LINK_SECTION, handlers::link_section},
-     {Attrs::EXPORT_NAME, handlers::export_name},
-     {Attrs::NO_MANGLE, handlers::no_mangle},
-     {Attrs::ALLOW, handlers::lint},
-     {Attrs::DENY, handlers::lint},
-     {Attrs::WARN, handlers::lint},
-     {Attrs::FORBID, handlers::lint},
-     {Attrs::LINK_NAME, handlers::link_name},
-     {Attrs::PROC_MACRO_DERIVE, handlers::proc_macro_derive},
-     {Attrs::PROC_MACRO, handlers::proc_macro},
-     {Attrs::PROC_MACRO_ATTRIBUTE, handlers::proc_macro},
-     {Attrs::TARGET_FEATURE, handlers::target_feature}};
+  attribute_checking_handlers = {
+    {Attrs::DOC, handlers::doc},
+    {Attrs::DEPRECATED, handlers::deprecated},
+    {Attrs::LINK_SECTION, handlers::link_section},
+    {Attrs::EXPORT_NAME, handlers::export_name},
+    {Attrs::NO_MANGLE, handlers::expect_no_input},
+    {Attrs::ALLOW, handlers::lint},
+    {Attrs::DENY, handlers::lint},
+    {Attrs::WARN, handlers::lint},
+    {Attrs::FORBID, handlers::lint},
+    {Attrs::LINK_NAME, handlers::link_name},
+    {Attrs::PROC_MACRO_DERIVE, handlers::proc_macro_derive},
+    {Attrs::PROC_MACRO, handlers::proc_macro},
+    {Attrs::PROC_MACRO_ATTRIBUTE, handlers::proc_macro},
+    {Attrs::TARGET_FEATURE, handlers::target_feature},
+    {Attrs::USED, handlers::used},
+    {Attrs::RUSTC_STD_INTERNAL_SYMBOL, handlers::expect_no_input},
+    {Attrs::RUSTC_ALLOCATOR, handlers::expect_no_input},
+    {Attrs::RUSTC_ALLOCATOR_NOUNWIND, handlers::expect_no_input},
+    {Attrs::GLOBAL_ALLOCATOR, handlers::expect_no_input},
+    {Attrs::RUSTC_CONVERSION_SUGGESTION, handlers::expect_no_input},
+};
 
 tl::optional<std::function<void (AST::Attribute &)>>
 lookup_handler (std::string attr_name)
@@ -428,6 +484,29 @@ check_valid_attribute_for_item (const AST::Attribute &attr,
 		     "the %<#[%s]%> attribute may only be applied "
 		     "to structs, enums and unions",
 		     attr.get_path ().as_string ().c_str ());
+    }
+  else if (item.get_item_kind () != AST::Item::Kind::StaticItem
+	   && (attr.get_path () == Values::Attributes::GLOBAL_ALLOCATOR
+	       || attr.get_path () == Values::Attributes::USED))
+
+    {
+      rust_error_at (attr.get_locus (),
+		     "the %<#[%s]%> attribute may only be applied "
+		     "to static items",
+		     attr.get_path ().as_string ().c_str ());
+    }
+  else if (attr.get_path () == Values::Attributes::RUSTC_CONVERSION_SUGGESTION)
+    {
+      auto attr_path = attr.get_path ().as_string ();
+      rust_warning_at (attr.get_locus (), 0,
+		       "%<#[%s]%> is not implemented yet and has no effect",
+		       attr_path.c_str ());
+      if (item.get_item_kind () != AST::Item::Kind::Function)
+	{
+	  rust_error_at (item.get_locus (),
+			 "%<#[%s]%> can only be applied to functions",
+			 attr_path.c_str ());
+	}
     }
 }
 

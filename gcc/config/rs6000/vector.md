@@ -46,7 +46,7 @@
 ;; Vector arithmetic modes
 (define_mode_iterator VEC_A [V16QI V8HI V4SI V2DI V4SF V2DF])
 
-;; Vector modes that need alginment via permutes
+;; Vector modes that need alignment via permutes
 (define_mode_iterator VEC_K [V16QI V8HI V4SI V4SF])
 
 ;; Vector logical modes
@@ -336,10 +336,10 @@
 
 ;; Same mode for condition true/false values and predicate operand.
 (define_expand "vcond_mask_<mode><mode>"
-  [(match_operand:VEC_I 0 "vint_operand")
-   (match_operand:VEC_I 1 "vint_operand")
-   (match_operand:VEC_I 2 "vint_operand")
-   (match_operand:VEC_I 3 "vint_operand")]
+  [(match_operand:VEC_IC 0 "vint_operand")
+   (match_operand:VEC_IC 1 "vint_operand")
+   (match_operand:VEC_IC 2 "vint_operand")
+   (match_operand:VEC_IC 3 "vint_operand")]
   "VECTOR_UNIT_ALTIVEC_OR_VSX_P (<MODE>mode)"
 {
   emit_insn (gen_vector_select_<mode> (operands[0], operands[2], operands[1],
@@ -1300,7 +1300,7 @@
   DONE;
 })
 
-;; Vector shift right in bits. Currently supported ony for shift
+;; Vector shift right in bits. Currently supported only for shift
 ;; amounts that can be expressed as byte shifts (divisible by 8).
 ;; General shift amounts can be supported using vsro + vsr. We're
 ;; not expecting to see these yet (the vectorizer currently

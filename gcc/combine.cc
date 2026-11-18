@@ -196,7 +196,7 @@ struct reg_stat_type {
 
   unsigned HOST_WIDE_INT	last_set_nonzero_bits;
   unsigned short		last_set_sign_bit_copies;
-  ENUM_BITFIELD(machine_mode)	last_set_mode : MACHINE_MODE_BITSIZE;
+  machine_mode			last_set_mode : MACHINE_MODE_BITSIZE;
 
   /* Set to true if references to register n in expressions should not be
      used.  last_set_invalid is set nonzero when this register is being
@@ -231,7 +231,7 @@ struct reg_stat_type {
      truncation if we know that value already contains a truncated
      value.  */
 
-  ENUM_BITFIELD(machine_mode)	truncated_to_mode : MACHINE_MODE_BITSIZE;
+  machine_mode			truncated_to_mode : MACHINE_MODE_BITSIZE;
 };
 
 
@@ -316,7 +316,7 @@ struct insn_link {
 static struct insn_link **uid_log_links;
 
 static inline int
-insn_uid_check (const_rtx insn)
+insn_uid_check (const rtx_insn *insn)
 {
   int uid = INSN_UID (insn);
   gcc_checking_assert (uid <= max_uid_known);
@@ -825,7 +825,8 @@ do_SUBST_LINK (struct insn_link **into, struct insn_link *newval)
 
 static bool
 combine_validate_cost (rtx_insn *i0, rtx_insn *i1, rtx_insn *i2, rtx_insn *i3,
-		       rtx newpat, rtx newi2pat, rtx newotherpat)
+		       rtx newpat, rtx newi2pat, rtx newotherpat,
+		       int insn_code, int i2_code, int other_code)
 {
   int i0_cost, i1_cost, i2_cost, i3_cost;
   int new_i2_cost, new_i3_cost;
@@ -867,7 +868,7 @@ combine_validate_cost (rtx_insn *i0, rtx_insn *i1, rtx_insn *i2, rtx_insn *i3,
   rtx tmp = PATTERN (i3);
   PATTERN (i3) = newpat;
   int tmpi = INSN_CODE (i3);
-  INSN_CODE (i3) = -1;
+  INSN_CODE (i3) = insn_code;
   new_i3_cost = insn_cost (i3, optimize_this_for_speed_p);
   PATTERN (i3) = tmp;
   INSN_CODE (i3) = tmpi;
@@ -876,7 +877,7 @@ combine_validate_cost (rtx_insn *i0, rtx_insn *i1, rtx_insn *i2, rtx_insn *i3,
       tmp = PATTERN (i2);
       PATTERN (i2) = newi2pat;
       tmpi = INSN_CODE (i2);
-      INSN_CODE (i2) = -1;
+      INSN_CODE (i2) = i2_code;
       new_i2_cost = insn_cost (i2, optimize_this_for_speed_p);
       PATTERN (i2) = tmp;
       INSN_CODE (i2) = tmpi;
@@ -897,7 +898,7 @@ combine_validate_cost (rtx_insn *i0, rtx_insn *i1, rtx_insn *i2, rtx_insn *i3,
       tmp = PATTERN (undobuf.other_insn);
       PATTERN (undobuf.other_insn) = newotherpat;
       tmpi = INSN_CODE (undobuf.other_insn);
-      INSN_CODE (undobuf.other_insn) = -1;
+      INSN_CODE (undobuf.other_insn) = other_code;
       new_other_cost = insn_cost (undobuf.other_insn,
 				  optimize_this_for_speed_p);
       PATTERN (undobuf.other_insn) = tmp;
@@ -2023,7 +2024,10 @@ can_combine_p (rtx_insn *insn, rtx_insn *i3, rtx_insn *pred ATTRIBUTE_UNUSED,
     : volatile_insn_p;
 
   for (p = NEXT_INSN (insn); p != i3; p = NEXT_INSN (p))
-    if (INSN_P (p) && p != succ && p != succ2 && is_volatile_p (PATTERN (p)))
+    if (NONDEBUG_INSN_P (p)
+	&& p != succ
+	&& p != succ2
+	&& is_volatile_p (PATTERN (p)))
       return false;
 
   /* If INSN contains an autoincrement or autodecrement, make sure that
@@ -2311,7 +2315,13 @@ likely_spilled_retval_p (rtx_insn *insn)
   unsigned mask;
   struct likely_spilled_retval_info info;
 
-  if (!NONJUMP_INSN_P (use) || GET_CODE (PATTERN (use)) != USE || insn == use)
+  /* With -g, BB_END may be a DEBUG_INSN.  Ignore trailing debug
+     instructions without changing how notes are handled.  */
+  if (DEBUG_INSN_P (use))
+    use = prev_nondebug_insn (use);
+  if (!NONJUMP_INSN_P (use)
+      || GET_CODE (PATTERN (use)) != USE
+      || insn == use)
     return false;
   reg = XEXP (PATTERN (use), 0);
   if (!REG_P (reg) || !targetm.calls.function_value_regno_p (REGNO (reg)))
@@ -4134,7 +4144,9 @@ try_combine (rtx_insn *i3, rtx_insn *i2, rtx_insn *i1, rtx_insn *i0,
 
   /* Reject this combination if insn_cost reports that the replacement
      instructions are more expensive than the originals.  */
-  if (!combine_validate_cost (i0, i1, i2, i3, newpat, newi2pat, other_pat))
+  if (!combine_validate_cost (i0, i1, i2, i3, newpat, newi2pat, other_pat,
+			      insn_code_number, i2_code_number,
+			      other_code_number))
     {
       undo_all ();
       return 0;
@@ -4396,9 +4408,10 @@ try_combine (rtx_insn *i3, rtx_insn *i2, rtx_insn *i1, rtx_insn *i0,
     INSN_CODE (i3) = insn_code_number;
     PATTERN (i3) = newpat;
 
-    if (CALL_P (i3) && CALL_INSN_FUNCTION_USAGE (i3))
+    auto call = dyn_cast<rtx_call_insn *> (i3);
+    if (call && CALL_INSN_FUNCTION_USAGE (call))
       {
-	for (rtx link = CALL_INSN_FUNCTION_USAGE (i3); link;
+	for (rtx link = CALL_INSN_FUNCTION_USAGE (call); link;
 	     link = XEXP (link, 1))
 	  {
 	    if (substed_i2)
@@ -5951,6 +5964,10 @@ combine_simplify_rtx (rtx x, machine_mode op0_mode, bool in_dest, bool in_cond)
   /* A little bit of algebraic simplification here.  */
   switch (code)
     {
+    case PREFETCH:
+      /* A prefetch reaches memory through an address, and targets recognize
+	 that address with the same predicates they use for a MEM, so it
+	 needs the same treatment.  */
     case MEM:
       /* Ensure that our address has any ASHIFTs converted to MULT in case
 	 address-recognizing predicates are called later.  */
@@ -8118,59 +8135,12 @@ make_compound_operation_int (scalar_int_mode mode, rtx *x_ptr,
       break;
 
     case PLUS:
-      lhs = XEXP (x, 0);
-      rhs = XEXP (x, 1);
-      lhs = make_compound_operation (lhs, next_code);
-      rhs = make_compound_operation (rhs, next_code);
-      if (GET_CODE (lhs) == MULT && GET_CODE (XEXP (lhs, 0)) == NEG)
-	{
-	  tem = simplify_gen_binary (MULT, mode, XEXP (XEXP (lhs, 0), 0),
-				     XEXP (lhs, 1));
-	  new_rtx = simplify_gen_binary (MINUS, mode, rhs, tem);
-	}
-      else if (GET_CODE (lhs) == MULT
-	       && (CONST_INT_P (XEXP (lhs, 1)) && INTVAL (XEXP (lhs, 1)) < 0))
-	{
-	  tem = simplify_gen_binary (MULT, mode, XEXP (lhs, 0),
-				     simplify_gen_unary (NEG, mode,
-							 XEXP (lhs, 1),
-							 mode));
-	  new_rtx = simplify_gen_binary (MINUS, mode, rhs, tem);
-	}
-      else
-	{
-	  SUBST (XEXP (x, 0), lhs);
-	  SUBST (XEXP (x, 1), rhs);
-	}
-      maybe_swap_commutative_operands (x);
-      return x;
-
     case MINUS:
-      lhs = XEXP (x, 0);
-      rhs = XEXP (x, 1);
-      lhs = make_compound_operation (lhs, next_code);
-      rhs = make_compound_operation (rhs, next_code);
-      if (GET_CODE (rhs) == MULT && GET_CODE (XEXP (rhs, 0)) == NEG)
-	{
-	  tem = simplify_gen_binary (MULT, mode, XEXP (XEXP (rhs, 0), 0),
-				     XEXP (rhs, 1));
-	  return simplify_gen_binary (PLUS, mode, tem, lhs);
-	}
-      else if (GET_CODE (rhs) == MULT
-	       && (CONST_INT_P (XEXP (rhs, 1)) && INTVAL (XEXP (rhs, 1)) < 0))
-	{
-	  tem = simplify_gen_binary (MULT, mode, XEXP (rhs, 0),
-				     simplify_gen_unary (NEG, mode,
-							 XEXP (rhs, 1),
-							 mode));
-	  return simplify_gen_binary (PLUS, mode, tem, lhs);
-	}
-      else
-	{
-	  SUBST (XEXP (x, 0), lhs);
-	  SUBST (XEXP (x, 1), rhs);
-	  return x;
-	}
+      lhs = make_compound_operation (XEXP (x, 0), next_code);
+      rhs = make_compound_operation (XEXP (x, 1), next_code);
+      if (lhs != XEXP (x, 0) || rhs != XEXP (x, 1))
+	return simplify_gen_binary (code, mode, lhs, rhs);
+      return x;
 
     case AND:
       /* If the second operand is not a constant, we can't do anything
@@ -8437,6 +8407,12 @@ make_compound_operation_int (scalar_int_mode mode, rtx *x_ptr,
 
 	tem = make_compound_operation (inner, subreg_code);
 
+	/* TEM's code might be CLOBBER if combine_simplify_rtx
+	   could not transform a subexpression, e.g. a volatile MEM.
+	   simplify_subreg cannot be called with clobber, so bail out.  */
+	if (GET_CODE (tem) == CLOBBER)
+	  return NULL_RTX;
+
 	simplified
 	  = simplify_subreg (mode, tem, GET_MODE (inner), SUBREG_BYTE (x));
 	if (simplified)
@@ -8692,7 +8668,11 @@ canon_reg_for_combine (rtx x, rtx reg)
 
 /* Return X converted to MODE.  If the value is already truncated to
    MODE we can just return a subreg even though in the general case we
-   would need an explicit truncation.  */
+   would need an explicit truncation.
+
+   If an explicit truncation is needed but either mode has no
+   equivalent integer mode (e.g. a wide vector mode), return
+   (clobber (const_int 0)) so that the combination fails.  */
 
 static rtx
 gen_lowpart_or_truncate (machine_mode mode, rtx x)
@@ -8702,11 +8682,15 @@ gen_lowpart_or_truncate (machine_mode mode, rtx x)
       && !TRULY_NOOP_TRUNCATION_MODES_P (mode, GET_MODE (x))
       && !(REG_P (x) && reg_truncated_to_mode (mode, x)))
     {
+      scalar_int_mode imode, omode;
+      if (!int_mode_for_mode (GET_MODE (x)).exists (&imode)
+	  || !int_mode_for_mode (mode).exists (&omode))
+	return gen_rtx_CLOBBER (mode, const0_rtx);
+
       /* Bit-cast X into an integer mode.  */
       if (!SCALAR_INT_MODE_P (GET_MODE (x)))
-	x = gen_lowpart (int_mode_for_mode (GET_MODE (x)).require (), x);
-      x = simplify_gen_unary (TRUNCATE, int_mode_for_mode (mode).require (),
-			      x, GET_MODE (x));
+	x = gen_lowpart (imode, x);
+      x = simplify_gen_unary (TRUNCATE, omode, x, GET_MODE (x));
     }
 
   return gen_lowpart (mode, x);
@@ -9856,7 +9840,9 @@ make_field_assignment (rtx x)
       && is_a <scalar_int_mode> (GET_MODE (SUBREG_REG (src)), &src_mode))
     src = SUBREG_REG (src);
 
-  if (GET_CODE (src) != IOR && GET_CODE (src) != XOR)
+  if (GET_CODE (src) != IOR
+      && GET_CODE (src) != XOR
+      && GET_CODE (src) != PLUS)
     return x;
 
   rhs = expand_compound_operation (XEXP (src, 0));
@@ -10101,7 +10087,11 @@ distribute_and_simplify_rtx (rtx x, int n)
 
   /* Special case (and (xor B C) (not A)), which is equivalent to
      (xor (ior A B) (ior A C))  */
-  if (outer_code == AND && inner_code == XOR && GET_CODE (distributed) == NOT)
+  if (outer_code == AND && inner_code == XOR && GET_CODE (distributed) == NOT
+      /* But not when A is a paradoxical subreg since the masking effect
+	 of the outer AND is lost and the duplicated use can result in
+	 undefined bits to be exposed when spilling.  */
+      && !contains_paradoxical_subreg_p (XEXP (distributed, 0)))
     {
       distributed = XEXP (distributed, 0);
       outer_code = IOR;
@@ -11572,12 +11562,42 @@ recog_for_combine_1 (rtx *pnewpat, rtx_insn *insn, rtx *pnotes,
       REG_NOTES (insn) = notes;
       INSN_CODE (insn) = insn_code_number;
 
-      /* Allow targets to reject combined insn.  */
-      if (!targetm.legitimate_combined_insn (insn))
+      /* Do not accept an insn if hard register constraints are used.  For
+	 example, assume that the first insn is combined into the last one:
+
+	 r100=...
+	 %5=...
+	 r101=exp(r100)
+
+	 If the resulting insn has an operand which is constrained to hard
+	 register %5, then this introduces a conflict since register %5 is live
+	 at this point.  Therefore, skip for now.  This is a sledge hammer
+	 approach.  Ideally we would skip based on the fact whether a
+	 combination crosses a hard register assignment and the corresponding
+	 hard register is also referred by a single register constraint of the
+	 resulting insn.  */
+      bool has_hard_reg_cstr = false;
+      extract_insn (insn);
+      for (int nop = recog_data.n_operands - 1; nop >= 0; --nop)
+	if (strchr (recog_data.constraints[nop], '{'))
+	  {
+	    has_hard_reg_cstr = true;
+	    break;
+	  }
+
+      /* Don't accept hard register constraints.  Allow targets to reject
+	 combined insn.  */
+      if (has_hard_reg_cstr || !targetm.legitimate_combined_insn (insn))
 	{
 	  if (dump_file && (dump_flags & TDF_DETAILS))
-	    fputs ("Instruction not appropriate for target.",
-		   dump_file);
+	    {
+	      if (has_hard_reg_cstr)
+		fputs ("Instruction makes use of hard register constraints.",
+		       dump_file);
+	      else
+		fputs ("Instruction not appropriate for target.",
+		       dump_file);
+	    }
 
 	  /* Callers expect recog_for_combine to strip
 	     clobbers from the pattern on failure.  */
@@ -12617,7 +12637,7 @@ simplify_comparison (enum rtx_code code, rtx *pop0, rtx *pop1)
 
 	     The difficulty here is that we have predicates for A but not for
 	     (A - C1) so we need to check that C1 is within proper bounds so
-	     as to perturbate A as little as possible.  */
+	     as to perturb A as little as possible.  */
 
 	  if (mode_width <= HOST_BITS_PER_WIDE_INT
 	      && subreg_lowpart_p (op0)
@@ -12878,50 +12898,6 @@ simplify_comparison (enum rtx_code code, rtx *pop0, rtx *pop1)
 	    {
 	      op0 = gen_lowpart_or_truncate (tmode, XEXP (op0, 0));
 	      continue;
-	    }
-
-	  /* If this is (and:M1 (subreg:M1 X:M2 0) (const_int C1)) where C1
-	     fits in both M1 and M2 and the SUBREG is either paradoxical
-	     or represents the low part, permute the SUBREG and the AND
-	     and try again.  */
-	  if (GET_CODE (XEXP (op0, 0)) == SUBREG
-	      && CONST_INT_P (XEXP (op0, 1)))
-	    {
-	      unsigned HOST_WIDE_INT c1 = INTVAL (XEXP (op0, 1));
-	      /* Require an integral mode, to avoid creating something like
-		 (AND:SF ...).  */
-	      if ((is_a <scalar_int_mode>
-		   (GET_MODE (SUBREG_REG (XEXP (op0, 0))), &tmode))
-		  /* It is unsafe to commute the AND into the SUBREG if the
-		     SUBREG is paradoxical and WORD_REGISTER_OPERATIONS is
-		     not defined.  As originally written the upper bits
-		     have a defined value due to the AND operation.
-		     However, if we commute the AND inside the SUBREG then
-		     they no longer have defined values and the meaning of
-		     the code has been changed.
-		     Also C1 should not change value in the smaller mode,
-		     see PR67028 (a positive C1 can become negative in the
-		     smaller mode, so that the AND does no longer mask the
-		     upper bits).  */
-		  && ((WORD_REGISTER_OPERATIONS
-		       && mode_width > GET_MODE_PRECISION (tmode)
-		       && mode_width <= BITS_PER_WORD
-		       && trunc_int_for_mode (c1, tmode) == (HOST_WIDE_INT) c1)
-		      || (mode_width <= GET_MODE_PRECISION (tmode)
-			  && subreg_lowpart_p (XEXP (op0, 0))))
-		  && mode_width <= HOST_BITS_PER_WIDE_INT
-		  && HWI_COMPUTABLE_MODE_P (tmode)
-		  && (c1 & ~mask) == 0
-		  && (c1 & ~GET_MODE_MASK (tmode)) == 0
-		  && c1 != mask
-		  && c1 != GET_MODE_MASK (tmode))
-		{
-		  op0 = simplify_gen_binary (AND, tmode,
-					     SUBREG_REG (XEXP (op0, 0)),
-					     gen_int_mode (c1, tmode));
-		  op0 = gen_lowpart (mode, op0);
-		  continue;
-		}
 	    }
 
 	  /* Convert (ne (and (not X) 1) 0) to (eq (and X 1) 0).  */
@@ -13625,10 +13601,10 @@ record_dead_and_set_regs (rtx_insn *insn)
 	record_value_for_reg (XEXP (link, 0), insn, NULL_RTX);
     }
 
-  if (CALL_P (insn))
+  if (auto call = dyn_cast<rtx_call_insn *> (insn))
     {
       HARD_REG_SET callee_clobbers
-	= insn_callee_abi (insn).full_and_partial_reg_clobbers ();
+	= insn_callee_abi (call).full_and_partial_reg_clobbers ();
       hard_reg_set_iterator hrsi;
       EXECUTE_IF_SET_IN_HARD_REG_SET (callee_clobbers, 0, i, hrsi)
 	{
@@ -13644,7 +13620,7 @@ record_dead_and_set_regs (rtx_insn *insn)
 	     situation before RA.  */
 	  rsp = &reg_stat[i];
 	  rsp->last_set_invalid = true;
-	  rsp->last_set = insn;
+	  rsp->last_set = call;
 	  rsp->last_set_value = 0;
 	  rsp->last_set_mode = VOIDmode;
 	  rsp->last_set_nonzero_bits = 0;
@@ -13653,13 +13629,13 @@ record_dead_and_set_regs (rtx_insn *insn)
 	  rsp->truncated_to_mode = VOIDmode;
 	}
 
-      last_call_luid = mem_last_set = DF_INSN_LUID (insn);
+      last_call_luid = mem_last_set = DF_INSN_LUID (call);
 
       /* We can't combine into a call pattern.  Remember, though, that
 	 the return value register is set at this LUID.  We could
 	 still replace a register with the return value from the
 	 wrong subroutine call!  */
-      note_stores (insn, record_dead_and_set_regs_1, NULL_RTX);
+      note_stores (call, record_dead_and_set_regs_1, NULL_RTX);
     }
   else
     note_stores (insn, record_dead_and_set_regs_1, insn);
@@ -14464,7 +14440,7 @@ distribute_notes (rtx notes, rtx_insn *from_insn, rtx_insn *i3, rtx_insn *i2,
 	    /* The landing pad handling needs to be kept in sync with the
 	       prerequisite checking in try_combine.  */
 	    int lp_nr = INTVAL (XEXP (note, 0));
-	    /* A REG_EH_REGION note transfering control can only ever come
+	    /* A REG_EH_REGION note transferring control can only ever come
 	       from i3.  */
 	    if (lp_nr > 0)
 	      gcc_assert (from_insn == i3);

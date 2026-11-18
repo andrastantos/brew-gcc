@@ -42,6 +42,7 @@ extern tree rewrite_to_non_trapping_overflow (tree);
 extern bool stmt_could_throw_p (function *, gimple *);
 extern bool stmt_unremovable_because_of_non_call_eh_p (function *, gimple *);
 extern bool tree_could_throw_p (tree);
+extern bool lhs_could_trap_p (tree);
 extern bool stmt_can_throw_external (function *, gimple *);
 extern bool stmt_can_throw_internal (function *, gimple *);
 extern bool maybe_clean_eh_stmt_fn (struct function *, gimple *);

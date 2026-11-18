@@ -26,7 +26,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-pass.h"
 #include "ssa.h"
 #include "fold-const.h"
-#include "gimplify.h"
 #include "tree-cfg.h"
 #include "tree-ssa.h"
 #include "tree-ssa-loop-niter.h"
@@ -38,10 +37,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "cfghooks.h"
 #include "tree-ssa-loop-manip.h"
 #include "tree-vectorizer.h"
-#include "tree-pretty-print.h"
 #include "gimple-range.h"
 #include "dbgcnt.h"
 #include "cfganal.h"
+#include "tree-cfgcleanup.h"
 
 /* This file implements the loop unswitching, i.e. transformation of loops like
 
@@ -117,7 +116,13 @@ struct unswitch_predicate
     false_range = true_range;
     if (!false_range.varying_p ()
 	&& !false_range.undefined_p ())
-      false_range.invert ();
+      {
+	if (!false_range.invert ())
+	  {
+	    true_range.set_varying (TREE_TYPE (lhs));
+	    false_range.set_varying (TREE_TYPE (lhs));
+	  }
+      }
     count = e->count ();
     num = predicates->length ();
     predicates->safe_push (this);
@@ -250,6 +255,21 @@ set_predicates_for_bb (basic_block bb, vec<unswitch_predicate *> predicates)
   bb_predicates->safe_push (predicates);
 }
 
+/* Estimate number of instructions in LOOP using eni_size_weights.  */
+
+static unsigned
+estimate_loop_insns (class loop *loop)
+{
+  unsigned insns = 0;
+  basic_block *body = get_loop_body (loop);
+  for (unsigned i = 0; i < loop->num_nodes; i++)
+    for (gimple_stmt_iterator gsi = gsi_start_bb (body[i]);
+	 !gsi_end_p (gsi); gsi_next (&gsi))
+      insns += estimate_num_insns (gsi_stmt (gsi), &eni_size_weights);
+  free (body);
+  return insns;
+}
+
 /* Initialize LOOP information reused during the unswitching pass.
    Return total number of instructions in the loop.  Adjusts LOOP to
    the outermost loop all candidates are invariant in.  */
@@ -262,13 +282,35 @@ init_loop_unswitch_info (class loop *&loop, unswitch_predicate *&hottest,
 
   basic_block *bbs = get_loop_body (loop);
 
-  /* Unswitch only nests with no sibling loops.  */
+  /* Unswitch only nests with no sibling loops.  Since predicates come from
+     the innermost loop, only the outer-loop bodies get duplicated by hoisting
+     the unswitching out; the innermost loop is shared in the cost estimate.  */
   class loop *outer_loop = loop;
   unsigned max_depth = param_max_unswitch_depth;
+  unsigned innermost_size = estimate_loop_insns (loop);
   while (loop_outer (outer_loop)->num != 0
-	 && !loop_outer (outer_loop)->inner->next
-	 && --max_depth != 0)
-    outer_loop = loop_outer (outer_loop);
+	 && !loop_outer (outer_loop)->inner->next)
+    {
+      if (--max_depth == 0)
+	break;
+
+      class loop *candidate = loop_outer (outer_loop);
+      unsigned candidate_size = estimate_loop_insns (candidate);
+
+      if (candidate_size - innermost_size
+	  > (unsigned) param_max_unswitch_insns)
+	{
+	  if (dump_enabled_p ())
+	    dump_printf_loc (MSG_NOTE, find_loop_location (loop),
+			     "Not unswitching outer loop, duplicated size %u "
+			     "exceeds max-unswitch-insns %u\n",
+			     candidate_size - innermost_size,
+			     (unsigned) param_max_unswitch_insns);
+	  break;
+	}
+
+      outer_loop = candidate;
+    }
   hottest = NULL;
   hottest_bb = NULL;
   /* Find all unswitching candidates in the innermost loop.  */
@@ -410,7 +452,10 @@ tree_ssa_unswitch_loops (function *fun)
     clean_up_after_unswitching (ignored_edge_flag);
 
   if (changed_unswitch || changed_hoist)
-    return TODO_cleanup_cfg;
+    cleanup_tree_cfg ();
+
+  if (changed_unswitch)
+    return loop_invariant_motion_in_fun (cfun, false);
 
   return 0;
 }
@@ -478,6 +523,16 @@ find_unswitching_predicates_for_bb (basic_block bb, class loop *loop,
 	     behavior that the original program might never exercise.  */
 	  if (is_maybe_undefined (use, stmt, loop))
 	    return;
+	}
+      /* A condition that may trap must not be evaluated where the original
+	 program does not evaluate it.  Only the header of LOOP is known to
+	 execute once LOOP is entered, so require that, and do not hoist the
+	 condition out of any enclosing loop, which might not be entered.  */
+      if (gimple_could_trap_p (stmt))
+	{
+	  if (bb != loop->header)
+	    return;
+	  outer_loop = loop;
 	}
       /* Narrow OUTER_LOOP.  */
       if (outer_loop != loop)
@@ -1677,5 +1732,4 @@ make_pass_tree_unswitch (gcc::context *ctxt)
 {
   return new pass_tree_unswitch (ctxt);
 }
-
 

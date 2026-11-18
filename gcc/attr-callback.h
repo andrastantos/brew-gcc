@@ -21,6 +21,8 @@
 #ifndef ATTR_CALLBACK_H
 #define ATTR_CALLBACK_H
 
+/* This enum relates to the attribute's arguments.  */
+
 enum callback_position
 {
   /* Value used when an argument of a callback function
@@ -28,7 +30,14 @@ enum callback_position
   CB_UNKNOWN_POS = 0
 };
 
-#define CALLBACK_ATTR_IDENT " callback"
+/* This enum describes values present in the arg_mapping vector.  */
+
+enum arg_mapping_constants
+{
+  /* Value representing an unknown argument position in the arg_mapping
+     vector.  */
+  ARG_MAPPING_UNKNOWN_IDX = -1
+};
 
 /* Returns a callback attribute with callback index FN_IDX, and ARG_COUNT
    arguments specified by VA_ARGS.  */
@@ -54,20 +63,9 @@ int callback_get_fn_index (tree cb_attr);
    to create E from the callee of CARRYING.  */
 tree callback_fetch_attr_by_edge (cgraph_edge *e, cgraph_edge *carrying);
 
-/* Given an instance of callback attribute, return the 0-base indices
-   of arguments passed to the callback.  For a callback function taking
-   n parameters, returns a vector of n indices of their values in the parameter
-   list of it's caller.  Indices with unknown positions contain -1.  */
-auto_vec<int> callback_get_arg_mapping (cgraph_edge *e, cgraph_edge *carrying);
-
-/* For a callback pair, returns the 0-based index of the address of
-   E's callee in the argument list of CARRYING's callee decl.  */
-int callback_fetch_fn_position (cgraph_edge *e, cgraph_edge *carrying);
-
-/* Handle a "callback" attribute; arguments as in
-   struct attribute_spec.handler.  */
-tree handle_callback_attribute (tree *node, tree name, tree args, int flags,
-				bool *no_add_attrs);
+/* Returns the argument mapping from the dispatching function to the callback
+   function parsed from the attribute.  */
+auto_vec<int> callback_get_arg_mapping_from_attr (tree attr);
 
 /* Returns TRUE if E is considered useful in the callgraph, FALSE otherwise.  If
    this predicate returns FALSE, then E wasn't used to optimize its callee and
@@ -77,5 +75,10 @@ bool callback_edge_useful_p (cgraph_edge *e);
 /* Returns the number of arguments the callback function described by ATTR
    takes.  */
 size_t callback_num_args (tree attr);
+
+/* Redirect call statement of E to the callee of E.  Used in
+   cgraph_edge::redirect_call_stmt_to_callee.  Edge E must be a callback
+   edge.  */
+void callback_redirect_edge (cgraph_edge *e);
 
 #endif /* ATTR_CALLBACK_H  */

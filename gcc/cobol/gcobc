@@ -1,8 +1,34 @@
 #! /bin/sh -e
 
 #
-# COPYRIGHT
-# The gcobc program is in public domain.
+# Copyright (c) 2021-2026 Symas Corporation
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#
+# * Redistributions of source code must retain the above copyright
+#   notice, this list of conditions and the following disclaimer.
+# * Redistributions in binary form must reproduce the above
+#   copyright notice, this list of conditions and the following disclaimer
+#   in the documentation and/or other materials provided with the
+#   distribution.
+# * Neither the name of the Symas Corporation nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
 # If it breaks then you get to keep both pieces.
 #
 # This file emulates the GnuCOBOL cobc compiler to a limited degree.
@@ -60,22 +86,25 @@ then
     copydir="-I$COB_COPY_DIR"
 fi
 
-# TODO: this file likely needs to query gcobol for its shared path instead
-udf_default="${0%/*}/../share/gcobol/udf"
-if [ ! -d "$udfdir" ]
+# if not available from the build tree, attempt to search the install directory.
+udf_default="${0%/*}/../$($gcobol -dumpmachine)/libgcobol/compat/gnu/cpy"
+if ! [ -d "$udf_default" ]
 then
-   # the one above is the installed one from the packages this one was previously used
-   udf_default="${0%/*}/../share/cobol/udf"
+    install_dir="$($gcobol -print-search-dirs | grep '^install:' | awk '{print $2}')"
+    udf_default="$install_dir/cobol/compat/gnu/cpy"
 fi
 udfdir="${GCOBCUDF:-$udf_default}"
 
 if [ -d "$udfdir" ]
 then
-    for F in "$udfdir"/*
+    # Feel free to add more UDFs below.
+    udfs=stored-char-length.cpy
+
+    for F in $udfs
     do
-        if [ -f "$F" ]
+        if [ -f "$udfdir/$F" ]
         then
-            includes="$includes -include $F "
+            includes="$includes -include $udfdir/$F "
         fi
     done
 else
@@ -147,8 +176,6 @@ EOF
 }
 
 dialect="mf gnu"
-out_set=""
-first=""
 
 #
 # Iterate over the command-line tokens.  We can't use getopts here
@@ -173,8 +200,6 @@ do
         pending_arg=
         continue
     fi
-
-    #cho "next arg: $opt" >&2
 
     case $opt in
 
@@ -207,6 +232,8 @@ do
         -echo) echo="echo"
                ;;
 
+        # note: if warnings on not implemented GC exceptions should be suppressed,
+        # then use -Wno-ec-unknown
         -fec=* | -fno-ec=*)
             opt="$(echo "$opt" | sed -E 's/-f(no-)?ec=/-f\1cobol-exceptions=EC-/g')"
              opts="$opts $opt"
@@ -413,21 +440,27 @@ do
                ;;
         -i | --info) warn "$opt"
                      ;;
-        -include )
-            pending_arg=$opt
+
+        # include a COBOL copybook --> gcobol's -include
+        --copy)
+            pending_arg="-include "  # space-separation needed
             ;;
-        # no-space version: just concatenate
-        -include* )
-            opts="$opts $opt"
+        #
+
+        # include a C header --> no real option in gcobol
+        --include)
+            error "$opt $incomparable"
             ;;
         #
         # Options that may have a space  before the argument, or not
         #
-        -I | -L | -MF | -MT )
+        # Note that -B is not supported as per cobc syntax, but it might
+        # still be required by gcc users.
+        -B | -I | -L | -MF | -MT )
             pending_arg=$opt
             ;;
         # no-space version: just concatenate
-        -I* | -L* | -MF* | -MT* )
+        -B* | -I* | -L* | -MF* | -MT* )
             opts="$opts $opt"
             ;;
         
@@ -467,7 +500,7 @@ do
         -std=mf | -std=mf-strict)  dialect=mf
                                    ;;
                       # GnuCOBOL's default and GCC's dialect for GnuCOBOL
-        -std=default) dialect=gnu  
+        -std=default) dialect="mf gnu"
                       ;;
                       # GCC COBOL targets COBOL2024 "mostly backward to COBOL85"
         -std=cobol*)  dialect="" 
@@ -485,9 +518,10 @@ do
             ;;
          -q | --brief) warn "$opt"
                        ;;
-         -v | --verbose) opts="$opts -V"
+         -v | --verbose) opts="$opts -v"
                          ;;
-         # note: we want -dumpversion to be passed to gcc
+         # -dumpversion, like all options not handled specifically, is
+         # passed by default.
          -V | --version | -version)
              $gcobol --version |
                  awk '1 == NR { ver = $3; 
@@ -496,10 +530,10 @@ do
              exit
              # opts="$opts --version"
             ;;
-        # pass through, strangely -Wall is not supported
-        -w | -W | -Wextra) opts="$opts $opt"
-             ;;
-        -Wno-*) no_warn "$opt"
+        # pass through, -Wall support pending gcc to set for all front ends
+        # note: while cobc does not support gcc's -Wl options, they
+        # might be passed anyway for different reasons e.g.: -Wl,rpath.
+        -w | -W | -Wextra | -Wno-* | -Wl,*) opts="$opts $opt"
              ;;
 
         -W*) warn "$opt"
@@ -524,7 +558,7 @@ do
                        output_name="$output_name".so
                        ;;
                esac
-               opts="$opts $cflags -o $output_name"
+               opts="$opts -o $output_name"
            fi    
            opts="$opts $opt" # pass through
            ;;
@@ -534,7 +568,8 @@ done
 # cobc default:
 if [ "$static_used" = "" ]
 then
-    opts="-fno-static-call $opts";
+    # -export-dynamic required if CALLs occur within the same executable.
+    opts="-fno-static-call -export-dynamic $opts";
 fi
 
 if [ "$exit_status" -gt 0 ]
@@ -549,7 +584,7 @@ fi
 
 if [ "$echo" ]
 then
-    echo $gcobol $mode $opts
+    echo $gcobol $mode $dialect $opts
     exit
 fi
 
@@ -558,4 +593,4 @@ then
     set -x
 fi
 
-exec $gcobol $mode $dialect $opts
+exec $gcobol $mode $dialect $cflags $opts

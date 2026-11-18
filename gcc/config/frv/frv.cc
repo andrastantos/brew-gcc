@@ -321,8 +321,8 @@ static rtx frv_expand_noargs_builtin		(enum insn_code);
 static void frv_split_iacc_move			(rtx, rtx);
 static rtx frv_emit_comparison			(enum rtx_code, rtx, rtx);
 static void frv_ifcvt_add_insn			(rtx, rtx_insn *, int);
-static rtx frv_ifcvt_rewrite_mem		(rtx, machine_mode, rtx);
-static rtx frv_ifcvt_load_value			(rtx, rtx);
+static rtx frv_ifcvt_rewrite_mem (rtx, machine_mode, rtx_insn *);
+static rtx frv_ifcvt_load_value (rtx, rtx_insn *);
 static unsigned int frv_insn_unit		(rtx_insn *);
 static bool frv_issues_to_branch_unit_p		(rtx_insn *);
 static int frv_cond_flags 			(rtx);
@@ -1557,11 +1557,9 @@ frv_dwarf_store (rtx reg, int offset)
 static void
 frv_frame_insn (rtx pattern, rtx dwarf_pattern)
 {
-  rtx insn = emit_insn (pattern);
+  rtx_insn *insn = emit_insn (pattern);
   RTX_FRAME_RELATED_P (insn) = 1;
-  REG_NOTES (insn) = alloc_EXPR_LIST (REG_FRAME_RELATED_EXPR,
-				      dwarf_pattern,
-				      REG_NOTES (insn));
+  add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf_pattern);
 }
 
 /* Emit instructions that transfer REG to or from the memory location (sp +
@@ -2616,7 +2614,7 @@ frv_print_operand_jump_hint (rtx_insn *insn)
       labelref = condjump_label (insn);
       if (labelref)
 	{
-	  rtx label = XEXP (labelref, 0);
+	  rtx_insn *label = label_ref_label (labelref);
 	  jump_type = (insn_current_address > INSN_ADDRESSES (INSN_UID (label))
 		       ? BACKWARD
 		       : FORWARD);
@@ -4166,7 +4164,7 @@ frv_emit_movsi (rtx dest, rtx src)
 /* Return a string to output a single word move.  */
 
 const char *
-output_move_single (rtx operands[], rtx insn)
+output_move_single (rtx operands[], rtx_insn *insn)
 {
   rtx dest = operands[0];
   rtx src  = operands[1];
@@ -4380,7 +4378,7 @@ output_move_single (rtx operands[], rtx insn)
 /* Return a string to output a double word move.  */
 
 const char *
-output_move_double (rtx operands[], rtx insn)
+output_move_double (rtx operands[], rtx_insn *insn)
 {
   rtx dest = operands[0];
   rtx src  = operands[1];
@@ -4511,7 +4509,7 @@ output_move_double (rtx operands[], rtx insn)
    Operand3 -- source  */
 
 const char *
-output_condmove_single (rtx operands[], rtx insn)
+output_condmove_single (rtx operands[], rtx_insn *insn)
 {
   rtx dest = operands[2];
   rtx src  = operands[3];
@@ -4734,11 +4732,9 @@ frv_emit_scc (rtx operands[])
 /* Split a SCC instruction into component parts, returning a SEQUENCE to hold
    the separate insns.  */
 
-rtx
+rtx_insn *
 frv_split_scc (rtx dest, rtx test, rtx cc_reg, rtx cr_reg, HOST_WIDE_INT value)
 {
-  rtx ret;
-
   start_sequence ();
 
   /* Set the appropriate CCR bit.  */
@@ -4759,8 +4755,7 @@ frv_split_scc (rtx dest, rtx test, rtx cc_reg, rtx cr_reg, HOST_WIDE_INT value)
 				gen_rtx_SET (dest, const0_rtx)));
 
   /* Finish up, return sequence.  */
-  ret = end_sequence ();
-  return ret;
+  return end_sequence ();
 }
 
 
@@ -4845,7 +4840,7 @@ frv_emit_cond_move (rtx dest, rtx test_rtx, rtx src1, rtx src2)
 /* Split a conditional move into constituent parts, returning a SEQUENCE
    containing all of the insns.  */
 
-rtx
+rtx_insn *
 frv_split_cond_move (rtx operands[])
 {
   rtx dest	= operands[0];
@@ -4854,7 +4849,6 @@ frv_split_cond_move (rtx operands[])
   rtx src1	= operands[3];
   rtx src2	= operands[4];
   rtx cr_reg	= operands[5];
-  rtx ret;
   machine_mode cr_mode = GET_MODE (cr_reg);
 
   start_sequence ();
@@ -4930,8 +4924,7 @@ frv_split_cond_move (rtx operands[])
     }
 
   /* Finish up, return sequence.  */
-  ret = end_sequence ();
-  return ret;
+  return end_sequence ();
 }
 
 
@@ -4994,7 +4987,7 @@ frv_split_double_store (rtx dest, rtx source)
 /* Split a min/max operation returning a SEQUENCE containing all of the
    insns.  */
 
-rtx
+rtx_insn *
 frv_split_minmax (rtx operands[])
 {
   rtx dest	= operands[0];
@@ -5003,7 +4996,6 @@ frv_split_minmax (rtx operands[])
   rtx src2	= operands[3];
   rtx cc_reg	= operands[4];
   rtx cr_reg	= operands[5];
-  rtx ret;
   enum rtx_code test_code;
   machine_mode cr_mode = GET_MODE (cr_reg);
 
@@ -5060,22 +5052,20 @@ frv_split_minmax (rtx operands[])
     }
 
   /* Finish up, return sequence.  */
-  ret = end_sequence ();
-  return ret;
+  return end_sequence ();
 }
 
 
 /* Split an integer abs operation returning a SEQUENCE containing all of the
    insns.  */
 
-rtx
+rtx_insn *
 frv_split_abs (rtx operands[])
 {
   rtx dest	= operands[0];
   rtx src	= operands[1];
   rtx cc_reg	= operands[2];
   rtx cr_reg	= operands[3];
-  rtx ret;
 
   start_sequence ();
 
@@ -5098,8 +5088,7 @@ frv_split_abs (rtx operands[])
 				  gen_rtx_SET (dest, src)));
 
   /* Finish up, return sequence.  */
-  ret = end_sequence ();
-  return ret;
+  return end_sequence ();
 }
 
 
@@ -5640,7 +5629,7 @@ frv_ifcvt_modify_multiple_tests (ce_if_block *ce_info,
    that use constants to ones that just use registers.  */
 
 static rtx
-frv_ifcvt_load_value (rtx value, rtx insn ATTRIBUTE_UNUSED)
+frv_ifcvt_load_value (rtx value, rtx_insn *insn ATTRIBUTE_UNUSED)
 {
   int num_alloc = frv_ifcvt.cur_scratch_regs;
   int i;
@@ -5710,7 +5699,7 @@ frv_ifcvt_load_value (rtx value, rtx insn ATTRIBUTE_UNUSED)
    into a temporary register, or the new MEM if we were successful.  */
 
 static rtx
-frv_ifcvt_rewrite_mem (rtx mem, machine_mode mode, rtx insn)
+frv_ifcvt_rewrite_mem (rtx mem, machine_mode mode, rtx_insn *insn)
 {
   rtx addr = XEXP (mem, 0);
 
@@ -6862,7 +6851,7 @@ frv_issue_rate (void)
 /* Return the value of INSN's acc_group attribute.  */
 
 int
-frv_acc_group (rtx insn)
+frv_acc_group (rtx_insn *insn)
 {
   /* This distinction only applies to the FR550 packing constraints.  */
   if (frv_cpu_type == FRV_CPU_FR550)

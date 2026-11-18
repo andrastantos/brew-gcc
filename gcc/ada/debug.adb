@@ -105,7 +105,7 @@ package body Debug is
    --  d.r  Disable reordering of components in record types
    --  d.s  Strict secondary stack management
    --  d.t  Disable static allocation of library level dispatch tables
-   --  d.u  Enable Unsigned_Base_Range aspect language extension
+   --  d.u
    --  d.v  Enforce SPARK elaboration rules in SPARK code
    --  d.w  Do not check for infinite loops
    --  d.x  No exception handlers
@@ -143,7 +143,7 @@ package body Debug is
    --  d_c  CUDA compilation : compile for the host
    --  d_d  CUDA compilation : compile for the device
    --  d_e  Ignore entry calls and requeue statements for elaboration
-   --  d_f  Issue info messages related to GNATprove usage
+   --  d_f
    --  d_g  Disable large static aggregates
    --  d_h  Disable the use of (perfect) hash functions for enumeration Value
    --  d_i  Ignore activations and calls to instances for elaboration
@@ -800,8 +800,7 @@ package body Debug is
    --       previous dynamic construction of tables. It is there as a possible
    --       work around if we run into trouble with the new implementation.
 
-   --  d.u  Enable the support for Unsigned_Base_Range aspect, attribute, and
-   --       pragma.
+   --  d.u
 
    --  d.v  This flag enforces the elaboration rules defined in the SPARK
    --       Reference Manual, chapter 7.7, to all SPARK code within a unit. As

@@ -4447,7 +4447,7 @@ ipa_tm_scan_irr_block (basic_block bb)
   return false;
 }
 
-/* For each of the blocks seeded witin PQUEUE, walk the CFG looking
+/* For each of the blocks seeded within PQUEUE, walk the CFG looking
    for new irrevocable blocks, marking them in NEW_IRR.  Don't bother
    scanning past OLD_IRR or EXIT_BLOCKS.  */
 
@@ -5065,7 +5065,7 @@ ipa_tm_insert_irr_call (struct cgraph_node *node, struct tm_region *region,
   transaction_subcode_ior (region, GTMA_MAY_ENTER_IRREVOCABLE);
 
   g = gimple_build_call (builtin_decl_explicit (BUILT_IN_TM_IRREVOCABLE),
-			 1, build_int_cst (NULL_TREE, MODE_SERIALIRREVOCABLE));
+			 1, build_int_cst (integer_type_node, MODE_SERIALIRREVOCABLE));
 
   split_block_after_labels (bb);
   gsi = gsi_after_labels (bb);
@@ -5516,7 +5516,7 @@ ipa_tm_execute (void)
 
   /* Iterate scans until no more work to be done.  Prefer not to use
      vec::pop because the worklist tends to follow a breadth-first
-     search of the callgraph, which should allow convergance with a
+     search of the callgraph, which should allow convergence with a
      minimum number of scans.  But we also don't want the worklist
      array to grow without bound, so we shift the array up periodically.  */
   for (i = 0; i < irr_worklist.length (); ++i)
@@ -5693,7 +5693,7 @@ public:
   {}
 
   /* opt_pass methods: */
-  bool gate (function *) final override { return flag_tm; }
+  bool gate (function *) final override { return (flag_tm && !seen_error ()); }
   unsigned int execute (function *) final override { return ipa_tm_execute (); }
 
 }; // class pass_ipa_tm

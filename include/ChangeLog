@@ -1,3 +1,94 @@
+2026-11-11  Matt Turner  <mattst88@gmail.com>
+
+	* longlong.h (__ll_check_output): New macro.
+	[__arc__, __arm__, __hppa, __i386__, __x86_64__, __M32R__,
+	__mc68000__, __mc68020__, __m88000__, __ibm032__, __sh__,
+	__sparc__, __sparc_v8__, __sparc_v9__, __sparclite__, __vax__]:
+	Use it for the casts on asm output operands.
+
+2026-11-11  Matt Turner  <mattst88@gmail.com>
+
+	* longlong.h: Say the file is part of GCC, not the GNU C Library.
+	(attribute_hidden): Update comment.
+
+2026-11-11  Matt Turner  <mattst88@gmail.com>
+
+	* longlong.h [__z8000__]: Remove.
+
+2026-10-30  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR bootstrap/128228
+	* libiberty.h (strtoll, strtoull): Declare if C++11.
+
+2026-09-06  Matt Turner  <mattst88@gmail.com>
+
+	* longlong.h [__i370__, __s390__, __mvs__] (sdiv_qrnnd): Wrap
+	the n1 and n0 macro parameters in parentheses.
+	[__vax__] (sdiv_qrnnd): Likewise.
+
+2026-07-22  Tobias Burnus  <tburnus@baylibre.com>
+	    Andrew Stubbs  <ams@baylibre.com>
+	    supers1ngular  <supers1ngular@baylibre.com>
+
+	* hsa.h (hsa_system_info_t): Add HSA_AMD_SYSTEM_INFO_XNACK_ENABLED.
+
+2026-06-30  Chung-Lin Tang  <cltang@baylibre.com>
+
+	* gomp-constants.h (enum gomp_map_kind): Add GOMP_MAP_USES_ALLOCATORS.
+
+2026-06-24  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* gomp-constants.h (GOMP_BARRIER_IMPLICIT_PARALLEL): New macro.
+	(GOMP_BARRIER_IMPLICIT_WORKSHARE): New macro.
+	(GOMP_BARRIER_EXPLICIT): New macro.
+
+2026-06-19  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/125877
+	* cuda/cuda.h (cuDeviceGetPCIBusId): Declare.
+
+2026-06-13  Sunil Dora  <sunilkumar.dora@windriver.com>
+
+	PR driver/111527
+	* libiberty.h (expandargstr): Declare.
+
+2026-06-01  Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	* gomp-constants.h (GOMP_VERSION): Bump.  Signature of
+	GOMP_OFFLOAD_run et al changed.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* hsa.h: Reflow long line.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* demangle.h (enum demangle_component_type): Fix typos.
+	* doubly-linked-list.h: Likewise.
+	* floatformat.h (struct floatformat): Likewise.
+	* gcc-cp-fe.def (GCC_METHOD1): Likewise.
+	(GCC_METHOD2): Likewise.
+	* gomp-constants.h (enum gomp_map_kind): Likewise.
+	(GOMP_TARGET_ARG_THREAD_LIMIT): Likewise.
+	* hsa.h: Likewise.
+	* hsa_ext_amd.h (hsa_amd_signal_value_pointer): Likewise.
+	(hsa_amd_memory_lock): Likewise.
+	(hsa_amd_pointer_info): Likewise.
+	(hsa_amd_ipc_memory_create): Likewise.
+	(hsa_amd_ipc_signal_create): Likewise.
+	* libiberty.h (PEX_STDOUT_APPEND): Likewise.
+	* longlong.h: Likewise.
+	* plugin-api.h (enum ld_plugin_status): Likewise.
+	* splay-tree.h (struct splay_tree_s): Likewise.
+
+2026-05-29  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR c/122892
+	* gomp-constants.h (GOMP_OMP_PREDEF_ALLOC_THREADS): Rename to ...
+	(GOMP_OMP_PREDEF_ALLOC_THREAD): ... this.
+	(GOMP_OMP_PREDEF_ALLOC_CGROUP, GOMP_OMP_PREDEF_ALLOC_PTEAM): Define
+	with the value of omp_{cgroup,pteam}_mem_alloc
+
 2026-02-05  Matthieu Longo  <matthieu.longo@arm.com>
 
 	* doubly-linked-list.h

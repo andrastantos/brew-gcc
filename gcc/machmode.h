@@ -26,7 +26,7 @@ extern CONST_MODE_SIZE poly_uint16 mode_size[NUM_MACHINE_MODES];
 extern CONST_MODE_PRECISION poly_uint16 mode_precision[NUM_MACHINE_MODES];
 extern const unsigned short mode_inner[NUM_MACHINE_MODES];
 extern CONST_MODE_NUNITS poly_uint16 mode_nunits[NUM_MACHINE_MODES];
-extern CONST_MODE_UNIT_SIZE unsigned char mode_unit_size[NUM_MACHINE_MODES];
+extern CONST_MODE_UNIT_SIZE MODE_UNIT_SIZE_TYPE mode_unit_size[NUM_MACHINE_MODES];
 extern const unsigned short mode_unit_precision[NUM_MACHINE_MODES];
 extern const unsigned short mode_next[NUM_MACHINE_MODES];
 extern const unsigned short mode_wider[NUM_MACHINE_MODES];
@@ -264,13 +264,13 @@ class opt_mode
 public:
   enum from_int { dummy = MAX_MACHINE_MODE };
 
-  ALWAYS_INLINE CONSTEXPR opt_mode () : m_mode (E_VOIDmode) {}
-  ALWAYS_INLINE CONSTEXPR opt_mode (const T &m) : m_mode (m) {}
+  ALWAYS_INLINE constexpr opt_mode () : m_mode (E_VOIDmode) {}
+  ALWAYS_INLINE constexpr opt_mode (const T &m) : m_mode (m) {}
   template<typename U>
-  ALWAYS_INLINE CONSTEXPR opt_mode (const U &m) : m_mode (T (m)) {}
+  ALWAYS_INLINE constexpr opt_mode (const U &m) : m_mode (T (m)) {}
   template<typename U>
-  ALWAYS_INLINE CONSTEXPR opt_mode (const opt_mode<U> &);
-  ALWAYS_INLINE CONSTEXPR opt_mode (from_int m) : m_mode (machine_mode (m)) {}
+  ALWAYS_INLINE constexpr opt_mode (const opt_mode<U> &);
+  ALWAYS_INLINE constexpr opt_mode (from_int m) : m_mode (machine_mode (m)) {}
 
   machine_mode else_void () const;
   machine_mode else_blk () const { return else_mode (BLKmode); }
@@ -289,7 +289,7 @@ private:
 
 template<typename T>
 template<typename U>
-ALWAYS_INLINE CONSTEXPR
+ALWAYS_INLINE constexpr
 opt_mode<T>::opt_mode (const opt_mode<U> &m)
   : m_mode (m.exists () ? T (m.require ()) : E_VOIDmode)
 {
@@ -357,10 +357,10 @@ struct pod_mode
   typedef typename T::measurement_type measurement_type;
 
   machine_mode m_mode;
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   operator machine_mode () const { return m_mode; }
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   operator T () const { return from_int (m_mode); }
 
   ALWAYS_INLINE pod_mode &operator = (const T &m) { m_mode = m; return *this; }
@@ -441,10 +441,10 @@ public:
 
   ALWAYS_INLINE scalar_int_mode () {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   scalar_int_mode (from_int m) : m_mode (machine_mode (m)) {}
 
-  ALWAYS_INLINE CONSTEXPR operator machine_mode () const { return m_mode; }
+  ALWAYS_INLINE constexpr operator machine_mode () const { return m_mode; }
 
   static bool includes_p (machine_mode);
 
@@ -469,10 +469,10 @@ public:
 
   ALWAYS_INLINE scalar_float_mode () {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   scalar_float_mode (from_int m) : m_mode (machine_mode (m)) {}
 
-  ALWAYS_INLINE CONSTEXPR operator machine_mode () const { return m_mode; }
+  ALWAYS_INLINE constexpr operator machine_mode () const { return m_mode; }
 
   static bool includes_p (machine_mode);
 
@@ -497,19 +497,19 @@ public:
 
   ALWAYS_INLINE scalar_mode () {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   scalar_mode (from_int m) : m_mode (machine_mode (m)) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   scalar_mode (const scalar_int_mode &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   scalar_mode (const scalar_float_mode &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   scalar_mode (const scalar_int_mode_pod &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR operator machine_mode () const { return m_mode; }
+  ALWAYS_INLINE constexpr operator machine_mode () const { return m_mode; }
 
   static bool includes_p (machine_mode);
 
@@ -547,10 +547,10 @@ public:
 
   ALWAYS_INLINE complex_mode () {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   complex_mode (from_int m) : m_mode (machine_mode (m)) {}
 
-  ALWAYS_INLINE CONSTEXPR operator machine_mode () const { return m_mode; }
+  ALWAYS_INLINE constexpr operator machine_mode () const { return m_mode; }
 
   static bool includes_p (machine_mode);
 
@@ -611,7 +611,7 @@ mode_to_inner (machine_mode mode)
 
 /* Return the base GET_MODE_UNIT_SIZE value for MODE.  */
 
-ALWAYS_INLINE unsigned char
+ALWAYS_INLINE MODE_UNIT_SIZE_TYPE
 mode_to_unit_size (machine_mode mode)
 {
 #if GCC_VERSION >= 4001
@@ -837,28 +837,28 @@ public:
 
   ALWAYS_INLINE fixed_size_mode () {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   fixed_size_mode (from_int m) : m_mode (machine_mode (m)) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   fixed_size_mode (const scalar_mode &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   fixed_size_mode (const scalar_int_mode &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   fixed_size_mode (const scalar_float_mode &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   fixed_size_mode (const scalar_mode_pod &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   fixed_size_mode (const scalar_int_mode_pod &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR
+  ALWAYS_INLINE constexpr
   fixed_size_mode (const complex_mode &m) : m_mode (m) {}
 
-  ALWAYS_INLINE CONSTEXPR operator machine_mode () const { return m_mode; }
+  ALWAYS_INLINE constexpr operator machine_mode () const { return m_mode; }
 
   static bool includes_p (machine_mode);
 
@@ -924,6 +924,21 @@ inline opt_scalar_int_mode
 smallest_int_mode_for_size (poly_uint64 size)
 {
   return dyn_cast <scalar_int_mode> (smallest_mode_for_size (size, MODE_INT));
+}
+
+/* Parses a machine mode from NAME.  If successful the machine mode is stored
+   into RESULT and true is returned.  Otherwise false is returned.  */
+
+inline bool
+parse_machine_mode (const char *name, machine_mode *result)
+{
+  for (unsigned i = 0; i < NUM_MACHINE_MODES; i++)
+    if (strcmp (GET_MODE_NAME (i), name) == 0)
+      {
+	*result = (machine_mode) i;
+	return true;
+      }
+  return false;
 }
 
 extern opt_scalar_int_mode int_mode_for_mode (machine_mode);
@@ -1024,7 +1039,7 @@ HWI_COMPUTABLE_MODE_P (scalar_int_mode mode)
 }
 
 struct int_n_data_t {
-  /* These parts are initailized by genmodes output */
+  /* These parts are initialized by genmodes output */
   unsigned int bitsize;
   scalar_int_mode_pod m;
   /* RID_* is RID_INTN_BASE + index into this array */

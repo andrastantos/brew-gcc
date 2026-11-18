@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O0 -Werror-implicit-function-declaration -march=k8 -msse4a -m3dnow -mavx -mavx2 -mfma4 -mxop -maes -mpclmul -mpopcnt -mabm -mlzcnt -mbmi -mbmi2 -mtbm -mlwp -mfsgsbase -mrdrnd -mf16c -mfma -mrtm -mrdseed -mprfchw -madx -mfxsr -mxsaveopt -msha -mxsavec -mxsaves -mclflushopt -mclwb -mmwaitx -mclzero -mpku -msgx -mrdpid -mgfni -mpconfig -mwbnoinvd -menqcmd -mavx512vp2intersect -mserialize -mtsxldtrk -mamx-tile -mamx-int8 -mamx-bf16 -mkl -mwidekl -mavxvnni -mavxifma -mavxvnniint8 -mavxneconvert -mamx-fp16 -mraoint -mamx-complex -mavxvnniint16 -msm3 -msha512 -msm4 -mavx10.2 -mamx-avx512 -mamx-tf32 -mamx-fp8 -mmovrs -mamx-movrs" } */
+/* { dg-options "-O0 -Werror-implicit-function-declaration -march=k8 -msse4a -m3dnow -mavx -mavx2 -mfma4 -mxop -maes -mpclmul -mpopcnt -mabm -mlzcnt -mbmi -mbmi2 -mtbm -mlwp -mfsgsbase -mrdrnd -mf16c -mfma -mrtm -mrdseed -mprfchw -madx -mfxsr -mxsaveopt -msha -mxsavec -mxsaves -mclflushopt -mclwb -mmwaitx -mclzero -mpku -msgx -mrdpid -mgfni -mpconfig -mwbnoinvd -menqcmd -mavx512vp2intersect -mserialize -mtsxldtrk -mamx-tile -mamx-int8 -mamx-bf16 -mkl -mwidekl -mavxvnni -mavxifma -mavxvnniint8 -mavxneconvert -mamx-fp16 -mraoint -mamx-complex -mavxvnniint16 -msm3 -msha512 -msm4 -mavx10.2 -mamx-avx512 -mamx-fp8 -mmovrs -mamx-movrs -mavx10v2aux -macev1" } */
 /* { dg-add-options bind_pic_locally } */
 
 #include <mm_malloc.h>
@@ -24,9 +24,17 @@
   type _CONCAT(_,func) (int const I)					\
   { return func (imm); }
 
+#define test_0v(func, imm)						\
+  void _CONCAT(_,func) (int const I)					\
+  { func (imm); }
+
 #define test_1(func, type, op1_type, imm)				\
   type _CONCAT(_,func) (op1_type A, int const I)			\
   { return func (A, imm); }
+
+#define test_1t(func, type, imm, op1_type)				\
+  type _CONCAT(_,func) (int const I, op1_type A)			\
+  { return func (imm, A); }
 
 #define test_1x(func, type, op1_type, imm1, imm2)			\
   type _CONCAT(_,func) (op1_type A, int const I, int const L)		\
@@ -40,6 +48,10 @@
   type _CONCAT(_,func) (op1_type A, op2_type B, int const I)		\
   { return func (A, B, imm); }
 
+#define test_2vt(func, imm, op1_type, op2_type)				\
+  void _CONCAT(_,func) (int const I, op1_type A, op2_type B)		\
+  { func (imm, A, B); }
+
 #define test_2x(func, type, op1_type, op2_type, imm1, imm2)		\
   type _CONCAT(_,func) (op1_type A, op2_type B, int const I, int const L) \
   { return func (A, B, imm1, imm2); }
@@ -52,6 +64,10 @@
 #define test_2vx(func, op1_type, op2_type, imm1, imm2)     \
   void _CONCAT(_,func) (op1_type A, op2_type B, int const I, int const L) \
   { func (A, B, imm1, imm2); }
+
+#define test_2vxt(func, imm1, op1_type, op2_type, imm2)			\
+  void _CONCAT(_,func) (int const I, op1_type A, op2_type B, int const L) \
+  { func (imm1, A, B, imm2); }
 
 #define test_3(func, type, op1_type, op2_type, op3_type, imm)		\
   type _CONCAT(_,func) (op1_type A, op2_type B,				\
@@ -1029,7 +1045,7 @@ test_4 (_mm512_mask_mpsadbw_epu8, __m512i, __m512i, __mmask32, __m512i, __m512i,
 test_4 (_mm256_mask_mpsadbw_epu8, __m256i, __m256i, __mmask16, __m256i, __m256i, 1)
 test_4 (_mm_mask_mpsadbw_epu8, __m128i, __m128i, __mmask8, __m128i, __m128i, 1)
 
-/* avx10_2convertintrin.h */
+/* avx10v1auxintrin.h */
 test_2 (_mm512_cvtx_round2ps_ph, __m512h, __m512, __m512, 4)
 
 /* avx10_2bf16intrin.h */
@@ -1122,15 +1138,19 @@ test_3 (_mm512_mask_cvtts_roundps_epu32, __m512i, __m512i, __mmask16, __m512, 8)
 test_1 (_mm512_cvtts_roundps_epu64, __m512i, __m256, 8)
 test_2 (_mm512_maskz_cvtts_roundps_epu64, __m512i, __mmask8, __m256, 8)
 test_3 (_mm512_mask_cvtts_roundps_epu64, __m512i, __m512i, __mmask8, __m256, 8)
-test_1 (_mm_cvtts_roundsd_epi32, int, __m128d, 8)
-test_1 (_mm_cvtts_roundsd_epu32, unsigned int, __m128d, 8)
-test_1 (_mm_cvtts_roundss_epi32, int, __m128, 8)
-test_1 (_mm_cvtts_roundss_epu32, unsigned int, __m128, 8)
+test_1 (_mm_cvtts_roundsd_i32, int, __m128d, 8)
+test_1 (_mm_cvtts_roundsd_si32, int, __m128d, 8)
+test_1 (_mm_cvtts_roundsd_u32, unsigned int, __m128d, 8)
+test_1 (_mm_cvtts_roundss_i32, int, __m128, 8)
+test_1 (_mm_cvtts_roundss_si32, int, __m128, 8)
+test_1 (_mm_cvtts_roundss_u32, unsigned int, __m128, 8)
 #ifdef __x86_64__
-test_1 (_mm_cvtts_roundsd_epi64, long long, __m128d, 8)
-test_1 (_mm_cvtts_roundsd_epu64, unsigned long long, __m128d, 8)
-test_1 (_mm_cvtts_roundss_epi64, long long, __m128, 8)
-test_1 (_mm_cvtts_roundss_epu64, unsigned long long, __m128, 8)
+test_1 (_mm_cvtts_roundsd_i64, long long, __m128d, 8)
+test_1 (_mm_cvtts_roundsd_si64, long long, __m128d, 8)
+test_1 (_mm_cvtts_roundsd_u64, unsigned long long, __m128d, 8)
+test_1 (_mm_cvtts_roundss_i64, long long, __m128, 8)
+test_1 (_mm_cvtts_roundss_si64, long long, __m128, 8)
+test_1 (_mm_cvtts_roundss_u64, unsigned long long, __m128, 8)
 #endif
 
 /* avx10_2minmaxintrin.h */
@@ -1188,3 +1208,37 @@ test_4x (_mm_mask_minmax_round_ss, __m128, __m128, __mmask8, __m128, __m128, 100
 test_2x (_mm_minmax_round_sh, __m128h, __m128h, __m128h, 100, 4)
 test_3x (_mm_maskz_minmax_round_sh, __m128h, __mmask8, __m128h, __m128h, 100, 4)
 test_4x (_mm_mask_minmax_round_sh, __m128h, __m128h, __mmask8, __m128h, __m128h, 100, 4)
+
+/* avx10v2auxintrin.h */
+test_1 (_mm_unpack_epi8, __m128i, __m128i, 10)
+test_3 (_mm_mask_unpack_epi8, __m128i, __m128i, __mmask16, __m128i, 10)
+test_2 (_mm_maskz_unpack_epi8, __m128i, __mmask16, __m128i, 10)
+test_1 (_mm256_unpack_epi8, __m256i, __m256i, 10)
+test_3 (_mm256_mask_unpack_epi8, __m256i, __m256i, __mmask32, __m256i, 10)
+test_2 (_mm256_maskz_unpack_epi8, __m256i, __mmask32, __m256i, 10)
+test_1 (_mm512_unpack_epi8, __m512i, __m512i, 10)
+test_3 (_mm512_mask_unpack_epi8, __m512i, __m512i, __mmask64, __m512i, 10)
+test_2 (_mm512_maskz_unpack_epi8, __m512i, __mmask64, __m512i, 10)
+
+/* acev1intrin.h */
+#ifdef __x86_64__
+test_0v (_tile_ace_zero, 1)
+test_1t (_tile_cvtrow_epi32_ps, __m512, 1, int)
+test_1t (_tile_cvtrowh_ps_pbh, __m512bh, 1, int)
+test_1t (_tile_cvtrowl_ps_pbh, __m512bh, 1, int)
+test_1t (_tile_cvtrowh_ps_ph, __m512h, 1, int)
+test_1t (_tile_cvtrowl_ps_ph, __m512h, 1, int)
+test_1t (_tile_extractrow, __m512i, 1, int)
+test_2vt (_tile_insertrow, 1, __m512i, int)
+test_2vt (_tile_insertcol, 1, __m512i, int)
+test_2vt (_tile_op2bf16_ps, 1, __m512bh, __m512bh)
+test_2vt (_tile_op4bssd_epi32, 1, __m512i, __m512i)
+test_2vt (_tile_op4bsud_epi32, 1, __m512i, __m512i)
+test_2vt (_tile_op4busd_epi32, 1, __m512i, __m512i)
+test_2vt (_tile_op4buud_epi32, 1, __m512i, __m512i)
+test_2vxt (_tile_op4mxbf8_ps, 1, __m512i, __m512i, 9)
+test_2vxt (_tile_op4mxbhf8_ps, 1, __m512i, __m512i, 9)
+test_2vxt (_tile_op4mxhbf8_ps, 1, __m512i, __m512i, 9)
+test_2vxt (_tile_op4mxhf8_ps, 1, __m512i, __m512i, 9)
+test_2vxt (_tile_op4mxbss_ps, 1, __m512i, __m512i, 9)
+#endif

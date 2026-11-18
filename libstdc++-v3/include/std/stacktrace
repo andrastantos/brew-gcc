@@ -34,6 +34,7 @@
 
 #define __glibcxx_want_stacktrace
 #define __glibcxx_want_formatters
+#define __glibcxx_want_hardened_basic_stacktrace
 #include <bits/version.h>
 
 #ifdef __cpp_lib_stacktrace // C++ >= 23 && hosted && HAVE_STACKTRACE
@@ -45,9 +46,9 @@
 #include <bits/memory_resource.h>
 #include <bits/stl_algobase.h>
 #include <bits/stl_algo.h>
-#include <bits/stl_iterator.h>
 #include <bits/stl_uninitialized.h>
 #include <bits/stl_tempbuf.h> // __get_temporary_buffer
+#include <bits/range_access.h>
 #include <ext/numeric_traits.h>
 
 namespace std _GLIBCXX_VISIBILITY(default)

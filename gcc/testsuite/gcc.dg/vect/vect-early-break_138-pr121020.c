@@ -3,10 +3,15 @@
 /* { dg-additional-options "-march=znver2" { target x86_64-*-* i?86-*-* } } */
 /* { dg-require-effective-target mmap } */
 /* { dg-require-effective-target vect_early_break } */
+/* { dg-require-effective-target avx2 } */
 
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/mman.h>
+
+#if defined(__APPLE__) && !defined(MAP_ANONYMOUS)
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 #include <unistd.h>
 #include "tree-vect.h"
 

@@ -30,7 +30,6 @@
 #include "gimple-iterator.h"
 #include "gimple-fold.h"
 #include "tree-eh.h"
-#include "gimplify.h"
 #include "tree-cfg.h"
 #include "tree-ssa.h"
 #include "tree-ssa-propagate.h"
@@ -124,10 +123,6 @@ static int *cfg_order_to_bb;
    two worklists to first make forward progress before iterating.  */
 static bitmap ssa_edge_worklist;
 static vec<gimple *> uid_to_stmt;
-
-/* Current RPO index in the iteration.  */
-static int curr_order;
-
 
 /* We have just defined a new value for VAR.  If IS_VARYING is true,
    add all immediate uses of VAR to VARYING_SSA_EDGES, otherwise add
@@ -436,8 +431,6 @@ ssa_propagation_engine::ssa_propagate (void)
 {
   ssa_prop_init ();
 
-  curr_order = 0;
-
   /* Iterate until the worklists are empty.  We iterate both blocks
      and stmts in RPO order, prioritizing backedge processing.
      Seed the algorithm by adding the successors of the entry block to the
@@ -471,7 +464,6 @@ ssa_propagation_engine::ssa_propagate (void)
 	  && (next_stmt_bb_order == -1
 	      || next_block_order <= next_stmt_bb_order))
 	{
-	  curr_order = next_block_order;
 	  bitmap_clear_bit (cfg_blocks, next_block_order);
 	  basic_block bb
 	    = BASIC_BLOCK_FOR_FN (cfun, cfg_order_to_bb [next_block_order]);
@@ -480,7 +472,6 @@ ssa_propagation_engine::ssa_propagate (void)
       /* Else simulate from the SSA edge worklist.  */
       else
 	{
-	  curr_order = next_stmt_bb_order;
 	  if (dump_file && (dump_flags & TDF_DETAILS))
 	    {
 	      fprintf (dump_file, "\nSimulating statement: ");
@@ -699,7 +690,7 @@ private:
 
 /* Call post_new_stmt for each new statement that has been added
    to the current BB.  OLD_GSI is the statement iterator before the BB
-   changes ocurred.  NEW_GSI is the iterator which may contain new
+   changes occurred.  NEW_GSI is the iterator which may contain new
    statements.  */
 
 void
@@ -1011,7 +1002,7 @@ substitute_and_fold_engine::substitute_and_fold (basic_block block)
 
   /* Fixup stmts that became noreturn calls.  This may require splitting
      blocks and thus isn't possible during the dominator walk.  Do this
-     in reverse order so we don't inadvertedly remove a stmt we want to
+     in reverse order so we don't inadvertently remove a stmt we want to
      fixup by visiting a dominating now noreturn call first.  */
   while (!walker.stmts_to_fixup.is_empty ())
     {

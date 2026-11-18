@@ -73,20 +73,12 @@ unsigned int ssa_name_nodes_created;
 #define FREE_SSANAMES(fun) (fun)->gimple_df->free_ssanames
 #define FREE_SSANAMES_QUEUE(fun) (fun)->gimple_df->free_ssanames_queue
 
-/* Return TRUE if NAME has global range info.  */
-
-inline bool
-range_info_p (const_tree name)
-{
-  return SSA_NAME_RANGE_INFO (name);
-}
-
 /* Return TRUE if R fits in the global range of NAME.  */
 
 inline bool
 range_info_fits_p (tree name, const vrange &r)
 {
-  gcc_checking_assert (range_info_p (name));
+  gcc_checking_assert (SSA_NAME_RANGE_INFO (name));
   vrange_storage *mem = SSA_NAME_RANGE_INFO (name);
   return mem->fits_p (r);
 }
@@ -94,7 +86,7 @@ range_info_fits_p (tree name, const vrange &r)
 /* Allocate a new global range for NAME and set it to R.  Return the
    allocation slot.  */
 
-inline void *
+inline vrange_storage *
 range_info_alloc (tree name, const vrange &r)
 {
   vrange_storage *mem = ggc_alloc_vrange_storage (r);
@@ -111,6 +103,40 @@ range_info_free (tree name)
   ggc_free (mem);
 }
 
+/* Attach PT to NAME, creating range storage if necessary.  */
+
+static void
+set_pt_solution (tree name, pt_solution *pt)
+{
+  gcc_checking_assert (POINTER_TYPE_P (TREE_TYPE (name)));
+  if (!SSA_NAME_RANGE_INFO (name))
+    SSA_NAME_RANGE_INFO (name) = ggc_alloc_vrange_storage (TREE_TYPE (name));
+  ssa_name_prange_info (name)->pt = pt;
+}
+
+/* Return NAME's solution, creating an unknown solution if necessary.  */
+
+static pt_solution *
+get_pt_solution (tree name)
+{
+  gcc_assert (POINTER_TYPE_P (TREE_TYPE (name)));
+  prange_storage *s = ssa_name_prange_info (name);
+  if (s && s->pt)
+    return s->pt;
+  pt_solution *pt = ggc_cleared_alloc<pt_solution> ();
+  pt_solution_reset (pt);
+  set_pt_solution (name, pt);
+  return pt;
+}
+
+/* Make PT the points-to solution for NAME.  */
+
+void
+set_ssa_name_pt_solution (tree name, const pt_solution &pt)
+{
+  *get_pt_solution (name) = pt;
+}
+
 /* Return the global range for NAME in R.  */
 
 inline void
@@ -119,18 +145,29 @@ range_info_get_range (const_tree name, vrange &r)
   SSA_NAME_RANGE_INFO (name)->get_vrange (r, TREE_TYPE (name));
 }
 
-/* Set the global range for NAME from R.  Return TRUE if successfull,
+/* Set the global range for NAME from R.  Return TRUE if successful,
    or FALSE if we can't set a range of NAME's type.  */
 
 inline bool
 range_info_set_range (tree name, const vrange &r)
 {
-  if (!range_info_p (name) || !range_info_fits_p (name, r))
+  if (!SSA_NAME_RANGE_INFO (name) || !range_info_fits_p (name, r))
     {
-      if (range_info_p (name))
+      // Preserve SSA-owned points-to information when the
+      // variable-sized range storage must grow.
+      pt_solution *pt = NULL;
+      if (prange_storage *old = ssa_name_prange_info (name))
+	pt = old->pt;
+      if (SSA_NAME_RANGE_INFO (name))
 	range_info_free (name);
 
-      return range_info_alloc (name, r);
+      vrange_storage *mem = range_info_alloc (name, r);
+      if (mem && pt)
+	{
+	  prange_storage *s = mem->dyn_prange ();
+	  s->pt = pt;
+	}
+      return mem != NULL;
     }
   else
     {
@@ -398,10 +435,7 @@ make_ssa_name_fn (struct function *fn, tree var, gimple *stmt,
       SET_SSA_NAME_VAR_OR_IDENTIFIER (t, var);
     }
   SSA_NAME_DEF_STMT (t) = stmt;
-  if (POINTER_TYPE_P (TREE_TYPE (t)))
-    SSA_NAME_PTR_INFO (t) = NULL;
-  else
-    SSA_NAME_RANGE_INFO (t) = NULL;
+  SSA_NAME_RANGE_INFO (t) = NULL;
 
   SSA_NAME_IN_FREE_LIST (t) = 0;
   SSA_NAME_IS_DEFAULT_DEF (t) = 0;
@@ -425,28 +459,19 @@ set_range_info (tree name, const vrange &r)
 
   // Pick up the current range, or VARYING if none.
   tree type = TREE_TYPE (name);
-  if (POINTER_TYPE_P (type))
-    {
-      struct ptr_info_def *pi = get_ptr_info (name);
-      // If R is nonnull and pi is not, set nonnull.
-      if (r.nonzero_p () && (!pi || pi->pt.null))
-	set_ptr_nonnull (name);
-      else
-	return false;
-    }
+  value_range tmp (type);
+  if (SSA_NAME_RANGE_INFO (name))
+    range_info_get_range (name, tmp);
   else
-    {
-      value_range tmp (type);
-      if (range_info_p (name))
-	range_info_get_range (name, tmp);
-      else
-	tmp.set_varying (type);
-      // If the result doesn't change, or is undefined, return false.
-      if (!tmp.intersect (r) || tmp.undefined_p ())
-	return false;
-      if (!range_info_set_range (name, tmp))
-	return false;
-    }
+    tmp.set_varying (type);
+
+  // If the result doesn't change, or is undefined, return false.
+  if (!tmp.intersect (r) || tmp.undefined_p ())
+    return false;
+
+  if (!range_info_set_range (name, tmp))
+    return false;
+
   if (dump_file)
     {
       value_range tmp (type);
@@ -462,14 +487,31 @@ set_range_info (tree name, const vrange &r)
   return true;
 }
 
+/* query nonnull attribute for pointer NAME.  */
+
+bool
+ptr_nonnull_p (tree name)
+{
+  gcc_assert (POINTER_TYPE_P (TREE_TYPE (name)));
+  prange_storage *ps = ssa_name_prange_info (name);
+  return ps ? ps->nonnull_p (TREE_TYPE (name)) : false;
+}
+
 /* Set nonnull attribute to pointer NAME.  */
 
 void
 set_ptr_nonnull (tree name)
 {
   gcc_assert (POINTER_TYPE_P (TREE_TYPE (name)));
-  struct ptr_info_def *pi = get_ptr_info (name);
-  pi->pt.null = 0;
+  prange_storage *ps = ssa_name_prange_info (name);
+  if (ps)
+    {
+      ps->set_nonnull (TREE_TYPE (name));
+      return;
+    }
+  prange pr;
+  pr.set_nonzero (TREE_TYPE (name));
+  range_info_set_range (name, pr);
 }
 
 /* Update the non-zero bits bitmask of NAME.  */
@@ -477,7 +519,13 @@ set_ptr_nonnull (tree name)
 void
 set_nonzero_bits (tree name, const wide_int &mask)
 {
-  gcc_assert (!POINTER_TYPE_P (TREE_TYPE (name)));
+  if (POINTER_TYPE_P (TREE_TYPE (name)))
+    {
+      prange p (TREE_TYPE (name));
+      p.set_nonzero_bits (mask);
+      set_range_info (name, p);
+      return;
+    }
 
   int_range<2> r (TREE_TYPE (name));
   r.set_nonzero_bits (mask);
@@ -492,7 +540,13 @@ set_nonzero_bits (tree name, const wide_int &mask)
 void
 set_bitmask (tree name, const wide_int &value, const wide_int &mask)
 {
-  gcc_assert (!POINTER_TYPE_P (TREE_TYPE (name)));
+  if (POINTER_TYPE_P (TREE_TYPE (name)))
+    {
+      prange p (TREE_TYPE (name));
+      p.update_bitmask (irange_bitmask (value, mask));
+      set_range_info (name, p);
+      return;
+    }
 
   int_range_max r (TREE_TYPE (name));
   r.update_bitmask (irange_bitmask (value, mask));
@@ -522,19 +576,19 @@ get_nonzero_bits_1 (const_tree name)
 	return get_nonzero_bits_1 (elem);
     }
 
-  if (TREE_CODE (name) != SSA_NAME)
+  if (TREE_CODE (name) != SSA_NAME || !SSA_NAME_RANGE_INFO (name))
     return wi::shwi (-1, precision);
 
+  // Alignment information is encoded in the bitmask, so pointers simply
+  // need to extract the bitmask like integers do.
   if (POINTER_TYPE_P (TREE_TYPE (name)))
     {
-      struct ptr_info_def *pi = SSA_NAME_PTR_INFO (name);
-      if (pi && pi->align)
-	return wi::shwi (-(HOST_WIDE_INT) pi->align
-			 | (HOST_WIDE_INT) pi->misalign, precision);
-      return wi::shwi (-1, precision);
+      prange_storage *s = ssa_name_prange_info (name);
+      gcc_checking_assert (s);
+      return s->get_bitmask (TREE_TYPE (name)).get_nonzero_bits ();
     }
 
-  if (!range_info_p (name) || !irange::supports_p (TREE_TYPE (name)))
+  if (!irange::supports_p (TREE_TYPE (name)))
     return wi::shwi (-1, precision);
 
   int_range_max tmp;
@@ -579,10 +633,24 @@ get_known_nonzero_bits_1 (const_tree name)
   /* Use element_precision instead of TYPE_PRECISION so complex and
      vector types get a non-zero precision.  */
   unsigned int precision = element_precision (TREE_TYPE (name));
-  if (TREE_CODE (name) != SSA_NAME || POINTER_TYPE_P (TREE_TYPE (name)))
+  if (TREE_CODE (name) != SSA_NAME)
     return wi::shwi (0, precision);
 
-  if (!range_info_p (name) || !irange::supports_p (TREE_TYPE (name)))
+  if (!SSA_NAME_RANGE_INFO (name))
+    return wi::shwi (0, precision);
+
+  // Known pointer bits, including alignment, are encoded in the bitmask
+  if (POINTER_TYPE_P (TREE_TYPE (name)))
+    {
+      prange_storage *s = ssa_name_prange_info (name);
+      gcc_checking_assert (s);
+      if (s->undefined_p ())
+	return wi::shwi (0, precision);
+      irange_bitmask bm = s->get_bitmask (TREE_TYPE (name));
+      return wi::bit_and_not (bm.value (), bm.mask ());
+    }
+
+  if (!irange::supports_p (TREE_TYPE (name)))
     return wi::shwi (0, precision);
 
   int_range_max tmp;
@@ -727,86 +795,116 @@ release_ssa_name_fn (struct function *fn, tree var)
     }
 }
 
-/* If the alignment of the pointer described by PI is known, return true and
-   store the alignment and the deviation from it into *ALIGNP and *MISALIGNP
-   respectively.  Otherwise return false.  */
+/* Return the bitmask expressing byte alignment ALIGN with byte offset
+   MISALIGN for a pointer of type TYPE.  */
+
+static irange_bitmask
+alignment_to_bitmask (tree type, unsigned int align, unsigned int misalign)
+{
+  /* ptr & (ALIGN - 1) == MISALIGN says the low log2(ALIGN) bits of the pointer
+     are known and hold MISALIGN, so the unknown-bit mask is ~(ALIGN - 1) and
+     the known value is MISALIGN.
+     An ALIGN of 1 carries no information and yields an unknown bitmask.  */
+  unsigned int prec = TYPE_PRECISION (type);
+  wide_int value = wi::uhwi (misalign, prec);
+  wide_int low_bits = wi::uhwi (align - 1, prec);
+  return irange_bitmask (value, ~low_bits);
+}
+
+/* if BM contains usable alignment info, return the byte alignment and offset
+   in ALIGNP and MISALIGNP.  Otherwise return FALSE.  */
+
+static bool
+bitmask_to_alignment (const irange_bitmask &bm, unsigned int *alignp,
+		      unsigned int *misalignp)
+{
+  if (bm.unknown_p ())
+    return false;
+
+  wide_int mask = bm.mask ();
+  unsigned int bit;
+
+  /* A fully known pointer supports any representable alignment, with
+     the corresponding offset.  Otherwise stop at the first unknown bit.  */
+  bit = mask == 0 ? bm.value ().get_precision () : wi::ctz (mask);
+  if (bit == 0)
+    return false;
+
+  /* A more strongly calculated alignment should simply be max alignment.  */
+  if (bit > HOST_BITS_PER_INT - 1)
+    bit = HOST_BITS_PER_INT - 1;
+
+  *alignp = 1u << bit;
+  *misalignp = wi::extract_uhwi (bm.value (), 0, bit);
+  return true;
+}
+
+/* Extract useful alignment information from NAME's global range.  Return
+   false if no alignment beyond byte alignment is known.  */
 
 bool
-get_ptr_info_alignment (struct ptr_info_def *pi, unsigned int *alignp,
+get_ssa_name_alignment (const_tree name, unsigned int *alignp,
 			unsigned int *misalignp)
 {
-  if (pi->align)
-    {
-      *alignp = pi->align;
-      *misalignp = pi->misalign;
-      return true;
-    }
-  else
+  if (!POINTER_TYPE_P (TREE_TYPE (name)) || !SSA_NAME_RANGE_INFO (name))
     return false;
+
+  prange_storage *s = ssa_name_prange_info (name);
+  if (!s)
+    return false;
+
+  return bitmask_to_alignment (s->get_bitmask (TREE_TYPE (name)),
+			       alignp, misalignp);
 }
 
-/* State that the pointer described by PI has unknown alignment.  */
+/* Clear NAME's known bits independently of the legacy alignment fields.  */
 
 void
-mark_ptr_info_alignment_unknown (struct ptr_info_def *pi)
+mark_ssa_name_alignment_unknown (tree name)
 {
-  pi->align = 0;
-  pi->misalign = 0;
+  if (!SSA_NAME_RANGE_INFO (name))
+    return;
+
+  prange r (TREE_TYPE (name));
+  range_info_get_range (name, r);
+  if (r.undefined_p ())
+    return;
+
+  /* Withdraw the known bits or the alignment survives in the bitmask.  */
+  irange_bitmask unknown (TYPE_PRECISION (TREE_TYPE (name)));
+  r.update_bitmask (unknown);
+  range_info_set_range (name, r);
 }
 
-/* Store the power-of-two byte alignment and the deviation from that
-   alignment of pointer described by PI to ALIOGN and MISALIGN
-   respectively.  */
+/* Refine NAME's bitmask with ALIGN and MISALIGN.  Preserve the existing
+   information if the requested alignment conflicts with known bits.  */
 
 void
-set_ptr_info_alignment (struct ptr_info_def *pi, unsigned int align,
-			    unsigned int misalign)
+set_ssa_name_alignment (tree name, unsigned int align, unsigned int misalign)
 {
   gcc_checking_assert (align != 0);
   gcc_assert ((align & (align - 1)) == 0);
   gcc_assert ((misalign & ~(align - 1)) == 0);
+  gcc_assert (POINTER_TYPE_P (TREE_TYPE (name)));
 
-  pi->align = align;
-  pi->misalign = misalign;
-}
+  tree type = TREE_TYPE (name);
+  irange_bitmask bm = alignment_to_bitmask (type, align, misalign);
+  if (bm.unknown_p ())
+    return;
 
-/* If pointer described by PI has known alignment, increase its known
-   misalignment by INCREMENT modulo its current alignment.  */
+  prange r (type);
+  if (SSA_NAME_RANGE_INFO (name))
+    range_info_get_range (name, r);
+  if (r.undefined_p ())
+    return;
 
-void
-adjust_ptr_info_misalignment (struct ptr_info_def *pi, poly_uint64 increment)
-{
-  if (pi->align != 0)
-    {
-      increment += pi->misalign;
-      if (!known_misalignment (increment, pi->align, &pi->misalign))
-	{
-	  pi->align = known_alignment (increment);
-	  pi->misalign = 0;
-	}
-    }
-}
+  irange_bitmask cur = r.get_bitmask ();
+  if (!cur.intersect (bm))
+    return;
 
-/* Return the alias information associated with pointer T.  It creates a
-   new instance if none existed.  */
-
-struct ptr_info_def *
-get_ptr_info (tree t)
-{
-  struct ptr_info_def *pi;
-
-  gcc_assert (POINTER_TYPE_P (TREE_TYPE (t)));
-
-  pi = SSA_NAME_PTR_INFO (t);
-  if (pi == NULL)
-    {
-      pi = ggc_cleared_alloc<ptr_info_def> ();
-      pt_solution_reset (&pi->pt);
-      mark_ptr_info_alignment_unknown (pi);
-      SSA_NAME_PTR_INFO (t) = pi;
-    }
-
-  return pi;
+  r.update_bitmask (cur);
+  if (!r.undefined_p ())
+    range_info_set_range (name, r);
 }
 
 
@@ -829,39 +927,58 @@ copy_ssa_name_fn (struct function *fn, tree name, gimple *stmt)
   return new_name;
 }
 
-
-/* Creates a duplicate of the ptr_info_def at PTR_INFO for use by
-   the SSA name NAME.  */
+/* Give DEST its own copy of the points-to information of
+   the SSA name SRC.  SRC may be NULL_TREE or carry no information, in
+   which case DEST is left alone.  */
 
 void
-duplicate_ssa_name_ptr_info (tree name, struct ptr_info_def *ptr_info)
+duplicate_ssa_name_pt_solution (tree dest, const pt_solution* pt)
 {
-  struct ptr_info_def *new_ptr_info;
+  gcc_assert (POINTER_TYPE_P (TREE_TYPE (dest)));
+  gcc_assert (!ssa_name_pt_solution (dest));
 
-  gcc_assert (POINTER_TYPE_P (TREE_TYPE (name)));
-  gcc_assert (!SSA_NAME_PTR_INFO (name));
-
-  if (!ptr_info)
+  if (!pt)
     return;
-
-  new_ptr_info = ggc_alloc<ptr_info_def> ();
-  *new_ptr_info = *ptr_info;
-
-  SSA_NAME_PTR_INFO (name) = new_ptr_info;
+  pt_solution *copy = ggc_alloc<pt_solution> ();
+  *copy = *pt;
+  set_pt_solution (dest, copy);
 }
 
-void
-duplicate_ssa_name_range_info (tree name, tree src)
-{
-  gcc_checking_assert (!POINTER_TYPE_P (TREE_TYPE (src)));
-  gcc_checking_assert (!range_info_p (name));
+/* Give DEST its own copy of the points-to information of
+   the SSA name SRC.  SRC may be NULL_TREE or carry no information, in
+   which case DEST is left alone.  */
 
-  if (range_info_p (src))
-    {
-      value_range src_range (TREE_TYPE (src));
-      range_info_get_range (src, src_range);
-      range_info_set_range (name, src_range);
-    }
+void
+duplicate_ssa_name_pt_solution (tree dest, tree src)
+{
+  if (!src)
+     return;
+
+  if (const pt_solution *pt = ssa_name_pt_solution (src))
+    duplicate_ssa_name_pt_solution (dest, pt);
+}
+
+/* Copy any global range information from SRC to NAME.  If REMOVE_LOCAL_ADDR
+   is true, then any specified address that a prange may refer to is checked
+   to see if it's local to the function and removed if so.
+   The default is FALSE, which is the previous default behaviour and copies
+   the entire range as is.  */
+
+void
+duplicate_ssa_name_range_info (tree name, tree src, bool remove_local_addr)
+{
+  gcc_checking_assert (!SSA_NAME_RANGE_INFO (name));
+
+  if (!SSA_NAME_RANGE_INFO (src))
+    return;
+
+  value_range src_range (TREE_TYPE (src));
+  range_info_get_range (src, src_range);
+
+  /* Remove any local addresses from the range if present.  */
+  if (remove_local_addr && is_a <prange> (src_range))
+    as_a <prange> (src_range).clear_function_local_addr ();
+  range_info_set_range (name, src_range);
 }
 
 /* For a SSA copy DEST = SRC duplicate SSA info present on DEST to SRC
@@ -876,14 +993,11 @@ maybe_duplicate_ssa_info_at_copy (tree dest, tree src)
       != gimple_bb (SSA_NAME_DEF_STMT (dest)))
     return;
 
-  if (POINTER_TYPE_P (TREE_TYPE (dest))
-      && SSA_NAME_PTR_INFO (dest)
-      && ! SSA_NAME_PTR_INFO (src))
-    duplicate_ssa_name_ptr_info (src, SSA_NAME_PTR_INFO (dest));
-  else if (INTEGRAL_TYPE_P (TREE_TYPE (dest))
-	   && SSA_NAME_RANGE_INFO (dest)
-	   && ! SSA_NAME_RANGE_INFO (src))
-    duplicate_ssa_name_range_info (src, dest);
+  if (SSA_NAME_RANGE_INFO (dest) && !SSA_NAME_RANGE_INFO (src))
+    {
+      duplicate_ssa_name_range_info (src, dest);
+      duplicate_ssa_name_pt_solution (src, dest);
+    }
 }
 
 
@@ -894,15 +1008,12 @@ tree
 duplicate_ssa_name_fn (struct function *fn, tree name, gimple *stmt)
 {
   tree new_name = copy_ssa_name_fn (fn, name, stmt);
-  if (POINTER_TYPE_P (TREE_TYPE (name)))
-    {
-      struct ptr_info_def *old_ptr_info = SSA_NAME_PTR_INFO (name);
 
-      if (old_ptr_info)
-	duplicate_ssa_name_ptr_info (new_name, old_ptr_info);
+  if (SSA_NAME_RANGE_INFO (name))
+    {
+      duplicate_ssa_name_range_info (new_name, name);
+      duplicate_ssa_name_pt_solution (new_name, name);
     }
-  else if (range_info_p (name))
-    duplicate_ssa_name_range_info (new_name, name);
 
   return new_name;
 }
@@ -914,19 +1025,16 @@ duplicate_ssa_name_fn (struct function *fn, tree name, gimple *stmt)
 void
 reset_flow_sensitive_info (tree name)
 {
-  if (POINTER_TYPE_P (TREE_TYPE (name)))
-    {
-      /* points-to info is not flow-sensitive.  */
-      if (SSA_NAME_PTR_INFO (name))
-	{
-	  /* [E]VRP can derive context sensitive alignment info and
-	     non-nullness properties.  We must reset both.  */
-	  mark_ptr_info_alignment_unknown (SSA_NAME_PTR_INFO (name));
-	  SSA_NAME_PTR_INFO (name)->pt.null = 1;
-	}
-    }
-  else
-    SSA_NAME_RANGE_INFO (name) = NULL;
+  /* Aliasing info is not flow sensitive, so preserve it if present.  */
+  prange_storage *s = ssa_name_prange_info (name);
+  pt_solution *pt = s ? s->pt : NULL;
+
+  SSA_NAME_RANGE_INFO (name) = NULL;
+  if (pt)
+    set_pt_solution (name, pt);
+
+  // Clear range info in the current range query.
+  get_range_query (cfun)->reset_range_info (name);
 }
 
 /* Clear all flow sensitive data from all statements and PHI definitions
@@ -1056,76 +1164,4 @@ gimple_opt_pass *
 make_pass_release_ssa_names (gcc::context *ctxt)
 {
   return new pass_release_ssa_names (ctxt);
-}
-
-/* Save and restore of flow sensitive information. */
-
-/* Save off the flow sensitive info from NAME. */
-
-void
-flow_sensitive_info_storage::save (tree name)
-{
-  gcc_assert (state == 0);
-  if (!POINTER_TYPE_P (TREE_TYPE (name)))
-    {
-      range_info = SSA_NAME_RANGE_INFO (name);
-      state = 1;
-      return;
-    }
-  state = -1;
-  auto ptr_info = SSA_NAME_PTR_INFO (name);
-  if (ptr_info)
-    {
-      align = ptr_info->align;
-      misalign = ptr_info->misalign;
-      null = SSA_NAME_PTR_INFO (name)->pt.null;
-    }
-  else
-    {
-      align = 0;
-      misalign = 0;
-      null = true;
-    }
-}
-
-/* Restore the flow sensitive info from NAME. */
-
-void
-flow_sensitive_info_storage::restore (tree name)
-{
-  gcc_assert (state != 0);
-  if (!POINTER_TYPE_P (TREE_TYPE (name)))
-    {
-      gcc_assert (state == 1);
-      SSA_NAME_RANGE_INFO (name) = range_info;
-      return;
-    }
-  gcc_assert (state == -1);
-  auto ptr_info = SSA_NAME_PTR_INFO (name);
-  /* If there was no flow sensitive info on the pointer
-     just return, there is nothing to restore to.  */
-  if (!ptr_info)
-    return;
-  if (align != 0)
-    set_ptr_info_alignment (ptr_info, align, misalign);
-  else
-    mark_ptr_info_alignment_unknown (ptr_info);
-  SSA_NAME_PTR_INFO (name)->pt.null = null;
-}
-
-/* Save off the flow sensitive info from NAME.
-   And reset the flow sensitive info of NAME. */
-
-void
-flow_sensitive_info_storage::save_and_clear (tree name)
-{
-  save (name);
-  reset_flow_sensitive_info (name);
-}
-
-/* Clear the storage. */
-void
-flow_sensitive_info_storage::clear_storage (void)
-{
-  state = 0;
 }

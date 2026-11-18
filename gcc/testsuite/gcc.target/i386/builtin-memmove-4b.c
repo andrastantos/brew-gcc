@@ -1,6 +1,5 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -mno-avx512f -march=x86-64-v3 -mtune=generic -minline-all-stringops" } */
-/* { dg-add-options check_function_bodies } */
 /* Keep labels and directives ('.cfi_startproc', '.cfi_endproc').  */
 /* { dg-final { check-function-bodies "**" "" "" { target { lp64 } } {^\t?\.} } } */
 
@@ -22,7 +21,7 @@
 **	cmpq	\$256, %rdx
 **	ja	.L5
 **	cmpq	\$128, %rdx
-**	jnb	.L16
+**	ja	.L16
 **	vmovdqu	\(%rsi\), %ymm3
 **	vmovdqu	32\(%rsi\), %ymm2
 **	vmovdqu	-32\(%rsi,%rdx\), %ymm1

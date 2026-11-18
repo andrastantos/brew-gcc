@@ -145,6 +145,32 @@
   (and (match_code "mem")
        (match_test "GET_CODE(XEXP(op,0)) == REG")))
 
+(define_constraint "B1"
+  "Memory models that can match with A for load."
+  (and (match_code "const_int")
+       (and (match_test "ival == MEMMODEL_ACQUIRE")
+	    (match_test "TARGET_ZALASR"))))
+
+(define_constraint "B2"
+  "Memory models that can match with m for load."
+  (and (match_code "const_int")
+       (ior (match_test "ival != MEMMODEL_ACQUIRE")
+	    (match_test "!TARGET_ZALASR"))))
+
+(define_constraint "B3"
+  "Memory models that can match with A for store."
+  (and (match_code "const_int")
+       (and (ior (match_test "ival == MEMMODEL_RELEASE")
+		 (match_test "ival == MEMMODEL_SEQ_CST"))
+            (match_test "TARGET_ZALASR"))))
+
+(define_constraint "B4"
+  "Memory models that can match with m for store."
+  (and (match_code "const_int")
+       (ior (and (match_test "ival != MEMMODEL_RELEASE")
+                 (match_test "ival != MEMMODEL_SEQ_CST"))
+            (match_test "!TARGET_ZALASR"))))
+
 (define_constraint "S"
   "A constraint that matches an absolute symbolic address."
   (match_operand 0 "absolute_symbolic_operand"))
@@ -184,6 +210,56 @@
 (define_register_constraint "vm" "TARGET_VECTOR ? VM_REGS : NO_REGS"
   "A vector mask register (if available).")
 
+;; Dependent (dynamic) constraint for widening overlap:
+;; The RVV widening constraints for register overlap, aka dest EEW > src EEW.
+;; Quote from RVV spec 1.0:
+;;
+;; The destination EEW is greater than the source EEW, the source EMUL is at
+;; least 1, and the overlap is in the highest-numbered part of the destination
+;; register group (e.g., when LMUL=8, vzext.vf4 v0, v6 is legal, but a source
+;; of v0, v2, or v4 is not).
+;;
+;; Take vzext.vfN for example, only below cases are valid.
+;; Source EMUL = LMUL * (Source EEW / SEW) = LMUL * SEW / (N * SEW) = LMUL / N
+;;
+;; +-----------+------------+------------+----------+
+;; |           | LMUL = 8   | LMUL = 4   | LMUL = 2 |
+;; +-----------+------------+------------+----------+
+;; | vzext.vf2 | EMUL = 4   | EMUL = 2   | EMUL = 1 |
+;; +-----------+------------+------------+----------+
+;; |           | v0-7, v4-7 | v0-3, v2-3 | v0-1, v1 |
+;; +-----------+------------+------------+----------+
+;; | vzext.vf4 | EMUL = 2   | EMUL = 1   |          |
+;; +-----------+------------+------------+----------+
+;; |           | v0-7, v6-7 | v0-3, v3   |          |
+;; +-----------+------------+------------+----------+
+;; | vzext.vf8 | EMUL = 1   |            |          |
+;; +-----------+------------+------------+----------+
+;; |           | v0-7, v7   |            |          |
+;; +-----------+------------+------------+----------+
+;;
+(define_register_constraint "Wvr" "TARGET_VECTOR ? V_REGS : NO_REGS"
+  "Widening vector reg constraint"
+  "riscv_vector::riscv_v_widen_constraint_ok (regno, mode, ref_regno, ref_mode)"
+  "0")
+
+;; The scalar operand vs1 of a widening reduction (vwredsum[u].vs,
+;; vfwred[o|u]sum.vs) is read with EEW = 2 * SEW while the vector operand vs2
+;; (operand 3) is read with EEW = SEW.  A vector register may not supply
+;; source operands with two different EEWs, so vs1 must not fall inside the
+;; vs2 register group.
+;; Therefore, we take Wn3 indicates widen non-overlap to operand 3.
+(define_register_constraint "Wn3" "TARGET_VECTOR ? V_REGS : NO_REGS"
+  "Vector reg not overlapping the operand 3 register group"
+  "riscv_vector::riscv_v_widen_non_overlap_constraint_ok (regno, mode, ref_regno, ref_mode)"
+  "3")
+
+;; Same as Wn3 but target operand 4, aka ref_regno and ref_mode come from operand 4.
+(define_register_constraint "Wn4" "TARGET_VECTOR ? V_REGS : NO_REGS"
+  "Vector reg not overlapping the operand 4 register group"
+  "riscv_vector::riscv_v_widen_non_overlap_constraint_ok (regno, mode, ref_regno, ref_mode)"
+  "4")
+
 ;; This constraint is used to match instruction "csrr %0, vlenb" which is generated in "mov<mode>".
 ;; VLENB is a run-time constant which represent the vector register length in bytes.
 ;; BYTES_PER_RISCV_VECTOR represent runtime invariant of vector register length in bytes.
@@ -194,7 +270,7 @@
        (match_test "known_eq (rtx_to_poly_int64 (op), BYTES_PER_RISCV_VECTOR)")))
 
 (define_constraint "vu"
-  "A undefined vector value."
+  "An undefined vector value."
   (and (match_code "unspec")
        (match_test "XINT (op, 1) == UNSPEC_VUNDEF")))
 

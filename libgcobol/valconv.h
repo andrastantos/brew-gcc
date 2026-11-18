@@ -53,9 +53,8 @@ extern "C"
                               const unsigned char *alphabet,
                               int low_char,
                               int high_char );
-  bool __gg__string_to_numeric_edited(char * const dest,
+  void __gg__string_to_numeric_edited(char * const dest,
                                       const char *source,       // ASCII
-                                      int rdigits,
                                       int is_negative,
                                       const char *picture);
   void __gg__string_to_alpha_edited(char *dest,

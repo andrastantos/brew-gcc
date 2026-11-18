@@ -160,6 +160,11 @@ enum cbl_field_type_t {
   FldPointer,
 };
 
+/* In some places, I use SUPERTYPE for things like MOVES and COMPARES to
+   avoid lots of conditionals or complex multi-level switch() statements. */
+
+#define SUPERTYPE(a, b) ((static_cast<int>(a)<<5)+(static_cast<int>(b)))
+
 
 /*  BINARY, COMP, COMPUTATIONAL, COMP-4, COMPUTATIONAL-4 are the same:
  *      Storage, by default, is big-endian.
@@ -210,8 +215,8 @@ enum cbl_field_attr_t : uint64_t {
   refmod_e          =  0x0000040000, // Runtime; indicates a refmod is active
   based_e           =  0x0000080000, // pointer capacity, for ADDRESS OF or ALLOCATE
   any_length_e      =  0x0000100000, // inferred length of linkage in nested program
-  global_e          =  0x0000200000, // field has global scope
-  external_e        =  0x0000400000, // field has external scope
+  global_e          =  0x0000200000, // field is COBOL GLOBAL (not GCC global scope)
+  external_e        =  0x0000400000, // field is COBOL EXTERNAL (not GCC extern)
   blank_zero_e      =  0x0000800000, // BLANK WHEN ZERO
   // data division uses 2 low bits of high byte
   linkage_e         =  0x0001000000, // field is in linkage section
@@ -222,7 +227,7 @@ enum cbl_field_attr_t : uint64_t {
   encoded_e         =  0x0020000000, // data.initial matches codeset.encoding
   bool_encoded_e    =  0x0040000000, // data.initial is a boolean string
   hex_encoded_e     =  0x0080000000, // data.initial is a hex-encoded string
-  depends_on_e      =  0x0100000000, // A group hierachy contains a DEPENDING_ON
+  depends_on_e      =  0x0100000000, // A group hierarchy contains a DEPENDING_ON
   initialized_e     =  0x0200000000, // Don't call parser_initialize from parser_symbol_add
   has_value_e       =  0x0400000000, // Flag to hierarchical descendents to ignore .initial
   ieeedec_e         =  0x0800000000, // Indicates a FldFloat is IEEE 754 decimal, rather than binary
@@ -282,7 +287,7 @@ enum cbl_file_mode_t {
   file_mode_any_e,
 };
 
-enum cbl_round_t {
+enum cbl_round_t : int {
   away_from_zero_e,
   nearest_toward_zero_e,
   toward_greater_e,
@@ -402,6 +407,14 @@ enum classify_t {
   ClassKanjiType,
 };
 
+enum cbl_dialect_t {
+  dialect_iso_e = 0x00,
+  dialect_gcc_e = 0x01,
+  dialect_ibm_e = 0x02,
+  dialect_mf_e  = 0x04,
+  dialect_gnu_e = 0x08,
+};
+
 static inline const char *
 classify_str( enum classify_t classify ) {
   switch(classify) {
@@ -427,7 +440,7 @@ cbl_file_mode_str( cbl_file_mode_t mode ) {
   case file_mode_any_e:    return "file_mode_any_e";
   }
   return "???";
-};
+}
 
 enum module_type_t {
   module_activating_e,
@@ -601,11 +614,15 @@ typedef std::vector<cbl_declarative_t> cbl_declaratives_t;
 
 class cbl_enabled_exceptions_t : protected std::set<cbl_enabled_exception_t>
 {
+  static void complain( ec_type_t ec );
+
   void apply( bool enabled, const cbl_enabled_exception_t& elem ) {
     if( ! enabled ) {
       erase(elem);
       return;
     }
+    complain( elem.ec );
+
     auto inserted = insert( elem );
     if( ! inserted.second ) {
       erase(inserted.first);

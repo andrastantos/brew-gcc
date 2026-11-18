@@ -19,8 +19,12 @@
 #ifndef RUST_COMPILE_EXPR
 #define RUST_COMPILE_EXPR
 
+#include "optional.h"
 #include "rust-compile-base.h"
+#include "rust-gcc.h"
+#include "rust-hir-expr.h"
 #include "rust-hir-visitor.h"
+#include "rust-rib.h"
 
 namespace Rust {
 namespace Compile {
@@ -68,11 +72,11 @@ public:
   void visit (HIR::RangeFromExpr &expr) override;
   void visit (HIR::RangeToExpr &expr) override;
   void visit (HIR::RangeFullExpr &expr) override;
-  void visit (HIR::RangeFromToInclExpr &expr) override;
   void visit (HIR::ClosureExpr &expr) override;
   void visit (HIR::InlineAsm &expr) override;
   void visit (HIR::LlvmInlineAsm &expr) override;
   void visit (HIR::OffsetOf &expr) override;
+  void visit (HIR::BoxExpr &expr) override;
 
   // TODO
   void visit (HIR::ErrorPropagationExpr &) override {}
@@ -128,6 +132,9 @@ protected:
   tree compile_byte_string_literal (const HIR::LiteralExpr &expr,
 				    const TyTy::BaseType *tyty);
 
+  tree compile_c_string_literal (const HIR::LiteralExpr &expr,
+				 const TyTy::BaseType *tyty);
+
   tree type_cast_expression (tree type_to_cast_to, tree expr, location_t locus);
 
   tree array_value_expr (location_t expr_locus,
@@ -137,6 +144,9 @@ protected:
   tree array_copied_expr (location_t expr_locus,
 			  const TyTy::ArrayType &array_tyty, tree array_type,
 			  HIR::ArrayElemsCopied &elems);
+
+  tree compile_transparent_field_access (TyTy::VariantDef *variant,
+					 location_t locus, tree source_expr);
 
 protected:
   tree generate_closure_function (HIR::ClosureExpr &expr,
@@ -150,6 +160,13 @@ protected:
 
   bool generate_possible_fn_trait_call (HIR::CallExpr &expr, tree receiver,
 					tree *result);
+
+  tree construct_block_label (HIR::BlockExpr &expr);
+  tree lookup_label (NodeId to_be_resolved);
+  Bvariable *lookup_label_temp_var (NodeId to_be_resolved);
+  HirId resolve_nodeid (NodeId to_be_resolved, Resolver2_0::Namespace ns);
+  std::pair<tree, tree>
+  construct_loop_labels (tl::optional<HIR::LoopLabel> loop_label);
 
 private:
   CompileExpr (Context *ctx);

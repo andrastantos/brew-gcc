@@ -1190,7 +1190,7 @@ old_insns_match_p (int mode ATTRIBUTE_UNUSED, rtx_insn *i1, rtx_insn *i2)
 
      Also check for identical exception regions.  */
 
-  if (CALL_P (i1))
+  if (auto call1 = dyn_cast<rtx_call_insn *> (i1))
     {
       /* Ensure the same EH region.  */
       rtx n1 = find_reg_note (i1, REG_EH_REGION, 0);
@@ -1202,9 +1202,10 @@ old_insns_match_p (int mode ATTRIBUTE_UNUSED, rtx_insn *i1, rtx_insn *i2)
       if (n1 && (!n2 || XEXP (n1, 0) != XEXP (n2, 0)))
 	return dir_none;
 
-      if (!rtx_equal_p (CALL_INSN_FUNCTION_USAGE (i1),
+      if (!rtx_equal_p (CALL_INSN_FUNCTION_USAGE (call1),
 			CALL_INSN_FUNCTION_USAGE (i2))
-	  || SIBLING_CALL_P (i1) != SIBLING_CALL_P (i2))
+	  || CALL_INSN_ABI_ID (call1) != CALL_INSN_ABI_ID (i2)
+	  || SIBLING_CALL_P (call1) != SIBLING_CALL_P (i2))
 	return dir_none;
 
       /* For address sanitizer, never crossjump __asan_report_* builtins,
@@ -1737,6 +1738,12 @@ outgoing_edges_match (int mode, basic_block bb1, basic_block bb2)
 	  && tablejump_p (BB_END (bb2), &label2, &table2)
 	  && GET_CODE (PATTERN (table1)) == GET_CODE (PATTERN (table2)))
 	{
+	  /* Cross-jumping redirects every user of one table to the other.
+	     Keep a shared table and all its users unchanged.  */
+	  if (JUMP_TABLE_SHARED_P (PATTERN (table1))
+	      || JUMP_TABLE_SHARED_P (PATTERN (table2)))
+	    return false;
+
 	  /* The labels should never be the same rtx.  If they really are same
 	     the jump tables are same too. So disable crossjumping of blocks BB1
 	     and BB2 because when deleting the common insns in the end of BB1
@@ -2179,9 +2186,11 @@ try_crossjump_bb (int mode, basic_block bb)
   if (EDGE_COUNT (bb->preds) < 2)
     return false;
 
-  /* Don't crossjump if this block ends in a computed jump,
-     unless we are optimizing for size.  */
-  if (optimize_bb_for_size_p (bb)
+  /* Don't crossjump the predecessors of a computed jump when computed
+     gotos are duplicated (see pass_duplicate_computed_gotos::gate), as
+     that copies the jump back into each predecessor.  */
+  if (!optimize_function_for_size_p (cfun)
+      && flag_expensive_optimizations
       && bb != EXIT_BLOCK_PTR_FOR_FN (cfun)
       && computed_jump_p (BB_END (bb)))
     return false;

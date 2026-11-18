@@ -67,18 +67,21 @@ typedef int_hash <unsigned short, 0> dependence_hash;
 class copy_bb_data
 {
 public:
-  copy_bb_data() : dependence_map (NULL) {}
+  copy_bb_data () : dependence_map (NULL), skip_copyid (false) {}
   ~copy_bb_data () { delete dependence_map; }
 
   /* A map from the copied BBs dependence info cliques to
      equivalents in the BBs duplicated to.  */
   hash_map<dependence_hash, unsigned short> *dependence_map;
+
+  /* If true copy_bbs assigns one copyid for the region.  */
+  bool skip_copyid;
 };
 
 struct cfg_hooks
 {
-  /* Name of the corresponding ir.  */
-  const char *name;
+  /* The ir that hooks corresponds with.  */
+  enum ir_type ir;
 
   /* Debugging.  */
   bool (*verify_flow_info) (void);
@@ -245,14 +248,14 @@ extern basic_block create_basic_block (gimple_seq, basic_block);
 extern basic_block create_empty_bb (basic_block);
 extern bool can_merge_blocks_p (basic_block, basic_block);
 extern void merge_blocks (basic_block, basic_block);
-extern edge make_forwarder_block (basic_block, bool (*)(edge),
-				  void (*) (basic_block));
+extern edge make_forwarder_block (basic_block, bool (*)(edge, void*), void*);
 extern basic_block force_nonfallthru (edge);
 extern void tidy_fallthru_edge (edge);
 extern void tidy_fallthru_edges (void);
 extern void predict_edge (edge e, enum br_predictor predictor, int probability);
 extern bool predicted_by_p (const_basic_block bb, enum br_predictor predictor);
 extern bool can_duplicate_block_p (const_basic_block);
+extern bool can_duplicate_block_on_edge_p (edge);
 extern basic_block duplicate_block (basic_block, edge, basic_block,
 				    copy_bb_data * = NULL);
 extern bool block_ends_with_call_p (basic_block bb);
@@ -275,25 +278,25 @@ extern void lv_adjust_loop_header_phi (basic_block, basic_block, basic_block,
 extern void lv_add_condition_to_bb (basic_block, basic_block, basic_block,
 				    void *);
 
-extern bool can_copy_bbs_p (basic_block *, unsigned);
+extern bool can_copy_bbs_p (basic_block *, unsigned, edge = NULL);
 extern void copy_bbs (basic_block *, unsigned, basic_block *,
 		      edge *, unsigned, edge *, class loop *,
-		      basic_block, bool);
+		      basic_block, bool, edge = NULL);
 
 void profile_record_check_consistency (profile_record *);
 void profile_record_account_profile (profile_record *);
 
 /* Hooks containers.  */
-extern struct cfg_hooks gimple_cfg_hooks;
-extern struct cfg_hooks rtl_cfg_hooks;
-extern struct cfg_hooks cfg_layout_rtl_cfg_hooks;
+extern const struct cfg_hooks gimple_cfg_hooks;
+extern const struct cfg_hooks rtl_cfg_hooks;
+extern const struct cfg_hooks cfg_layout_rtl_cfg_hooks;
 
 /* Declarations.  */
 extern enum ir_type current_ir_type (void);
 extern void rtl_register_cfg_hooks (void);
 extern void cfg_layout_rtl_register_cfg_hooks (void);
 extern void gimple_register_cfg_hooks (void);
-extern struct cfg_hooks get_cfg_hooks (void);
-extern void set_cfg_hooks (struct cfg_hooks);
+extern const struct cfg_hooks *get_cfg_hooks (void);
+extern void set_cfg_hooks (const struct cfg_hooks *);
 
 #endif /* GCC_CFGHOOKS_H */

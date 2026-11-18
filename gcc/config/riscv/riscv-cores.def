@@ -40,23 +40,33 @@ RISCV_TUNE("sifive-5-series", generic, rocket_tune_info)
 RISCV_TUNE("sifive-7-series", sifive_7, sifive_7_tune_info)
 RISCV_TUNE("sifive-p400-series", sifive_p400, sifive_p400_tune_info)
 RISCV_TUNE("sifive-p600-series", sifive_p600, sifive_p600_tune_info)
-RISCV_TUNE("tt-ascalon-d8", tt_ascalon_d8, tt_ascalon_d8_tune_info)
+RISCV_TUNE("sifive-p550", sifive_p600, sifive_p550_tune_info)
+RISCV_TUNE("sifive-p870-d", sifive_p600, sifive_p870_tune_info)
+RISCV_TUNE("tt-ascalon-x", tt_ascalon_d8, tt_ascalon_d8_tune_info)
+RISCV_TUNE("tt-ascalon-xg", tt_ascalon_xg, tt_ascalon_d8_tune_info)
 RISCV_TUNE("thead-c906", generic, thead_c906_tune_info)
-RISCV_TUNE("xt-c908", generic, generic_ooo_tune_info)
+RISCV_TUNE("xt-c908", xt_c908, xt_c908_tune_info)
 RISCV_TUNE("xt-c908v", generic, generic_ooo_tune_info)
 RISCV_TUNE("xt-c910", generic, generic_ooo_tune_info)
 RISCV_TUNE("xt-c910v2", generic, generic_ooo_tune_info)
 RISCV_TUNE("xt-c920", generic, generic_ooo_tune_info)
 RISCV_TUNE("xt-c920v2", generic, generic_ooo_tune_info)
+RISCV_TUNE("xt-c9501fdvt", generic_ooo, xt_c9501_tune_info)
 RISCV_TUNE("xiangshan-nanhu", xiangshan, xiangshan_nanhu_tune_info)
 RISCV_TUNE("xiangshan-kunminghu", xiangshan, generic_ooo_tune_info)
 RISCV_TUNE("spacemit-x60", spacemit_x60, spacemit_x60_tune_info)
+RISCV_TUNE("spacemit-x100", generic_ooo, spacemit_x100_tune_info)
+RISCV_TUNE("spacemit-a100", spacemit_x60, spacemit_x60_tune_info)
+RISCV_TUNE("arc-v-rhx-100-series", arcv_rhx100, arcv_rhx100_tune_info)
+RISCV_TUNE("arc-v-rpx-100-series", arcv_rpx100, arcv_rhx100_tune_info)
 RISCV_TUNE("generic-ooo", generic_ooo, generic_ooo_tune_info)
 RISCV_TUNE("size", generic, optimize_size_tune_info)
 RISCV_TUNE("mips-p8700", mips_p8700, mips_p8700_tune_info)
+RISCV_TUNE("mips-i8500", mips_i8500, mips_i8500_tune_info)
 RISCV_TUNE("andes-25-series", andes_25_series, andes_25_tune_info)
 RISCV_TUNE("andes-23-series", andes_23_series, andes_23_tune_info)
 RISCV_TUNE("andes-45-series", andes_45_series, andes_45_tune_info)
+RISCV_TUNE("arc-v-rmx-100-series", arcv_rmx100, arcv_rmx100_tune_info)
 
 #undef RISCV_TUNE
 
@@ -64,66 +74,161 @@ RISCV_TUNE("andes-45-series", andes_45_series, andes_45_tune_info)
 
    Before using #include to read this file, define a macro:
 
-      RISCV_CORE(CORE_NAME, ARCH, MICRO_ARCH)
+      RISCV_CORE(CORE_NAME, ARCH, MICRO_ARCH, MVENDORID, MARCHID, MIMPID)
 
    The CORE_NAME is the name of the core, represented as a string.
    The ARCH is the default arch of the core, represented as a string,
    can be NULL if no default arch.
    The MICRO_ARCH is the name of the core for which scheduling decisions
-   will be made, represented as an identifier.  */
+   will be made, represented as an identifier.
+   The MVENDORID, MARCHID and MIMPID are what the core reports in the
+   registers of those names, which is how -mcpu=native and -mtune=native
+   recognise the core they are running on.  They are riscv_core_id_t
+   values, so a reader that uses them has to include
+   common/config/riscv/riscv-hwprobe.h first.  A value that has not been
+   recorded is UNKNOWN_ID, and a core is only recognised when all three
+   registers are recorded and all three agree, so an entry that leaves any
+   of them UNKNOWN_ID is never detected.
 
+   If the core has an alternate name(s), an alias(es) can be created to map
+   an alternate name to the core's canonical name.  Before using #include
+   to read this file, define a macro:
+
+      RISCV_CORE_ALIAS(CANONICAL_NAME, ALIAS_NAME)
+
+   CANONICAL_NAME is the normal name of the core, represented as a string.
+   ALIAS_NAME is the alternate name for the core, represented as a string.  */
+
+#ifndef UNKNOWN_ID
+#define UNKNOWN_ID ((riscv_core_id_t) -1)
+#endif
 #ifndef RISCV_CORE
-#define RISCV_CORE(CORE_NAME, ARCH, MICRO_ARCH)
+#define RISCV_CORE(CORE_NAME, ARCH, MICRO_ARCH, MVENDORID, MARCHID, MIMPID)
+#endif
+#ifndef RISCV_CORE_ALIAS
+#define RISCV_CORE_ALIAS(CANONICAL_NAME, ALIAS_NAME)
 #endif
 
-RISCV_CORE("sifive-e20",      "rv32imc",    "rocket")
-RISCV_CORE("sifive-e21",      "rv32imac",   "rocket")
-RISCV_CORE("sifive-e24",      "rv32imafc",  "rocket")
-RISCV_CORE("sifive-e31",      "rv32imac",   "sifive-3-series")
-RISCV_CORE("sifive-e34",      "rv32imafc",  "sifive-3-series")
-RISCV_CORE("sifive-e76",      "rv32imafc",  "sifive-7-series")
+RISCV_CORE("sifive-e20",      "rv32imc",    "rocket",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-e21",      "rv32imac",   "rocket",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-e24",      "rv32imafc",  "rocket",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-e31",      "rv32imac",   "sifive-3-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-e34",      "rv32imafc",  "sifive-3-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-e76",      "rv32imafc",  "sifive-7-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
-RISCV_CORE("sifive-s21",      "rv64imac",   "rocket")
-RISCV_CORE("sifive-s51",      "rv64imac",   "sifive-5-series")
-RISCV_CORE("sifive-s54",      "rv64imafdc", "sifive-5-series")
-RISCV_CORE("sifive-s76",      "rv64imafdc", "sifive-7-series")
+RISCV_CORE("sifive-s21",      "rv64imac",   "rocket",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-s51",      "rv64imac",   "sifive-5-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-s54",      "rv64imafdc", "sifive-5-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-s76",      "rv64imafdc", "sifive-7-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
-RISCV_CORE("sifive-u54",      "rv64imafdc", "sifive-5-series")
-RISCV_CORE("sifive-u74",      "rv64imafdc", "sifive-7-series")
-RISCV_CORE("sifive-x280",     "rv64imafdcv_zfh_zba_zbb_zvfh_zvl512b", "sifive-7-series")
+RISCV_CORE("sifive-u54",      "rv64imafdc", "sifive-5-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-u74",      "rv64imafdc", "sifive-7-series",
+			      /* MVENDORID */ 0x489,
+			      /* MARCHID */ 0x8000000000000007ULL,
+			      /* MIMPID */ 0x4210427ULL)
+RISCV_CORE("sifive-x280",     "rv64imafdcv_zfh_zba_zbb_zvfh_zvl512b",
+			      "sifive-7-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 RISCV_CORE("sifive-p450",     "rv64imafdc_za64rs_zic64b_zicbom_zicbop_zicboz_"
 			      "ziccamoa_ziccif_zicclsm_ziccrse_zicsr_zifencei_"
 			      "zihintntl_zihintpause_zihpm_zfhmin_zba_zbb_zbs",
-			      "sifive-p400-series")
+			      "sifive-p400-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-p550",     "rv64imafdc_zifencei_zfhmin_zba_zbb",
+			      "sifive-p550",
+			      /* MVENDORID */ 0x489,
+			      /* MARCHID */ 0x8000000000000008ULL,
+			      /* MIMPID */ 0x6220425ULL)
 RISCV_CORE("sifive-p670",     "rv64imafdcv_za64rs_zic64b_zicbom_zicbop_zicboz_"
 			      "ziccamoa_ziccif_zicclsm_ziccrse_zicsr_zifencei_"
 			      "zihintntl_zihintpause_zihpm_zfhmin_zba_zbb_zbs_"
 			      "zvl128b_zvbb_zvknc_zvkng_zvksc_zvksg",
-			      "sifive-p600-series")
+			      "sifive-p600-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("sifive-p870-d",   "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_"
+			      "ziccamoa_ziccif_zicclsm_ziccrse_zicntr_zicond_"
+			      "zifencei_zihintntl_zihintpause_zihpm_zimop_"
+			      "za64rs_zama16b_zawrs_zfa_zfh_zcb_zcmop_zkr_zkt_"
+			      "zvbb_zvfbfwma_zvfh_zvfhmin_zvknc_zvksg",
+			      "sifive-p870-d",
+			      /* MVENDORID */ 0x489,
+			      /* MARCHID */ 0x8000000000000109ULL,
+			      /* MIMPID */ 0x14250606ULL)
 
 RISCV_CORE("thead-c906",      "rv64imafdc_xtheadba_xtheadbb_xtheadbs_xtheadcmo_"
 			      "xtheadcondmov_xtheadfmemidx_xtheadmac_"
 			      "xtheadmemidx_xtheadmempair_xtheadsync",
-			      "thead-c906")
+			      "thead-c906",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
 RISCV_CORE("xt-c908",         "rv64imafdc_zicbom_zicbop_zicboz_zicntr_zicsr_"
 			      "zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_"
 			      "sstc_svinval_svnapot_svpbmt_xtheadba_xtheadbb_"
 			      "xtheadbs_xtheadcmo_xtheadcondmov_xtheadfmemidx_"
 			      "xtheadmac_xtheadmemidx_xtheadmempair_xtheadsync",
-			      "xt-c908")
+			      "xt-c908",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 RISCV_CORE("xt-c908v",        "rv64imafdcv_zicbom_zicbop_zicboz_zicntr_zicsr_"
 			      "zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_"
 			      "zvfh_sstc_svinval_svnapot_svpbmt__xtheadba_"
 			      "xtheadbb_xtheadbs_xtheadcmo_xtheadcondmov_"
 			      "xtheadfmemidx_xtheadmac_xtheadmemidx_"
 			      "xtheadmempair_xtheadsync",
-			      "xt-c908")
+			      "xt-c908",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 RISCV_CORE("xt-c910",         "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zfh_"
 			      "xtheadba_xtheadbb_xtheadbs_xtheadcmo_"
 			      "xtheadcondmov_xtheadfmemidx_xtheadmac_"
 			      "xtheadmemidx_xtheadmempair_xtheadsync",
-			      "xt-c910")
+			      "xt-c910",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 RISCV_CORE("xt-c910v2",       "rv64imafdc_zicbom_zicbop_zicboz_zicntr_zicond_"
 			      "zicsr_zifencei_zihintntl_zihintpause_zihpm_"
 			      "zawrs_zfa_zfbfmin_zfh_zca_zcb_zcd_zba_zbb_zbc_"
@@ -131,13 +236,19 @@ RISCV_CORE("xt-c910v2",       "rv64imafdc_zicbom_zicbop_zicboz_zicntr_zicond_"
 			      "xtheadba_xtheadbb_xtheadbs_xtheadcmo_"
 			      "xtheadcondmov_xtheadfmemidx_xtheadmac_"
 			      "xtheadmemidx_xtheadmempair_xtheadsync",
-			      "xt-c910v2")
+			      "xt-c910v2",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 RISCV_CORE("xt-c920",         "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zfh_"
 			      "xtheadba_xtheadbb_xtheadbs_xtheadcmo_"
 			      "xtheadcondmov_xtheadfmemidx_xtheadmac_"
 			      "xtheadmemidx_xtheadmempair_xtheadsync_"
 			      "xtheadvector",
-			      "xt-c910")
+			      "xt-c910",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 RISCV_CORE("xt-c920v2",       "rv64imafdcv_zicbom_zicbop_zicboz_zicntr_zicond_"
 			      "zicsr_zifencei_zihintntl_zihintpause_zihpm_"
 			      "zawrs_zfa_zfbfmin_zfh_zca_zcb_zcd_zba_zbb_zbc_"
@@ -146,17 +257,47 @@ RISCV_CORE("xt-c920v2",       "rv64imafdcv_zicbom_zicbop_zicboz_zicntr_zicond_"
 			      "xtheadbs_xtheadcmo_xtheadcondmov_xtheadfmemidx_"
 			      "xtheadmac_xtheadmemidx_xtheadmempair_"
 			      "xtheadsync",
-			       "xt-c920v2")
+			       "xt-c920v2",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
-RISCV_CORE("tt-ascalon-d8",   "rva23s64_zfbfmin_zfh_zkr_zvbc_zvfbfmin_zvfbfwma_"
+RISCV_CORE("xt-c9501fdvt",    "rva23s64_zfbfmin_zfh_zicfilp_zicfiss_zkr_zmmul_"
+			      "zbc_zca_zcd_zabha_zacas_zvbc_zvfbfmin_"
+			      "zvfbfwma_zvfh_zvkb_zvkg_zvkn_zvknc_zvkned_"
+			      "zvkng_zvknha_zvknhb_zvksc_zvksed_zvksg_zvksh_"
+			      "zvl256b_smaia_smcntrpmf_smcsrind_smepmp_smmpm_"
+			      "smnpm_smrnmi_ssaia_sscsrind_sspm_ssstrict_"
+			      "svadu_svvptc_xxtvarith",
+			      "xt-c9501fdvt",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+
+RISCV_CORE("tt-ascalon-x",    "rva23s64_zfbfmin_zfh_zkr_zvbc_zvfbfmin_zvfbfwma_"
 			      "zvfh_zvkng_zvl256b_smaia_smmpm_smnpm_smrnmi_"
 			      "smstateen_ssaia_ssstrict_svadu",
-			      "tt-ascalon-d8")
+			      "tt-ascalon-x",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE_ALIAS("tt-ascalon-x", "tt-ascalon-d8")
+
+RISCV_CORE("tt-ascalon-xg",   "rva23s64_zfbfmin_zfh_zkr_zvbc_zvfbfmin_zvfbfwma_"
+			      "zvfh_zvl256b_smaia_smmpm_smnpm_smrnmi_smstateen_"
+			      "ssaia_ssstrict_svadu",
+			      "tt-ascalon-xg",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
 RISCV_CORE("xiangshan-nanhu",      "rv64imafdc_zba_zbb_zbc_zbs_"
 			      "zbkb_zbkc_zbkx_zknd_zkne_zknh_zksed_zksh_"
 			      "svinval_zicbom_zicboz",
-			      "xiangshan-nanhu")
+			      "xiangshan-nanhu",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
 RISCV_CORE("xiangshan-kunminghu",   "rv64imafdcbvh_sdtrig_sha_shcounterenw_"
 			      "shgatpa_shlcofideleg_shtvala_shvsatpa_shvstvala_shvstvecd_"
@@ -169,31 +310,109 @@ RISCV_CORE("xiangshan-kunminghu",   "rv64imafdcbvh_sdtrig_sha_shcounterenw_"
 			      "zicclsm_ziccrse_zicntr_zicond_zicsr_zifencei_zihintpause_"
 			      "zihpm_zimop_zkn_zknd_zkne_zknh_zksed_zksh_zkt_zvbb_zvfh_"
 			      "zvfhmin_zvkt_zvl128b_zvl32b_zvl64b",
-			      "xiangshan-kunminghu")
+			      "xiangshan-kunminghu",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
 RISCV_CORE("mips-p8700",      "rv64imfd_zicsr_zifencei_zalrsc_zba_zbb",
-			      "mips-p8700")
+			      "mips-p8700",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
-RISCV_CORE("andes-n22",       "rv32imc_zicsr_zifencei_xandesperf",    "andes-25-series")
-RISCV_CORE("andes-n25",       "rv32imc_zicsr_zifencei_xandesperf",    "andes-25-series")
-RISCV_CORE("andes-a25",       "rv32imafdc_zicsr_zifencei_xandesperf", "andes-25-series")
-RISCV_CORE("andes-nx25",      "rv64imc_zicsr_zifencei_xandesperf",    "andes-25-series")
-RISCV_CORE("andes-ax25",      "rv64imafdc_zicsr_zifencei_xandesperf", "andes-25-series")
-RISCV_CORE("andes-a27",       "rv32imafdc_zicsr_zifencei_xandesperf", "andes-25-series")
-RISCV_CORE("andes-ax27",      "rv64imafdc_zicsr_zifencei_xandesperf", "andes-25-series")
+RISCV_CORE("andes-n22",       "rv32imc_zicsr_zifencei_xandesperf",
+			      "andes-25-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-n25",       "rv32imc_zicsr_zifencei_xandesperf",
+			      "andes-25-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-a25",       "rv32imafdc_zicsr_zifencei_xandesperf",
+			      "andes-25-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-nx25",      "rv64imc_zicsr_zifencei_xandesperf",
+			      "andes-25-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-ax25",      "rv64imafdc_zicsr_zifencei_xandesperf",
+			      "andes-25-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-a27",       "rv32imafdc_zicsr_zifencei_xandesperf",
+			      "andes-25-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-ax27",      "rv64imafdc_zicsr_zifencei_xandesperf",
+			      "andes-25-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 RISCV_CORE("andes-n225",      "rv32im_zicsr_zifencei_zca_zcb_zcmp_zcmt_"
 			      "zba_zbb_zbc_zbs_xandesperf",
-			      "andes-23-series")
+			      "andes-23-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 RISCV_CORE("andes-d23",       "rv32im_zicsr_zifencei_zicbop_zicbom_zicboz_"
 			      "zca_zcb_zcmp_zcmt_zba_zbb_zbc_zbs_xandesperf",
-			      "andes-23-series")
-RISCV_CORE("andes-n45",       "rv32imc_zicsr_zifencei_xandesperf",    "andes-45-series")
-RISCV_CORE("andes-nx45",      "rv64imc_zicsr_zifencei_xandesperf",    "andes-45-series")
-RISCV_CORE("andes-a45",       "rv32imafdc_zicsr_zifencei_xandesperf", "andes-45-series")
-RISCV_CORE("andes-ax45",      "rv64imafdc_zicsr_zifencei_xandesperf", "andes-45-series")
+			      "andes-23-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-n45",       "rv32imc_zicsr_zifencei_xandesperf",
+			      "andes-45-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-nx45",      "rv64imc_zicsr_zifencei_xandesperf",
+			      "andes-45-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-a45",       "rv32imafdc_zicsr_zifencei_xandesperf",
+			      "andes-45-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
+RISCV_CORE("andes-ax45",      "rv64imafdc_zicsr_zifencei_xandesperf",
+			      "andes-45-series",
+			      /* MVENDORID */ UNKNOWN_ID,
+			      /* MARCHID */ UNKNOWN_ID,
+			      /* MIMPID */ UNKNOWN_ID)
 
-RISCV_CORE("spacemit-x60",    "rv64imafdcv_zba_zbb_zbc_zbs_zicboz_zicond_"
-			      "zbkc_zfh_zvfh_zvkt_zvl256b_sscofpmf_xsmtvdot",
-			      "spacemit-x60")
+RISCV_CORE("spacemit-x60",    "rva22u64_v_zicond_zifencei_zihintntl_zihpm_zfh_zbc_"
+			      "zbkc_zvfh_zvfhmin_zvkt_zvl256b_smepmp_sscofpmf_sstc_"
+			      "svinval_svnapot_svpbmt_xsmtvdot",
+			      "spacemit-x60",
+			      /* MVENDORID */ 0x710,
+			      /* MARCHID */ 0x8000000058000001ULL,
+			      /* MIMPID */ 0x1000000049772200ULL)
+
+RISCV_CORE("spacemit-x100",   "rva23s64_smepmp_smnpm_smstateen_sspm_zbc_zbkc_"
+			      "zfbfmin_zfh_zvbc_zvfbfwma_zvfh_zvknc_zvkng_zvknha_"
+			      "zvksc_zvksg_zvl256b_xsmtvdot",
+			      "spacemit-x100",
+			      /* MVENDORID */ 0x710,
+			      /* MARCHID */ 0x8000000058000002ULL,
+			      /* MIMPID */ 0x33d8a600ULL)
+
+RISCV_CORE("spacemit-a100",   "rva23u64_zfh_zbc_zbkc_zfbfmin_smepmp_smnpm_"
+			      "smstateen_sscofpmf_ssnpm_sspm_ssstateen_sstc_svinval_"
+			      "svnapot_svpbmt_zifencei_zvfh_zvfbfwma_zvkng_zvknha_"
+			      "zvknc_zvksc_zvksg_zvl1024b_xsmtvdotii",
+			      "spacemit-a100",
+			      /* MVENDORID */ 0x710,
+			      /* MARCHID */ 0x8000000041000002ULL,
+			      /* MIMPID */ 0x10000000d5686200ULL)
 
 #undef RISCV_CORE
+#undef RISCV_CORE_ALIAS

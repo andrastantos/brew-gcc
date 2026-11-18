@@ -1145,7 +1145,7 @@ variables, such as AIX, I/O is also performed as synchronous.
 
 On some systems, such as Darwin or Solaris, the POSIX thread library
 is always linked in, so asynchronous I/O is always performed. On other
-sytems, such as Linux, it is necessary to specify @option{-pthread},
+systems, such as Linux, it is necessary to specify @option{-pthread},
 @option{-lpthread} or @option{-fopenmp} during the linking step.
 
 @c ---------------------------------------------------------------------
@@ -2622,6 +2622,7 @@ The following intrinsics take unsigned arguments:
 @item @code{IPARITY}, @pxref{IPARITY}
 @item @code{ISHFT}, @pxref{ISHFT}
 @item @code{ISHFTC}, @pxref{ISHFTC}
+@item @code{LEADZ}, @pxref{LEADZ}
 @item @code{MATMUL}, @pxref{MATMUL}
 @item @code{MAX}, @pxref{MAX}
 @item @code{MAXLOC}, @pxref{MAXLOC}
@@ -2636,6 +2637,8 @@ The following intrinsics take unsigned arguments:
 @item @code{MVBITS}, @pxref{MVBITS}
 @item @code{NOT}, @pxref{NOT}
 @item @code{OUT_OF_RANGE}, @pxref{OUT_OF_RANGE}
+@item @code{POPCNT}, @pxref{POPCNT}
+@item @code{POPPAR}, @pxref{POPPAR}
 @item @code{PRODUCT}, @pxref{PRODUCT}
 @item @code{RANDOM_NUMBER}, @pxref{RANDOM_NUMBER}
 @item @code{RANGE}, @pxref{RANGE}
@@ -2644,6 +2647,7 @@ The following intrinsics take unsigned arguments:
 @item @code{SHIFTL}, @pxref{SHIFTL}
 @item @code{SHIFTR}, @pxref{SHIFTR}
 @item @code{SUM}, @pxref{SUM}
+@item @code{TRAILZ}, @pxref{TRAILZ}
 @item @code{TRANSPOSE}, @pxref{TRANSPOSE}
 @item @code{TRANSFER}, @pxref{TRANSFER}
 @end itemize
@@ -3117,6 +3121,13 @@ example, we ignore the return value:
   end
 @end smallexample
 
+Fortran 2023 added two new intrinsic functions for converting between
+C and Fortran string representations: @code{f_c_string} transforms a
+Fortran string into a C string by appending a null character, and
+@code{c_f_strpointer} allows access to a null-terminated C string or
+simply contiguous array of @code{c_char} as a Fortran deferred-length
+character pointer.
+
 The intrinsic procedures are described in @ref{Intrinsic Procedures}.
 
 @node Working with C Pointers
@@ -3308,7 +3319,7 @@ Tools, @url{http://chasm-interop.sourceforge.net/}.
 @cindex prototypes
 @cindex C prototypes
 The options @option{-fc-prototypes} can be used to write out C
-declatations and function prototypes for @code{BIND(C)} entities.
+declarations and function prototypes for @code{BIND(C)} entities.
 The same can be done for writing out prototypes for external
 procedures using @option{-fc-prototypes-external},
 @pxref{Interoperability Options}.
@@ -3397,6 +3408,14 @@ requires an explicit interface.
 deprecated procedure, variable or parameter; the warning can be suppressed
 with @option{-Wno-deprecated-declarations}.
 @item @code{NOINLINE} -- prevent inlining given function.
+@item @code{INLINE} -- hint that the given function should be inlined, while
+still respecting the inlining size limits, corresponding to the C @code{inline}
+keyword.
+@item @code{ALWAYS_INLINE} -- force inlining of a given function, ignoring the
+inlining size limits.  This is the counterpart of @code{NOINLINE} and
+corresponds to the C @code{always_inline} attribute.  @code{INLINE} and
+@code{ALWAYS_INLINE} are incompatible with @code{NOINLINE}.  Specifying both
+for the same procedure makes the inline attribute ignored with a warning.
 @item @code{NORETURN} -- add a hint that a given function cannot return.
 @item @code{WEAK} -- emit the declaration of an external symbol as a weak
 symbol rather than a global.  This is primarily useful in defining library
@@ -4134,7 +4153,7 @@ typedef struct caf_reference_t @{
     @} c;
     struct @{
       /* The mode of the array ref.  See CAF_ARR_REF_*.  */
-      /* caf_array_ref_t, replaced by unsigend char to allow specification in
+      /* caf_array_ref_t, replaced by unsigned char to allow specification in
          fortran FE.  */
      unsigned char mode[GFC_MAX_DIMENSIONS];
       /* The type of a static array.  Unset for array's with descriptors.  */
@@ -4336,7 +4355,7 @@ team is returned.
 @item @emph{Notes}:
 When both argument are given, then it is caf-library dependent which argument
 is examined first.  Current implementations prioritize the @var{team} argument,
-because it is easier to retrive the number of images from it.
+because it is easier to retrieve the number of images from it.
 
 Fortran 2008 or later, with no arguments; Fortran 2018 or later with two
 arguments.
@@ -4550,7 +4569,7 @@ void (*accessor)(void **, int32_t *, void *, void *, size_t *,
 size_t *))}
 
 @item @emph{Description}:
-Identification of access funtions across images is done using a unique hash.
+Identification of access functions across images is done using a unique hash.
 For each given hash an accessor has to be registered.  This routine is expected
 to register an accessor function pointer for the given hash in nearly constant
 time.  I.e. it is expected to add the hash and accessor to a buffer and return.
@@ -4634,7 +4653,7 @@ lookups.
 @end multitable
 
 @item @emph{Result}:
-The zero based index to access the accessor funtion in a lookup table.
+The zero based index to access the accessor function in a lookup table.
 On error, @code{-1} can be returned.
 
 @item @emph{Notes}:
@@ -4679,11 +4698,11 @@ from the remote image.  If the data type to get is a string or string array,
 then this needs to be set to the byte size of each character, i.e. @code{4} for
 a @code{CHARACTER (KIND=4)} string.  The length of the string is then returned
 in @code{opt_dst_charlen} (also for string arrays).
-@item @var{dst_data} @tab intent(inout) A pointer to the adress the data is
-stored.  To prevent copying of data into an output buffer the adress to the live
-data is returned here.  When a descriptor is provided also its data-member is
-set to that adress.  When @var{may_realloc_dst} is set, then the memory may be
-reallocated by the remote function, which needs to be replicated by this
+@item @var{dst_data} @tab intent(inout) A pointer to the address the data is
+stored.  To prevent copying of data into an output buffer the address to the
+live data is returned here.  When a descriptor is provided also its data-member
+is set to that address.  When @var{may_realloc_dst} is set, then the memory may
+be reallocated by the remote function, which needs to be replicated by this
 function.
 @item @var{opt_dst_charlen} @tab intent(inout)  When a char array is returned,
 this parameter is set to the length where applicable.  The value can also be
@@ -5717,7 +5736,7 @@ size_t errmsg_len)}
 @item @emph{Description}:
 Actives the team given by @var{team}, which must be formed but not active
 yet.  This routine starts a new epoch on the coarray memory pool.  All
-coarrays registered from now on, will be freeed once the team is terminated.
+coarrays registered from now on, will be freed once the team is terminated.
 
 @item @emph{Arguments}:
 @multitable @columnfractions .15 .70
@@ -5748,7 +5767,7 @@ block.
 @item @emph{Description}:
 Terminates the last team changed to.  The coarray memory epoch is
 terminated and all coarrays allocated since the execution of @code{CHANGE TEAM}
-are freeed.
+are freed.
 
 @item @emph{Arguments}:
 @multitable @columnfractions .15 .70

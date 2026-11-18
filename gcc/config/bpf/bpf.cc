@@ -248,6 +248,9 @@ bpf_option_override (void)
   if (bpf_has_smov == -1)
     bpf_has_smov = (bpf_isa >= ISA_V4);
 
+  if (bpf_has_callx == -1)
+    bpf_has_callx = (bpf_isa >= ISA_V1);
+
   /* Disable -fstack-protector as it is not supported in BPF.  */
   if (flag_stack_protect)
     {
@@ -602,14 +605,37 @@ bpf_legitimate_address_p (machine_mode mode,
    `rtx_cost' should recurse.  */
 
 static bool
-bpf_rtx_costs (rtx x ATTRIBUTE_UNUSED,
+bpf_rtx_costs (rtx x,
 	       enum machine_mode mode ATTRIBUTE_UNUSED,
 	       int outer_code ATTRIBUTE_UNUSED,
 	       int opno ATTRIBUTE_UNUSED,
-               int *total ATTRIBUTE_UNUSED,
+	       int *total,
 	       bool speed ATTRIBUTE_UNUSED)
 {
-  /* To be written.  */
+  switch (GET_CODE (x))
+    {
+    case MULT:
+    case DIV:
+    case UDIV:
+    case MOD:
+    case UMOD:
+      /* BPF implements these as a single instruction, so keep the native
+	 operation cheaper than synthesized sequence.
+	 Only influences choice between actually available alternatives;
+	 if the operation has no insn (e.g. a 64-bit signed divide before
+	 -mcpu=v4) expand_divmod () still falls back to a libcall.
+	 Return false so caller rtx_cost keeps recursing for operands.  */
+      *total = COSTS_N_INSNS (1);
+      return false;
+
+    case CONST_INT:
+      /* Signed 32-bit imm is free, wider needs an extra LD_IMM64.  */
+      *total = BPF_IMM32_P (x) ? 0 : COSTS_N_INSNS (1);
+      return true;
+
+    default:
+      return false;
+    }
   return false;
 }
 
@@ -625,7 +651,7 @@ bpf_insn_cost (rtx_insn *insn, bool speed ATTRIBUTE_UNUSED)
      && XINT (XEXP (pat, 1), 1) == UNSPEC_CORE_RELOC)
     return COSTS_N_INSNS (100);
 
-  return COSTS_N_INSNS (1);
+  return pattern_cost (pat, speed);
 }
 
 #undef TARGET_INSN_COST
@@ -732,12 +758,39 @@ bpf_output_destructor (rtx symbol, int priority ATTRIBUTE_UNUSED)
 #undef TARGET_ASM_DESTRUCTOR
 #define TARGET_ASM_DESTRUCTOR bpf_output_destructor
 
+/* Check the TARGET of a call, an RTX denoting the address of the called
+   function, and return the target to actually call.
+
+   Calling through anything but a constant address requires an indirect
+   CALL instruction, which is not available with -mno-callx.  Diagnose
+   that here, at expansion time, so the error is reported at the call
+   itself and only once per call; by the time the instruction is output
+   the location of the call is no longer available.
+
+   This function is called from the expansion of the 'call' and
+   'call_value' patterns in bpf.md.  */
+
+rtx
+bpf_check_call_target (rtx target)
+{
+  if (bpf_has_callx
+      || GET_CODE (target) == CONST_INT
+      || GET_CODE (target) == SYMBOL_REF)
+    return target;
+
+  error_at (curr_insn_location (),
+	    "indirect call in function, not supported with %<-mno-callx%>");
+
+  /* Call address zero instead, so the expansion can continue.  */
+  return const0_rtx;
+}
+
 /* Return the appropriate instruction to CALL to a function.  TARGET
    is an RTX denoting the address of the called function.
 
    The main purposes of this function are:
-   - To reject indirect CALL instructions, which are not supported by
-     eBPF.
+   - To reject indirect CALL instructions that reached this point
+     despite bpf_check_call_target, which is not expected to happen.
    - To recognize calls to kernel helper functions and emit the
      corresponding CALL N instruction.
 
@@ -769,9 +822,9 @@ bpf_output_call (const char *templ, rtx *operands, int target_index)
 	break;
       }
     default:
-      if (!TARGET_XBPF)
+      if (!bpf_has_callx)
 	{
-	  error ("indirect call in function, which are not supported by eBPF");
+	  error ("indirect call in function, not supported with %<-mno-callx%>");
 	  operands[target_index] = GEN_INT (0);
 	}
       break;
@@ -1245,7 +1298,7 @@ bpf_asm_named_section (const char *name, unsigned int flags,
      characters.  This includes for example names like /foo//bar/baz.
      This makes it necessary to quote section names to make sure the
      assembler doesn't get confused.  For example, the example above
-     would be interpreted unqouted as a section name "/foo" followed
+     would be interpreted unquoted as a section name "/foo" followed
      by a line comment "//bar/baz".
 
      Note that we only quote the section name if it contains any
@@ -1294,11 +1347,11 @@ bpf_asm_named_section (const char *name, unsigned int flags,
 static bool
 bpf_small_register_classes_for_mode_p (machine_mode mode)
 {
-  if (TARGET_XBPF)
+  if (bpf_has_callx)
     return 1;
   else
     /* Avoid putting function addresses in registers, as calling these
-       is not supported in eBPF.  */
+       is not supported with -mno-callx.  */
     return (mode != FUNCTION_MODE);
 }
 
@@ -1343,20 +1396,53 @@ emit_move_loop (rtx src, rtx dst, machine_mode mode, int offset, int inc,
     {
       emit_insn (gen_rtx_SET (adjust_address (dst, SImode, offset),
 			      adjust_address (src, SImode, offset)));
-      offset += (inc < 0 ? -4 : 4);
-      remainder -= 4;
+      offset += 4;
     }
   if (remainder & 2)
     {
       emit_insn (gen_rtx_SET (adjust_address (dst, HImode, offset),
 			      adjust_address (src, HImode, offset)));
-      offset += (inc < 0 ? -2 : 2);
-      remainder -= 2;
+      offset += 2;
     }
   if (remainder & 1)
     {
       emit_insn (gen_rtx_SET (adjust_address (dst, QImode, offset),
 			      adjust_address (src, QImode, offset)));
+    }
+}
+
+/* As above, but use a backwards loop.  For memmove when the source and
+   destination overlap with source higher than dest.  */
+
+static void
+emit_move_loop_back (rtx src, rtx dst, machine_mode mode, int offset, int inc,
+		     unsigned iters, unsigned remainder)
+{
+  /* First handle trailing bytes.  */
+  if (remainder & 1)
+    {
+      offset -= 1;
+      emit_insn (gen_rtx_SET (adjust_address (dst, QImode, offset),
+			      adjust_address (src, QImode, offset)));
+    }
+  if (remainder & 2)
+    {
+      offset -= 2;
+      emit_insn (gen_rtx_SET (adjust_address (dst, HImode, offset),
+			      adjust_address (src, HImode, offset)));
+    }
+  if (remainder & 4)
+    {
+      offset -= 4;
+      emit_insn (gen_rtx_SET (adjust_address (dst, SImode, offset),
+			      adjust_address (src, SImode, offset)));
+    }
+  /* Copy in chunks as large as the alignment permits.  */
+  for (unsigned int i = 0; i < iters; i++)
+    {
+      offset -= inc;
+      emit_insn (gen_rtx_SET (adjust_address (dst, mode, offset),
+			      adjust_address (src, mode, offset)));
     }
 }
 
@@ -1432,7 +1518,7 @@ bpf_expand_cpymem (rtx *operands, bool is_move)
 			       true, fwd_label, profile_probability::even ());
 
       /* Emit the "backwards" unrolled loop.  */
-      emit_move_loop (src, dst, mode, (size_bytes - 1), -inc, iters, remainder);
+      emit_move_loop_back (src, dst, mode, size_bytes, inc, iters, remainder);
       emit_jump_insn (gen_jump (done_label));
       emit_barrier ();
 

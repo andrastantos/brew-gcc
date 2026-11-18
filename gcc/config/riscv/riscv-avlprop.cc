@@ -6,7 +6,7 @@ This file is part of GCC.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 3, or(at your option)
+the Free Software Foundation; either version 3, or (at your option)
 any later version.
 
 GCC is distributed in the hope that it will be useful,
@@ -23,7 +23,7 @@ along with GCC; see the file COPYING3.  If not see
 
      - Better code maintain:
        Current LCM-based VSETVL pass is so complicated that codes
-       there will become even harder to maintain. A straight forward
+       there will become even harder to maintain.  A straight forward
        AVL propagation PASS is much easier to maintain.
 
      - Reduce scalar register pressure:
@@ -51,7 +51,7 @@ along with GCC; see the file COPYING3.  If not see
 	tail elements are agnostic.
 
        We DON'T do this optimization on VSETVL pass since it is a
-       post-RA pass that consumed 't0' already wheras a standalone
+       post-RA pass that consumed 't0' already whereas a standalone
        pre-RA AVL propagation pass allows us elide the consumption
        of the pseudo register of 't0' then we can reduce scalar
        register pressure.
@@ -137,12 +137,31 @@ avl_can_be_propagated_p (rtx_insn *rinsn)
 	   vcompress v1, v2, v0 with avl = 4, v1 = {0x8, 0x2, 0x3, 0x4}.
 	   vcompress v1, v2, v0 with avl = 2, v1 will be unchanged.
 	   Thus, we cannot propagate avl of vcompress because it may has
-	   semantics change to the result.  */
+	   semantics change to the result.
+       xt.vilo:
+	 - It can read past AVL when AVL is odd.  When xt.vilo has an AVL of 3
+	   while a producer has an AVL of 4, we cannot propagate the AVL of
+	   xt.vilo.
+       xt.vcrcfold:
+	 - It read pairs of adjacent elements of source vectors.  It does not
+	   read past AVL when AVL is odd, but needs an even AVL to perform
+	   correctly even if the consumer only nees an odd number of
+	   elements.
+       Dot products:
+	 - VL counts reduction terms rather than live accumulator elements,
+	   so propagating it into an accumulator producer can discard values
+	   that the dot product still needs.  */
   return get_attr_type (rinsn) != TYPE_VGATHER
 	 && get_attr_type (rinsn) != TYPE_VSLIDEDOWN
 	 && get_attr_type (rinsn) != TYPE_VISLIDE1DOWN
 	 && get_attr_type (rinsn) != TYPE_VFSLIDE1DOWN
-	 && get_attr_type (rinsn) != TYPE_VCOMPRESS;
+	 && get_attr_type (rinsn) != TYPE_VCOMPRESS
+	 && get_attr_type (rinsn) != TYPE_XT_VCRCFOLD
+	 && get_attr_type (rinsn) != TYPE_XT_VILO
+	 && get_attr_type (rinsn) != TYPE_VIDOTA
+	 && get_attr_type (rinsn) != TYPE_VFDOTA
+	 && get_attr_type (rinsn) != TYPE_VIBDOTA
+	 && get_attr_type (rinsn) != TYPE_VFBDOTA;
 }
 
 static bool
@@ -313,13 +332,13 @@ pass_avlprop::get_preferred_avl (
      - Few code changes in Loop Vectorizer.
      - Reuse the current clean flow of partial vectorization, That is, apply
        predicate LEN or MASK into LOAD/STORE operations and other special
-       arithmetic operations (e.d. DIV), then do the whole vector register
+       arithmetic operations (e.g., DIV), then do the whole vector register
        operation if it DON'T affect the correctness.
        Such flow is used by all other targets like x86, sve, s390, ... etc.
      - PLUS_EXPR has better gimple optimizations than COND_LEN_ADD.
 
    We propagate AVL from NON-VLMAX to VLMAX for gimple IR like PLUS_EXPR which
-   generates the VLMAX instruction due to missed LEN information. The later
+   generates the VLMAX instruction due to missed LEN information.  The later
    VSETVL PASS will elided the redundant vsetvls.
 */
 
@@ -340,7 +359,7 @@ pass_avlprop::get_vlmax_ta_preferred_avl (insn_info *insn) const
       const auto *set = dyn_cast<set_info *> (def);
 
       /* FIXME: Stop AVL propagation if any USE is not a RVV real
-	 instruction. It should be totally enough for vectorized codes since
+	 instruction.  It should be totally enough for vectorized codes since
 	 they always locate at extended blocks.
 
 	 TODO: We can extend PHI checking for intrinsic codes if it

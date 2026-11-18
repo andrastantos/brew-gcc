@@ -23,7 +23,7 @@
 #  <http://www.gnu.org/licenses/>.
 
 AC_INIT([GNU Atomic Library], 1.0,,[libatomic])
-AC_CONFIG_HEADER(auto-config.h)
+AC_CONFIG_HEADERS([auto-config.h])
 
 # -------
 # Options
@@ -63,13 +63,10 @@ AM_CONDITIONAL(GENINSRC, test "$enable_generated_files_in_srcdir" = yes)
 #
 # Also, if this library is being configured as part of a cross compiler, the
 # top-level configure script will pass the "real" host as $with_cross_host.
-#
-# Do not delete or change the following two lines.  For why, see
-# http://gcc.gnu.org/ml/libstdc++/2003-07/msg00451.html
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_TARGET
 target_alias=${target_alias-$host_alias}
 
-# Sets up automake.  Must come after AC_CANONICAL_SYSTEM.  Each of the
+# Sets up automake.  Must come after AC_CANONICAL_TARGET.  Each of the
 # following is magically included in AUTOMAKE_OPTIONS in each Makefile.am.
 #  1.9.0:  minimum required version
 #  no-define:  PACKAGE and VERSION will not be #define'd in config.h (a bunch
@@ -164,7 +161,7 @@ AC_CHECK_TOOL(RANLIB, ranlib, ranlib-not-found-in-path-error)
 AC_PROG_INSTALL
 
 # Configure libtool
-AM_PROG_LIBTOOL
+LT_INIT
 ACX_LT_HOST_FLAGS
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
@@ -205,7 +202,6 @@ AC_DEFINE_UNQUOTED(IFUNC_RESOLVER_ARGS, $IFUNC_RESOLVER_ARGS,
 CFLAGS="$__libatomic_save_CFLAGS__ -fno-sync-libcalls $XCFLAGS"
 
 # Check header files.
-AC_STDC_HEADERS
 ACX_HEADER_STRING
 GCC_HEADER_STDINT(gstdint.h)
 AC_CHECK_HEADERS([fenv.h])
@@ -256,7 +252,7 @@ case " $config_path " in
 esac
 
 # See what sort of export controls are available.
-LIBAT_CHECK_ATTRIBUTE_VISIBILITY
+GCC_CHECK_ATTRIBUTE_VISIBILITY
 LIBAT_CHECK_ATTRIBUTE_DLLEXPORT
 LIBAT_CHECK_ATTRIBUTE_ALIAS
 if test x$try_ifunc = xyes; then

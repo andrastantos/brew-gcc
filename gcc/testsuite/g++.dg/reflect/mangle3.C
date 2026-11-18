@@ -134,6 +134,12 @@ consteval auto f26 (typename [:^^T:] x) { return x; }
 template<info R>
 constexpr auto f27 (typename [:R:]::Alias x) { return x; }
 
+template<info M>
+constexpr auto f28 () -> decltype(S{}.[:M:].i) { return 42; }
+
+template<info R>
+void f29 () { }
+
 void
 g (int p)
 {
@@ -157,26 +163,18 @@ g (int p)
 // { dg-final { scan-assembler "_Z2f4ILDmsb2a1EE4TClsIXszDST_EEEv" } }
   f4<^^A>();
 // { dg-final { scan-assembler "_Z2f4ILDmen4Enum1AEE4TClsIXszDST_EEEv" } }
-  f4<^^TVar>();
-// { dg-final { scan-assembler "_Z2f4ILDmvt4TVarEE4TClsIXszDST_EEEv" } }
   f5<^^i>();
 // { dg-final { scan-assembler "_Z2f5ILDmvr1iEEDtDST_EEv" } }
   f5<^^a1>();
 // { dg-final { scan-assembler "_Z2f5ILDmsb2a1EEDtDST_EEv" } }
   f5<^^A>();
 // { dg-final { scan-assembler "_Z2f5ILDmen4Enum1AEEDtDST_EEv" } }
-  f5<^^TVar>();
-// { dg-final { scan-assembler "_Z2f5ILDmvt4TVarEEDtDST_EEv" } }
-  f5<^^Concept>();
-// { dg-final { scan-assembler "_Z2f5ILDmco7ConceptEEDtDST_EEv" } }
   f5<^^p>();
 // { dg-final { scan-assembler "_Z2f5ILDmvrZ1giE1pEEDtDST_EEv" } }
   f5<std::meta::reflect_constant (42)>();
 // { dg-final { scan-assembler "_Z2f5ILDmvlLi42EEEDtDST_EEv" } }
   f5<std::meta::reflect_object (arr[1])>();
 // { dg-final { scan-assembler "_Z2f5ILDmobixL_Z3arrEL\[ilx]1EEEDtDST_EEv" } }
-  f5<bases_of (^^S, ctx)[0]>();
-// { dg-final { scan-assembler "_Z2f5ILDmba_1SEEDtDST_EEv" } }
   f6<Y>(Y{42});
 // { dg-final { scan-assembler "_Z2f6I1YEDaDSLDmtyT_EE" } }
   f7<^^TCls>(TCls<0>{});
@@ -236,4 +234,10 @@ g (int p)
   constexpr auto r = f26<std::meta::info>({});
   f27<^^::>(42);
 // { dg-final { scan-assembler "_Z3f27ILDmgsEEDaNDST_E5AliasE" } }
+  f28<bases_of (^^S, ctx)[0]>();
+// { dg-final { scan-assembler "_Z3f28ILDmba_1SEEDtdtdttlS0_EDST_E1iEv" } }
+  f29<^^TVar>();
+// { dg-final { scan-assembler "_Z3f29ILDmvt4TVarEEvv" } }
+  f29<^^Concept>();
+// { dg-final { scan-assembler "_Z3f29ILDmco7ConceptEEvv" } }
 }

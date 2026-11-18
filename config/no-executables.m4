@@ -49,23 +49,23 @@ m4_defn([AC_LINK_IFELSE]))
 
 dnl This is a shame.  We have to provide a default for some link tests,
 dnl similar to the default for run tests.
-m4_define([AC_FUNC_MMAP],
+m4_define([GCC_AC_FUNC_MMAP],
 if test x$gcc_no_link = xyes; then
   if test "x${ac_cv_func_mmap_fixed_mapped+set}" != xset; then
     ac_cv_func_mmap_fixed_mapped=no
   fi
 fi
 if test "x${ac_cv_func_mmap_fixed_mapped}" != xno; then
-  m4_defn([AC_FUNC_MMAP])
+  m4_defn([GCC_AC_FUNC_MMAP])
 fi)
 
 m4_divert_pop()dnl
 ])# GCC_NO_EXECUTABLES
 
-# Use the strongest available test out of AC_TRY_COMPILE and AC_TRY_LINK.
+# Use the strongest available test out of AC_COMPILE_IFELSE and AC_LINK_IFELSE
 AC_DEFUN([GCC_TRY_COMPILE_OR_LINK],
 [if test x$gcc_no_link = xyes; then
-  AC_TRY_COMPILE([$1], [$2], [$3], [$4])
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[$1]], [[$2]])],[$3],[$4])
 else
-  AC_TRY_LINK([$1], [$2], [$3], [$4])
+  AC_LINK_IFELSE([AC_LANG_PROGRAM([[$1]], [[$2]])],[$3],[$4])
 fi])

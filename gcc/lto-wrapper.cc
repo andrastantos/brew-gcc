@@ -257,7 +257,7 @@ merge_flto_options (vec<cl_decoded_option> &decoded_options,
 }
 
 /* Try to merge and complain about options FDECODED_OPTIONS when applied
-   ontop of DECODED_OPTIONS.  */
+   on top of DECODED_OPTIONS.  */
 
 static void
 merge_and_complain (vec<cl_decoded_option> &decoded_options,
@@ -1381,7 +1381,7 @@ init_num_threads (void)
 void
 print_lto_docs_link ()
 {
-  label_text url = label_text::take (global_dc->make_option_url (OPT_flto));
+  label_text url = global_dc->get_option_url (OPT_flto);
   inform (UNKNOWN_LOCATION,
 	  "see the %{%<-flto%> option documentation%} for more information",
 	  url.get ());
@@ -1452,7 +1452,7 @@ run_gcc (unsigned argc, char *argv[])
   if (!collect_gcc)
     fatal_error (input_location,
 		 "environment variable %<COLLECT_GCC%> must be set");
-  collect_gcc_options = getenv ("COLLECT_GCC_OPTIONS");
+  collect_gcc_options = const_cast<char *> (read_collect_gcc_options ());
   if (!collect_gcc_options)
     fatal_error (input_location,
 		 "environment variable %<COLLECT_GCC_OPTIONS%> must be set");
@@ -1535,7 +1535,7 @@ run_gcc (unsigned argc, char *argv[])
       close (fd);
     }
 
-  /* Initalize the common arguments for the driver.  */
+  /* Initialize the common arguments for the driver.  */
   obstack_init (&argv_obstack);
   obstack_ptr_grow (&argv_obstack, collect_gcc);
   obstack_ptr_grow (&argv_obstack, "-xlto");
@@ -1926,6 +1926,7 @@ cont1:
   for (i = 0; i < ltoobj_argc; ++i)
     obstack_ptr_grow (&argv_obstack, ltoobj_argv[i]);
   obstack_ptr_grow (&argv_obstack, NULL);
+  obstack_ptr_grow (&argv_obstack, NULL);
 
   new_argv = XOBFINISH (&argv_obstack, const char **);
   argv_ptr = &new_argv[new_head_argc];
@@ -1975,6 +1976,8 @@ cont1:
       /* Parse the list of LTRANS inputs from the WPA stage.  */
       obstack_init (&env_obstack);
       nr = 0;
+      const char *linemap_name = nullptr;
+      char *linemap_arg = nullptr;
       for (;;)
 	{
 	  const unsigned piece = 32;
@@ -2002,6 +2005,15 @@ cont:
 	      goto cont;
 	    }
 	  input_name[len - 1] = '\0';
+
+	  if (!linemap_arg)
+	    {
+	      constexpr auto lf_opt = "-fltrans-linemap-file=";
+	      linemap_arg = concat (lf_opt, input_name, nullptr);
+	      free (input_name);
+	      linemap_name = linemap_arg + strlen (lf_opt);
+	      continue;
+	    }
 
 	  if (input_name[0] == '*')
 	    output_name = &input_name[1];
@@ -2133,9 +2145,13 @@ cont:
 	  argv_ptr[2] = "-o";
 	  argv_ptr[3] = output_name;
 	  argv_ptr[4] = input_name;
-	  argv_ptr[5] = NULL;
+	  argv_ptr[5] = linemap_arg;
+	  argv_ptr[6] = NULL;
 	  if (parallel)
 	    {
+	      /* Saved LTRANS outputs can exist from an earlier link.  */
+	      if (save_temps && !ltrans_cache)
+		fprintf (mstream, ".PHONY: %s\n", output_name);
 	      fprintf (mstream, "%s:\n\t@%s ", output_name, new_argv[0]);
 	      for (j = 1; new_argv[j] != NULL; ++j)
 		fprintf (mstream, " '%s'", new_argv[j]);
@@ -2252,6 +2268,16 @@ cont:
 	    if (early_debug_object_names[i] != NULL)
 	      printf ("%s\n", early_debug_object_names[i]);
 	}
+
+      if (linemap_arg)
+	{
+	  /* This should be done even if(ltrans_cache), since the linemap file
+	     changes when any of the inputs changes and is not part of the
+	     cache.  */
+	  maybe_unlink (linemap_name);
+	  free (linemap_arg);
+	}
+
       nr = 0;
       free (ltrans_priorities);
       free (output_names);
@@ -2282,11 +2308,12 @@ public:
   {
     return true;
   }
-  char *make_option_name (diagnostics::option_id,
-			  enum diagnostics::kind,
-			  enum diagnostics::kind) const final override
+  label_text
+  get_option_name (diagnostics::option_id,
+		   enum diagnostics::kind,
+		   enum diagnostics::kind) const final override
   {
-    return nullptr;
+    return label_text::borrow (nullptr);
   }
 };
 

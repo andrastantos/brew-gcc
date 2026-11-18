@@ -83,7 +83,10 @@ proc host_header_path {hname} {
 
 # Return the pathname CMI munged like the compiler.
 proc munge_cmi {cmi} {
-    if { [string index $cmi 0] == "/" } {
+    if { [string index $cmi 1] == ":" && [info exists ::env(OS)] && [string match "Windows*" $::env(OS)] } {
+	# Windows paths like C:/some/path should be munged to C-/some/path
+	set cmi [string replace $cmi 1 1 "-"]
+    } elseif { [string index $cmi 0] == "/" } {
 	set cmi [string range $cmi 1 end]
     } else {
 	set cmi ",/$cmi"
@@ -148,7 +151,7 @@ proc dg-module-cmi { args } {
 
 # check the expected module files exist (or not)
 # return list to delete
-proc module_cmi_p { src ifs } {
+proc module_cmi_p { src ifs std } {
     set res {}
     foreach if_arg $ifs {
 	set spec [lindex $if_arg 0]
@@ -166,9 +169,9 @@ proc module_cmi_p { src ifs } {
 	global srcdir
 	set relcmi [string map [list $srcdir "/\$srcdir"] $cmi]
 	if { $not != [file_on_host exists $cmi] } {
-	    pass "$src module-cmi $spec ($relcmi)"
+	    pass "$src $std module-cmi $spec ($relcmi)"
 	} else {
-	    fail "$src module-cmi $spec ($relcmi)"
+	    fail "$src $std module-cmi $spec ($relcmi)"
 	    set not [expr ! $not ]
 	}
 	if { ! $not } {
@@ -356,18 +359,33 @@ foreach test [prune [lsort [find $srcdir/$subdir {*.[CH]}]] \
     if [runtest_file_p $runtests $test] {
 	set nshort [file tail [file dirname $test]]/[file tail $test]
 
+	# Kludge: inc-xlate-5.C doesn't want the libstdc++ headers, and
+	# g++_init put them in ALWAYS_CXXFLAGS, so we need to temporarily
+	# remove them for that test.  libstdc++-v3/scripts/testsuite_flags
+	# --build-includes always starts with -nostdinc++, so that's how we
+	# recognize the block we want to remove.
+	global ALWAYS_CXXFLAGS
+	set always $ALWAYS_CXXFLAGS
+	if [string match "*inc-xlate-5*" $test] {
+	    set ALWAYS_CXXFLAGS [regsub {\{additional_flags=-nostdinc[^\}]+\}} $ALWAYS_CXXFLAGS ""]
+	    verbose "set ALWAYS_CXXFLAGS $ALWAYS_CXXFLAGS" 1
+	}
+
 	set std_list [module-init $test]
 	foreach std $std_list {
 	    global module_cmis
 	    set module_cmis {}
+	    set module_do {"compile" "P"}
 	    verbose "Testing $nshort $std" 1
 	    dg-test $test "$std" $DEFAULT_MODFLAGS
 	    if { [lindex $module_do 1] == "N" } {
 		continue
 	    }
 	    set testcase [string range $test [string length "$srcdir/"] end]
-	    cleanup_module_files [module_cmi_p $testcase $module_cmis]
+	    cleanup_module_files [module_cmi_p $testcase $module_cmis $std]
 	}
+
+    	set ALWAYS_CXXFLAGS $always
     }
 }
 
@@ -414,7 +432,7 @@ foreach src [lsort [find $srcdir/$subdir {*_a.[CHX}]] {
 			break
 		    }
 		    set testcase [string range $test [string length "$srcdir/"] end]
-		    lappend mod_files [module_cmi_p $testcase $module_cmis]
+		    lappend mod_files [module_cmi_p $testcase $module_cmis $std]
 		}
 	    }
 	    set testcase [regsub {_a.[CH]} $src {}]

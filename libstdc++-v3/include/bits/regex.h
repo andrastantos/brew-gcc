@@ -61,8 +61,10 @@ namespace __detail
 		      _RegexExecutorPolicy		   __policy,
 		      bool				   __match_mode);
 
+_GLIBCXX_BEGIN_INLINE_ABI_NAMESPACE(_V2)
   template<typename, typename, typename>
     class _Executor;
+_GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 
   template<typename _Tp>
     struct __is_contiguous_iter : false_type { };
@@ -731,7 +733,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	      __glibcxx_requires_valid_range(__first, __last);
 	      if constexpr (is_pointer_v<_InputIterator>)
 		_M_compile(__first, __last, __flags);
-	      else // __normal_iterator<_T*, C>
+	      else // __normal_iterator<T*, C>
 		_M_compile(__first.base(), __last.base(), __flags);
 	    }
 	  else

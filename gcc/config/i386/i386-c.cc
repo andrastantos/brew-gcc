@@ -44,7 +44,7 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
 			     void (*def_or_undef) (cpp_reader *,
 						   const char *))
 {
-  /* For some of the k6/pentium varients there weren't separate ISA bits to
+  /* For some of the k6/pentium variants there weren't separate ISA bits to
      identify which tune/arch flag was passed, so figure it out here.  */
   size_t arch_len = strlen (ix86_arch_string);
   size_t tune_len = strlen (ix86_tune_string);
@@ -303,7 +303,22 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
       def_or_undef (parse_in, "__novalake");
       def_or_undef (parse_in, "__novalake__");
       break;
-
+    case PROCESSOR_C86_4G_M4:
+      def_or_undef (parse_in, "__c86_4g_m4");
+      def_or_undef (parse_in, "__c86_4g_m4__");
+      break;
+    case PROCESSOR_C86_4G_M6:
+      def_or_undef (parse_in, "__c86_4g_m6");
+      def_or_undef (parse_in, "__c86_4g_m6__");
+      break;
+    case PROCESSOR_C86_4G_M7:
+      def_or_undef (parse_in, "__c86_4g_m7");
+      def_or_undef (parse_in, "__c86_4g_m7__");
+      break;
+    case PROCESSOR_C86_4G_M8:
+      def_or_undef (parse_in, "__c86_4g_m8");
+      def_or_undef (parse_in, "__c86_4g_m8__");
+      break;
     /* use PROCESSOR_max to not set/unset the arch macro.  */
     case PROCESSOR_max:
       break;
@@ -511,6 +526,18 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
       break;
     case PROCESSOR_NOVALAKE:
       def_or_undef (parse_in, "__tune_novalake__");
+      break;
+    case PROCESSOR_C86_4G_M4:
+      def_or_undef (parse_in, "__tune_c86_4g_m4__");
+      break;
+    case PROCESSOR_C86_4G_M6:
+      def_or_undef (parse_in, "__tune_c86_4g_m6__");
+      break;
+    case PROCESSOR_C86_4G_M7:
+      def_or_undef (parse_in, "__tune_c86_4g_m7__");
+      break;
+    case PROCESSOR_C86_4G_M8:
+      def_or_undef (parse_in, "__tune_c86_4g_m8__");
       break;
     case PROCESSOR_INTEL:
     case PROCESSOR_GENERIC:
@@ -755,8 +782,6 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
     def_or_undef (parse_in, "__AVX10_2__");
   if (isa_flag2 & OPTION_MASK_ISA2_AMX_AVX512)
     def_or_undef (parse_in, "__AMX_AVX512__");
-  if (isa_flag2 & OPTION_MASK_ISA2_AMX_TF32)
-    def_or_undef (parse_in, "__AMX_TF32__");
   if (isa_flag2 & OPTION_MASK_ISA2_AMX_FP8)
     def_or_undef (parse_in, "__AMX_FP8__");
   if (isa_flag2 & OPTION_MASK_ISA2_MOVRS)
@@ -765,6 +790,12 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
     def_or_undef (parse_in, "__AMX_MOVRS__");
   if (isa_flag2 & OPTION_MASK_ISA2_AVX512BMM)
     def_or_undef (parse_in, "__AVX512BMM__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AVX10V2AUX)
+    def_or_undef (parse_in, "__AVX10V2AUX__");
+  if (isa_flag2 & OPTION_MASK_ISA2_ACEV1)
+    def_or_undef (parse_in, "__ACEV1__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AVX10V1AUX)
+    def_or_undef (parse_in, "__AVX10V1AUX__");
   if (TARGET_IAMCU)
     {
       def_or_undef (parse_in, "__iamcu");
@@ -946,8 +977,9 @@ ix86_target_macros (void)
   cpp_define (parse_in, "__SEG_FS");
   cpp_define (parse_in, "__SEG_GS");
 
-  if (flag_cf_protection != CF_NONE)
-    cpp_define_formatted (parse_in, "__CET__=%d", flag_cf_protection & ~CF_SET);
+  if (flag_cf_protection & (CF_BRANCH | CF_RETURN))
+    cpp_define_formatted (parse_in, "__CET__=%d",
+			  flag_cf_protection & (CF_BRANCH | CF_RETURN));
 }
 
 

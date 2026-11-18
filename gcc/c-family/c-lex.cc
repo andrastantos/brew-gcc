@@ -355,7 +355,6 @@ c_common_has_attribute (cpp_reader *pfile, bool std_syntax)
     {
       attr_name = get_identifier ((const char *)
 				  cpp_token_as_text (pfile, token));
-      attr_name = canonicalize_attr_name (attr_name);
       bool have_scope = false;
       int idx = 0;
       const cpp_token *nxt_token;
@@ -390,6 +389,13 @@ c_common_has_attribute (cpp_reader *pfile, bool std_syntax)
 	  if (nxt_token->type == CPP_NAME)
 	    {
 	      tree attr_ns = attr_name;
+	      /* In clang, __clang__ is predefined macro, and the supported
+		 alternate namespace is _Clang rather than __clang__ because
+		 of that.  Don't handle ___Clang__ that way though.  */
+	      if (id_equal (attr_ns, "_Clang"))
+		attr_ns = get_identifier ("clang");
+	      else if (!id_equal (attr_ns, "__clang__"))
+		attr_ns = canonicalize_attr_name (attr_ns);
 	      tree attr_id
 		= get_identifier ((const char *)
 				  cpp_token_as_text (pfile, nxt_token));
@@ -403,6 +409,15 @@ c_common_has_attribute (cpp_reader *pfile, bool std_syntax)
 		result = 1;
 	      if (result)
 		attr_name = NULL_TREE;
+	      /* gnu::trivial_abi is in the attribute table just
+		 to error on it and suggest using [[clang::trivial_abi]]
+		 or __attribute__((trivial_abi)).  Don't advertise it.
+		 Ditto for gnu::no_specializations.  */
+	      else if (c_dialect_cxx ()
+		       && is_attribute_p ("gnu", attr_ns)
+		       && (is_attribute_p ("trivial_abi", attr_id)
+			   || is_attribute_p ("no_specializations", attr_id)))
+		attr_name = NULL_TREE;
 	      else
 		attr_name = build_tree_list (attr_ns, attr_id);
 	    }
@@ -415,6 +430,7 @@ c_common_has_attribute (cpp_reader *pfile, bool std_syntax)
 	}
       else
 	{
+	  attr_name = canonicalize_attr_name (attr_name);
 	  /* Some standard attributes need special handling.  */
 	  if (c_dialect_cxx ())
 	    {
@@ -433,6 +449,8 @@ c_common_has_attribute (cpp_reader *pfile, bool std_syntax)
 		result = 201907;
 	      else if (is_attribute_p ("assume", attr_name))
 		result = 202207;
+	      else if (is_attribute_p ("indeterminate", attr_name))
+		result = 202403;
 	      else if (is_attribute_p ("init_priority", attr_name))
 		{
 		  /* The (non-standard) init_priority attribute is always
@@ -1076,7 +1094,7 @@ interpret_integer (const cpp_token *token, unsigned int flags,
 	}
 
       prec = wi::min_precision (wval, UNSIGNED);
-      if (prec == 0)
+      if (prec == 0 && ((flags & CPP_N_UNSIGNED) != 0 || !flag_isoc2y))
 	prec = 1;
       if ((flags & CPP_N_UNSIGNED) == 0)
 	++prec;

@@ -41,7 +41,7 @@ dnl Arrange to define HAVE_DECL_<FUNCTION> to 0 or 1 as appropriate.
 dnl gcc_AC_CHECK_DECLS(SYMBOLS,
 dnl 	[ACTION-IF-NEEDED [, ACTION-IF-NOT-NEEDED [, INCLUDES]]])
 AC_DEFUN([gcc_AC_CHECK_DECLS],
-[AC_FOREACH([gcc_AC_Func], [$1],
+[m4_foreach_w([gcc_AC_Func], [$1],
   [AH_TEMPLATE(AS_TR_CPP(HAVE_DECL_[]gcc_AC_Func),
   [Define to 1 if we found a declaration for ']gcc_AC_Func[', otherwise
    define to 0.])])dnl
@@ -220,35 +220,13 @@ test -z "$INSTALL_DATA" && INSTALL_DATA='${INSTALL} -m 644'
 AC_SUBST(INSTALL_DATA)dnl
 ])
 
-dnl Determine if enumerated bitfields are unsigned.   ISO C says they can 
-dnl be either signed or unsigned.
-dnl
-AC_DEFUN([gcc_AC_C_ENUM_BF_UNSIGNED],
-[AC_CACHE_CHECK(for unsigned enumerated bitfields, gcc_cv_enum_bf_unsigned,
-[AC_RUN_IFELSE([AC_LANG_SOURCE([#include <stdlib.h>
-enum t { BLAH = 128 } ;
-struct s_t { enum t member : 8; } s ;
-int main(void)
-{            
-        s.member = BLAH;
-        if (s.member < 0) exit(1);
-        exit(0);
-
-}])], gcc_cv_enum_bf_unsigned=yes, gcc_cv_enum_bf_unsigned=no, gcc_cv_enum_bf_unsigned=yes)])
-if test $gcc_cv_enum_bf_unsigned = yes; then
-  AC_DEFINE(ENUM_BITFIELDS_ARE_UNSIGNED, 1,
-    [Define if enumerated bitfields are treated as unsigned values.])
-fi])
-
 dnl Probe number of bits in a byte.
 dnl Note C89 requires CHAR_BIT >= 8.
 dnl
 AC_DEFUN([gcc_AC_C_CHAR_BIT],
 [AC_CACHE_CHECK(for CHAR_BIT, gcc_cv_decl_char_bit,
 [AC_EGREP_CPP(found,
-[#ifdef HAVE_LIMITS_H
-#include <limits.h>
-#endif
+[#include <limits.h>
 #ifdef CHAR_BIT
 found
 #endif], gcc_cv_decl_char_bit=yes, gcc_cv_decl_char_bit=no)
@@ -308,24 +286,23 @@ int (*fp) (void) __attribute__ ((section (".init_array"))) = foo;
 	    gcc_cv_initfini_array=yes
 	  fi
 	elif test x"$gcc_cv_as" != x -a x"$gcc_cv_ld" != x -a x"$gcc_cv_objdump" != x ; then
-	  case $target:$gas in
-	    *:yes)
-	      sh_flags='"a"'
-	      sh_type='%progbits'
-	      ;;
-	    i?86-*-solaris2*:no | x86_64-*-solaris2*:no)
+	  case $target:$as_flavor in
+	    i?86-*-solaris2*:solaris | x86_64-*-solaris2*:solaris)
 	      sh_flags='"a"'
 	      sh_type='@progbits'
 	      ;;
-	    sparc*-*-solaris2*:no)
+	    sparc*-*-solaris2*:yes)
 	      sh_flags='#alloc'
 	      sh_type='#progbits'
 	      sh_quote='"'
 	      ;;
+	    *:*)
+	      sh_flags='"a"'
+	      sh_type='%progbits'
+	      ;;
 	  esac
-	  case "$target:$gnu_ld" in
-	    *:yes)
-	      cat > conftest.s <<EOF
+	  if test x$ld_flavor = xgnu; then
+	    cat > conftest.s <<EOF
 .section .dtors,$sh_flags,$sh_type
 .balign 4
 .byte 'A', 'A', 'A', 'A'
@@ -354,24 +331,23 @@ int (*fp) (void) __attribute__ ((section (".init_array"))) = foo;
 .globl _start
 _start:
 EOF
-	      if $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
-	         && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
-	         && $gcc_cv_objdump -s -j .init_array conftest \
-		    | grep HHHHFFFFDDDDBBBB > /dev/null 2>&1 \
-	         && $gcc_cv_objdump -s -j .fini_array conftest \
-		    | grep GGGGEEEECCCCAAAA > /dev/null 2>&1; then
-	        gcc_cv_initfini_array=yes
-	      fi
-	      ;;
-	    *-*-solaris2*:no)
-	      # When Solaris ld added constructor priority support, it was
-	      # decided to only handle .init_array.N/.fini_array.N since
-	      # there was no need for backwards compatibility with
-	      # .ctors.N/.dtors.N.  .ctors/.dtors remain as separate
-	      # sections with correct execution order resp. to
-	      # .init_array/.fini_array, while gld merges them into
-	      # .init_array/.fini_array.
-	      cat > conftest.s <<EOF
+	    if $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
+	       && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
+	       && $gcc_cv_objdump -s -j .init_array conftest \
+		  | grep HHHHFFFFDDDDBBBB > /dev/null 2>&1 \
+	       && $gcc_cv_objdump -s -j .fini_array conftest \
+		  | grep GGGGEEEECCCCAAAA > /dev/null 2>&1; then
+	      gcc_cv_initfini_array=yes
+	    fi
+	  else
+	    # When Solaris ld added constructor priority support, it was
+	    # decided to only handle .init_array.N/.fini_array.N since
+	    # there was no need for backwards compatibility with
+	    # .ctors.N/.dtors.N.  .ctors/.dtors remain as separate
+	    # sections with correct execution order resp. to
+	    # .init_array/.fini_array, while gld merges them into
+	    # .init_array/.fini_array.
+	    cat > conftest.s <<EOF
 .section $sh_quote.fini_array.65530$sh_quote,$sh_flags,$sh_type
 .align 4
 .byte 'C', 'C', 'C', 'C', 'C', 'C', 'C', 'C'
@@ -388,16 +364,15 @@ EOF
 .globl _start
 _start:
 EOF
-	      if $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
-	         && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
-	         && $gcc_cv_objdump -s -j .init_array conftest \
-		    | grep HHHHHHHHDDDDDDDD > /dev/null 2>&1 \
-	         && $gcc_cv_objdump -s -j .fini_array conftest \
-		    | grep GGGGGGGGCCCCCCCC > /dev/null 2>&1; then
-	        gcc_cv_initfini_array=yes
-	      fi
-	      ;;
-	    esac
+	    if $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
+	       && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
+	       && $gcc_cv_objdump -s -j .init_array conftest \
+		  | grep HHHHHHHHDDDDDDDD > /dev/null 2>&1 \
+	       && $gcc_cv_objdump -s -j .fini_array conftest \
+		  | grep GGGGGGGGCCCCCCCC > /dev/null 2>&1; then
+	      gcc_cv_initfini_array=yes
+	    fi
+	  fi
 changequote(,)dnl
 	  rm -f conftest conftest.*
 changequote([,])dnl
@@ -447,10 +422,11 @@ AC_DEFUN([gcc_CHECK_ATTRIBUTE_ALIAS], [
   AC_CACHE_CHECK([whether the host/build supports symbol aliases],
                  gcc_cv_have_attribute_alias, [
   if test "x${build}" = "x${host}"; then
-    AC_TRY_LINK([
+    AC_LINK_IFELSE([AC_LANG_PROGRAM([[
 extern "C" void foo(void) { }
-extern void bar(void) __attribute__((alias("foo")));],
-    [bar();], gcc_cv_have_attribute_alias=yes, gcc_cv_have_attribute_alias=no)
+extern void bar(void) __attribute__((alias("foo")));]],
+    [[bar();]])],
+    [gcc_cv_have_attribute_alias=yes], [gcc_cv_have_attribute_alias=no])
   else
     gcc_cv_have_attribute_alias=no
   fi])
@@ -464,7 +440,7 @@ dnl # Used by gcc_GAS_CHECK_FEATURE
 dnl #
 AC_DEFUN([gcc_GAS_FLAGS],
 [AC_CACHE_CHECK([assembler flags], gcc_cv_as_flags,
-[ case "$target:$gas" in
+[ case "$target:$as_flavor" in
   *-*-darwin*:*)
     dnl Darwin with the native assembler uses -arch i386/x86_64/ppc/ppc64.
     dnl
@@ -492,7 +468,7 @@ AC_DEFUN([gcc_GAS_FLAGS],
 	;;
     esac
     ;;
-  *-*-solaris2*:no)
+  *-*-solaris2*:solaris)
     dnl Solaris with the native assembler uses -m32/-m64 consistently.
     case "$target" in
       i?86-*-* | sparc-*-*)
@@ -513,6 +489,9 @@ AC_DEFUN([gcc_GAS_FLAGS],
 	;;
       x86_64-*-linux-gnux32*)
 	gcc_cv_as_flags=--x32
+	;;
+      x86_64-*-linux-gnuabi32 | x86_64-*-mingw32abi32)
+	gcc_cv_as_flags=--32
 	;;
       x86_64-*-* | sparcv9-*-* | sparc64-*-*)
 	gcc_cv_as_flags=--64

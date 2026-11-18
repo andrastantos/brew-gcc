@@ -30,9 +30,5 @@
 #ifndef GMATH_H_
 #define GMATH_H_
 
-extern "C"
-{
-
-}
 
 #endif

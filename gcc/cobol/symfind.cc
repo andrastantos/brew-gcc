@@ -45,6 +45,34 @@
 
 extern int yydebug;
 
+/*
+ * This silly function accepts __PRETTY_FUNCTION__ and trims the return type
+ * and parameter list from the name.  It's used only for debug messages.  It
+ * will not DTRT for conversion operators e.g. operator bool() or others with
+ * spaces in their names.
+ */
+struct funcname {
+  std::string output;
+  funcname( const char name[] ) { // cppcheck-suppress noExplicitConstructor
+    auto ename = name + strlen(name);
+    auto p = std::find(name, ename, ' ');
+    p = p == ename? name : p + 1;
+    auto pend = std::find(p, ename, '(');
+    std::reverse_iterator<const char *> rbeg(pend), rend(p);
+    // Find the last character that could not by part of the function name.
+    const std::string stop(" *&");
+    auto rp = std::find_if( rbeg, rend,
+                            [stop]( char ch ) {
+                              return stop.find(ch) != std::string::npos;
+                            } );
+    if( rp != rend ) p = rp.base();
+
+    assert(p < pend && pend < ename);
+    output.assign(p, pend);
+  }
+};
+#define __funcsig__ funcname(__PRETTY_FUNCTION__).output.c_str()
+
 static bool
 is_data_field( symbol_elem_t& e ) {
   if( e.type != SymField ) return false;
@@ -56,10 +84,10 @@ is_data_field( symbol_elem_t& e ) {
 }
 
 class sym_name_t {
-public: // TEMPORARY
-  const char *name;
-  size_t program, parent;
 public:
+  const char *name;
+  const size_t program, parent;
+
   explicit sym_name_t( const char name[] )
     : name(name), program(0), parent(0) { assert(name[0] == '\0'); }
   sym_name_t( size_t program, const char name[], size_t parent )
@@ -86,36 +114,114 @@ public:
 
 typedef std::map< sym_name_t, std::vector<size_t> > symbol_map_t;
 
-
 static symbol_map_t symbol_map;
 
 typedef std::map <field_key_t, std::list<size_t> > field_keymap_t;
 static field_keymap_t symbol_map2;
 
 /*
- * As each field is added to the symbol table, add its name and index
- * to the name map.  Initially the type is FldInvalid.  Those are
- * removed by symbols_update();
+ * symbol_file_names_t is a small "lookaside" map of FD name to the file's
+ * default buffer. It's a little bit too generous.  It works correctly for
+ * CALL, but because it's used by the parser's name: nonterminal, everything
+ * that wants a cbl_field_t gets it.  So MOVE would also work.
+ *
+ * To make it convenient for the parser to verify it's not relying on an FD
+ * name, the was_fd_name() function calls symbol_file_names_t::exists.
+ */
+static class symbol_file_names_t : protected symbol_map_t {
+  std::set<size_t> named_defaults;
+ public:
+  void add( const cbl_file_t& file ) {
+    auto program = symbol_elem_of(&file)->program;
+    std::vector<size_t> ids( 1, file.default_record );
+    sym_name_t key(program, file.name, 0);
+    (*this)[key] = ids;
+    // Keep track of symbols we added, so the parser can ask.
+    auto f = cbl_field_of(symbol_at(ids.front()));
+    assert('_' == f->name[0]); // not a COBOL name
+    named_defaults.insert(ids.front());
+  }
+  symbol_map_t find( size_t program, const char name[] ) const {
+    symbol_map_t output;
+    std::copy_if( cbegin(), cend(),
+                  std::inserter(output, output.begin()),
+                  [program, name]( const auto& elem ) {
+                    return match(program, name, elem);
+                  } );
+
+    dbgmsg("%s:%d: found %lu #%lu for %s", __funcsig__, __LINE__,
+           (unsigned long)output.size(),
+           output.empty()? 0ul : (unsigned long)output.begin()->second.front(),
+           name);
+
+    return output;
+  }
+  bool exists( const cbl_field_t * field ) const {
+    auto isym = symbol_index(symbol_elem_of(field));
+    return 1 == named_defaults.count(isym);
+  }
+ protected:
+  static bool match( size_t program, const char *name, const_reference elem ) {
+    const sym_name_t& key = elem.first;
+    return key.program == program
+      &&   0 == strcasecmp(key.name, name);
+  }
+} symbol_file_names;
+
+/*
+ * As each field is added to the symbol table, add its name and index to the
+ * name map.  Initially the type is FldInvalid.  Those are removed by
+ * symbols_update().  Typedefs are excluded; they do not represent data items.
  */
 void
 update_symbol_map2( const symbol_elem_t *e ) {
   auto field = cbl_field_of(e);
 
-  if( ! field->is_typedef() ) {
-    switch( field->type ) {
-    case FldForward:
-    case FldLiteralN:
-      return;
-    case FldLiteralA:
-      if( ! field->is_key_name() ) return;
-      break;
-    default:
-      break;
-    }
+  if( field->is_typedef() ) return;
+
+  switch( field->type ) {
+  case FldForward:
+  case FldLiteralN:
+    return;
+  case FldLiteralA:
+    if( ! field->is_key_name() ) return;
+    break;
+  default:
+    break;
   }
 
   field_key_t fk( e->program, field );
   symbol_map2[fk].push_back(symbol_index(e));
+}
+
+void
+update_symbol_map2( const cbl_file_t& file ) {
+  assert(file.default_record);
+  auto e = symbol_elem_of(&file);
+
+  symbol_file_names.add(file);
+
+  sym_name_t key( e->program, file.name, 0 );
+  auto m = symbol_file_names.find(e->program, file.name);
+  dbgmsg("%s:%d: %s => %lu (last of %lu)", __func__, __LINE__,
+         key.name, m[key].back(), m[key].size() );
+}
+
+/*
+ * The field may have been accepted as an FD NAME, representing the file's
+ * buffer.  That is valid for a CALL parameter, for example, but not otherwise,
+ * as in MOVE.
+ *
+ * When parsing a name nonterminal, we smuggle in the file's default buffer if
+ * an FD name is referenced (and unique).  The function below exists to check
+ * against that possibility in cases where it's not allowed.
+ */
+bool
+was_fd_name( const cbl_field_t * field ) {
+  if( current_program_index() < field->our_index ) {
+    return symbol_file_names.exists(field);
+  }
+  return false;
 }
 
 /*
@@ -479,7 +585,7 @@ symbol_match2( size_t program,
  * N-1.
  */
 static symbol_map_t
-symbol_match( size_t program, const std::list<const char *>& names ) {
+symbol_match( size_t program, const std::list<const char *>& names, bool diagnose ) {
   auto matched = symbol_match2( program, names );
   symbol_map_t output;
 
@@ -490,12 +596,12 @@ symbol_match( size_t program, const std::list<const char *>& names ) {
     symbol_map_t::key_type key( e->program, f->name, f->parent );
     auto p = symbol_map.find(key);
     if( p == symbol_map.end() ) {
-      yyerror("%s is not defined", key.name);
+      yyerror("%qs is not defined", key.name);
       continue;
     }
     auto inserted = output.insert(*p);
-    if( ! inserted.second ) {
-      error_msg_direct("%s is not a unique reference", key.name);
+    if( diagnose && ! inserted.second ) {
+      error_msg_direct("%qs is not a unique reference", key.name);
     }
   }
   return output;
@@ -513,8 +619,8 @@ symbol_field_alias_end() {
 }
 
 std::pair <symbol_elem_t *, bool>
-symbol_find( size_t program, std::list<const char *> names ) {
-  symbol_map_t items = symbol_match(program, names);
+symbol_find( size_t program, std::list<const char *> names, bool diagnose ) {
+  symbol_map_t items = symbol_match(program, names, diagnose);
 
   if( symbol_field_alias_01 && items.size() != 1 ) {
     symbol_map_t qualified;
@@ -523,9 +629,14 @@ symbol_find( size_t program, std::list<const char *> names ) {
                   std::inserter(qualified, qualified.begin()),
                   [i01]( auto item ) {
                     const std::vector<size_t>& ancestors(item.second);
+                    assert(!ancestors.empty());
                     return ancestors.back() == i01;
                   } );
     items = qualified;
+  }
+
+  if( items.empty() && names.size() == 1 ) {
+    items = symbol_file_names.find(program, names.front());
   }
 
   auto unique = items.size() == 1;
@@ -562,7 +673,7 @@ public:
 
 symbol_elem_t *
 symbol_find_of( size_t program, std::list<const char *> names, size_t group ) {
-  symbol_map_t input = symbol_match(program, names);
+  symbol_map_t input = symbol_match(program, names, true);
 
   symbol_map_t items;
   std::copy_if( input.begin(), input.end(),

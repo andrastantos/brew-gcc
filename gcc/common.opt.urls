@@ -555,6 +555,9 @@ UrlSuffix(gcc/Warning-Options.html#index-Wno-vector-operation-performance)
 Wtsan
 UrlSuffix(gcc/Warning-Options.html#index-Wno-tsan)
 
+Wzero-init-padding-bits=
+UrlSuffix(gcc/Warning-Options.html#index-Wzero-init-padding-bits_003d)
+
 Xassembler
 UrlSuffix(gcc/Assembler-Options.html#index-Xassembler)
 
@@ -932,6 +935,9 @@ UrlSuffix(gcc/Developer-Options.html#index-fdump-unnumbered)
 fdump-unnumbered-links
 UrlSuffix(gcc/Developer-Options.html#index-fdump-unnumbered-links)
 
+fduplicate-switch-dispatch
+UrlSuffix(gcc/Optimize-Options.html#index-fduplicate-switch-dispatch)
+
 fdwarf2-cfi-asm
 UrlSuffix(gcc/Debugging-Options.html#index-fdwarf2-cfi-asm)
 
@@ -1094,9 +1100,6 @@ UrlSuffix(gcc/Optimize-Options.html#index-fif-conversion2)
 
 fstack-reuse=
 UrlSuffix(gcc/Code-Gen-Options.html#index-fstack-reuse)
-
-ftree-loop-if-convert
-UrlSuffix(gcc/Optimize-Options.html#index-fno-tree-loop-if-convert)
 
 finhibit-size-directive
 UrlSuffix(gcc/Code-Gen-Options.html#index-finhibit-size-directive)
@@ -1332,6 +1335,12 @@ UrlSuffix(gcc/OpenMP-and-OpenACC-Options.html#index-foffload-options)
 
 fomit-frame-pointer
 UrlSuffix(gcc/Optimize-Options.html#index-fno-omit-frame-pointer)
+
+fopenmp-ompt
+UrlSuffix(gcc/OpenMP-and-OpenACC-Options.html#index-fopenmp-ompt)
+
+fopenmp-ompt=
+UrlSuffix(gcc/OpenMP-and-OpenACC-Options.html#index-fopenmp-ompt)
 
 fopenmp-target-simd-clone
 UrlSuffix(gcc/OpenMP-and-OpenACC-Options.html#index-fno-openmp-target-simd-clone)

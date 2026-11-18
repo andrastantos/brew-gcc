@@ -173,7 +173,6 @@ cleanup_control_expr_graph (basic_block bb, gimple_stmt_iterator gsi)
     {
       edge e;
       edge_iterator ei;
-      bool warned;
       tree val = NULL_TREE;
 
       /* Try to convert a switch with just a single non-default case to
@@ -185,7 +184,6 @@ cleanup_control_expr_graph (basic_block bb, gimple_stmt_iterator gsi)
       if (gimple_code (stmt) == GIMPLE_COND)
 	canonicalize_bool_cond (as_a<gcond*> (stmt), bb);
 
-      fold_defer_overflow_warnings ();
       switch (gimple_code (stmt))
 	{
 	case GIMPLE_COND:
@@ -207,24 +205,13 @@ cleanup_control_expr_graph (basic_block bb, gimple_stmt_iterator gsi)
 	}
       taken_edge = find_taken_edge (bb, val);
       if (!taken_edge)
-	{
-	  fold_undefer_and_ignore_overflow_warnings ();
-	  return false;
-	}
+	return false;
 
       /* Remove all the edges except the one that is always executed.  */
-      warned = false;
       for (ei = ei_start (bb->succs); (e = ei_safe_edge (ei)); )
 	{
 	  if (e != taken_edge)
 	    {
-	      if (!warned)
-		{
-		  fold_undefer_overflow_warnings
-		    (true, stmt, WARN_STRICT_OVERFLOW_CONDITIONAL);
-		  warned = true;
-		}
-
 	      taken_edge->probability += e->probability;
 	      remove_edge_and_dominated_blocks (e);
 	      retval = true;
@@ -232,15 +219,14 @@ cleanup_control_expr_graph (basic_block bb, gimple_stmt_iterator gsi)
 	  else
 	    ei_next (&ei);
 	}
-      if (!warned)
-	fold_undefer_and_ignore_overflow_warnings ();
     }
   else
     taken_edge = single_succ_edge (bb);
 
   bitmap_set_bit (cfgcleanup_altered_bbs, bb->index);
   gsi_remove (&gsi, true);
-  taken_edge->flags = EDGE_FALLTHRU;
+  taken_edge->flags &= ~(EDGE_TRUE_VALUE|EDGE_FALSE_VALUE);
+  taken_edge->flags |= EDGE_FALLTHRU;
 
   return retval;
 }
@@ -463,6 +449,28 @@ move_debug_stmts_from_forwarder (basic_block src,
     }
 }
 
+/* Returns true if a phi of the basic block BB has an
+   use of a ssa name that is used in an abnormal edge.  */
+
+static bool
+bb_phis_references_abnormal_uses (basic_block bb)
+{
+  auto phis = phi_nodes (bb);
+  gimple_stmt_iterator i;
+  for (i = gsi_start (phis); !gsi_end_p (i); gsi_next (&i))
+    {
+      gphi *phi = as_a<gphi*>(*i);
+      for (unsigned indx = 0; indx < gimple_phi_num_args (phi); indx++)
+	{
+	  tree value = gimple_phi_arg_def (phi, indx);
+	  if (TREE_CODE (value) == SSA_NAME
+	      && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (value))
+	    return true;
+	}
+    }
+  return false;
+}
+
 /* Return true if basic block BB does nothing except pass control
    flow to another block and that we can safely insert a label at
    the start of the successor block and was removed.
@@ -547,6 +555,11 @@ maybe_remove_forwarder_block (basic_block bb, bool can_split = false)
   /* When we have a phi, we have to feed into another
      basic block with PHI nodes.  */
   if (has_phi && gimple_seq_empty_p (phi_nodes (dest)))
+    return false;
+
+  /* When we have phi, make sure the phi does not have any uses of
+     names used in abnormal phis.  */
+  if (has_phi && bb_phis_references_abnormal_uses (bb))
     return false;
 
   /* Now walk through the statements backward.  We can ignore labels,
@@ -770,7 +783,7 @@ maybe_remove_forwarder_block (basic_block bb, bool can_split = false)
 
   set_immediate_dominator (CDI_DOMINATORS, dest, dom);
 
-  /* Adjust latch infomation of BB's parent loop as otherwise
+  /* Adjust latch information of BB's parent loop as otherwise
      the cfg hook has a hard time not to kill the loop.  */
   if (current_loops && bb->loop_father->latch == bb)
     bb->loop_father->latch = pred;
@@ -1103,8 +1116,11 @@ cleanup_control_flow_pre ()
   return retval;
 }
 
+/* Callback function for make_forwarder_block which returns
+   true when E is not a latch.  */
+
 static bool
-mfb_keep_latches (edge e)
+mfb_keep_latches (edge e, void*)
 {
   return !((dom_info_available_p (CDI_DOMINATORS)
 	    && dominated_by_p (CDI_DOMINATORS, e->src, e->dest))
@@ -1164,8 +1180,7 @@ cleanup_tree_cfg_noloop (unsigned ssa_update_flags)
 	       create a forwarder.  */
 	    if (found_latch && ! any_abnormal && n > 1)
 	      {
-		edge fallthru = make_forwarder_block (bb, mfb_keep_latches,
-						      NULL);
+		edge fallthru = make_forwarder_block (bb, mfb_keep_latches, NULL);
 		loop->header = fallthru->dest;
 		if (! loops_state_satisfies_p (LOOPS_NEED_FIXUP))
 		  {
@@ -1187,7 +1202,7 @@ cleanup_tree_cfg_noloop (unsigned ssa_update_flags)
   /* Start by iterating over all basic blocks in PRE order looking for
      edge removal opportunities.  Do this first because incoming SSA form
      may be invalid and we want to avoid performing SSA related tasks such
-     as propgating out a PHI node during BB merging in that state.  This
+     as propagating out a PHI node during BB merging in that state.  This
      also gets rid of unreachable blocks.  */
   bool changed = cleanup_control_flow_pre ();
 

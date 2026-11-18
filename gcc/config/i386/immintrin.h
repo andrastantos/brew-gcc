@@ -134,8 +134,6 @@
 
 #include <amxavx512intrin.h>
 
-#include <amxtf32intrin.h>
-
 #include <amxfp8intrin.h>
 
 #include <prfchwintrin.h>
@@ -147,6 +145,10 @@
 #include <avx10_2mediaintrin.h>
 
 #include <avx10_2convertintrin.h>
+
+#include <avx10v2auxintrin.h>
+
+#include <avx10v1auxintrin.h>
 
 #include <avx10_2bf16intrin.h>
 
@@ -163,4 +165,7 @@
 #include <avx512bmmintrin.h>
 
 #include <avx512bmmvlintrin.h>
+
+#include <acev1intrin.h>
+
 #endif /* _IMMINTRIN_H_INCLUDED */

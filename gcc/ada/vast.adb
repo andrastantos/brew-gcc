@@ -48,6 +48,7 @@ with Output;
 with Sem_Aux;
 with Sem_Util;
 with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
 with Sinput;
 with Table;
 with Types;          use Types;
@@ -67,15 +68,38 @@ package body VAST is
 
    type Check_Enum is
      (Check_Other,
+      --  Checks other than listed below. These should all pass.
       Check_Sloc,
+      --  Check that nodes have a Sloc.
       Check_Analyzed,
+      --  Check that the Analyzed flag is True for all nodes.
       Check_Error_Nodes,
+      --  Check that there are no Error nodes in the tree.
+      Check_Entity_Chain,
+      --  Check that the entity chain is consistent when traversed in both
+      --  directions (Next_Entity and Prev_Entity).
       Check_FE_Only,
+      --  Check that front-end-only nodes (i.e. nodes that should not be passed
+      --  to the back end) are not present.
       Check_Sharing,
+      --  Check that the tree is treeish; a node cannot be a subtree of two or
+      --  more parents. This one is hopeless.
       Check_Parent_Present,
+      --  Check that each node has a non-Empty Parent field.
       Check_Parent_Correct,
+      --  Check that the Parent points to the right node (the one we came from
+      --  in the tree walk). Note that Parents cannot be correct if there is
+      --  sharing; Parent can't point to more than one node.
       Check_Scope_Present,
-      Check_Scope_Correct);
+      --  Check that each Entity has a non-Empty Scope field.
+      Check_Scope_Correct,
+      --  Check that each Entity has a correct Scope field.
+      Check_Corresponding_Aspect);
+      --  Check that the Corresponding_Aspect and related fields are correct.
+      --  Currently, only pragmas have Corresponding_Aspect, but we should
+      --  probably add it to attribute definition clauses. Then we could
+      --  get rid of From_Aspect_Specification, which should always equal
+      --  Present(Corresponding_Aspect(...)).
 
    type Check_Status is
      --  Action in case of check failure:
@@ -90,12 +114,14 @@ package body VAST is
       Check_Sloc => Disabled,
       Check_Analyzed => Disabled,
       Check_Error_Nodes => Enabled,
+      Check_Entity_Chain => Print_And_Continue,
       Check_FE_Only => Disabled,
       Check_Sharing => Disabled,
       Check_Parent_Present => Enabled,
       Check_Parent_Correct => Disabled,
       Check_Scope_Present => Print_And_Continue,
-      Check_Scope_Correct => Print_And_Continue);
+      Check_Scope_Correct => Print_And_Continue,
+      Check_Corresponding_Aspect => Print_And_Continue);
 --      others => Print_And_Continue);
 --      others => Enabled);
 --      others => Disabled);
@@ -124,6 +150,8 @@ package body VAST is
 
    type Pass_Number is range 1 .. 2;
    Pass : Pass_Number;
+   --  We walk the tree twice (with Pass = 1, then Pass = 2), so that we can
+   --  compute information in Pass 1, and then check it in Pass 2.
 
    procedure VAST;
    --  Called by VAST_If_Enabled to do all the checking
@@ -247,6 +275,11 @@ package body VAST is
    --  information about N. Returns No_Name if there is no interesting Name_Id.
    --  This is typically "Chars (N)" or "Chars (Defining_Identifier (N))" or
    --  similar.
+
+   procedure Check_Entity_Chain (E : Entity_Id);
+   --  Checks for all elements Elt of the entity chain starting from E that if
+   --  there is a next element for Elt in the chain, its Prev_Entity points at
+   --  Elt.
 
    procedure Check_Scope (N : Node_Id);
    --  Check that the Scope of N makes sense
@@ -498,6 +531,21 @@ package body VAST is
       end if;
    end Assert;
 
+   ------------------------
+   -- Check_Entity_Chain --
+   ------------------------
+   procedure Check_Entity_Chain (E : Entity_Id) is
+      Entity_It : Entity_Id := E;
+   begin
+      while Present (Entity_It) loop
+         if Present (Next_Entity (Entity_It)) then
+            Assert (Prev_Entity (Next_Entity (Entity_It))
+                    = Entity_It, Check_Entity_Chain);
+         end if;
+         Next_Entity (Entity_It);
+      end loop;
+   end Check_Entity_Chain;
+
    -----------------
    -- Check_Scope --
    -----------------
@@ -506,6 +554,8 @@ package body VAST is
       use Exp_Tss, Sem_Util;
    begin
       if Present (Scope (N)) then
+         Check_Entity_Chain (First_Entity (Scope (N)));
+
          if False then -- ????
             Assert (Enclosing_Declaration (Scope (N)) =
                     Enclosing_Declaration (Enclosing_Declaration (N)),
@@ -605,6 +655,37 @@ package body VAST is
                Assert (Parent (N) = Ancestor_Node (1), Check_Parent_Correct);
             end if;
       end case;
+
+      --  Check that From_Aspect_Specification, Corresponding_Aspect, and
+      --  Aspect_Rep_Item are consistent with one another.
+
+      if Nkind (N) in N_Aspect_Specification then
+         if Present (Aspect_Rep_Item (N)) then
+            Assert (Nkind (Aspect_Rep_Item (N)) = N_Pragma,
+                    Check_Corresponding_Aspect);
+
+            --  If the above check fails, the test below may raise predicate
+            --  failures, no need to check for pragma/aspect consistency for
+            --  other nodes.
+            if Nkind (Aspect_Rep_Item (N)) = N_Pragma then
+               Assert (From_Aspect_Specification (Aspect_Rep_Item (N)),
+                       Check_Corresponding_Aspect);
+               Assert (Corresponding_Aspect (Aspect_Rep_Item (N)) = N,
+                       Check_Corresponding_Aspect);
+            end if;
+         end if;
+      end if;
+
+      if Nkind (N) = N_Pragma then
+         Assert
+           (From_Aspect_Specification (N) = Present (Corresponding_Aspect (N)),
+            Check_Corresponding_Aspect);
+         if From_Aspect_Specification (N) then
+            Assert
+              (Aspect_Rep_Item (Corresponding_Aspect (N)) = N,
+               Check_Corresponding_Aspect);
+         end if;
+      end if;
    end Do_Node_Pass_2;
 
    -------------
@@ -655,8 +736,9 @@ package body VAST is
       --  subtrees get placed inside the pragmas without removing
       --  them from the original aspect specifications.
 
-      if Pass = 2 and then Nodes_Info (N).Count > 1 and then
-        not Nodes_Info (N).In_Aspect -- ????cuts failures by 1.9
+      if Pass = 2 and then Nodes_Info (N).Count > 1
+        and then not Nodes_Info (N).In_Aspect
+      --  Ignoring In_Aspect cases cuts failures by a factor of 1.9
       then
          declare
             Count : constant String :=

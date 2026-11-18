@@ -876,9 +876,9 @@ included, in this file you should guard declarations using these types
 inside appropriate @code{#ifdef RTX_CODE} or @code{#ifdef TREE_CODE}
 conditional code segments.
 
-If the backend uses shared data structures that require @code{GTY} markers 
+If the backend uses shared data structures that require @code{GTY} markers
 for garbage collection (@pxref{Type Information}), you must declare those
-in @file{@var{machine}.h} rather than @file{@var{machine}-protos.h}.  
+in @file{@var{machine}.h} rather than @file{@var{machine}-protos.h}.
 Any definitions required for building libgcc must also go in
 @file{@var{machine}.h}.
 
@@ -1498,13 +1498,34 @@ are expected to fail some tests.
 
 Effective-target keywords are defined in @file{lib/target-supports.exp} in
 the GCC testsuite, with the exception of those that are documented as
-being local to a particular test directory.
+being local to a particular test directory.  Effective-target keywords
+matching @file{auto-host.h} macros can be generated from definitions
+in @file{lib/et-static.def}.
 
 The @samp{effective target} takes into account all of the compiler options
 with which the test will be compiled, including the multilib options.
 By convention, keywords ending in @code{_nocache} can also include options
 specified for the particular test in an earlier @code{dg-options} or
 @code{dg-add-options} directive.
+
+@subsubsection Object file format
+
+This identifies the object file format emitted by the compiler. Matching
+assembler output often depends on content that differs between file formats.
+
+@table @code
+
+@item elf
+Target uses the ELF file format (note that ELFv2 is matched specifically for
+the powerpc platform, below).
+
+@item macho
+Target uses the Mach-O file format (currently applies only to Darwin / macOS).
+
+@item pe
+Target uses the PE/COFF file format (e.g. for Windows).
+
+@end table
 
 @subsubsection Endianness
 
@@ -2098,11 +2119,16 @@ options, including @code{-mfp16-format=ieee} if necessary to obtain the
 
 @item arm_neon_fp16_hw
 Test system supports executing Neon half-precision float instructions.
-(Implies previous.)
+(Implies @code{arm_neon_fp16_ok}.)
 
 @item arm_fp16_alternative_ok
 ARM target supports the ARM FP16 alternative format.  Some multilibs
 may be incompatible with the options needed.
+
+@item arm_fp16_alternative_hw
+Test system supports executing VFP half-precision floating-point
+instructions in the ARM FP16 alternative format.  (Implies
+@code{arm_fp16_alternative_ok}.)
 
 @item arm_fp16_none_ok
 ARM target supports specifying none as the ARM FP16 format.
@@ -2215,6 +2241,11 @@ incompatible with these options.
 ARM target supports options to generate instructions from ARMv8.1-M with
 the M-Profile Vector Extension (MVE). Some multilibs may be incompatible
 with these options.
+
+@item arm_v8_1m_mve_link
+ARM target supports linking programs using the options selected by
+@code{arm_v8_1m_mve_ok}. Some multilibs may be incompatible with these
+options.
 
 @item arm_v8_1m_mve_fp_ok
 ARM target supports options to generate instructions from ARMv8.1-M with
@@ -2329,27 +2360,22 @@ ARM target supports the @code{-mfloat-abi=hard} option.
 @anchor{arm_mve}
 ARM target supports generating MVE instructions.
 
-@item arm_v8_1_lob_ok
-@anchor{arm_v8_1_lob_ok}
+@item arm_v8_1m_lob_hw
+@anchor{arm_v8_1m_lob_hw}
 ARM Target supports executing the Armv8.1-M Mainline Low Overhead Loop
 instructions @code{DLS} and @code{LE}.
 Some multilibs may be incompatible with these options.
-
-@item arm_thumb2_no_arm_v8_1_lob
-ARM target where Thumb-2 is used without options but does not support
-executing the Armv8.1-M Mainline Low Overhead Loop instructions
-@code{DLS} and @code{LE}.
-
-@item arm_thumb2_ok_no_arm_v8_1_lob
-ARM target generates Thumb-2 code for @code{-mthumb} but does not
-support executing the Armv8.1-M Mainline Low Overhead Loop
-instructions @code{DLS} and @code{LE}.
 
 @item mbranch_protection_ok
 ARM target supporting @code{-mbranch-protection=standard}.
 
 @item arm_pacbti_hw
 Test system supports for executing non nop pacbti instructions.
+
+@item arm_mixed_fp
+On Arm targets, true when the target uses hardware instructions for
+single-precision floatint-point values, but software emulation for
+double-precision values.
 
 @end table
 
@@ -2369,6 +2395,8 @@ AArch64 target which generates instruction sequences for large memory model.
 AArch64 target which generates instruction sequences for little endian.
 @item aarch64_big_endian
 AArch64 target which generates instruction sequences for big endian.
+@item aarch64_mbig_endian
+AArch64 target supporting big endian code generation with @code{-mbig-endian}.
 @item aarch64_small_fpic
 Binutils installed on test system supports relocation types required by -fpic
 for AArch64 small memory model.
@@ -2376,6 +2404,8 @@ for AArch64 small memory model.
 AArch64 target that generates instructions for SME.
 @item aarch64_sme2
 AArch64 target that generates instructions for SME2.
+@item aarch64_lut_hw
+AArch64 target that is able to generate and execute LUT instructions.
 @item aarch64_sve_hw
 AArch64 target that is able to generate and execute SVE code (regardless of
 whether it does so by default).
@@ -2644,11 +2674,44 @@ Test system has support for the CORE-V BI extension.
 @item autoincdec
 Target supports autoincrement/decrement addressing.
 
+@item acev1
+Target supports the execution of @code{acev1} instructions.
+
+@item amx_avx512
+Target supports the execution of @code{amx-avx512} instructions.
+
+@item amx_bf16
+Target supports the execution of @code{amx-bf16} instructions.
+
+@item amx_complex
+Target supports the execution of @code{amx-complex} instructions.
+
+@item amx_fp16
+Target supports the execution of @code{amx-fp16} instructions.
+
+@item amx_fp8
+Target supports the execution of @code{amx-fp8} instructions.
+
+@item amx_int8
+Target supports the execution of @code{amx-int8} instructions.
+
+@item amx_movrs
+Target supports the execution of @code{amx-movrs} instructions.
+
+@item amx_tile
+Target supports the execution of @code{amx-tile} instructions.
+
 @item avx
 Target supports compiling @code{avx} instructions.
 
 @item avx_runtime
 Target supports the execution of @code{avx} instructions.
+
+@item avx10v2aux
+Target supports the execution of @code{avx10v2aux} instructions.
+
+@item avx10v1aux
+Target supports the execution of @code{avx10v1aux} instructions.
 
 @item avx10.1
 Target supports the execution of @code{avx10.1} instructions.
@@ -2686,32 +2749,13 @@ Target supports the execution of @code{avxvnniint8} instructions.
 @item avxvnniint16
 Target supports the execution of @code{avxvnniint16} instructions.
 
-@item amx_tile
-Target supports the execution of @code{amx-tile} instructions.
+@item can_deref_null
+Target runtime permits dereferencing a null pointer without trapping, for
+example because address zero is mapped and readable.
 
-@item amx_int8
-Target supports the execution of @code{amx-int8} instructions.
-
-@item amx_bf16
-Target supports the execution of @code{amx-bf16} instructions.
-
-@item amx_avx512
-Target supports the execution of @code{amx-avx512} instructions.
-
-@item amx_complex
-Target supports the execution of @code{amx-complex} instructions.
-
-@item amx_fp16
-Target supports the execution of @code{amx-fp16} instructions.
-
-@item amx_movrs
-Target supports the execution of @code{amx-movrs} instructions.
-
-@item amx_tf32
-Target supports the execution of @code{amx-tf32} instructions.
-
-@item amx_fp8
-Target supports the execution of @code{amx-fp8} instructions.
+@item cbcond_hw
+Test system can execute SPARC compare-and-branch (@code{cbcond})
+instructions.
 
 @item cell_hw
 Test system can execute AltiVec and Cell PPU instructions.
@@ -2725,6 +2769,11 @@ Target supports a clz optab on long.
 @item clzll
 Target supports a clz optab on long long.
 
+@item clzsi
+Target has a @code{clzsi2} pattern, which can be an expander, so a
+@code{.CLZ} internal function call on a 32-bit unsigned integer can be
+expanded.
+
 @item ctz
 Target supports a ctz optab on int.
 
@@ -2733,6 +2782,11 @@ Target supports a ctz optab on long.
 
 @item ctzll
 Target supports a ctz optab on long long.
+
+@item ctzsi
+Target has a @code{ctzsi2} pattern, which can be an expander, so a
+@code{.CTZ} internal function call on a 32-bit unsigned integer can be
+expanded.
 
 @item cmpccxadd
 Target supports the execution of @code{cmpccxadd} instructions.
@@ -2936,6 +2990,9 @@ Target can compile using @code{pthread.h} with no errors or warnings.
 @item pthread_h
 Target has @code{pthread.h}.
 
+@item sleep
+Target supports @code{sleep}.
+
 @item sockets
 Target can compile using @code{sys/socket.h} with no errors or warnings.
 
@@ -3003,9 +3060,6 @@ Target supports weak undefined symbols
 @subsubsection Other attributes
 
 @table @code
-@item R_flag_in_section
-Target supports the 'R' flag in .section directive in assembly inputs.
-
 @item asm_goto_with_outputs
 Target supports 'asm goto' with outputs.
 
@@ -3014,6 +3068,9 @@ Target supports automatic stack alignment.
 
 @item branch_cost
 Target supports @option{-branch-cost=N}.
+
+@item checking
+Compiler has been configured with internal checking enabled.
 
 @item const_volatile_readonly_section
 Target places const volatile variables in readonly sections.
@@ -3078,9 +3135,15 @@ Target supports @option{--gc-sections}.
 @item gld
 Target uses GNU @command{ld}.
 
+@item gnu_retain
+Target supports GNU retain.
+
 @item keeps_null_pointer_checks
 Target keeps null pointer checks, either due to the use of
 @option{-fno-delete-null-pointer-checks} or hardwired into the target.
+
+@item ld_at_file
+Target supports GNU style response files.
 
 @item llvm_binutils
 Target is using an LLVM assembler and/or linker, instead of GNU Binutils.
@@ -3133,9 +3196,6 @@ Target supports the @code{noinit} variable attribute.
 @item nonpic
 Target does not generate PIC by default.
 
-@item o_flag_in_section
-Target supports the 'o' flag in .section directive in assembly inputs.
-
 @item offload_gcn
 Target has been configured for OpenACC/OpenMP offloading on AMD GCN.
 
@@ -3168,8 +3228,28 @@ and @code{double}.  These optabs are: @code{fma_optab}, @code{fms_optab},
 @item section_anchors
 Target supports section anchors.
 
+@item shared_jump_tables
+Target makes the copies of a loop switch dispatch that
+@option{-fduplicate-switch-dispatch} creates share one jump table, with the
+current multilib and test options.  Use it only in test directives.
+
+@item shf_gnu_retain
+Target supports @code{SHF_GNU_RETAIN}.
+
+@item shf_link_order
+Target supports @code{SHF_LINK_ORDER}.
+
 @item short_enums
 Target defaults to short enums.
+
+@item sht_init_array
+Target supports @code{SHT_INIT_ARRAY} and @code{SHT_PREINIT_ARRAY} sections.
+
+@item solaris_as
+Target uses the Solaris @command{as}.
+
+@item solaris_ld
+Target uses the Solaris @command{ld}.
 
 @item stack_size
 @anchor{stack_size_et}
@@ -3385,6 +3465,12 @@ locally when using pic/PIC passes in the testsuite.
 @item check_function_bodies
 Add the target-specific flags needed to use
 @code{check-function-bodies} from @code{dg-final}.
+
+These options are also added automatically by:
+
+@smallexample
+/* @{ dg-final @{ check-function-bodies @dots{} @} @dots{} @} */
+@end smallexample
 
 @item float@var{n}
 Add the target-specific flags needed to use the @code{_Float@var{n}} type.
@@ -3609,7 +3695,7 @@ assembler output, excluding LTO sections.
 
 @item scan-assembler-bound @var{regex} @var{cmp} @var{num} [@{ target/xfail @var{selector} @}]
 Passes if @var{regex} is matched @var{cmp} @var{num} times in the test's
-assembler output, excluding LTO sections. @var{cmp} is a comparitor.
+assembler output, excluding LTO sections. @var{cmp} is a comparator.
 
 @item scan-assembler-dem @var{regex} [@{ target/xfail @var{selector} @}]
 Passes if @var{regex} matches text in the test's demangled assembler output,
@@ -3727,6 +3813,38 @@ A line containing just:
 stands for zero or more unmatched lines; the whitespace after
 @var{prefix} is again not significant.
 
+@code{check-function-bodies} automatically adds the same options as:
+
+@smallexample
+/* @{ dg-add-options check_function_bodies @} */
+@end smallexample
+
+For this reason, @code{check-function-bodies} must come after the final
+@code{dg-options} directive.
+
+@end table
+
+@subsubsection Scan object metadata with readelf
+
+These commands inspect the linked test output file with @command{readelf}.
+They are mainly intended for LTO tests.
+
+These commands take a single @var{regex} and test whether it is present
+in (or absent from, for @samp{-not}) the corresponding @command{readelf}
+output.
+
+@table @code
+@item object-readelf-attributes @var{regex} [@{ target/xfail @var{selector} @}]
+Runs @command{readelf -A} and checks that @var{regex} matches.
+
+@item object-readelf-attributes-not @var{regex} [@{ target/xfail @var{selector} @}]
+Runs @command{readelf -A} and checks that @var{regex} does not match.
+
+@item object-readelf-notes @var{regex} [@{ target/xfail @var{selector} @}]
+Runs @command{readelf -n} and checks that @var{regex} matches.
+
+@item object-readelf-notes-not @var{regex} [@{ target/xfail @var{selector} @}]
+Runs @command{readelf -n} and checks that @var{regex} does not match.
 @end table
 
 @subsubsection Scan optimization dump files
@@ -4047,12 +4165,19 @@ it is executed.  It is one of:
 Compile with @option{-c} to produce a relocatable object file.
 @item link
 Compile, assemble, and link to produce an executable file.
+@item ar-link
+Similar to @code{link}, but combine all but the first source file into
+an archive file before the final link.
+@item incr-link
+As with @code{ar-link}, but combine the files into an object file
+using incremental linking, rather than an archive file.  This enables
+testing the incremental linking features of the LTO front end.
 @item run
 Produce and run an executable file, which is expected to return
 an exit code of 0.
 @end table
 
-The default is @code{assemble}.  That can be overridden for a set of
+The default is @code{run}.  That can be overridden for a set of
 tests by redefining @code{dg-do-what-default} within the @code{.exp}
 file for those tests.
 
@@ -4062,8 +4187,17 @@ Unlike @code{dg-do}, @code{dg-lto-do} does not support an optional
 
 @item @{ dg-lto-options @{ @{ @var{options} @} [@{ @var{options} @}] @} [@{ target @var{selector} @}]@}
 This directive provides a list of one or more sets of compiler options
-to override @var{LTO_OPTIONS}.  Each test will be compiled and run with
-each of these sets of options.
+to override @var{LTO_OPTIONS}.  Every test file will be compiled and
+run once for each of these sets of options.  Individual source files
+within a test may also use @code{dg-options} to specify additional
+options to include.
+
+@item @{ dg-lto-additional-options @{ @{ @var{options} @} [@{ @var{options} @}] @} [@{ target @var{selector} @}]@}
+This is similar to @code{dg-lto-options}, but rather than overriding
+@var{LTO_OPTIONS}, it appends the given options to each of the sets
+specified in @var{LTO_OPTIONS}.  This can be used to add a given list
+of options to every compilation of all source files in the test,
+without otherwise changing which combinations of options are tested.
 
 @item @{ dg-extra-ld-options @var{options} [@{ target @var{selector} @}]@}
 This directive adds @var{options} to the linker options used.

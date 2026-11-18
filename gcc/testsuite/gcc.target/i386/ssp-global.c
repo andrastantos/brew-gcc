@@ -1,12 +1,13 @@
 /* { dg-do run { target fstack_protector } } */
 /* { dg-options "-O2 -fstack-protector-all -mstack-protector-guard=global" } */
 
+#include <stdint.h>
 #include <stdlib.h>
 
 #ifdef __LP64__
-const unsigned long int __stack_chk_guard = 0x2d853605a4d9a09cUL;
+uintptr_t __stack_chk_guard = 0x2d853605a4d9a09cUL;
 #else
-const unsigned long int __stack_chk_guard = 0xdd2cc927UL;
+uintptr_t __stack_chk_guard = 0xdd2cc927UL;
 #endif
 
 void

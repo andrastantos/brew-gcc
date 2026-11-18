@@ -135,7 +135,7 @@ begin -- Gen_IL.Gen.Gen_Nodes
    Ab (N_Entity, N_Has_Etype,
        (Sy (Chars, Name_Id, Default_No_Name),
         Sm (Next_Entity, Node_Id),
-        Sm (Scope, Node_Id)));
+        Sm (Scope_Raw, Node_Id)));
 
    Cc (N_Defining_Character_Literal, N_Entity);
    Cc (N_Defining_Identifier, N_Entity);
@@ -364,7 +364,8 @@ begin -- Gen_IL.Gen.Gen_Nodes
 
    Cc (N_Expression_With_Actions, N_Subexpr,
        (Sy (Actions, List_Id, Default_No_List),
-        Sy (Expression, Node_Id, Default_Empty)));
+        Sy (Expression, Node_Id, Default_Empty),
+        Sm (Scope_Link, Node_Id)));
 
    Cc (N_External_Initializer, N_Subexpr,
        (Sy (File_Index, Source_File_Index)));
@@ -736,7 +737,6 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sy (Handled_Statement_Sequence, Node_Id, Default_Empty),
         Sy (Bad_Is_Detected, Flag),
         Sy (At_End_Proc, Node_Id, Default_Empty),
-        Sm (Activation_Chain_Entity, Node_Id),
         Sm (Acts_As_Spec, Flag),
         Sm (Corresponding_Entry_Body, Node_Id),
         Sm (Has_Relative_Deadline_Pragma, Flag),
@@ -759,7 +759,6 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sy (Declarations, List_Id, Default_No_List),
         Sy (Handled_Statement_Sequence, Node_Id, Default_Empty),
         Sy (At_End_Proc, Node_Id, Default_Empty),
-        Sm (Activation_Chain_Entity, Node_Id),
         Sm (Is_Task_Master, Flag)));
 
    Cc (N_Implicit_Label_Declaration, N_Later_Decl_Item,
@@ -769,7 +768,6 @@ begin -- Gen_IL.Gen.Gen_Nodes
    Cc (N_Package_Declaration, N_Later_Decl_Item,
        (Sy (Specification, Node_Id),
         Sy (Aspect_Specifications, List_Id, Default_No_List),
-        Sm (Activation_Chain_Entity, Node_Id),
         Sm (Corresponding_Body, Node_Id),
         Sm (Parent_Spec, Node_Id)));
 
@@ -912,14 +910,13 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sy (Handled_Statement_Sequence, Node_Id, Default_Empty),
         Sy (Has_Created_Identifier, Flag),
         Sy (Is_Asynchronous_Call_Block, Flag),
-        Sy (Is_Task_Allocation_Block, Flag),
         Sy (At_End_Proc, Node_Id, Default_Empty),
-        Sm (Activation_Chain_Entity, Node_Id),
         Sm (Cleanup_Actions, List_Id),
         Sm (Exception_Junk, Flag),
         Sm (Is_Abort_Block, Flag),
         Sm (Is_Expanded_Dispatching_Call, Flag),
         Sm (Is_Initialization_Block, Flag),
+        Sm (Is_Task_Allocation_Block, Flag),
         Sm (Is_Task_Master, Flag)));
 
    Cc (N_Case_Statement, N_Statement_Other_Than_Procedure_Call,
@@ -1015,7 +1012,6 @@ begin -- Gen_IL.Gen.Gen_Nodes
    Cc (N_Extended_Return_Statement, N_Statement_Other_Than_Procedure_Call,
        (Sy (Return_Object_Declarations, List_Id),
         Sy (Handled_Statement_Sequence, Node_Id, Default_Empty),
-        Sm (Activation_Chain_Entity, Node_Id),
         Sm (Procedure_To_Call, Node_Id),
         Sm (Return_Statement_Entity, Node_Id),
         Sm (Storage_Pool, Node_Id)));
@@ -1143,7 +1139,6 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sm (Aspect_Subprograms, Elist_Id),
         Sm (Entity_Or_Associated_Node, Node_Id), -- just Entity
         Sm (Expression_Copy, Node_Id),
-        Sm (Is_Boolean_Aspect, Flag),
         Sm (Is_Checked, Flag),
         Sm (Is_Delayed_Aspect, Flag),
         Sm (Is_Disabled, Flag),
@@ -1277,7 +1272,6 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sy (Handled_Statement_Sequence, Node_Id, Default_Empty),
         Sy (At_End_Proc, Node_Id, Default_Empty),
         Sy (Aspect_Specifications, List_Id, Default_No_List),
-        Sm (Activation_Chain_Entity, Node_Id),
         Sm (Corresponding_Spec, Node_Id)));
 
    Cc (N_Entry_Call_Alternative, Node_Kind,

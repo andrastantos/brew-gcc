@@ -1,35 +1,23 @@
-typedef enum omp_allocator_handle_t
-#if __cplusplus >= 201103L
-: __UINTPTR_TYPE__
-#endif
-{
-  omp_default_mem_alloc = 1,
-  omp_low_lat_mem_alloc = 5,
-  __omp_allocator_handle_t_max__ = __UINTPTR_MAX__
-} omp_allocator_handle_t;
+// { dg-do compile }
 
-typedef struct omp_alloctrait_t
-{
-  int key;
-  int value;
-} omp_alloctrait_t;
+// PR c/122748
+// Was previously ICEing
 
-void
-f ()
+void f()
 {
-   omp_alloctrait_t trait[1] = {{1,1}};
-   omp_allocator_handle_t my_alloc;
-   #pragma omp target uses_allocators(traits(trait) : my_alloc)  /* { dg-error "traits array 'trait' must be of 'const omp_alloctrait_t \\\[\\\]' type" } */
-     ;
+  int x;
+#pragma omp target parallel \
+    uses_allocators(omp_thread_mem_alloc) \
+    allocate(omp_thread_mem_alloc: x) private(x)
+  { }
 }
 
-void
-g ()
-{
-   const omp_alloctrait_t trait[1] = {{1,1}};
-   omp_allocator_handle_t my_alloc;
-   #pragma omp target uses_allocators(traits(trait) : my_alloc)
-     ;
-}
+// C
+// { dg-error "'omp_thread_mem_alloc' undeclared \\(first use in this function\\)" "" { target c } 10 }
+// { dg-note  "each undeclared identifier is reported only once for each function it appears in" "" { target c } 10 }
+// { dg-error "allocate' clause must specify an allocator here" "" { target c } 11 }
 
-// { dg-message "sorry, unimplemented: 'uses_allocators' clause" "" { target *-*-* } 31 }
+// C++
+// { dg-error "'omp_thread_mem_alloc' has not been declared" "" { target c++ } 10 }
+// { dg-error "'omp_thread_mem_alloc' was not declared in this scope" "" { target c++ } 11 }
+// { dg-error "'allocate' clause must specify an allocator here" "" { target c++ } 11 }

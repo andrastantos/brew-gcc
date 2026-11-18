@@ -685,6 +685,7 @@ static const struct default_options default_options_table[] =
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_falign_jumps, NULL, 1 },
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_falign_labels, NULL, 1 },
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_falign_loops, NULL, 1 },
+    { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_fduplicate_switch_dispatch, NULL, 1 },
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_foptimize_strlen, NULL, 1 },
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_freorder_blocks_algorithm_, NULL,
       REORDER_BLOCKS_ALGORITHM_STC },
@@ -707,7 +708,6 @@ static const struct default_options default_options_table[] =
     { OPT_LEVELS_3_PLUS, OPT_fpeel_loops, NULL, 1 },
     { OPT_LEVELS_3_PLUS, OPT_fpredictive_commoning, NULL, 1 },
     { OPT_LEVELS_3_PLUS, OPT_fsplit_loops, NULL, 1 },
-    { OPT_LEVELS_3_PLUS, OPT_fsplit_paths, NULL, 1 },
     { OPT_LEVELS_3_PLUS, OPT_ftree_loop_distribution, NULL, 1 },
     { OPT_LEVELS_3_PLUS, OPT_ftree_partial_pre, NULL, 1 },
     { OPT_LEVELS_3_PLUS, OPT_funswitch_loops, NULL, 1 },
@@ -1165,8 +1165,10 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
   if (opts->x_flag_hardened)
     {
       if (!opts_set->x_flag_auto_var_init)
-	opts->x_flag_auto_var_init = AUTO_INIT_ZERO;
-      else if (opts->x_flag_auto_var_init != AUTO_INIT_ZERO)
+	opts->x_flag_auto_var_init
+	  = auto_init_type (opts->x_flag_auto_var_init | AUTO_INIT_ZERO);
+      else if ((opts->x_flag_auto_var_init & ~AUTO_INIT_CXX26)
+	       != AUTO_INIT_ZERO)
 	warning_at (loc, OPT_Whardened,
 		    "%<-ftrivial-auto-var-init=zero%> is not enabled by "
 		    "%<-fhardened%> because it was specified on the command "
@@ -1500,9 +1502,8 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
       opts->x_flag_var_tracking_assignments = 0;
     }
 
-  /* One could use EnabledBy, but it would lead to a circular dependency.  */
-  if (!opts_set->x_flag_var_tracking_uninit)
-    opts->x_flag_var_tracking_uninit = opts->x_flag_var_tracking;
+  if (opts_set->x_flag_var_tracking_uninit && opts->x_flag_var_tracking_uninit)
+    opts->x_flag_var_tracking = 1;
 
   if (!opts_set->x_flag_var_tracking_assignments)
     opts->x_flag_var_tracking_assignments
@@ -1537,6 +1538,9 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
 		    "%<-Wstrict-flex-arrays%> is ignored when"
 		    " %<-fstrict-flex-arrays%> is not present");
       }
+
+  if (opts->x_flag_openmp_ompt && !opts->x_flag_openmp)
+    error_at (loc, "%<-fopenmp-ompt%> requires %<-fopenmp%>");
 
   diagnose_options (opts, opts_set, loc);
 }
@@ -2951,12 +2955,6 @@ common_handle_option (struct gcc_options *opts,
       set_Wstrict_aliasing (opts, value);
       break;
 
-    case OPT_Wstrict_overflow:
-      opts->x_warn_strict_overflow = (value
-				      ? (int) WARN_STRICT_OVERFLOW_CONDITIONAL
-				      : 0);
-      break;
-
     case OPT_Wsystem_headers:
       dc->m_warn_system_headers = value;
       break;
@@ -3812,16 +3810,15 @@ enable_warning_as_error (const char *arg, int value, unsigned int lang_mask,
   free (new_option);
 }
 
-/* Return malloced memory for the name of the option OPTION_INDEX
-   which enabled a diagnostic, originally of type
-   ORIG_DIAG_KIND but possibly converted to DIAG_KIND by options such
-   as -Werror.  */
+/* Return the name of the option OPTION_INDEX which enabled a diagnostic,
+   originally of type ORIG_DIAG_KIND but possibly converted to DIAG_KIND by
+   options such as -Werror.   Can return null if OPTION_ID is zero.  */
 
-char *
+label_text
 compiler_diagnostic_option_id_manager::
-make_option_name (diagnostics::option_id option_id,
-		  enum diagnostics::kind orig_diag_kind,
-		  enum diagnostics::kind diag_kind) const
+get_option_name (diagnostics::option_id option_id,
+		 enum diagnostics::kind orig_diag_kind,
+		 enum diagnostics::kind diag_kind) const
 {
   if (option_id.m_idx)
     {
@@ -3829,22 +3826,24 @@ make_option_name (diagnostics::option_id option_id,
       if ((orig_diag_kind == diagnostics::kind::warning
 	   || orig_diag_kind == diagnostics::kind::pedwarn)
 	  && diag_kind == diagnostics::kind::error)
-	return concat (cl_options[OPT_Werror_].opt_text,
-		       /* Skip over "-W".  */
-		       cl_options[option_id.m_idx].opt_text + 2,
-		       NULL);
+	return label_text::take
+	  (concat (cl_options[OPT_Werror_].opt_text,
+		   /* Skip over "-W".  */
+		   cl_options[option_id.m_idx].opt_text + 2,
+		   NULL));
       /* A warning with option.  */
       else
-	return xstrdup (cl_options[option_id.m_idx].opt_text);
+	return label_text::take
+	  (xstrdup (cl_options[option_id.m_idx].opt_text));
     }
   /* A warning without option classified as an error.  */
   else if ((orig_diag_kind == diagnostics::kind::warning
 	    || orig_diag_kind == diagnostics::kind::pedwarn
 	    || diag_kind == diagnostics::kind::warning)
 	   && m_context.warning_as_error_requested_p ())
-    return xstrdup (cl_options[OPT_Werror].opt_text);
+    return label_text::borrow (cl_options[OPT_Werror].opt_text);
   else
-    return NULL;
+    return label_text ();
 }
 
 /* Get the page within the documentation for this option.  */
@@ -3893,22 +3892,23 @@ get_option_url_suffix (int option_index, unsigned lang_mask)
   return label_text ();
 }
 
-/* Return malloced memory for a URL describing the option OPTION_INDEX
-   which enabled a diagnostic.  */
+/* Return a URL describing the option OPTION_INDEX which enabled
+   a diagnostic, or null.  */
 
-char *
+label_text
 gcc_diagnostic_option_id_manager::
-make_option_url (diagnostics::option_id option_id) const
+get_option_url (diagnostics::option_id option_id) const
 {
   if (option_id.m_idx)
     {
       label_text url_suffix = get_option_url_suffix (option_id.m_idx,
 						     m_lang_mask);
       if (url_suffix.get ())
-	return concat (DOCUMENTATION_ROOT_URL, url_suffix.get (), nullptr);
+	return label_text::take
+	  (concat (DOCUMENTATION_ROOT_URL, url_suffix.get (), nullptr));
     }
 
-  return nullptr;
+  return label_text ();
 }
 
 /* Return a heap allocated producer with command line options.  */
@@ -3963,6 +3963,7 @@ gen_command_line_string (cl_decoded_option *options,
       case OPT_nostdinc__:
       case OPT_fpreprocessed:
       case OPT_fltrans_output_list_:
+      case OPT_fltrans_linemap_file_:
       case OPT_fresolution_:
       case OPT_fdebug_prefix_map_:
       case OPT_fmacro_prefix_map_:

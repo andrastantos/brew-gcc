@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/Quote_marks_in_comment_paragraphs.out" }
 
        IDENTIFICATION DIVISION.

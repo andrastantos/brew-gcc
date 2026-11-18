@@ -1816,7 +1816,7 @@ bfin_function_ok_for_sibcall (tree decl ATTRIBUTE_UNUSED,
 
   /* When compiling for ID shared libraries, can't sibcall a local function
      from a non-local function, because the local function thinks it does
-     not need to reload P5 in the prologue, but the sibcall wil pop P5 in the
+     not need to reload P5 in the prologue, but the sibcall will pop P5 in the
      sibcall epilogue, and we end up with the wrong value in P5.  */
 
   if (!decl)
@@ -2442,8 +2442,7 @@ branch_dest (rtx_insn *branch)
   dest = SET_SRC (pat);
   if (GET_CODE (dest) == IF_THEN_ELSE)
     dest = XEXP (dest, 1);
-  dest = XEXP (dest, 0);
-  dest_uid = INSN_UID (dest);
+  dest_uid = INSN_UID (label_ref_label (dest));
   return INSN_ADDRESSES (dest_uid);
 }
 
@@ -2451,7 +2450,7 @@ branch_dest (rtx_insn *branch)
    it's a branch that's predicted taken.  */
 
 static int
-cbranch_predicted_taken_p (rtx insn)
+cbranch_predicted_taken_p (rtx_insn *insn)
 {
   rtx x = find_reg_note (insn, REG_BR_PROB, 0);
 
@@ -3148,7 +3147,7 @@ analyze_pop_multiple_operation (rtx op)
    operands in OPERANDS.  */
 
 void
-output_push_multiple (rtx insn, rtx *operands)
+output_push_multiple (rtx_insn *insn, rtx *operands)
 {
   char buf[80];
   int ok;
@@ -3172,7 +3171,7 @@ output_push_multiple (rtx insn, rtx *operands)
    operands in OPERANDS.  */
 
 void
-output_pop_multiple (rtx insn, rtx *operands)
+output_pop_multiple (rtx_insn *insn, rtx *operands)
 {
   char buf[80];
   int ok;
@@ -3453,11 +3452,12 @@ hwloop_optimize (hwloop_info loop)
 {
   basic_block bb;
   rtx_insn *insn, *last_insn;
-  rtx loop_init, start_label, end_label;
+  rtx loop_init;
+  rtx_insn *start_label;
   rtx iter_reg, scratchreg, scratch_init;
   rtx_insn *scratch_init_insn;
   rtx lc_reg, lt_reg, lb_reg;
-  rtx seq_end;
+  rtx_insn *seq_end;
   rtx_insn *seq;
   int length;
   bool clobber0, clobber1;
@@ -3676,7 +3676,7 @@ hwloop_optimize (hwloop_info loop)
 
   /* The loop is good for replacement.  */
   start_label = loop->start_label;
-  end_label = gen_label_rtx ();
+  rtx_code_label *end_label = gen_label_rtx ();
   iter_reg = loop->iter_reg;
 
   if (loop->depth == 1 && !clobber1)
@@ -3842,8 +3842,7 @@ hwloop_optimize (hwloop_info loop)
 
   delete_insn (loop->loop_end);
   /* Insert the loop end label before the last instruction of the loop.  */
-  emit_label_before (as_a <rtx_code_label *> (loop->end_label),
-		     loop->last_insn);
+  emit_label_before (loop->end_label, loop->last_insn);
 
   return true;
 }
@@ -3854,13 +3853,14 @@ hwloop_optimize (hwloop_info loop)
 static void
 hwloop_fail (hwloop_info loop)
 {
-  rtx insn = loop->loop_end;
+  rtx_insn *insn = loop->loop_end;
 
   if (DPREG_P (loop->iter_reg))
     {
       /* If loop->iter_reg is a DREG or PREG, we can split it here
 	 without scratch register.  */
-      rtx insn, test;
+      rtx test;
+      rtx_jump_insn *insn;
 
       emit_insn_before (gen_addsi3 (loop->iter_reg,
 				    loop->iter_reg,
@@ -3880,7 +3880,7 @@ hwloop_fail (hwloop_info loop)
   else
     {
       splitting_loops = 1;
-      try_split (PATTERN (insn), safe_as_a <rtx_insn *> (insn), 1);
+      try_split (PATTERN (insn), insn, 1);
       splitting_loops = 0;
     }
 }

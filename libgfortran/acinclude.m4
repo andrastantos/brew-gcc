@@ -1,4 +1,5 @@
 m4_include(../config/acx.m4)
+m4_include(../config/mmap.m4)
 m4_include(../config/no-executables.m4)
 m4_include(../config/math.m4)
 m4_include(../config/ax_check_define.m4)
@@ -31,21 +32,6 @@ AC_DEFUN([AC_LIBTOOL_DLOPEN])
 AC_DEFUN([AC_PROG_LD])
 ])
 
-dnl Check whether the target supports hidden visibility.
-AC_DEFUN([LIBGFOR_CHECK_ATTRIBUTE_VISIBILITY], [
-  AC_CACHE_CHECK([whether the target supports hidden visibility],
-		 libgfor_cv_have_attribute_visibility, [
-  save_CFLAGS="$CFLAGS"
-  CFLAGS="$CFLAGS -Werror"
-  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[void __attribute__((visibility("hidden"))) foo(void) { }]], [])],
-		    libgfor_cv_have_attribute_visibility=yes,
-		    libgfor_cv_have_attribute_visibility=no)
-  CFLAGS="$save_CFLAGS"])
-  if test $libgfor_cv_have_attribute_visibility = yes; then
-    AC_DEFINE(HAVE_ATTRIBUTE_VISIBILITY, 1,
-      [Define to 1 if the target supports __attribute__((visibility(...))).])
-  fi])
-
 dnl Check whether the target supports symbol aliases.
 AC_DEFUN([LIBGFOR_CHECK_ATTRIBUTE_ALIAS], [
   AC_CACHE_CHECK([whether the target supports symbol aliases],
@@ -63,7 +49,7 @@ dnl Check whether the target supports __atomic_fetch_add.
 AC_DEFUN([LIBGFOR_CHECK_ATOMIC_FETCH_ADD], [
   AC_CACHE_CHECK([whether the target supports __atomic_fetch_add],
 		 libgfor_cv_have_atomic_fetch_add, [
-  AC_LINK_IFELSE([AC_LANG_PROGRAM([[int foovar = 0;]], [[
+  AC_LINK_IFELSE([AC_LANG_PROGRAM([[__INT64_TYPE__ foovar = 0;]], [[
 if (foovar <= 0) return __atomic_fetch_add (&foovar, 1, __ATOMIC_ACQ_REL);
 if (foovar > 10) return __atomic_add_fetch (&foovar, -1, __ATOMIC_ACQ_REL);]])],
 	      libgfor_cv_have_atomic_fetch_add=yes, libgfor_cv_have_atomic_fetch_add=no)])
@@ -191,6 +177,31 @@ esac])])
 if test x"$libgfor_cv_have_crlf" = xyes; then
   AC_DEFINE(HAVE_CRLF, 1, [Define if CRLF is line terminator.])
 fi])
+
+dnl Check for 64-bit time_t support on 32-bit platforms (Y2038 safety).
+dnl glibc only accepts _TIME_BITS=64 together with _FILE_OFFSET_BITS=64,
+dnl so rely on AC_SYS_LARGEFILE having put the latter into confdefs.h;
+dnl with --disable-largefile the probe fails and _TIME_BITS is not set.
+AC_DEFUN([LIBGFOR_CHECK_TIME_BITS64], [
+  AC_REQUIRE([AC_SYS_LARGEFILE])
+  AC_CACHE_CHECK([for 64-bit time_t], [libgfor_cv_time_bits64], [
+    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#include <time.h>
+#include <sys/types.h>
+int verify_y2038[(sizeof (time_t) >= 8) ? 1 : -1];
+]])], [libgfor_cv_time_bits64="already 64-bit"], [
+      AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#define _TIME_BITS 64
+#include <time.h>
+#include <sys/types.h>
+int verify_y2038[(sizeof (time_t) >= 8) ? 1 : -1];
+]])], [libgfor_cv_time_bits64="yes"], [libgfor_cv_time_bits64="no"])
+    ])
+  ])
+  if test "x$libgfor_cv_time_bits64" = xyes; then
+    AC_DEFINE([_TIME_BITS], [64], [Define to 64 to enable 64-bit time_t on 32-bit systems.])
+  fi
+])
 
 dnl Check whether the st_ino and st_dev stat fields taken together uniquely
 dnl identify the file within the system. This is should be true for POSIX
@@ -422,10 +433,10 @@ AC_DEFUN([LIBGFOR_CHECK_STRERROR_R], [
   dnl Check for three-argument POSIX version of strerror_r
   ac_save_CFLAGS="$CFLAGS"
   CFLAGS="-Wimplicit-function-declaration -Werror"
-  AC_TRY_COMPILE([#define _GNU_SOURCE 1
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#define _GNU_SOURCE 1
 	     	  #include <string.h>
-		  #include <locale.h>],
-		  [char s[128]; strerror_r(5, s, 128);],
+		  #include <locale.h>]],
+		  [[char s[128]; strerror_r(5, s, 128);]])],
 		  AC_DEFINE(HAVE_STRERROR_R, 1,
 		  [Define if strerror_r is available in <string.h>.]),)
   CFLAGS="$ac_save_CFLAGS"
@@ -433,10 +444,10 @@ AC_DEFUN([LIBGFOR_CHECK_STRERROR_R], [
   dnl Check for two-argument version of strerror_r (e.g. for VxWorks)
   ac_save_CFLAGS="$CFLAGS"
   CFLAGS="-Wimplicit-function-declaration -Werror"
-  AC_TRY_COMPILE([#define _GNU_SOURCE 1
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#define _GNU_SOURCE 1
 	     	  #include <string.h>
-		  #include <locale.h>],
-		  [char s[128]; strerror_r(5, s);],
+		  #include <locale.h>]],
+		  [[char s[128]; strerror_r(5, s);]])],
 		  AC_DEFINE(HAVE_STRERROR_R_2ARGS, 1,
 		  [Define if strerror_r takes two arguments and is available in <string.h>.]),)
   CFLAGS="$ac_save_CFLAGS"

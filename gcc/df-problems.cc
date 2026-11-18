@@ -3938,7 +3938,7 @@ df_simulate_fixup_sets (basic_block bb, bitmap live)
    i.e. they process the defs before the uses.
 
    df_simulate_initialize_backwards should be called first with a
-   bitvector copyied from the DF_LIVE_OUT or DF_LR_OUT.  Then
+   bitvector copied from the DF_LIVE_OUT or DF_LR_OUT.  Then
    df_simulate_one_insn_backwards should be called for each insn in
    the block, starting with the last one.  Finally,
    df_simulate_finalize_backwards can be called to get a new value
@@ -4007,7 +4007,7 @@ df_simulate_finalize_backwards (basic_block bb, bitmap live)
    problems computed before using these functions.
 
    df_simulate_initialize_forwards should be called first with a
-   bitvector copyied from the DF_LIVE_IN or DF_LR_IN.  Then
+   bitvector copied from the DF_LIVE_IN or DF_LR_IN.  Then
    df_simulate_one_insn_forwards should be called for each insn in
    the block, starting with the first one.
    ----------------------------------------------------------------------------*/
@@ -4118,7 +4118,7 @@ find_memory_stores (rtx x, const_rtx pat ATTRIBUTE_UNUSED,
    lifetimes, up to insn POINT.  The result is stored in LIVE.  */
 
 void
-simulate_backwards_to_point (basic_block bb, regset live, rtx point)
+simulate_backwards_to_point (basic_block bb, regset live, rtx_insn *point)
 {
   rtx_insn *insn;
   bitmap_copy (live, df_get_live_out (bb));
@@ -4177,9 +4177,9 @@ can_move_insns_across (rtx_insn *from, rtx_insn *to,
 
   for (insn = across_to; ; insn = next)
     {
-      if (CALL_P (insn))
+      if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	{
-	  if (RTL_CONST_OR_PURE_CALL_P (insn))
+	  if (RTL_CONST_OR_PURE_CALL_P (call))
 	    /* Pure functions can read from memory.  Const functions can
 	       read from arguments that the ABI has forced onto the stack.
 	       Neither sort of read can be volatile.  */

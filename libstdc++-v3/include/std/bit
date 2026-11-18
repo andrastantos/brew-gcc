@@ -33,7 +33,7 @@
 #pragma GCC system_header
 #endif
 
-#if __cplusplus >= 201402L
+#if __cplusplus >= 201103L
 
 #include <concepts> // for std::integral
 #include <type_traits>
@@ -157,7 +157,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #pragma GCC diagnostic ignored "-Wc++17-extensions" // if constexpr
 
   template<typename _Tp>
-    constexpr _Tp
+    _GLIBCXX14_CONSTEXPR _Tp
     __rotl(_Tp __x, int __s) noexcept
     {
       constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits;
@@ -179,7 +179,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     }
 
   template<typename _Tp>
-    constexpr _Tp
+    _GLIBCXX14_CONSTEXPR _Tp
     __rotr(_Tp __x, int __s) noexcept
     {
       constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits;
@@ -200,16 +200,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	return (__x << -__r) | (__x >> ((_Nd + __r) % _Nd)); // rotl(x, -r)
     }
 
+#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_clzg)
   template<typename _Tp>
     constexpr int
     __countl_zero(_Tp __x) noexcept
     {
+      return __builtin_clzg(__x, __gnu_cxx::__int_traits<_Tp>::__digits);
+    }
+#else
+  template<typename _Tp>
+    _GLIBCXX14_CONSTEXPR int
+    __countl_zero(_Tp __x) noexcept
+    {
       using __gnu_cxx::__int_traits;
       constexpr auto _Nd = __int_traits<_Tp>::__digits;
-
-#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_clzg)
-      return __builtin_clzg(__x, _Nd);
-#else
       if (__x == 0)
         return _Nd;
 
@@ -247,8 +251,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  unsigned long long __low = __x & __max_ull;
 	  return (_Nd - _Nd_ull) + __builtin_clzll(__low);
 	}
-#endif
     }
+#endif
 
   template<typename _Tp>
     constexpr int
@@ -257,16 +261,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return std::__countl_zero<_Tp>((_Tp)~__x);
     }
 
-  template<typename _Tp>
+#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_ctzg)
+   template<typename _Tp>
     constexpr int
+    __countr_zero(_Tp __x) noexcept
+    {
+      return __builtin_ctzg(__x, __gnu_cxx::__int_traits<_Tp>::__digits);
+    }
+#else
+  template<typename _Tp>
+    _GLIBCXX14_CONSTEXPR int
     __countr_zero(_Tp __x) noexcept
     {
       using __gnu_cxx::__int_traits;
       constexpr auto _Nd = __int_traits<_Tp>::__digits;
-
-#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_ctzg)
-      return __builtin_ctzg(__x, _Nd);
-#else
       if (__x == 0)
         return _Nd;
 
@@ -292,8 +300,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  unsigned long long __high = __x >> _Nd_ull;
 	  return __builtin_ctzll(__high) + _Nd_ull;
 	}
-#endif
     }
+#endif
 
   template<typename _Tp>
     constexpr int
@@ -302,13 +310,18 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return std::__countr_zero((_Tp)~__x);
     }
 
+#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_popcountg)
   template<typename _Tp>
     constexpr int
     __popcount(_Tp __x) noexcept
     {
-#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_popcountg)
       return __builtin_popcountg(__x);
+    }
 #else
+  template<typename _Tp>
+    _GLIBCXX14_CONSTEXPR int
+    __popcount(_Tp __x) noexcept
+    {
       using __gnu_cxx::__int_traits;
       constexpr auto _Nd = __int_traits<_Tp>::__digits;
 
@@ -332,8 +345,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  unsigned long long __high = __x >> _Nd_ull;
 	  return __builtin_popcountll(__low) + __builtin_popcountll(__high);
 	}
-#endif
     }
+#endif
 
   template<typename _Tp>
     constexpr bool
@@ -341,7 +354,21 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     { return std::__popcount(__x) == 1; }
 
   template<typename _Tp>
+    constexpr int
+    __bit_width(_Tp __x) noexcept
+    {
+      return __gnu_cxx::__int_traits<_Tp>::__digits - std::__countl_zero(__x);
+    }
+
+  template<typename _Tp>
     constexpr _Tp
+    __bit_floor(_Tp __x) noexcept
+    {
+      return (__x == 0) ? (_Tp)0 : ((_Tp)1u << (std::__bit_width(__x) - 1));
+    }
+
+  template<typename _Tp>
+    _GLIBCXX14_CONSTEXPR _Tp
     __bit_ceil(_Tp __x) noexcept
     {
       using __gnu_cxx::__int_traits;
@@ -372,24 +399,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return (_Tp)1u << __shift_exponent;
     }
 
-  template<typename _Tp>
-    constexpr _Tp
-    __bit_floor(_Tp __x) noexcept
-    {
-      constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits;
-      if (__x == 0)
-        return 0;
-      return (_Tp)1u << (_Nd - std::__countl_zero((_Tp)(__x >> 1)));
-    }
-
-  template<typename _Tp>
-    constexpr int
-    __bit_width(_Tp __x) noexcept
-    {
-      constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits;
-      return _Nd - std::__countl_zero(__x);
-    }
-
 #pragma GCC diagnostic pop
   /// @endcond
 
@@ -398,9 +407,38 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /// @cond undocumented
   template<typename _Tp>
     concept __unsigned_integer = __is_unsigned_integer<_Tp>::value;
+
+  template<typename _Tp>
+    concept __signed_or_unsigned_integer
+      = __is_signed_or_unsigned_integer<_Tp>::value;
   /// @endcond
 
-  // [bit.rot], rotating
+#if __cpp_lib_bitops >= 202606L // >= C++29
+  // [bit.shift], shifting
+  template<__signed_or_unsigned_integer _Tp, __signed_or_unsigned_integer _Sp>
+    [[nodiscard]] constexpr _Tp
+    shl(_Tp __x, _Sp __s) noexcept
+    {
+      constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits
+			   + is_signed_v<_Tp>;
+      if (__s < 0)
+	return __s > -_Nd ? __x >> -__s : static_cast<_Tp>(__x < 0 ? -1 : 0);
+      return __s < _Nd ? __x << __s : static_cast<_Tp>(0);
+    }
+
+  template<__signed_or_unsigned_integer _Tp, __signed_or_unsigned_integer _Sp>
+    [[nodiscard]] constexpr _Tp
+    shr(_Tp __x, _Sp __s) noexcept
+    {
+      constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits
+			   + is_signed_v<_Tp>;
+      if (__s < 0)
+	return __s > -_Nd ? __x << -__s : static_cast<_Tp>(0);
+      return __s < _Nd ? __x >> __s : static_cast<_Tp>(__x < 0 ? -1 : 0);
+    }
+#endif
+
+  // [bit.rotate], rotating
 
   /// Rotate `x` to the left by `s` bits.
   template<__unsigned_integer _Tp>
@@ -477,6 +515,123 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     { return std::__bit_width(__x); }
 #endif // defined (__cpp_lib_int_pow2)
 
+#if __cpp_lib_bitops >= 202607L // >= C++29
+  // [bit.permute], permutation
+  template<__unsigned_integer _Tp>
+    [[nodiscard]] constexpr _Tp
+    bit_repeat(_Tp __x, int __l)
+    {
+      __glibcxx_assert( __l > 0 );
+      constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits;
+      if (__l >= _Nd)
+	return __x;
+      __x &= ((_Tp)1 << __l) - 1;
+      do
+	{
+	  __x |= __x << __l;
+	  __l <<= 1;
+	}
+      while (__l < _Nd);
+      return __x;
+    }
+
+  template<__unsigned_integer _Tp>
+    [[nodiscard]] constexpr _Tp
+    bit_reverse(_Tp __x) noexcept
+    {
+#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_bitreverseg)
+      return __builtin_bitreverseg(__x);
+#else
+      constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits;
+      if constexpr (_Nd % __CHAR_BIT__ == 0 && __CHAR_BIT__ == 8)
+	{
+	  __x = std::byteswap(__x);
+	  constexpr auto __m1 = std::bit_repeat<_Tp>(15, 8);
+	  constexpr auto __m2 = std::bit_repeat<_Tp>(3, 4);
+	  constexpr auto __m3 = std::bit_repeat<_Tp>(1, 2);
+	  __x = ((__x >> 4) & __m1) | ((__x & __m1) << 4);
+	  __x = ((__x >> 2) & __m2) | ((__x & __m2) << 2);
+	  __x = ((__x >> 1) & __m3) | ((__x & __m3) << 1);
+	  return __x;
+	}
+      else
+	{
+	  _Tp __r = 0;
+	  for (int __i = 0; __i < _Nd; ++__i)
+	    {
+	      __r <<= 1;
+	      __r |= (__x & 1);
+	      __x >>= 1;
+	    }
+	  return __r;
+	}
+#endif
+    }
+
+  template<__unsigned_integer _Tp>
+    [[nodiscard]] constexpr _Tp
+    bit_compress(_Tp __x, _Tp __m) noexcept
+    {
+#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_elementwise_pext)
+      return __builtin_elementwise_pext(__x, __m);
+#else
+      constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits;
+      // Based on "Compress, or Generalized Extract" in Hacker's Delight
+      __x &= __m;
+      _Tp __mk = ~__m << 1;
+      for (int __i = 1; __i < _Nd; __i <<= 1)
+	{
+	  _Tp __mp = __mk;
+	  for (int __j = 1; __j < _Nd; __j <<= 1)
+	    __mp ^= __mp << __j;
+	  _Tp __mv = __mp & __m;
+	  __m = (__m ^ __mv) | (__mv >> __i);
+	  _Tp __t = __x & __mv;
+	  __x = (__x ^ __t) | (__t >> __i);
+	  __mk = __mk & ~__mp;
+	}
+      return __x;
+#endif
+    }
+
+  template<__unsigned_integer _Tp>
+    [[nodiscard]] constexpr _Tp
+    bit_expand(_Tp __x, _Tp __m) noexcept
+    {
+#if _GLIBCXX_USE_BUILTIN_TRAIT(__builtin_elementwise_pdep)
+      return __builtin_elementwise_pdep(__x, __m);
+#else
+      constexpr auto _Nd = __gnu_cxx::__int_traits<_Tp>::__digits;
+      if constexpr (_Nd == 1)
+	return __x & __m;
+      constexpr auto __log2_Nd
+	= _Nd == 1 ? 1 : (__gnu_cxx::__int_traits<unsigned>::__digits
+			  - std::__countl_zero<unsigned>(_Nd - 1));
+      // Based on "Expand, or Generalized Insert" in Hacker's Delight
+      _Tp __m0 = __m;
+      _Tp __mk = ~__m << 1;
+      _Tp __array[__log2_Nd];
+      for (int __i = 0; __i < __log2_Nd; __i++)
+	{
+	  _Tp __mp = __mk;
+	  for (int __j = 1; __j < _Nd; __j <<= 1)
+	    __mp ^= __mp << __j;
+	  _Tp __mv = __mp & __m;
+	  __array[__i] = __mv;
+	  __m = (__m ^ __mv) | (__mv >> (_Tp(1) << __i));
+	  __mk = __mk & ~__mp;
+	}
+      for (int __i = __log2_Nd - 1; __i >= 0; __i--)
+	{
+	  _Tp __mv = __array[__i];
+	  _Tp __t = __x << (_Tp(1) << __i);
+	  __x = (__x & ~__mv) | (__t & __mv);
+	}
+      return __x & __m0;
+#endif
+    }
+#endif // __cpp_lib_bitops >= 202607L
+
 #ifdef __cpp_lib_endian // C++ >= 20
 
   /// Byte order constants
@@ -499,5 +654,5 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std
 
-#endif // C++14
+#endif // C++11
 #endif // _GLIBCXX_BIT

@@ -1,4 +1,4 @@
-/* Functions related to invoking -*- C++ -*- methods and overloaded functions.
+/* Functions related to invoking C++ methods and overloaded functions.
    Copyright (C) 1987-2026 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com) and
    modified by Brendan Kehoe (brendan@cygnus.com).
@@ -39,7 +39,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "c-family/c-objc.h"
 #include "internal-fn.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "decl.h"
 #include "c-family/c-type-mismatch.h"
@@ -95,36 +94,36 @@ struct conversion {
   conversion_kind kind;
   /* The rank of this conversion.  */
   conversion_rank rank;
-  BOOL_BITFIELD user_conv_p : 1;
-  BOOL_BITFIELD ellipsis_p : 1;
-  BOOL_BITFIELD this_p : 1;
+  bool user_conv_p : 1;
+  bool ellipsis_p : 1;
+  bool this_p : 1;
   /* True if this conversion would be permitted with a bending of
      language standards, e.g. disregarding pointer qualifiers or
      converting integers to pointers.  */
-  BOOL_BITFIELD bad_p : 1;
+  bool bad_p : 1;
   /* If KIND is ck_ref_bind or ck_base, true to indicate that a
      temporary should be created to hold the result of the
      conversion.  If KIND is ck_ambig or ck_user, true means force
      copy-initialization.  */
-  BOOL_BITFIELD need_temporary_p : 1;
+  bool need_temporary_p : 1;
   /* If KIND is ck_ptr or ck_pmem, true to indicate that a conversion
      from a pointer-to-derived to pointer-to-base is being performed.  */
-  BOOL_BITFIELD base_p : 1;
+  bool base_p : 1;
   /* If KIND is ck_ref_bind, true when either an lvalue reference is
      being bound to an lvalue expression or an rvalue reference is
      being bound to an rvalue expression.  If KIND is ck_rvalue or ck_base,
      true when we are treating an lvalue as an rvalue (12.8p33).  If
      ck_identity, we will be binding a reference directly or decaying to
      a pointer.  */
-  BOOL_BITFIELD rvaluedness_matches_p: 1;
-  BOOL_BITFIELD check_narrowing: 1;
+  bool rvaluedness_matches_p: 1;
+  bool check_narrowing: 1;
   /* Whether check_narrowing should only check TREE_CONSTANTs; used
      in build_converted_constant_expr.  */
-  BOOL_BITFIELD check_narrowing_const_only: 1;
+  bool check_narrowing_const_only: 1;
   /* True if this conversion is taking place in a copy-initialization context
      and we should only consider converting constructors.  Only set in
      ck_base and ck_rvalue.  */
-  BOOL_BITFIELD copy_init_p : 1;
+  bool copy_init_p : 1;
   /* The type of the expression resulting from the conversion.  */
   tree type;
   union {
@@ -1016,6 +1015,9 @@ can_convert_array (tree atype, tree from, int flags, tsubst_flags_t complain)
       && TREE_CODE (tree_strip_any_location_wrapper (from)) == STRING_CST)
     return array_string_literal_compatible_p (atype, from);
 
+  if (tree vi = (get_vec_init_expr (from)))
+    return can_convert_array (atype, VEC_INIT_EXPR_INIT (vi), flags, complain);
+
   /* No other valid way to aggregate initialize an array.  */
   return false;
 }
@@ -1277,7 +1279,7 @@ strip_top_quals (tree t)
 {
   if (TREE_CODE (t) == ARRAY_TYPE)
     return t;
-  return cp_build_qualified_type (t, 0);
+  return cp_build_qualified_type (t, TYPE_UNQUALIFIED);
 }
 
 /* Returns the standard conversion path (see [conv]) from type FROM to type
@@ -1450,7 +1452,7 @@ standard_conversion (tree to, tree from, tree expr, bool c_cast_p,
 	{
 	  tree nfrom = TREE_TYPE (from);
 	  /* Don't try to apply restrict to void.  */
-	  int quals = cp_type_quals (nfrom) & ~TYPE_QUAL_RESTRICT;
+	  auto quals = cp_type_quals (nfrom) & ~TYPE_QUAL_RESTRICT;
 	  from_pointee = cp_build_qualified_type (void_type_node, quals);
 	  from = build_pointer_type (from_pointee);
 	  conv = build_conv (ck_ptr, from, conv);
@@ -1546,12 +1548,16 @@ standard_conversion (tree to, tree from, tree expr, bool c_cast_p,
 
       if (!same_type_p (fbase, tbase))
 	{
-	  from = build_memfn_type (fstat,
-				   tbase,
-				   cp_type_quals (tbase),
-				   type_memfn_rqual (tofn));
-	  from = build_ptrmemfunc_type (build_pointer_type (from));
-	  conv = build_conv (ck_pmem, from, conv);
+	  tree first = to;
+	  if (!same_type_p (tstat, fstat))
+	    {
+	      first = build_memfn_type (fstat,
+					tbase,
+					cp_type_quals (tbase),
+					type_memfn_rqual (tofn));
+	      first = build_ptrmemfunc_type (build_pointer_type (first));
+	    }
+	  conv = build_conv (ck_pmem, first, conv);
 	  conv->base_p = true;
 	}
       if (fnptr_conv_p (tstat, fstat))
@@ -1711,7 +1717,7 @@ reference_compatible_p (tree t1, tree t2)
 static bool
 involves_qualification_conversion_p (tree to, tree from)
 {
-  /* If we're not convering a pointer to another one, we won't get
+  /* If we're not converting a pointer to another one, we won't get
      a qualification conversion.  */
   if (!((TYPE_PTR_P (to) && TYPE_PTR_P (from))
 	|| (TYPE_PTRDATAMEM_P (to) && TYPE_PTRDATAMEM_P (from))))
@@ -1730,28 +1736,25 @@ involves_qualification_conversion_p (tree to, tree from)
    per [except.handle]/3.  */
 
 bool
-handler_match_for_exception_type (tree handler, tree except_type)
+handler_match_for_exception_type (tree handler_type, tree except_type)
 {
-  tree handler_type = HANDLER_TYPE (handler);
+  if (handler_type && TREE_CODE (handler_type) == HANDLER)
+    handler_type = TREE_TYPE (handler_type);
   if (handler_type == NULL_TREE)
     return true; /* ... */
   if (same_type_ignoring_top_level_qualifiers_p (handler_type, except_type))
     return true;
   if (CLASS_TYPE_P (except_type) && CLASS_TYPE_P (handler_type))
-    {
-      base_kind b_kind;
-      tree binfo = lookup_base (except_type, handler_type, ba_check, &b_kind,
-				tf_none);
-      if (binfo && binfo != error_mark_node)
-	return true;
-    }
-  if (TYPE_PTR_P (handler_type) || TYPE_PTRDATAMEM_P (handler_type))
+    return publicly_uniquely_derived_p (handler_type, except_type);
+  if (TYPE_PTR_P (handler_type) || TYPE_PTRMEM_P (handler_type))
     {
       if (TREE_CODE (except_type) == NULLPTR_TYPE)
 	return true;
       if ((TYPE_PTR_P (handler_type) && TYPE_PTR_P (except_type))
 	  || (TYPE_PTRDATAMEM_P (handler_type)
-	      && TYPE_PTRDATAMEM_P (except_type)))
+	      && TYPE_PTRDATAMEM_P (except_type))
+	  || (TYPE_PTRMEMFUNC_P (handler_type)
+ 	      && TYPE_PTRMEMFUNC_P (except_type)))
 	{
 	  conversion *conv
 	    = standard_conversion (handler_type, except_type, NULL_TREE,
@@ -1762,6 +1765,13 @@ handler_match_for_exception_type (tree handler, tree except_type)
 		switch (t->kind)
 		  {
 		  case ck_ptr:
+		    /* ...not involving conversions to pointers to private or
+		       protected or ambiguous classes, */
+		    if (CLASS_TYPE_P (TREE_TYPE (handler_type)))
+		      return (publicly_uniquely_derived_p
+			      (TREE_TYPE (handler_type),
+			       TREE_TYPE (except_type)));
+		    gcc_fallthrough ();
 		  case ck_fnptr:
 		  case ck_qual:
 		  case ck_identity:
@@ -3918,7 +3928,7 @@ splice_viable (struct z_candidate *cands,
 
   /* Be strict inside templates, since build_over_call won't actually
      do the conversions to get pedwarns.  */
-  if (processing_template_decl)
+  if (processing_template_decl || flag_diagnostics_all_candidates)
     strict_p = true;
 
   for (z_candidate *cand = cands; cand; cand = cand->next)
@@ -4700,7 +4710,7 @@ build_user_type_conversion_1 (tree totype, tree expr, int flags,
       struct z_candidate *old_candidates;
 
       /* If LOOKUP_NO_CONVERSION, don't consider a conversion function that
-	 would need an addional user-defined conversion, i.e. if the return
+	 would need an additional user-defined conversion, i.e. if the return
 	 type differs in class-ness from the desired type.  So we avoid
 	 considering operator bool when calling a copy constructor.
 
@@ -8064,6 +8074,8 @@ usual_deallocation_fn_p (tree fn)
    usual deallocation should be chosen in preference to the single argument
    version in a class context.
    PLACEMENT is the corresponding placement new call, or NULL_TREE.
+   PLACEMENT_ARGS is a pointer to vector containing the original placement
+   arguments, or NULL.
 
    If this call to "operator delete" is being generated as part to
    deallocate memory allocated via a new-expression (as per [expr.new]
@@ -8074,7 +8086,8 @@ usual_deallocation_fn_p (tree fn)
 static tree
 build_op_delete_call_1 (enum tree_code code, tree addr, tree size,
 			bool global_p, bool coro_p, tree placement,
-			tree alloc_fn, tsubst_flags_t complain)
+			vec<tree, va_gc> *placement_args, tree alloc_fn,
+			tsubst_flags_t complain)
 {
   tree fn = NULL_TREE;
   tree fns, fnname, type, t;
@@ -8116,28 +8129,66 @@ build_op_delete_call_1 (enum tree_code code, tree addr, tree size,
 
   if (placement)
     {
-      /* "A declaration of a placement deallocation function matches the
-	 declaration of a placement allocation function if it has the same
-	 number of parameters and, after parameter transformations (8.3.5),
-	 all parameter types except the first are identical."
+      /* For a placement allocation function, the matching deallocation
+	 function is selected as follows:
 
-	 So we build up the function type we want and ask instantiate_type
-	 to get it for us.  */
+	 - Each candidate that is a function template is replaced by the
+	   function template specializations (if any) generated using template
+	   argument deduction with arguments as specified below.
+	 - Each candidate whose parameter-type-list is not identical to that
+	   of the allocation function, ignoring their respective first
+	   parameters, is removed from the set of candidates.
+	 - Each candidate whose associated constraints (if any) are not
+	   satisfied is removed from the set of candidates.
+	 - If exactly one function remains, that function is selected.
+	 - Otherwise, no deallocation function is selected.  */
       t = FUNCTION_ARG_CHAIN (alloc_fn);
-      t = tree_cons (NULL_TREE, ptr_type_node, t);
-      t = build_function_type (void_type_node, t);
+      fn = NULL_TREE;
+      tree *args = NULL;
+      unsigned nargs = 0;
+      for (tree elt : lkp_range (MAYBE_BASELINK_FUNCTIONS (fns)))
+	{
+	  if (TREE_CODE (elt) == TEMPLATE_DECL)
+	    {
+	      tree targs = make_tree_vec (DECL_NTPARMS (elt));
+	      if (args == NULL)
+		{
+		  nargs = vec_safe_length (placement_args);
+		  args = XALLOCAVEC (tree, nargs);
+		  args[0] = addr;
+		  for (unsigned i = 1; i < nargs; ++i)
+		    args[i] = (*placement_args)[i];
+		}
+	      elt = fn_type_unification (elt, NULL_TREE, targs, args,
+					 nargs, NULL_TREE,
+					 DEDUCE_CALL, LOOKUP_NORMAL,
+					 NULL, false, false);
+	      if (elt == error_mark_node)
+		/* Instantiation failed.  */
+		continue;
+	    }
 
-      fn = instantiate_type (t, fns, tf_none);
-      if (fn == error_mark_node)
-	return NULL_TREE;
+	  if (!constraints_satisfied_p (elt))
+	    continue;
 
-      fn = MAYBE_BASELINK_FUNCTIONS (fn);
+	  /* See if there's a match.  */
+	  if (!compparms (t, FUNCTION_ARG_CHAIN (elt)))
+	    continue;
+
+	  if (fn != NULL_TREE)
+	    {
+	      fn = NULL_TREE;
+	      break;
+	    }
+	  else
+	    fn = elt;
+	}
 
       /* "If the lookup finds the two-parameter form of a usual deallocation
 	 function (3.7.4.2) and that function, considered as a placement
 	 deallocation function, would have been selected as a match for the
 	 allocation function, the program is ill-formed."  */
-      if (second_parm_is_size_t (fn))
+      if (fn && second_parm_is_size_t (fn))
 	{
 	  const char *const msg1
 	    = G_("exception cleanup for this placement new selects "
@@ -8361,7 +8412,7 @@ build_op_delete_call_1 (enum tree_code code, tree addr, tree size,
   if (excluded_destroying
       && DECL_NAMESPACE_SCOPE_P (alloc_fn))
     return build_op_delete_call (code, addr, size, true, placement,
-				 alloc_fn, complain);
+				 placement_args, alloc_fn, complain);
 
   /* [expr.new]
 
@@ -8370,9 +8421,9 @@ build_op_delete_call_1 (enum tree_code code, tree addr, tree size,
      be freed.  */
   if (alloc_fn)
     {
-      if ((complain & tf_warning)
-	  && !placement)
+      if ((complain & tf_warning) && !placement)
 	{
+	  auto_diagnostic_group d;
 	  bool w = warning (0,
 			    "no corresponding deallocation function for %qD",
 			    alloc_fn);
@@ -8395,21 +8446,24 @@ build_op_delete_call_1 (enum tree_code code, tree addr, tree size,
 
 tree
 build_op_delete_call (enum tree_code code, tree addr, tree size, bool global_p,
-		      tree placement, tree alloc_fn, tsubst_flags_t complain)
+		      tree placement, vec<tree, va_gc> *placement_args,
+		      tree alloc_fn, tsubst_flags_t complain)
 {
   return build_op_delete_call_1 (code, addr, size, global_p, /*coro_p*/false,
-				 placement, alloc_fn, complain);
+				 placement, placement_args, alloc_fn,
+				 complain);
 }
 
 /* Arguments as per build_op_delete_call_1 ().  */
 
 tree
 build_coroutine_op_delete_call (enum tree_code code, tree addr, tree size,
-				bool global_p, tree placement, tree alloc_fn,
+				bool global_p, tree alloc_fn,
 				tsubst_flags_t complain)
 {
   return build_op_delete_call_1 (code, addr, size, global_p, /*coro_p*/true,
-				 placement, alloc_fn, complain);
+				 /*placement*/NULL_TREE,
+				 /*placement_args*/NULL, alloc_fn, complain);
 }
 
 /* Issue diagnostics about a disallowed access of DECL, using DIAG_DECL
@@ -8440,6 +8494,7 @@ complain_about_access (tree decl, tree diag_decl, tree diag_location,
     }
 
   /* Now generate an error message depending on calculated access.  */
+  auto_diagnostic_group d;
   if (no_access_reason == ak_private)
     {
       if (issue_error)
@@ -8452,7 +8507,7 @@ complain_about_access (tree decl, tree diag_decl, tree diag_location,
 	error ("%q#D is protected within this context", diag_decl);
       inform (DECL_SOURCE_LOCATION (diag_location), "declared protected here");
     }
-  /* Couldn't figure out why DECL is inaccesible, so just say it's
+  /* Couldn't figure out why DECL is inaccessible, so just say it's
      inaccessible.  */
   else
     {
@@ -8737,6 +8792,7 @@ convert_like_internal (conversion *convs, tree expr, tree fn, int argnum,
     {
       int complained = 0;
       conversion *t = convs;
+      auto_diagnostic_group d;
 
       /* Give a helpful error if this is bad because of excess braces.  */
       if (BRACE_ENCLOSED_INITIALIZER_P (expr)
@@ -8979,6 +9035,7 @@ convert_like_internal (conversion *convs, tree expr, tree fn, int argnum,
       if (complain & tf_error)
 	{
 	  /* Call build_user_type_conversion again for the error.  */
+	  auto_diagnostic_group d;
 	  int flags = (convs->need_temporary_p
 		       ? LOOKUP_IMPLICIT : LOOKUP_NORMAL);
 	  build_user_type_conversion (totype, convs->u.expr, flags, complain);
@@ -10715,10 +10772,18 @@ build_over_call (struct z_candidate *cand, int flags, tsubst_flags_t complain)
              func(NULL);
            }
       */
-      bool const conversion_warning = !(null_node_p (current_arg)
-					&& DECL_TEMPLATE_INFO (fn)
-					&& cand->template_decl
-					&& !cand->explicit_targs);
+      bool conversion_warning = !(null_node_p (current_arg)
+				  && DECL_TEMPLATE_INFO (fn)
+				  && cand->template_decl
+				  && !cand->explicit_targs);
+
+      /* Also don't warn about (x <=> y) < 0 (c++/100903).  */
+      if (conversion_warning
+	  && integer_zerop (current_arg)
+	  && warn_zero_as_null_pointer_constant
+	  && !warning_enabled_at (DECL_SOURCE_LOCATION (fn),
+				  OPT_Wzero_as_null_pointer_constant))
+	conversion_warning = false;
 
       tsubst_flags_t const arg_complain
 	= conversion_warning ? complain : complain & ~tf_warning;
@@ -10840,6 +10905,7 @@ build_over_call (struct z_candidate *cand, int flags, tsubst_flags_t complain)
 	{
 	  if (complain & tf_error)
 	    {
+	      auto_diagnostic_group d;
 	      sorry ("passing arguments to ellipsis of inherited constructor "
 		     "%qD", cand->fn);
 	      inform (DECL_SOURCE_LOCATION (cand->fn), "declared here");
@@ -11338,6 +11404,7 @@ maybe_warn_class_memaccess (location_t loc, tree fndecl,
   const char *suggest = "";
   bool warned = false;
 
+  auto_diagnostic_group d;
   switch (DECL_FUNCTION_CODE (fndecl))
     {
     case BUILT_IN_MEMSET:
@@ -11408,7 +11475,7 @@ maybe_warn_class_memaccess (location_t loc, tree fndecl,
       else
 	srctype = TREE_TYPE (srctype);
 
-      /* Since it's impossible to determine wheter the byte copy is
+      /* Since it's impossible to determine whether the byte copy is
 	 being used in place of assignment to an existing object or
 	 as a substitute for initialization, assume it's the former.
 	 Determine the best alternative to use instead depending on

@@ -207,7 +207,7 @@ public:
   std::string raw_bounds_as_name () const;
 
 protected:
-  void add_bound (TypeBoundPredicate predicate);
+  void add_bound (const TypeBoundPredicate &predicate);
 
   std::vector<TypeBoundPredicate> specified_bounds;
 };
@@ -237,11 +237,15 @@ public:
   //     2. (For functions) have the same signature
   virtual bool is_equal (const BaseType &other) const;
 
+  bool unsize_to (const BaseType *target) const;
+
   bool satisfies_bound (const TypeBoundPredicate &predicate, bool emit_error);
 
   bool bounds_compatible (BaseType &other, location_t locus, bool emit_error);
 
   void inherit_bounds (const BaseType &other);
+
+  void inherit_bound (const TypeBoundPredicate &bound);
 
   void inherit_bounds (
     const std::vector<TyTy::TypeBoundPredicate> &specified_bounds);
@@ -255,6 +259,10 @@ public:
   // is_concrete returns true if the type is fully resolved to concrete
   // primitives
   bool is_concrete () const;
+
+  // returns if the type is a zero-sized type, which is a type that occupies no
+  // space in memory
+  bool is_zero_sized () const;
 
   // return the type-kind
   TypeKind get_kind () const;
@@ -352,7 +360,18 @@ public:
   virtual BaseConstType *as_const_type () { return nullptr; }
   virtual const BaseConstType *as_const_type () const { return nullptr; }
 
+  virtual bool contains_unsafe_cell () const { return false; }
+
+  // is_unsized returns true if the type is a DST
+  virtual bool is_unsized () const { return false; }
+
+  virtual bool is_box () const { return false; }
+
 protected:
+  const TyTy::BaseType *
+  contains_infer (std::set<const TyTy::BaseType *> &visited) const;
+  bool is_concrete (std::set<const TyTy::BaseType *> &visited) const;
+
   BaseType (HirId ref, HirId ty_ref, TypeKind kind, RustIdent ident,
 	    std::set<HirId> refs = std::set<HirId> ());
 
@@ -487,7 +506,7 @@ protected:
   BaseGeneric (HirId ref, HirId ty_ref, TypeKind kind, RustIdent ident,
 	       std::vector<TypeBoundPredicate> specified_bounds,
 	       std::set<HirId> refs = std::set<HirId> ())
-    : BaseType (ref, ty_ref, kind, ident, specified_bounds, refs)
+    : BaseType (ref, ty_ref, kind, ident, std::move (specified_bounds), refs)
   {}
 };
 
@@ -496,12 +515,12 @@ class ParamType : public BaseGeneric
 public:
   static constexpr auto KIND = TypeKind::PARAM;
 
-  ParamType (std::string symbol, location_t locus, HirId ref,
+  ParamType (std::string symbol, location_t locus, HirId ref, HirId decl_id,
 	     std::vector<TypeBoundPredicate> specified_bounds,
 	     std::set<HirId> refs = std::set<HirId> ());
 
   ParamType (bool is_trait_self, std::string symbol, location_t locus,
-	     HirId ref, HirId ty_ref,
+	     HirId ref, HirId ty_ref, HirId decl_id,
 	     std::vector<TypeBoundPredicate> specified_bounds,
 	     std::set<HirId> refs = std::set<HirId> ());
 
@@ -527,7 +546,11 @@ public:
   void set_implicit_self_trait ();
   bool is_implicit_self_trait () const;
 
+  HirId get_decl_id () const { return decl_id; }
+
 private:
+  // Identity of the original HIR parameter, preserved through substitution.
+  const HirId decl_id;
   bool is_trait_self;
   std::string symbol;
 };
@@ -775,6 +798,8 @@ public:
 
   bool is_equal (const BaseType &other) const override;
 
+  bool is_zero_sized () const;
+
   size_t num_fields () const;
 
   BaseType *get_field (size_t index) const;
@@ -787,6 +812,8 @@ public:
 
   TupleType *handle_substitions (SubstitutionArgumentMappings &mappings);
 
+  bool contains_unsafe_cell () const override;
+
 private:
   std::vector<TyVar> fields;
 };
@@ -794,12 +821,8 @@ private:
 class TypeBoundPredicateItem
 {
 public:
-  TypeBoundPredicateItem (const TypeBoundPredicate parent,
+  TypeBoundPredicateItem (const TypeBoundPredicate *parent,
 			  const Resolver::TraitItemReference *trait_item_ref);
-
-  TypeBoundPredicateItem (const TypeBoundPredicateItem &other);
-
-  TypeBoundPredicateItem &operator= (const TypeBoundPredicateItem &other);
 
   static TypeBoundPredicateItem error ();
 
@@ -816,7 +839,9 @@ public:
   location_t get_locus () const;
 
 private:
-  TypeBoundPredicate parent;
+  // not owned, copying a predicate clones all of its types and nothing
+  // ever frees them. Null for the error item.
+  const TypeBoundPredicate *parent;
   const Resolver::TraitItemReference *trait_item_ref;
 };
 
@@ -900,7 +925,8 @@ public:
     STRUCT_STRUCT,
     TUPLE_STRUCT,
     UNION,
-    ENUM
+    ENUM,
+    EXTERN
   };
 
   enum ReprKind
@@ -910,8 +936,8 @@ public:
     INT,
     ALIGN,
     PACKED,
-    // TRANSPARENT,
-    // SIMD,
+    TRANSPARENT,
+    SIMD,
     // ...
   };
 
@@ -974,6 +1000,8 @@ public:
 
   bool is_equal (const BaseType &other) const override;
 
+  bool is_zero_sized () const;
+
   std::string get_identifier () const { return identifier; }
 
   std::string get_name () const override final
@@ -1027,6 +1055,10 @@ public:
   ADTType *
   handle_substitions (SubstitutionArgumentMappings &mappings) override final;
 
+  bool contains_unsafe_cell () const override;
+  virtual bool is_unsized () const override;
+  virtual bool is_box () const override;
+
 private:
   DefId id;
   std::string identifier;
@@ -1076,7 +1108,7 @@ public:
   static const uint8_t FNTYPE_DEFAULT_FLAGS = 0x00;
   static const uint8_t FNTYPE_IS_METHOD_FLAG = 0x01;
   static const uint8_t FNTYPE_IS_EXTERN_FLAG = 0x02;
-  static const uint8_t FNTYPE_IS_VARADIC_FLAG = 0X04;
+  static const uint8_t FNTYPE_IS_VARIADIC_FLAG = 0X04;
   static const uint8_t FNTYPE_IS_SYN_CONST_FLAG = 0X08;
 
   FnType (HirId ref, DefId id, std::string identifier, RustIdent ident,
@@ -1137,7 +1169,7 @@ public:
 
   bool is_extern () const { return (flags & FNTYPE_IS_EXTERN_FLAG) != 0; }
 
-  bool is_variadic () const { return (flags & FNTYPE_IS_VARADIC_FLAG) != 0; }
+  bool is_variadic () const { return (flags & FNTYPE_IS_VARIADIC_FLAG) != 0; }
 
   bool is_syn_constant () const
   {
@@ -1338,8 +1370,6 @@ public:
 
   DefId get_def_id () const { return id; }
 
-  void setup_fn_once_output () const;
-
   const std::set<NodeId> &get_captures () const { return captures; }
 
 private:
@@ -1377,6 +1407,8 @@ public:
 
   bool is_equal (const BaseType &other) const override;
 
+  bool is_zero_sized () const;
+
   BaseType *get_element_type () const;
   const TyVar &get_var_element_type () const;
 
@@ -1386,6 +1418,8 @@ public:
   const TyVar &get_capacity_var () const { return capacity; }
 
   ArrayType *handle_substitions (SubstitutionArgumentMappings &mappings);
+
+  bool contains_unsafe_cell () const override;
 
 private:
   TyVar element_type;
@@ -1426,6 +1460,9 @@ public:
   BaseType *clone () const final override;
 
   SliceType *handle_substitions (SubstitutionArgumentMappings &mappings);
+
+  bool contains_unsafe_cell () const override;
+  virtual bool is_unsized () const override { return true; }
 
 private:
   TyVar element_type;
@@ -1623,6 +1660,8 @@ public:
   bool is_equal (const BaseType &other) const override;
 
   BaseType *clone () const final override;
+
+  virtual bool is_unsized () const override { return true; }
 };
 
 class DynamicObjectType : public BaseType
@@ -1653,6 +1692,8 @@ public:
   const std::vector<
     std::pair<const Resolver::TraitItemReference *, const TypeBoundPredicate *>>
   get_object_items () const;
+
+  virtual bool is_unsized () const override { return true; }
 };
 
 class ReferenceType : public BaseType
@@ -1693,6 +1734,8 @@ public:
   bool is_dyn_slice_type (const TyTy::SliceType **slice = nullptr) const;
   bool is_dyn_str_type (const TyTy::StrType **str = nullptr) const;
   bool is_dyn_obj_type (const TyTy::DynamicObjectType **dyn = nullptr) const;
+  bool is_dyn_adt_type (const TyTy::ADTType **adt = nullptr) const;
+  bool is_dyn_cstr_type (const TyTy::ADTType **adt = nullptr) const;
 
 private:
   TyVar base;
@@ -1732,6 +1775,7 @@ public:
   bool is_dyn_slice_type (const TyTy::SliceType **slice = nullptr) const;
   bool is_dyn_str_type (const TyTy::StrType **str = nullptr) const;
   bool is_dyn_obj_type (const TyTy::DynamicObjectType **dyn = nullptr) const;
+  bool is_dyn_adt_type (const TyTy::ADTType **adt = nullptr) const;
 
 private:
   TyVar base;
@@ -1792,10 +1836,6 @@ public:
 
   std::string get_symbol () const;
 
-  void set_associated_type (HirId ref);
-
-  void clear_associated_type ();
-
   bool can_resolve () const;
 
   BaseType *resolve () const;
@@ -1817,21 +1857,27 @@ public:
   ProjectionType (HirId ref, BaseType *base,
 		  const Resolver::TraitReference *trait, DefId item,
 		  std::vector<SubstitutionParamMapping> subst_refs,
+		  TyTy::BaseType *self,
 		  SubstitutionArgumentMappings generic_arguments
 		  = SubstitutionArgumentMappings::error (),
 		  RegionConstraints region_constraints = {},
-		  std::set<HirId> refs = std::set<HirId> ());
+		  std::set<HirId> refs = std::set<HirId> (),
+		  size_t num_trait_substitutions = 0);
 
   ProjectionType (HirId ref, HirId ty_ref, BaseType *base,
 		  const Resolver::TraitReference *trait, DefId item,
 		  std::vector<SubstitutionParamMapping> subst_refs,
+		  TyTy::BaseType *self,
 		  SubstitutionArgumentMappings generic_arguments
 		  = SubstitutionArgumentMappings::error (),
 		  RegionConstraints region_constraints = {},
-		  std::set<HirId> refs = std::set<HirId> ());
+		  std::set<HirId> refs = std::set<HirId> (),
+		  size_t num_trait_substitutions = 0);
 
   void accept_vis (TyVisitor &vis) override;
   void accept_vis (TyConstVisitor &vis) const override;
+
+  bool is_trait_position () const;
 
   std::string as_string () const override;
 
@@ -1842,13 +1888,28 @@ public:
   const BaseType *get () const;
   BaseType *get ();
 
+  const BaseType *get_self () const;
+  BaseType *get_self ();
+  void set_self (BaseType *s) { self = s; }
+
+  const Resolver::TraitReference *get_trait_ref () const;
+
+  DefId get_item_defid () const;
+
   ProjectionType *
   handle_substitions (SubstitutionArgumentMappings &mappings) override final;
+
+  size_t get_outer_param_count () const override
+  {
+    return num_trait_substitutions;
+  }
 
 private:
   BaseType *base;
   const Resolver::TraitReference *trait;
   DefId item;
+  TyTy::BaseType *self;
+  size_t num_trait_substitutions = 0;
 };
 
 template <>
@@ -1943,6 +2004,9 @@ BaseType::try_as<const SubstitutionRef> () const
     }
   return nullptr;
 }
+
+WARN_UNUSED_RESULT tl::optional<BaseType *>
+try_get_box_inner_type (BaseType *base);
 
 } // namespace TyTy
 } // namespace Rust

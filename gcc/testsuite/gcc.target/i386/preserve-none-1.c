@@ -1,4 +1,4 @@
-/* { dg-do compile { target { ! ia32 } } } */
+/* { dg-do compile { target { { ! ia32 } && { ! llp64 } } } } */
 /* { dg-options "-O2 -fomit-frame-pointer" } */
 
 extern void boring(void);

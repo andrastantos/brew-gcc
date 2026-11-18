@@ -25,12 +25,12 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 #if defined(__x86_64__) && defined(__SSE2__)
 
-/* These macros currently support GNU/Linux, Solaris and Darwin.  */
+/* These macros currently support GNU/Linux, Solaris, FreeBSD, and Darwin.  */
 
 #ifdef __ELF__
 # define FN_TYPE(fn) .type fn,@function
 # define FN_SIZE(fn) .size fn,.-fn
-# ifdef __linux__
+# if defined(__linux__) || defined (__FreeBSD__)
 	.section	.note.GNU-stack,"",@progbits
 # endif
 #else
@@ -104,6 +104,19 @@ FUNC_BEGIN(mem_to_regs)
 	mov	0xd8(%r10),%r15
 	retq
 FUNC_END(mem_to_regs)
+
+FUNC_BEGIN(call_do_test_unaligned)
+	# Load the 5th argument to R10.
+	movq	0x28(%rsp), %r10
+	# Unalign stack.
+	subq	$8, %rsp
+	# Push the 5th argument.
+	pushq	%r10
+	subq	$32, %rsp
+	call	ASMNAME(do_test_unaligned)
+	addq	$48, %rsp
+	ret
+FUNC_END(call_do_test_unaligned)
 
 # NOTE: Not MT safe
 FUNC_BEGIN(do_test_unaligned)

@@ -114,7 +114,6 @@ along with GCC; see the file COPYING3.  If not see
 	    builtin_define ("__STDC_VERSION__=201112L");\
 	    break;					\
 	  }						\
-	builtin_define ("_XOPEN_SOURCE=600");		\
 	builtin_define ("_LARGEFILE_SOURCE=1");		\
 	builtin_define ("_LARGEFILE64_SOURCE=1");	\
 	builtin_define ("_FILE_OFFSET_BITS=64");	\
@@ -143,7 +142,7 @@ along with GCC; see the file COPYING3.  If not see
 /* It's safe to pass -s always, even if -g is not used.  Those options are
    handled by both Sun as and GNU as.  */
 #define ASM_SPEC_BASE \
-"%{v:-V} %{Qy:} %{!Qn:-Qy} %{Ym,*} -s %(asm_cpu)"
+"%{Qy:} %{!Qn:-Qy} %{Ym,*} -s %(asm_cpu)"
 
 #define ASM_PIC_SPEC " %{" FPIE_OR_FPIC_SPEC ":-K PIC}"
 
@@ -178,7 +177,7 @@ along with GCC; see the file COPYING3.  If not see
    compilers use values-Xc.o with either -Xc or (since Studio 12.6)
    -pedantic to select strictly conformant ISO C behaviour, otherwise
    values-Xa.o.  Since -pedantic is a diagnostic option only in GCC, we
-   need to specifiy the -std=c* options and -std=iso9899:199409.  We
+   need to specify the -std=c* options and -std=iso9899:199409.  We
    traditionally include -ansi, which affects C and C++, and also -std=c++*
    for consistency.
 
@@ -189,7 +188,7 @@ along with GCC; see the file COPYING3.  If not see
    values-xpg6.o to get C99 semantics.  Besides, most of the runtime
    libraries always require C99 semantics.
 
-   Since only one instance of _lib_version and __xpg[46] takes effekt (the
+   Since only one instance of _lib_version and __xpg[46] takes effect (the
    first in ld.so.1's search path), we only link the values-*.o files into
    executable programs.  */
 #undef STARTFILE_ARCH_SPEC
@@ -349,7 +348,7 @@ along with GCC; see the file COPYING3.  If not see
 
 /* Clear hardware capabilities, either explicitly or with OpenMP:
    #pragma openmp declare simd creates clones for SSE2, AVX, and AVX2.  */
-#ifdef HAVE_LD_CLEARCAP
+#if HAVE_SOLARIS_LD
 #define LINK_CLEARCAP_SPEC " %{mclear-hwcap|fopenmp*:-M %sclearcap.map}"
 #else
 #define LINK_CLEARCAP_SPEC ""
@@ -447,9 +446,14 @@ along with GCC; see the file COPYING3.  If not see
 #undef TARGET_ASM_ASSEMBLE_VISIBILITY
 #define TARGET_ASM_ASSEMBLE_VISIBILITY solaris_assemble_visibility
 
-#define AS_NEEDS_DASH_FOR_PIPED_INPUT
+/* Handle gcc -v/-w options.  There's no point including -I: while as accepts
+   it, it's only useful in combination with -P which invokes cpp.  Instead, gas
+   uses -I for the .include directive, but as doesn't understand that.  */
+#define ASM_V_SPEC "%{v:-V} %{w:-n}"
 
+#define AS_NEEDS_DASH_FOR_PIPED_INPUT
 #endif
+
 /* Solaris has an implementation of __enable_execute_stack.  */
 #define HAVE_ENABLE_EXECUTE_STACK
 

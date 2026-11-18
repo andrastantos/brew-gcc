@@ -55,13 +55,11 @@
 #			$default_gnu_indirect_function is set to
 #			"no" except for targets which are known to be OK.
 #
-#  gas_flag		One of yes, no or "" depending on whether GNU as was
-#			explicitly requested, explicitly not requested or
-#			unspecified.
-#
-#  gnu_ld_flag		One of yes, no or "" depending on whether GNU ld was
-#			explicitly requested, explicitly not requested or
-#			unspecified.
+#  default_md_generator_partitions
+#			The default partition counts for genemit, genrecog,
+#			and genattrtab.  Set this to N to use the same count
+#			for all three generators, or to E:R:A to set each
+#			count separately.
 
 # This file sets the following shell variables for use by the
 # autoconf-generated configure script:
@@ -179,9 +177,6 @@
 #
 #  thread_file		Set to control which thread package to use.
 #
-#  gas			Set to yes or no depending on whether the target
-#			system normally uses GNU as.
-#
 #  configure_default_options
 #			Set to an initializer for configure_default_options
 #			in configargs.h, based on --with-cpu et cetera.
@@ -200,9 +195,6 @@
 
 # The following variables are used in each case-construct to build up the
 # outgoing variables:
-#
-#  gnu_ld		Set to yes or no depending on whether the target
-#			system normally uses GNU ld.
 #
 #  target_has_targetcm	Set to yes or no depending on whether the target
 #			has its own definition of targetcm.
@@ -252,12 +244,9 @@ target_cpu_default=
 gdb_needs_out_file_path=
 # Set this to control which thread package will be used.
 thread_file=
-# Reinitialize these from the flag values every loop pass, since some
-# configure entries modify them.
-gas="$gas_flag"
-gnu_ld="$gnu_ld_flag"
 default_use_cxa_atexit=no
 default_gnu_indirect_function=no
+default_md_generator_partitions=10
 target_gtfiles=
 need_64bit_isa=
 native_system_header_dir=/usr/include
@@ -283,22 +272,13 @@ esac
 # Obsolete configurations.
 case ${target} in
      ia64*-*-hpux* | ia64*-*-*vms* | ia64*-*-elf*	\
-   | m32c*-*-* | epiphany*-*-* | rl78*-*-*		\
+   | epiphany*-*-* | rl78*-*-*		\
  )
     if test "x$enable_obsolete" != xyes; then
       echo "*** Configuration ${target} is obsolete." >&2
       echo "*** Specify --enable-obsolete to build it anyway." >&2
       echo "*** Support will be REMOVED in the next major release of GCC," >&2
       echo "*** unless a maintainer comes forward." >&2
-      exit 1
-    fi;;
-esac
-
-case ${target} in
-  s390-*)
-    if test "x$enable_obsolete" != xyes; then
-      echo "*** Configuration ${target} is deprecated and will be removed." >&2
-      echo "*** Specify --enable-obsolete to build it anyway." >&2
       exit 1
     fi;;
 esac
@@ -328,6 +308,7 @@ case ${target}${target_min} in
  | pdp11-*-bsd				\
  | powerpc*-*-linux*paired*		\
  | powerpc*-*-*spe*			\
+ | s390-*-*				\
  | sparc-hal-solaris2*			\
  | spu*-*-*				\
  | thumb-*-*				\
@@ -359,19 +340,49 @@ tm_p_file=
 cpu_type=`echo ${target} | sed 's/-.*$//'`
 cpu_is_64bit=
 case ${target} in
-m32c*-*-*)
-        cpu_type=m32c
-	tmake_file=m32c/t-m32c
-	target_has_targetm_common=no
-        ;;
 aarch64*-*-*)
 	cpu_type=aarch64
-	extra_headers="arm_fp16.h arm_neon.h arm_bf16.h arm_acle.h arm_sve.h arm_sme.h arm_neon_sve_bridge.h arm_private_fp8.h arm_private_neon_types.h"
+	default_md_generator_partitions=6:6:1
+	extra_headers="${extra_headers} arm_fp16.h"
+	extra_headers="${extra_headers} arm_neon.h"
+	extra_headers="${extra_headers} arm_bf16.h"
+	extra_headers="${extra_headers} arm_acle.h"
+	extra_headers="${extra_headers} arm_sve.h"
+	extra_headers="${extra_headers} arm_sme.h"
+	extra_headers="${extra_headers} arm_neon_sve_bridge.h"
+	extra_headers="${extra_headers} arm_private_fp8.h"
+	extra_headers="${extra_headers} arm_private_neon_types.h"
+
 	c_target_objs="aarch64-c.o"
 	cxx_target_objs="aarch64-c.o"
 	d_target_objs="aarch64-d.o"
-	extra_objs="aarch64-builtins.o aarch-common.o aarch64-elf-metadata.o aarch64-sve-builtins.o aarch64-sve-builtins-shapes.o aarch64-sve-builtins-base.o aarch64-sve-builtins-sve2.o aarch64-sve-builtins-sme.o cortex-a57-fma-steering.o aarch64-speculation.o aarch-bti-insert.o aarch64-early-ra.o aarch64-ldp-fusion.o aarch64-sched-dispatch.o aarch64-json-tunings-printer.o aarch64-json-tunings-parser.o aarch64-narrow-gp-writes.o"
-	target_gtfiles="\$(srcdir)/config/aarch64/aarch64-protos.h \$(srcdir)/config/aarch64/aarch64-builtins.h \$(srcdir)/config/aarch64/aarch64-builtins.cc \$(srcdir)/config/aarch64/aarch64-sve-builtins.h \$(srcdir)/config/aarch64/aarch64-sve-builtins.cc"
+
+	extra_objs="${extra_objs} aarch64-builtins.o"
+	extra_objs="${extra_objs} aarch-common.o"
+	extra_objs="${extra_objs} aarch64-elf-metadata.o"
+	extra_objs="${extra_objs} aarch64-acle-builtins.o"
+	extra_objs="${extra_objs} aarch64-sve-builtins-shapes.o"
+	extra_objs="${extra_objs} aarch64-sve-builtins-base.o"
+	extra_objs="${extra_objs} aarch64-sve-builtins-sve2.o"
+	extra_objs="${extra_objs} aarch64-sve-builtins-sme.o"
+	extra_objs="${extra_objs} cortex-a57-fma-steering.o"
+	extra_objs="${extra_objs} aarch64-speculation.o"
+	extra_objs="${extra_objs} aarch-bti-insert.o"
+	extra_objs="${extra_objs} aarch64-early-ra.o"
+	extra_objs="${extra_objs} aarch64-ldp-fusion.o"
+	extra_objs="${extra_objs} aarch64-sched-dispatch.o"
+	extra_objs="${extra_objs} aarch64-json-tunings-printer.o"
+	extra_objs="${extra_objs} aarch64-json-tunings-parser.o"
+	extra_objs="${extra_objs} aarch64-narrow-gp-writes.o"
+	extra_objs="${extra_objs} aarch64-neon-builtins-base.o"
+	extra_objs="${extra_objs} aarch64-neon-builtins-shapes.o"
+
+	target_gtfiles="${target_gtfiles} \$(srcdir)/config/aarch64/aarch64-protos.h"
+	target_gtfiles="${target_gtfiles} \$(srcdir)/config/aarch64/aarch64-builtins.h"
+	target_gtfiles="${target_gtfiles} \$(srcdir)/config/aarch64/aarch64-builtins.cc"
+	target_gtfiles="${target_gtfiles} \$(srcdir)/config/aarch64/aarch64-acle-builtins.h"
+	target_gtfiles="${target_gtfiles} \$(srcdir)/config/aarch64/aarch64-acle-builtins.cc"
+
 	target_has_targetm_common=yes
 	;;
 alpha*-*-*)
@@ -401,7 +412,7 @@ arm*-*-*)
 	cxx_target_objs="arm-c.o"
 	d_target_objs="arm-d.o"
 	extra_options="${extra_options} arm/arm-tables.opt"
-	target_gtfiles="\$(srcdir)/config/arm/arm-builtins.cc \$(srcdir)/config/arm/arm-mve-builtins.h \$(srcdir)/config/arm/arm-mve-builtins.cc"
+	target_gtfiles="\$(srcdir)/config/arm/arm-builtins.cc \$(srcdir)/config/arm/arm-builtins.h \$(srcdir)/config/arm/arm-mve-builtins.h \$(srcdir)/config/arm/arm-mve-builtins.cc"
 	;;
 avr-*-*)
 	cpu_type=avr
@@ -435,6 +446,7 @@ fido-*-*)
         ;;
 i[34567]86-*-* | x86_64-*-*)
 	cpu_type=i386
+	default_md_generator_partitions=6:6:1
 	c_target_objs="i386-c.o"
 	cxx_target_objs="i386-c.o"
 	d_target_objs="i386-d.o"
@@ -478,9 +490,9 @@ i[34567]86-*-* | x86_64-*-*)
 		       avx10_2mediaintrin.h avx10_2convertintrin.h
 		       avx10_2bf16intrin.h avx10_2satcvtintrin.h
 		       avx10_2minmaxintrin.h avx10_2copyintrin.h
-		       amxavx512intrin.h amxtf32intrin.h amxfp8intrin.h
-		       movrsintrin.h amxmovrsintrin.h avx512bmmintrin.h
-		       avx512bmmvlintrin.h"
+		       amxavx512intrin.h amxfp8intrin.h movrsintrin.h
+		       amxmovrsintrin.h avx512bmmintrin.h avx512bmmvlintrin.h
+		       avx10v2auxintrin.h avx10v1auxintrin.h acev1intrin.h"
 	;;
 ia64-*-*)
 	extra_headers=ia64intrin.h
@@ -558,7 +570,7 @@ powerpc*-*-*)
 	extra_headers="${extra_headers} ppu_intrinsics.h spu2vmx.h vec_types.h si2vmx.h"
 	extra_headers="${extra_headers} amo.h"
 	case x$with_cpu in
-	    xpowerpc64|xdefault64|x6[23]0|x970|xG5|xpower[3456789]|xpower1[01]|xpower6x|xrs64a|xcell|xa2|xe500mc64|xe5500|xe6500)
+	    xpowerpc64|xdefault64|x6[23]0|x970|xG5|xpower[3456789]|xpower1[01]|xfuture|xpower6x|xrs64a|xcell|xa2|xe500mc64|xe5500|xe6500)
 		cpu_is_64bit=yes
 		;;
 	esac
@@ -574,10 +586,10 @@ riscv*)
 	cpu_type=riscv
 	extra_objs="riscv-builtins.o riscv-c.o riscv-sr.o riscv-shorten-memrefs.o riscv-selftests.o riscv-string.o"
 	extra_objs="${extra_objs} riscv-v.o riscv-vsetvl.o riscv-vector-costs.o riscv-avlprop.o riscv-vect-permconst.o"
-	extra_objs="${extra_objs} riscv-vector-builtins.o riscv-vector-builtins-shapes.o riscv-vector-builtins-bases.o sifive-vector-builtins-bases.o andes-vector-builtins-bases.o"
-	extra_objs="${extra_objs} thead.o riscv-target-attr.o riscv-zicfilp.o riscv-bclr-lowest-set-bit.o riscv-opt-popretz.o"
+	extra_objs="${extra_objs} riscv-vector-builtins.o riscv-vector-builtins-shapes.o riscv-vector-builtins-bases.o sifive-vector-builtins-bases.o andes-vector-builtins-bases.o xuantie-vector-builtins-bases.o"
+	extra_objs="${extra_objs} thead.o riscv-target-attr.o riscv-zicfilp.o riscv-bclr-lowest-set-bit.o riscv-opt-popretz.o riscv-fusion.o"
 	d_target_objs="riscv-d.o"
-	extra_headers="riscv_vector.h riscv_crypto.h riscv_bitmanip.h riscv_th_vector.h sifive_vector.h andes_vector.h"
+	extra_headers="riscv_vector.h riscv_crypto.h riscv_bitmanip.h riscv_th_vector.h sifive_vector.h andes_vector.h xuantie_vector.h"
 	target_gtfiles="$target_gtfiles \$(srcdir)/config/riscv/riscv-vector-builtins.cc"
 	target_gtfiles="$target_gtfiles \$(srcdir)/config/riscv/riscv-vector-builtins.h"
 	extra_options="${extra_options} riscv/riscv-ext.opt"
@@ -596,7 +608,7 @@ sparc*-*-*)
 	d_target_objs="sparc-d.o"
 	extra_headers="visintrin.h"
 	;;
-s390*-*-*)
+s390x-*-*)
 	cpu_type=s390
 	d_target_objs="s390-d.o"
 	extra_options="${extra_options} fused-madd.opt"
@@ -771,7 +783,7 @@ sapphirerapids alderlake rocketlake eden-x2 nano nano-1000 nano-2000 nano-3000 \
 nano-x2 eden-x4 nano-x4 lujiazui yongfeng shijidadao x86-64 x86-64-v2 \
 x86-64-v3 x86-64-v4 sierraforest graniterapids graniterapids-d grandridge \
 arrowlake arrowlake-s clearwaterforest pantherlake diamondrapids novalake \
-native"
+c86-4g-m4 c86-4g-m6 c86-4g-m7 c86-4g-m8 native"
 
 # Additional x86 processors supported by --with-cpu=.  Each processor
 # MUST be separated by exactly one space.
@@ -858,8 +870,6 @@ case ${target} in
   esac
   ;;
 *-*-dragonfly*)
-  gas=yes
-  gnu_ld=yes
   tmake_file="t-slibgcc"
   case ${enable_threads} in
     "" | yes | posix)
@@ -898,8 +908,6 @@ case ${target} in
   # The machine-specific section should not tamper with this
   # ordering but may order all other entries of tm_file as it
   # pleases around the provided core setting.
-  gas=yes
-  gnu_ld=yes
   fbsd_major=`echo ${target} | sed -e 's/.*freebsd//g' | sed -e 's/\..*//g'`
   if test "$fbsd_major" = ""; then
     echo "Specify the major version number of the targeted FreeBSD release"
@@ -943,8 +951,6 @@ case ${target} in
   ;;
 *-*-linux* | frv-*-*linux* | *-*-kfreebsd*-gnu | *-*-gnu* | *-*-kopensolaris*-gnu | *-*-uclinuxfdpiceabi)
   extra_options="$extra_options gnu-user.opt"
-  gas=yes
-  gnu_ld=yes
   case ${enable_threads} in
     "" | yes | posix) thread_file='posix' ;;
   esac
@@ -1032,8 +1038,6 @@ case ${target} in
   tmake_file="t-netbsd t-slibgcc"
   extra_objs="${extra_objs} netbsd.o"
   d_target_objs="${d_target_objs} netbsd-d.o"
-  gas=yes
-  gnu_ld=yes
   use_gcc_stdint=wrap
   case ${enable_threads} in
     "" | yes | posix) thread_file='posix' ;;
@@ -1067,8 +1071,6 @@ case ${target} in
   target_has_targetrustm=yes
   ;;
 *-*-phoenix*)
-  gas=yes
-  gnu_ld=yes
   default_use_cxa_atexit=yes
   ;;
 *-*-rtems*)
@@ -1135,7 +1137,7 @@ case ${target} in
   fortran_target_objs="vms-f.o"
   use_gcc_stdint=provide
   tm_file="${tm_file} vms/vms-stdint.h"
-  if test x$gnu_ld != xyes; then
+  if test x$ld_flavor != xgnu; then
     # Build wrappers for native case.
     extra_programs="ld\$(exeext) ar\$(exeext)"
     tmake_file="$tmake_file vms/t-vmsnative"
@@ -1327,6 +1329,15 @@ aarch64*-*-gnu*)
 aarch64-*-mingw*)
 	tm_file="${tm_file} aarch64/aarch64-abi-ms.h"
 	tm_file="${tm_file} aarch64/aarch64-coff.h"
+	case ${enable_threads} in
+	  "" | yes | win32)
+	    thread_file='win32'
+	    ;;
+	  posix)
+	    thread_file='posix'
+	    tm_file="${tm_file} mingw/mingw-pthread.h"
+	    ;;
+	esac
 	tm_file="${tm_file} aarch64/cygming.h"
 	tm_file="${tm_file} mingw/mingw32.h"
 	tm_file="${tm_file} mingw/mingw-stdint.h"
@@ -1343,21 +1354,13 @@ aarch64-*-mingw*)
 	cxx_target_objs="${cxx_target_objs} msformat-c.o"
 	d_target_objs="${d_target_objs} winnt-d.o"
 	tmake_file="${tmake_file} mingw/t-cygming"
-	case ${enable_threads} in
-	  "" | yes | win32)
-	    thread_file='win32'
-	    ;;
-	  posix)
-	    thread_file='posix'
-	    ;;
-	esac
 	default_use_cxa_atexit=yes
 	use_gcc_stdint=wrap
 	user_headers_inc_next_post="${user_headers_inc_next_post} float.h"
 	tm_defines="${tm_defines} TARGET_AARCH64_MS_ABI=1"
 	;;
 aarch64*-wrs-vxworks*)
-        tm_file="${tm_file} elfos.h aarch64/aarch64-elf.h"
+        tm_file="${tm_file} elfos.h aarch64/aarch64-elf.h aarch64/aarch64-errata.h"
         tm_file="${tm_file} vx-common.h vxworks.h aarch64/aarch64-vxworks.h"
         tmake_file="${tmake_file} aarch64/t-aarch64 aarch64/t-aarch64-vxworks"
         ;;
@@ -1752,7 +1755,6 @@ bpf-*-*)
 cris-*-elf | cris-*-none)
 	tm_file="elfos.h newlib-stdint.h ${tm_file}"
 	tmake_file="cris/t-cris cris/t-elfmulti"
-	gas=yes
 	extra_options="${extra_options} cris/elf.opt"
 	use_gcc_stdint=wrap
 	;;
@@ -1853,8 +1855,6 @@ frv-*-*linux*)
 	tmake_file="${tmake_file} frv/t-frv frv/t-linux"
 	;;
 ft32-*-elf)
-	gas=yes
-	gnu_ld=yes
 	tm_file="elfos.h newlib-stdint.h ${tm_file}"
 	tmake_file="${tmake_file} ft32/t-ft32"
 	;;
@@ -1881,14 +1881,10 @@ amdgcn-*-amdhsa)
 	thread_file=gcn
 	;;
 moxie-*-elf)
-	gas=yes
-	gnu_ld=yes
 	tm_file="elfos.h newlib-stdint.h ${tm_file}"
 	tmake_file="${tmake_file} moxie/t-moxie"
 	;;
 moxie-*-uclinux*)
-	gas=yes
-	gnu_ld=yes
 	tm_file="elfos.h ${tm_file} gnu-user.h linux.h glibc-stdint.h moxie/uclinux.h"
 	tmake_file="${tmake_file} moxie/t-moxie"
 	;;
@@ -1897,8 +1893,6 @@ moxie-*-rtems*)
 	tm_file="moxie/moxie.h elfos.h moxie/rtems.h rtems.h newlib-stdint.h"
 	;;
 moxie-*-moxiebox*)
-	gas=yes
-	gnu_ld=yes
 	tm_file="${tm_file} elfos.h moxie/moxiebox.h newlib-stdint.h"
 	tmake_file="${tmake_file} moxie/t-moxiebox"
 	;;
@@ -1929,7 +1923,6 @@ hppa*64*-*-linux*)
 		 pa/pa64-linux.h"
 	tmake_file="${tmake_file} pa/t-pa pa/t-linux"
 	d_target_objs="${d_target_objs} pa-d.o"
-	gas=yes gnu_ld=yes
 	;;
 hppa*-*-linux*)
 	target_cpu_default="MASK_PA_11|MASK_NO_SPACE_REGS|MASK_CALLER_COPIES"
@@ -1945,8 +1938,6 @@ hppa*-*-openbsd*)
 	extra_options="${extra_options} openbsd.opt"
 	tmake_file="pa/t-pa"
 	d_target_objs="${d_target_objs} pa-d.o"
-	gas=yes
-	gnu_ld=yes
 	;;
 hppa*-*-netbsd*)
 	target_cpu_default="MASK_PA_11|MASK_NO_SPACE_REGS"
@@ -1958,10 +1949,6 @@ hppa*-*-netbsd*)
 	;;
 hppa*64*-*-hpux11*)
 	target_cpu_default="MASK_PA_11|MASK_PA_20"
-	if test x$gnu_ld = xyes
-	then
-		target_cpu_default="${target_cpu_default}|MASK_GNU_LD"
-	fi
 	tm_file="pa/pa64-start.h ${tm_file} elfos.h \
 		 pa/pa64-regs.h pa/pa-hpux.h pa/pa-hpux1010.h \
 		 pa/pa-hpux11.h"
@@ -1987,7 +1974,6 @@ hppa*64*-*-hpux11*)
 		thread_file=posix
 		;;
 	esac
-	gas=yes
 	case ${target} in
 	  *-*-hpux11.[01]*)
 		use_gcc_stdint=provide
@@ -2004,8 +1990,13 @@ i[34567]86-*-darwin1[89]* | i[34567]86-*-darwin2*)
 	;;
 i[34567]86-*-darwin*)
 	need_64bit_isa=yes
-	# Baseline choice for a machine that allows m64 support.
+	# Baseline choice for a machine that allows m64 support. This is the
+	# minimum arch that supported Darwin.
 	with_cpu=${with_cpu:-core2}
+	# Ensure that we actually set the capabilities (not just the tune)
+	# Note that 32b is handled specially in darwin.h because there is no
+	# GCC arch that matches.
+	with_arch_64=${with_arch_64:-core2}
 	tmake_file="${tmake_file} ${cpu_type}/t-darwin32-biarch t-slibgcc"
 	tm_file="${cpu_type}/darwin32-biarch.h ${tm_file} "
 	;;
@@ -2014,10 +2005,13 @@ x86_64-*-darwin1[89]* | x86_64-*-darwin2*)
 	tm_defines="${tm_defines} TARGET_64BIT_DEFAULT=(OPTION_MASK_ISA_64BIT|OPTION_MASK_ABI_64)"
 	tm_defines="${tm_defines} TARGET_BI_ARCH=0"
 	with_cpu=${with_cpu:-core2}
+	# TODO: bump this for OS versions that require haswell.
+	with_arch=${with_arch:-core2}
 	tmake_file="${tmake_file} t-slibgcc"
 	;;
 x86_64-*-darwin*)
 	with_cpu=${with_cpu:-core2}
+	with_arch_64=${with_arch_64:-core2}
 	tmake_file="${tmake_file} ${cpu_type}/t-darwin64-biarch t-slibgcc"
 	tm_file="${cpu_type}/darwin64-biarch.h ${tm_file} "
 	;;
@@ -2066,15 +2060,11 @@ i[34567]86-*-openbsd*)
 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h"
 	tm_file="${tm_file} openbsd.h openbsd-stdint.h openbsd-libpthread.h i386/openbsdelf.h"
 	extra_options="${extra_options} openbsd.opt"
-	gas=yes
-	gnu_ld=yes
 	;;
 x86_64-*-openbsd*)
 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h"
 	tm_file="${tm_file} openbsd.h openbsd-stdint.h openbsd-libpthread.h i386/x86-64.h i386/openbsdelf.h"
 	extra_options="${extra_options} openbsd.opt"
-	gas=yes
-	gnu_ld=yes
 	;;
 i[34567]86-*-linux* | i[34567]86-*-kfreebsd*-gnu | i[34567]86-*-gnu* | i[34567]86-*-kopensolaris*-gnu)
 			# Intel 80386's running GNU/*
@@ -2180,8 +2170,6 @@ i[34567]86-pc-msdosdjgpp*)
 	tm_file="${tm_file} i386/unix.h i386/bsd.h i386/gas.h i386/djgpp.h i386/djgpp-stdint.h"
 	native_system_header_dir=/dev/env/DJDIR/include
 	extra_options="${extra_options} i386/djgpp.opt"
-	gnu_ld=yes
-	gas=yes
 	use_gcc_stdint=wrap
 	;;
 i[34567]86-*-lynxos*)
@@ -2190,14 +2178,10 @@ i[34567]86-*-lynxos*)
 	tmake_file="${tmake_file} t-lynx"
 	extra_options="${extra_options} lynx.opt"
 	thread_file=lynx
-	gnu_ld=yes
-	gas=yes
 	;;
 i[34567]86-*-nto-qnx*)
 	tm_file="${tm_file} i386/att.h tm-dwarf2.h elfos.h i386/unix.h i386/nto.h"
 	extra_options="${extra_options} i386/nto.opt"
-	gnu_ld=yes
-	gas=yes
 	;;
 i[34567]86-*-rtems*)
 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h i386/i386elf.h i386/rtemself.h rtems.h newlib-stdint.h"
@@ -2308,7 +2292,7 @@ i[34567]86-*-mingw* | x86_64-*-mingw*)
 			;;
 	esac
 	if test x$enable_threads = xposix ; then
-		tm_file="${tm_file} i386/mingw-pthread.h"
+		tm_file="${tm_file} mingw/mingw-pthread.h"
 	fi
 	if test x$enable_threads = xmcf ; then
 		tm_file="${tm_file} i386/mingw-mcfgthread.h"
@@ -2368,8 +2352,6 @@ i[34567]86-*-mingw* | x86_64-*-mingw*)
 	extra_objs="${extra_objs} winnt.o winnt-stubs.o winnt-dll.o"
 	c_target_objs="${c_target_objs} msformat-c.o"
 	cxx_target_objs="${cxx_target_objs} winnt-cxx.o msformat-c.o"
-	gas=yes
-	gnu_ld=yes
 	default_use_cxa_atexit=yes
 	use_gcc_stdint=wrap
 	case ${enable_threads} in
@@ -2380,13 +2362,6 @@ i[34567]86-*-mingw* | x86_64-*-mingw*)
 	    thread_file='posix'
 	    ;;
 	esac
-	case ${target} in
- 		*mingw32crt*)
- 			tm_file="${tm_file} i386/crtdll.h"
- 			;;
-		*mingw32msv* | *mingw*)
-			;;
-	esac
 	;;
 x86_64-*-fuchsia*)
 	tmake_file="${tmake_file} i386/t-x86_64-elf"
@@ -2396,14 +2371,8 @@ ia64*-*-elf*)
 	tm_file="${tm_file} elfos.h newlib-stdint.h ia64/sysv4.h ia64/elf.h"
 	tmake_file="ia64/t-ia64"
 	target_cpu_default="0"
-	if test x$gas = xyes
-	then
-		target_cpu_default="${target_cpu_default}|MASK_GNU_AS"
-	fi
-	if test x$gnu_ld = xyes
-	then
-		target_cpu_default="${target_cpu_default}|MASK_GNU_LD"
-	fi
+	target_cpu_default="${target_cpu_default}|MASK_GNU_AS"
+	target_cpu_default="${target_cpu_default}|MASK_GNU_LD"
 	;;
 ia64*-*-freebsd*)
 	tm_file="${tm_file} elfos.h ${fbsd_tm_file} ia64/sysv4.h ia64/freebsd.h"
@@ -2443,10 +2412,7 @@ ia64-hp-*vms*)
 	tm_file="${tm_file} elfos.h ia64/sysv4.h vms/vms.h ia64/vms.h"
 	tmake_file="${tmake_file} ia64/t-ia64"
 	target_cpu_default="0"
-	if test x$gas = xyes
-	then
-		target_cpu_default="${target_cpu_default}|MASK_GNU_AS"
-	fi
+	target_cpu_default="${target_cpu_default}|MASK_GNU_AS"
 	extra_options="${extra_options} ia64/vms.opt"
 	;;
 iq2000*-*-elf*)
@@ -2599,8 +2565,6 @@ riscv*-*-linux*)
 	esac
 	tmake_file="${tmake_file} riscv/t-riscv riscv/t-linux"
 	tm_defines="${tm_defines} TARGET_DEFAULT_ASYNC_UNWIND_TABLES=1"
-	gnu_ld=yes
-	gas=yes
 	case $target in
 	riscv32be-*|riscv64be-*)
 		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=1"
@@ -2614,8 +2578,6 @@ riscv*-*-linux*)
 riscv*-*-gnu*)
 	tm_file="elfos.h gnu-user.h gnu.h glibc-stdint.h ${tm_file} riscv/gnu.h"
 	tmake_file="${tmake_file} riscv/t-riscv"
-	gnu_ld=yes
-	gas=yes
 	case $target in
 	riscv32be-*|riscv64be-*)
 		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=1"
@@ -2642,8 +2604,6 @@ riscv*-*-elf* | riscv*-*-rtems*)
 	  fi
 	esac
 	tmake_file="${tmake_file} riscv/t-riscv"
-	gnu_ld=yes
-	gas=yes
 	case $target in
 	riscv32be-*|riscv64be-*)
 		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=1"
@@ -2656,8 +2616,6 @@ riscv*-*-elf* | riscv*-*-rtems*)
 riscv*-*-freebsd*)
 	tm_file="${tm_file} elfos.h ${fbsd_tm_file} riscv/freebsd.h"
 	tmake_file="${tmake_file} riscv/t-riscv"
-	gnu_ld=yes
-	gas=yes
 	case $target in
 	riscv32be-*|riscv64be-*)
 		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=1"
@@ -2677,8 +2635,6 @@ loongarch*-*-linux*)
 	tm_file="${tm_file} loongarch/gnu-user.h loongarch/linux.h loongarch/loongarch-driver.h"
 	extra_options="${extra_options} linux-android.opt"
 	tmake_file="${tmake_file} loongarch/t-multilib loongarch/t-linux"
-	gnu_ld=yes
-	gas=yes
 
 	# Force .init_array support.  The configure script cannot always
 	# automatically detect that GAS supports it, yet we require it.
@@ -2689,8 +2645,6 @@ loongarch*-*-elf*)
 	tm_file="elfos.h newlib-stdint.h ${tm_file}"
 	tm_file="${tm_file} loongarch/elf.h loongarch/loongarch-driver.h"
 	tmake_file="${tmake_file} loongarch/t-multilib"
-	gnu_ld=yes
-	gas=yes
 
 	# For .init_array support.  The configure script cannot always
 	# automatically detect that GAS supports it, yet we require it.
@@ -2709,8 +2663,6 @@ mips*-img-linux*)
 	tm_defines="${tm_defines} MIPS_ISA_DEFAULT=MIPS_ISA_MIPS32R6 MIPS_ABI_DEFAULT=ABI_32"
 	with_arch_32="mips32r6"
 	with_arch_64="mips64r6"
-	gnu_ld=yes
-	gas=yes
 	;;
 mips*-mti-linux*)
 	tm_file="elfos.h gnu-user.h linux.h linux-android.h glibc-stdint.h ${tm_file} mips/gnu-user.h mips/linux.h mips/linux-common.h mips/mti-linux.h"
@@ -2719,8 +2671,6 @@ mips*-mti-linux*)
 	tm_defines="${tm_defines} MIPS_ISA_DEFAULT=MIPS_ISA_MIPS32R2 MIPS_ABI_DEFAULT=ABI_32"
 	with_arch_32="mips32r2"
 	with_arch_64="mips64r2"
-	gnu_ld=yes
-	gas=yes
 	;;
 mips*-*-linux*)				# Linux MIPS, either endian.
 	tm_file="elfos.h gnu-user.h linux.h linux-android.h glibc-stdint.h ${tm_file} mips/gnu-user.h mips/linux.h mips/linux-common.h"
@@ -3259,8 +3209,6 @@ powerpc-*-lynxos*)
 	tmake_file="t-lynx rs6000/t-lynx"
 	extra_options="${extra_options} rs6000/sysv4.opt lynx.opt"
 	thread_file=lynx
-	gnu_ld=yes
-	gas=yes
 	;;
 powerpcle-*-elf*)
 	tm_file="${tm_file} elfos.h gnu-user.h freebsd-spec.h newlib-stdint.h rs6000/sysv4.h rs6000/sysv4le.h"
@@ -3340,17 +3288,8 @@ rx-*-linux*)
 	tm_file="elfos.h linux.h glibc-stdint.h rx/linux.h ../../libgcc/config/rx/rx-abi.h"
 	tmake_file="${tmake_file} rx/t-linux"
 	;;
-s390-*-linux*)
-	tm_file="s390/s390.h elfos.h gnu-user.h linux.h glibc-stdint.h s390/linux.h"
-	c_target_objs="${c_target_objs} s390-c.o"
-	cxx_target_objs="${cxx_target_objs} s390-c.o"
-	if test x$enable_targets = xall; then
-		tmake_file="${tmake_file} s390/t-linux64"
-	fi
-	tmake_file="${tmake_file} s390/t-s390"
-	;;
 s390x-*-linux*)
-	tm_file="s390/s390x.h s390/s390.h elfos.h gnu-user.h linux.h glibc-stdint.h s390/linux.h"
+	tm_file="s390/s390.h elfos.h gnu-user.h linux.h glibc-stdint.h s390/linux.h"
 	tm_p_file="linux-protos.h s390/s390-protos.h"
 	c_target_objs="${c_target_objs} s390-c.o"
 	cxx_target_objs="${cxx_target_objs} s390-c.o"
@@ -3360,7 +3299,7 @@ s390x-*-linux*)
 	tmake_file="${tmake_file} s390/t-linux64 s390/t-s390"
 	;;
 s390x-ibm-tpf*)
-	tm_file="s390/s390x.h s390/s390.h elfos.h glibc-stdint.h s390/tpf.h"
+	tm_file="s390/s390.h elfos.h glibc-stdint.h s390/tpf.h"
 	tm_p_file=s390/s390-protos.h
 	c_target_objs="${c_target_objs} s390-c.o"
 	cxx_target_objs="${cxx_target_objs} s390-c.o"
@@ -3601,6 +3540,7 @@ sparc64-*-linux*)
 	tm_file="sparc/biarch64.h ${tm_file} elfos.h sparc/sysv4.h gnu-user.h linux.h glibc-stdint.h sparc/default64.h sparc/linux64.h sparc/tso.h"
 	extra_options="${extra_options} sparc/long-double-switch.opt"
 	tmake_file="${tmake_file} sparc/t-sparc sparc/t-linux64"
+	tm_defines="${tm_defines} TARGET_DEFAULT_ASYNC_UNWIND_TABLES=1"
 	;;
 sparc64-*-freebsd*|ultrasparc-*-freebsd*)
 	tm_file="${tm_file} ${fbsd_tm_file} elfos.h sparc/sysv4.h sparc/freebsd.h"
@@ -3624,7 +3564,6 @@ sparc64-*-openbsd*)
 	tm_file="${tm_file} openbsd.h openbsd-stdint.h openbsd-libpthread.h sparc/openbsd64.h"
 	extra_options="${extra_options} openbsd.opt"
 	extra_options="${extra_options}"
-	gas=yes gnu_ld=yes
 	with_cpu=ultrasparc
 	tmake_file="${tmake_file} sparc/t-sparc"
 	;;
@@ -3716,14 +3655,8 @@ xtensa*-*-uclinux*)
 	;;
 am33_2.0-*-linux*)
 	tm_file="mn10300/mn10300.h elfos.h gnu-user.h linux.h glibc-stdint.h mn10300/linux.h"
-	gas=yes gnu_ld=yes
 	use_collect2=no
 	;;
-m32c-*-elf*)
-	tm_file="elfos.h newlib-stdint.h ${tm_file}"
-	c_target_objs="m32c-pragma.o"
-	cxx_target_objs="m32c-pragma.o"
- 	;;
 *)
 	echo "*** Configuration ${target} not supported" 1>&2
 	exit 1
@@ -3756,6 +3689,10 @@ case "${target}_${with_picolibc}" in
 *-picolibc-*|*_yes)
 	default_use_cxa_atexit=yes
 	use_gcc_stdint=none
+	tmake_file="${tmake_file} t-picolibc"
+	c_target_objs="${c_target_objs} picolibc-c.o"
+	cxx_target_objs="${cxx_target_objs} picolibc-c.o"
+	target_has_targetcm=yes
 	# add newlib-stdint.h if not already present
 	case "${tm_file}" in
 	*newlib-stdint.h*)
@@ -4021,6 +3958,22 @@ case ${target} in
 	cpu=pentiumpro
 	arch_without_sse2=yes
 	;;
+      c86_4g_m4-*)
+	arch=c86-4g-m4
+	cpu=c86-4g-m4
+	;;
+      c86_4g_m6-*)
+	arch=c86-4g-m6
+	cpu=c86-4g-m6
+	;;
+      c86_4g_m7-*)
+	arch=c86-4g-m7
+	cpu=c86-4g-m7
+	;;
+      c86_4g_m8-*)
+	arch=c86-4g-m8
+	cpu=c86-4g-m8
+	;;
       *)
 	arch=pentiumpro
 	cpu=generic
@@ -4122,6 +4075,22 @@ case ${target} in
       corei7-*)
 	arch=corei7
 	cpu=corei7
+	;;
+      c86_4g_m4-*)
+	arch=c86-4g-m4
+	cpu=c86-4g-m4
+	;;
+      c86_4g_m6-*)
+	arch=c86-4g-m6
+	cpu=c86-4g-m6
+	;;
+      c86_4g_m7-*)
+	arch=c86-4g-m7
+	cpu=c86-4g-m7
+	;;
+      c86_4g_m8-*)
+	arch=c86-4g-m8
+	cpu=c86-4g-m8
 	;;
       *)
 	arch=x86-64
@@ -5861,7 +5830,7 @@ case "${target}" in
 				eval "with_$which=405"
 				;;
 			"" | common | native \
-			| power[3456789] | power1[01] | power5+ | power6x \
+			| power[3456789] | power1[01] | future | power5+ | power6x \
 			| powerpc | powerpc64 | powerpc64le \
 			| rs64 \
 			| 401 | 403 | 405 | 405fp | 440 | 440fp | 464 | 464fp \
@@ -5928,7 +5897,7 @@ case "${target}" in
 		fi
 		;;
 
-	s390*-*-*)
+	s390x-*-*)
 		supported_defaults="arch mode tune"
 
 		for which in arch tune; do
@@ -5945,8 +5914,12 @@ case "${target}" in
 		done
 
 		case ${with_mode} in
-		"" | esa | zarch)
+		"" | zarch)
 			# OK
+			;;
+		esa)
+			echo "ESA/390 mode is no longer supported." 1>&2
+			exit 1
 			;;
 		*)
 			echo "Unknown architecture mode used in --with-mode=$with_mode." 1>&2
@@ -6087,10 +6060,7 @@ case ${target} in
 		;;
 
 	hppa*-*-*)
-		if test x$gas = xyes
-		then
-			target_cpu_default2="MASK_GAS"
-		fi
+		target_cpu_default2="MASK_GAS"
 		;;
 
 	fido*-*-* | m68k*-*-*)
@@ -6133,10 +6103,7 @@ case ${target} in
 		;;
 
 	mips*-*-*)
-		if test x$gnu_ld = xyes
-		then
-			target_cpu_default2="MASK_SPLIT_ADDRESSES"
-		fi
+	        target_cpu_default2="MASK_SPLIT_ADDRESSES"
 		case ${target} in
 			mips*el-*-*)
 				tm_defines="TARGET_ENDIAN_DEFAULT=0 $tm_defines"

@@ -2880,7 +2880,7 @@ mn10300_split_cbranch (machine_mode cmp_mode, rtx cmp_op, rtx label_ref)
 /* A helper function for matching parallels that set the flags.  */
 
 bool
-mn10300_match_ccmode (rtx insn, machine_mode cc_mode)
+mn10300_match_ccmode (rtx_insn *insn, machine_mode cc_mode)
 {
   rtx op1, flags;
   machine_mode flags_mode;
@@ -3193,7 +3193,7 @@ mn10300_insert_setlb_lcc (rtx_insn *label, rtx_insn *branch)
   else
     lcc = gen_Lcc (comparison, label);
 
-  rtx_insn *jump = emit_jump_insn_before (lcc, branch);
+  rtx_jump_insn *jump = emit_jump_insn_before (lcc, branch);
   mark_jump_label (XVECEXP (lcc, 0, 0), jump, 0);
   JUMP_LABEL (jump) = label;
   DUMP ("Replacing branch insn...", branch);

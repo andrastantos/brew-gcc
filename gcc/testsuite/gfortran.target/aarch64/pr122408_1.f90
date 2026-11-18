@@ -1,5 +1,5 @@
 ! { dg-do compile }
-! { dg-additional-options "-O2 -march=armv8.3-a" }
+! { dg-additional-options "-O2 -march=armv8.3-a -fno-signed-zeros" }
 
 subroutine c_add_ab(n, a, c, b)         ! C += A * B
   use iso_fortran_env, only: real64
@@ -57,5 +57,10 @@ subroutine c_sub_a_conjb(n, a, c, b)    ! C -= A * conj(B)
   end do
 end subroutine c_sub_a_conjb
 
+! The accumulations form .COMPLEX_FMA (#0 + #90) and .COMPLEX_FMS (#180 +
+! #270), with the conjugate forms swapping the #90 and #270 rotations.  PR122408
+! is about detecting the conjugate form, so the #90 and #270 counts guard it.
 ! { dg-final { scan-assembler-times {fcmla\s+v[0-9]+.2d, v[0-9]+.2d, v[0-9]+.2d, #0} 2 } }
+! { dg-final { scan-assembler-times {fcmla\s+v[0-9]+.2d, v[0-9]+.2d, v[0-9]+.2d, #90} 2 } }
 ! { dg-final { scan-assembler-times {fcmla\s+v[0-9]+.2d, v[0-9]+.2d, v[0-9]+.2d, #270} 2 } }
+! { dg-final { scan-assembler-times {fcmla\s+v[0-9]+.2d, v[0-9]+.2d, v[0-9]+.2d, #180} 2 } }

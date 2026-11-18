@@ -236,6 +236,11 @@ static bool m68k_use_lra_p (void);
 #undef TARGET_ASM_CAN_OUTPUT_MI_THUNK
 #define TARGET_ASM_CAN_OUTPUT_MI_THUNK hook_bool_const_tree_hwi_hwi_const_tree_true
 
+/* The relative dispatch forms find the table at a fixed offset from the PC
+   of the jump.  */
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P hook_bool_rtx_insn_false
+
 #undef TARGET_ASM_FILE_START_APP_OFF
 #define TARGET_ASM_FILE_START_APP_OFF true
 
@@ -2521,7 +2526,7 @@ m68k_unwrap_symbol (rtx orig, bool unwrap_reloc32_p)
   return m68k_unwrap_symbol_1 (orig, unwrap_reloc32_p, NULL);
 }
 
-/* Adjust decorated address operand before outputing assembler for it.  */
+/* Adjust decorated address operand before outputting assembler for it.  */
 
 static void
 m68k_adjust_decorated_operand (rtx op)
@@ -2580,7 +2585,7 @@ m68k_adjust_decorated_operand (rtx op)
     }
 }
 
-/* Prescan insn before outputing assembler for it.  */
+/* Prescan insn before outputting assembler for it.  */
 
 void
 m68k_final_prescan_insn (rtx_insn *insn ATTRIBUTE_UNUSED,
@@ -2753,7 +2758,7 @@ m68k_call_tls_get_addr (rtx x, rtx eqv, enum m68k_reloc reloc)
   x = m68k_wrap_symbol (x, reloc, m68k_get_gp (), NULL_RTX);
 
   /* __tls_get_addr() is not a libcall, but emitting a libcall_value
-     is the simpliest way of generating a call.  The difference between
+     is the simplest way of generating a call.  The difference between
      __tls_get_addr() and libcall is that the result is returned in D0
      instead of A0.  To workaround this, we use m68k_libcall_value_in_a0_p
      which temporarily switches returning the result to A0.  */
@@ -2800,7 +2805,7 @@ m68k_call_m68k_read_tp (void)
   start_sequence ();
 
   /* __m68k_read_tp() is not a libcall, but emitting a libcall_value
-     is the simpliest way of generating a call.  The difference between
+     is the simplest way of generating a call.  The difference between
      __m68k_read_tp() and libcall is that the result is returned in D0
      instead of A0.  To workaround this, we use m68k_libcall_value_in_a0_p
      which temporarily switches returning the result to A0.  */
@@ -5307,7 +5312,7 @@ print_operand_address (FILE *file, rtx addr)
       labelno = (address.offset
 		 && !address.base
 		 && GET_CODE (address.offset) == LABEL_REF
-		 ? CODE_LABEL_NUMBER (XEXP (address.offset, 0))
+		 ? CODE_LABEL_NUMBER (label_ref_label (address.offset))
 		 : -1);
       if (MOTOROLA)
 	{
@@ -6359,7 +6364,7 @@ m68k_sched_attr_size (rtx_insn *insn)
 }
 
 /* Return operand X or Y (depending on OPX_P) of INSN,
-   if it is a MEM, or NULL overwise.  */
+   if it is a MEM, or NULL otherwise.  */
 static enum attr_op_type
 sched_get_opxy_mem_type (rtx_insn *insn, bool opx_p)
 {
@@ -6594,8 +6599,7 @@ m68k_sched_issue_rate (void)
       return 2;
 
     default:
-      gcc_unreachable ();
-      return 0;
+      return 1;
     }
 }
 
@@ -6631,7 +6635,7 @@ struct _sched_ib
   } records;
 
   /* An insn that reserves (marks empty) one word in the instruction buffer.  */
-  rtx insn;
+  rtx_insn *insn;
 };
 
 static struct _sched_ib sched_ib;
@@ -6900,7 +6904,7 @@ m68k_sched_dfa_post_advance_cycle (void)
 }
 
 /* Return X or Y (depending on OPX_P) operand of INSN,
-   if it is an integer register, or NULL overwise.  */
+   if it is an integer register, or NULL otherwise.  */
 static rtx
 sched_get_reg_operand (rtx_insn *insn, bool opx_p)
 {
@@ -6949,7 +6953,7 @@ sched_mem_operand_p (rtx_insn *insn, bool opx_p)
 }
 
 /* Return X or Y (depending on OPX_P) operand of INSN,
-   if it is a MEM, or NULL overwise.  */
+   if it is a MEM, or NULL otherwise.  */
 static rtx
 sched_get_mem_operand (rtx_insn *insn, bool must_read_p, bool must_write_p)
 {
@@ -7004,7 +7008,7 @@ m68k_sched_address_bypass_p (rtx_insn *pro, rtx_insn *con)
 
 /* Helper function for m68k_sched_indexed_address_bypass_p.
    if PRO modifies register used as index in CON,
-   return scale of indexed memory access in CON.  Return zero overwise.  */
+   return scale of indexed memory access in CON.  Return zero otherwise.  */
 static int
 sched_get_indexed_address_scale (rtx_insn *pro, rtx_insn *con)
 {
@@ -7113,14 +7117,14 @@ m68k_return_pops_args (tree fundecl, tree funtype, poly_int64 size)
 static void
 m68k_conditional_register_usage (void)
 {
-  int i;
+  unsigned int i;
   HARD_REG_SET x;
   if (!TARGET_HARD_FLOAT)
     {
       x = reg_class_contents[FP_REGS];
-      for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-        if (TEST_HARD_REG_BIT (x, i))
-	  fixed_regs[i] = call_used_regs[i] = 1;
+      hard_reg_set_iterator hrsi;
+      EXECUTE_IF_SET_IN_HARD_REG_SET (x, 0, i, hrsi)
+	fixed_regs[i] = call_used_regs[i] = 1;
     }
   if (flag_pic)
     fixed_regs[PIC_REG] = call_used_regs[PIC_REG] = 1;
@@ -7211,37 +7215,38 @@ m68k_zero_call_used_regs (HARD_REG_SET need_zeroed_hardregs)
 {
   rtx zero_fpreg = NULL_RTX;
 
-  for (unsigned int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-    if (TEST_HARD_REG_BIT (need_zeroed_hardregs, regno))
-      {
-	rtx reg, zero;
+  hard_reg_set_iterator hrsi;
+  unsigned int regno;
+  EXECUTE_IF_SET_IN_HARD_REG_SET (need_zeroed_hardregs, 0, regno, hrsi)
+    {
+      rtx reg, zero;
 
-	if (INT_REGNO_P (regno))
-	  {
-	    reg = regno_reg_rtx[regno];
-	    zero = CONST0_RTX (SImode);
-	  }
-	else if (FP_REGNO_P (regno))
-	  {
-	    reg = gen_raw_REG (SFmode, regno);
-	    if (zero_fpreg == NULL_RTX)
-	      {
-		/* On the 040/060 clearing an FP reg loads a large
-		   immediate.  To reduce code size use the first
-		   cleared FP reg to clear remaining ones.  Don't do
-		   this on cores which use fmovecr.  */
-		zero = CONST0_RTX (SFmode);
-		if (TUNE_68040_60)
-		  zero_fpreg = reg;
-	      }
-	    else
-	      zero = zero_fpreg;
-	  }
-	else
-	  gcc_unreachable ();
+      if (INT_REGNO_P (regno))
+	{
+	  reg = regno_reg_rtx[regno];
+	  zero = CONST0_RTX (SImode);
+	}
+      else if (FP_REGNO_P (regno))
+	{
+	  reg = gen_raw_REG (SFmode, regno);
+	  if (zero_fpreg == NULL_RTX)
+	    {
+	      /* On the 040/060 clearing an FP reg loads a large
+		 immediate.  To reduce code size use the first
+		 cleared FP reg to clear remaining ones.  Don't do
+		 this on cores which use fmovecr.  */
+	      zero = CONST0_RTX (SFmode);
+	      if (TUNE_68040_60)
+		zero_fpreg = reg;
+	    }
+	  else
+	    zero = zero_fpreg;
+	}
+      else
+	gcc_unreachable ();
 
-	emit_move_insn (reg, zero);
-      }
+      emit_move_insn (reg, zero);
+    }
 
   return need_zeroed_hardregs;
 }

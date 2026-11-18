@@ -38,6 +38,7 @@
 #include "optional.h"
 #include "rust-unicode.h"
 #include "rust-punycode.h"
+#include "rust-builtins.h"
 
 #include <mpfr.h>
 // note: header files must be in this order or else forward declarations don't
@@ -136,6 +137,8 @@ grs_langhook_init_options_struct (struct gcc_options *opts)
 
   /* We need to warn on unused variables by default */
   opts->x_warn_unused_variable = 1;
+  /* Experimental lints under -frust-unused-check-2.0 warn by default */
+  opts->x_warn_unused = 1;
   /* For const variables too */
   opts->x_warn_unused_const_variable = 1;
   /* And finally unused result for #[must_use] */
@@ -224,10 +227,11 @@ grs_langhook_type_for_mode (machine_mode mode, int unsignedp)
   return NULL;
 }
 
-// Record a builtin function. We just ignore builtin functions.
+// Record a builtin function.
 static tree
-grs_langhook_builtin_function (tree decl ATTRIBUTE_UNUSED)
+grs_langhook_builtin_function (tree decl)
 {
+  Rust::Compile::BuiltinsContext::get ().register_builtin (decl);
   return decl;
 }
 
@@ -251,7 +255,7 @@ grs_langhook_global_bindings_p (void)
 static tree
 grs_langhook_pushdecl (tree decl ATTRIBUTE_UNUSED)
 {
-  rust_unreachable ();
+  // rust_unreachable ();
   return NULL;
 }
 

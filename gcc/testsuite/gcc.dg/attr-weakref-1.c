@@ -16,7 +16,7 @@
 // { dg-additional-options "-Wl,-undefined,dynamic_lookup" { target *-*-darwin* } }
 // { dg-additional-options "-Wl,-flat_namespace" { target *-*-darwin[89]* } }
 // One subtest doesn't assemble with the Solaris/x86 as (PR ipa/70582)
-// { dg-additional-options "-DSOLARIS_X86_AS" { target { *86*-*-solaris2* && { ! gas } } } }
+// { dg-additional-options "-DSOLARIS_X86_AS" { target { x86 && solaris_as } } }
 // { dg-additional-sources "attr-weakref-1a.c" }
 
 // Copyright 2005 Free Software Foundation, Inc.

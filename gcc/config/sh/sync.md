@@ -42,7 +42,7 @@
 ;; Hardware Atomics (-matomic-model=hard-llcs; SH4A only)
 ;;
 ;; Hardware atomics implement all atomic operations using the 'movli.l' and
-;; 'movco.l' instructions that are availble on SH4A.  On multi-core hardware
+;; 'movco.l' instructions that are available on SH4A.  On multi-core hardware
 ;; configurations hardware atomics is the only safe mode.
 ;; However, it can also be safely used on single-core configurations.
 ;; Since these instructions operate on SImode memory only, QImode and HImode
@@ -196,7 +196,7 @@
   [(plus "add") (minus "sub") (ior "or") (xor "xor") (and "and")])
 
 ;;------------------------------------------------------------------------------
-;; comapre and swap
+;; compare and swap
 
 ;; Only the hard_llcs SImode patterns can use an I08 for the comparison
 ;; or for the new swapped in value.
@@ -217,7 +217,9 @@
 	    (and (match_test "mode == SImode")
 		 (and (match_test "!TARGET_ATOMIC_HARD_LLCS")
 		      (match_test "!TARGET_SH4A || TARGET_ATOMIC_STRICT"))
-		 (match_operand 0 "short_displacement_mem_operand")))))
+		 (match_operand 0 "short_displacement_mem_operand")))
+       (ior (match_test "!TARGET_ATOMIC_HARD_LLCS")
+	    (not (match_operand 0 "gbr_address_mem")))))
 
 (define_expand "atomic_compare_and_swap<mode>"
   [(match_operand:SI 0 "arith_reg_dest")		;; bool success output
@@ -715,7 +717,9 @@
 				   && TARGET_SH4A && !TARGET_ATOMIC_STRICT
 				   && mode != SImode"))
 		 (ior (match_operand 0 "short_displacement_mem_operand")
-		      (match_operand 0 "gbr_address_mem"))))))
+		      (match_operand 0 "gbr_address_mem"))))
+       (ior (match_test "!TARGET_ATOMIC_HARD_LLCS")
+            (not (match_operand 0 "gbr_address_mem")))))
 
 (define_expand "atomic_fetch_<fetchop_name><mode>"
   [(set (match_operand:QIHISI 0 "arith_reg_dest")

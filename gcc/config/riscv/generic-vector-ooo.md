@@ -17,19 +17,22 @@
 ;; <http://www.gnu.org/licenses/>.
 ;; Vector load/store
 
-;; The insn reservations include "generic" as we won't have a in-order
+;; The insn reservations include "generic" as we won't have an in-order
 ;; generic definition for vector instructions.
 
 (define_automaton "vector_ooo")
 
 ;; Separate issue queue for vector instructions.
-(define_cpu_unit "vxu_ooo_issue" "vector_ooo")
+(define_cpu_unit "vxu_issue0,vxu_issue1" "vector_ooo")
+(define_reservation "vxu_ooo_issue" "vxu_issue0|vxu_issue1")
 
 ;; Vector execution unit.
-(define_cpu_unit "vxu_ooo_alu" "vector_ooo")
+(define_cpu_unit "vxu_alu0,vxu_alu1" "vector_ooo")
+(define_reservation "vxu_ooo_alu" "vxu_alu0|vxu_alu1")
 
 ;; Vector subunit that does mult/div/sqrt.
-(define_cpu_unit "vxu_ooo_multicycle" "vector_ooo")
+(define_cpu_unit "vxu_multicycle0,vxu_multicycle1" "vector_ooo")
+(define_reservation "vxu_ooo_multicycle" "vxu_multicycle0|vxu_multicycle1")
 
 (define_insn_reservation "vec_load" 6
   (and (eq_attr "tune" "generic_ooo,generic")
@@ -68,7 +71,7 @@
 (define_insn_reservation "vec_imul" 4
   (and (eq_attr "tune" "generic_ooo,generic")
        (eq_attr "type" "vimul,viwmul,vimuladd,viwmuladd,vsmul,vclmul,vclmulh,\
-                        vghsh,vgmul"))
+			  vghsh,vgmul,xt_vgmulxor,xt_vcrcfold,vidota,vibdota"))
   "vxu_ooo_issue,vxu_ooo_alu")
 
 ;; Vector float addition.
@@ -80,7 +83,8 @@
 ;; Vector float multiplication and FMA.
 (define_insn_reservation "vec_fmul" 6
   (and (eq_attr "tune" "generic_ooo,generic")
-       (eq_attr "type" "vfmul,vfwmul,vfmuladd,vfwmuladd,vfwmaccbf16,sf_vqmacc,sf_vfnrclip"))
+       (eq_attr "type" "vfmul,vfwmul,vfmuladd,vfwmuladd,vfwmaccbf16,\
+			  vfdota,vfbdota,sf_vqmacc,sf_vfnrclip"))
   "vxu_ooo_issue,vxu_ooo_alu")
 
 ;; Vector crypto, assumed to be a generic operation for now.
@@ -111,7 +115,8 @@
 (define_insn_reservation "vec_perm" 3
   (and (eq_attr "tune" "generic_ooo,generic")
        (eq_attr "type" "vimerge,vfmerge,vslideup,vslidedown,vislide1up,\
-                        vislide1down,vfslide1up,vfslide1down,vgather,vcompress"))
+                        vislide1down,vfslide1up,vfslide1down,vgather,vcompress,\
+                        xt_vile,xt_vilo"))
   "vxu_ooo_issue,vxu_ooo_alu")
 
 ;; Vector reduction.

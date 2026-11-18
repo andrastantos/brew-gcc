@@ -97,7 +97,8 @@ supports_vectype_p (const function_group_info &group, unsigned int vec_type_idx)
       || *group.shape == shapes::fault_load
       || *group.shape == shapes::seg_loadstore
       || *group.shape == shapes::seg_indexed_loadstore
-      || *group.shape == shapes::seg_fault_load)
+      || *group.shape == shapes::seg_fault_load
+      || *group.shape == shapes::zvdota)
     return true;
   return false;
 }
@@ -105,7 +106,7 @@ supports_vectype_p (const function_group_info &group, unsigned int vec_type_idx)
 /* Add a function instance for every operand && predicate && args
    combination in GROUP.  Take the function base name from GROUP && operand
    suffix from operand_suffixes && mode suffix from type_suffixes && predication
-   suffix from predication_suffixes. Use apply_predication to add in
+   suffix from predication_suffixes.  Use apply_predication to add in
    the predicate.  */
 static void
 build_all (function_builder &b, const function_group_info &group)
@@ -124,7 +125,7 @@ build_all (function_builder &b, const function_group_info &group)
 /* Declare the function shape NAME, pointing it to an instance
    of class <NAME>_def.  */
 #define SHAPE(DEF, VAR) \
-  static CONSTEXPR const DEF##_def VAR##_obj; \
+  static constexpr const DEF##_def VAR##_obj; \
   namespace shapes { const function_shape *const VAR = &VAR##_obj; }
 
 #define BASE_NAME_MAX_LEN 20
@@ -424,6 +425,43 @@ struct alu_def : public build_base
   }
 };
 
+/* zvdota_def class.  */
+struct zvdota_def : public build_base
+{
+  char *get_name (function_builder &b, const function_instance &instance,
+		  bool overloaded_p) const override
+  {
+    /* Return nullptr if it can not be overloaded.  */
+    if (overloaded_p && !instance.base->can_be_overloaded_p (instance.pred))
+      return nullptr;
+
+    b.append_base_name (instance.base_name);
+
+    if (!overloaded_p)
+      {
+	vector_type_index vs2_type_idx
+	  = instance.op_info->args[1].get_function_type_index (
+	    instance.type.index);
+	vector_type_index vs1_type_idx
+	  = instance.op_info->args[2].get_function_type_index (
+	    instance.type.index);
+	vector_type_index ret_type_idx
+	  = instance.op_info->ret.get_function_type_index (
+	    instance.type.index);
+
+	b.append_name (operand_suffixes[instance.op_info->op]);
+	b.append_name (type_suffixes[vs2_type_idx].vector);
+	b.append_name (type_suffixes[vs1_type_idx].vector);
+	b.append_name (type_suffixes[ret_type_idx].vector);
+      }
+
+    if (overloaded_p && instance.pred == PRED_TYPE_m)
+      return b.finish_name ();
+    b.append_name (predication_suffixes[instance.pred]);
+    return b.finish_name ();
+  }
+};
+
 /* The base class for frm build.  */
 struct build_frm_base : public build_base
 {
@@ -496,6 +534,27 @@ struct alu_frm_def : public build_frm_base
     return b.finish_name ();
   }
 };
+
+/* Add the ci immediate check to an existing intrinsic shape.  */
+template<typename BASE>
+struct bdot_def : public BASE
+{
+  bool check (function_checker &c) const override
+  {
+    bool ok = BASE::check (c);
+    /* CI follows the accumulator and two sources, and precedes the
+       optional rounding mode and VL.  An invalid call can be shorter.  */
+    unsigned int trailing_args = c.base->has_rounding_mode_operand_p () ? 2 : 1;
+    if (c.arg_num () >= 4 + trailing_args)
+      ok &= c.require_zvbdota_ci (c.arg_num () - trailing_args - 1);
+
+    return ok;
+  }
+};
+
+using zvbdota_def = bdot_def<zvdota_def>;
+using vfbdota_def = bdot_def<alu_def>;
+using vfbdota_frm_def = bdot_def<alu_frm_def>;
 
 /* widen_alu_frm_def class.  */
 struct widen_alu_frm_def : public build_frm_base
@@ -608,7 +667,7 @@ struct reduc_alu_frm_def : public build_frm_base
   }
 };
 
-/* widen_alu_def class. Handle vwadd/vwsub. Unlike
+/* widen_alu_def class.  Handle vwadd/vwsub.  Unlike
    vadd.vx/vadd.vv/vwmul.vv/vwmul.vx, vwadd.vv/vwadd.vx/vwadd.wv/vwadd.wx has
    'OP' suffix in overloaded API.  */
 struct widen_alu_def : public build_base
@@ -634,7 +693,7 @@ struct widen_alu_def : public build_base
   }
 };
 
-/* no_mask_policy_def class. Such instructions belong to this class
+/* no_mask_policy_def class.  Such instructions belong to this class
    doesn't need mask policy.  */
 struct no_mask_policy_def : public build_base
 {
@@ -655,7 +714,7 @@ struct no_mask_policy_def : public build_base
   }
 };
 
-/* return_mask_def class. Such instructions belong to this class
+/* return_mask_def class.  Such instructions belong to this class
    is returning mask value.  */
 struct return_mask_def : public build_base
 {
@@ -683,7 +742,7 @@ struct return_mask_def : public build_base
   }
 };
 
-/* narrow_alu_def class. Handle narrowing instructions like vnsrl.wv.  */
+/* narrow_alu_def class.  Handle narrowing instructions like vnsrl.wv.  */
 struct narrow_alu_def : public build_base
 {
   char *get_name (function_builder &b, const function_instance &instance,
@@ -726,7 +785,7 @@ struct narrow_alu_def : public build_base
   }
 };
 
-/* move_def class. Handle vmv.v.v/vmv.v.x.  */
+/* move_def class.  Handle vmv.v.v/vmv.v.x.  */
 struct move_def : public build_base
 {
   char *get_name (function_builder &b, const function_instance &instance,
@@ -1320,7 +1379,7 @@ struct sf_vqmacc_def : public build_base
   }
 };
 
-/* sf_vfnrclip_def class. Handle instructions like vfnrclip.  */
+/* sf_vfnrclip_def class.  Handle instructions like vfnrclip.  */
 struct sf_vfnrclip_def : public build_base
 {
   char *get_name (function_builder &b, const function_instance &instance,
@@ -1427,6 +1486,10 @@ SHAPE(seg_fault_load, seg_fault_load)
 SHAPE(crypto_vv, crypto_vv)
 SHAPE(crypto_vi, crypto_vi)
 SHAPE(crypto_vv_no_op_type, crypto_vv_no_op_type)
+SHAPE (zvdota, zvdota)
+SHAPE (zvbdota, zvbdota)
+SHAPE (vfbdota, vfbdota)
+SHAPE (vfbdota_frm, vfbdota_frm)
 SHAPE (sf_vqmacc, sf_vqmacc)
 SHAPE (sf_vfnrclip, sf_vfnrclip)
 SHAPE(sf_vcix_se, sf_vcix_se)

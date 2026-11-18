@@ -113,7 +113,7 @@ public:
 
   /* File name of source code.  */
   const char *m_filename;
-  /* Funcation name.  */
+  /* Function name.  */
   const char *m_function;
   /* Line number in source code.  */
   int m_line;
@@ -259,7 +259,7 @@ public:
   size_t m_instances;
 };
 
-/* Memory usage pair that connectes memory usage and number
+/* Memory usage pair that connects memory usage and number
    of allocated bytes.  */
 template <class T>
 class mem_usage_pair
@@ -276,7 +276,23 @@ public:
 template <class T>
 class mem_alloc_description
 {
+
+  /* Constructor is private to enforce singleton.  */
+  mem_alloc_description ();
+
+  /* Destruction is not allowed, since we might be tracking
+     static objects with undefined destruction order.  */
+  ~mem_alloc_description () = delete;
+
 public:
+
+  template<mem_alloc_origin>
+  static auto &instance ()
+  {
+    static const auto self = new mem_alloc_description;
+    return *self;
+  }
+
   struct mem_location_hash : nofree_ptr_hash <mem_location>
   {
     static hashval_t
@@ -306,11 +322,6 @@ public:
   typedef hash_map <const void *, std::pair<T *, size_t> > reverse_object_map_t;
   typedef std::pair <mem_location *, T *> mem_list_t;
 
-  /* Default contructor.  */
-  mem_alloc_description ();
-
-  /* Default destructor.  */
-  ~mem_alloc_description ();
 
   /* Returns true if instance PTR is registered by the memory description.  */
   bool contains_descriptor_for_instance (const void *ptr);
@@ -323,7 +334,7 @@ public:
   T *register_descriptor (const void *ptr, mem_location *location);
 
   /* Register memory allocation descriptor for container PTR.  ORIGIN identifies
-     type of container and GGC identifes if the allocation is handled in GGC
+     type of container and GGC identifies if the allocation is handled in GGC
      memory.  Each location is identified by file NAME, LINE in source code and
      FUNCTION name.  */
   T *register_descriptor (const void *ptr, mem_alloc_origin origin,
@@ -371,11 +382,6 @@ public:
   reverse_object_map_t *m_reverse_object_map;
 
 private:
-  /* Register overhead of SIZE bytes of ORIGIN type. PTR pointer is allocated
-     in NAME source file, at LINE in source code, in FUNCTION.  */
-  T *register_overhead (size_t size, mem_alloc_origin origin, const char *name,
-			int line, const char *function, const void *ptr);
-
   /* Allocation location coupled to the description.  */
   mem_location m_location;
 
@@ -434,7 +440,7 @@ mem_alloc_description<T>::register_descriptor (const void *ptr,
 }
 
 /* Register memory allocation descriptor for container PTR.  ORIGIN identifies
-   type of container and GGC identifes if the allocation is handled in GGC
+   type of container and GGC identifies if the allocation is handled in GGC
    memory.  Each location is identified by file NAME, LINE in source code and
    FUNCTION name.  */
 
@@ -486,24 +492,6 @@ mem_alloc_description<T>::register_object_overhead (T *usage, size_t size,
   m_reverse_object_map->put (ptr, std::pair<T *, size_t> (usage, size));
 }
 
-/* Register overhead of SIZE bytes of ORIGIN type. PTR pointer is allocated
-   in NAME source file, at LINE in source code, in FUNCTION.  */
-
-template <class T>
-inline T*
-mem_alloc_description<T>::register_overhead (size_t size,
-					     mem_alloc_origin origin,
-					     const char *filename,
-					     int line,
-					     const char *function,
-					     const void *ptr)
-{
-  T *usage = register_descriptor (ptr, origin, filename, line, function);
-  usage->register_overhead (size);
-
-  return usage;
-}
-
 /* Release PTR pointer of SIZE bytes.  */
 
 template <class T>
@@ -535,6 +523,8 @@ inline void
 mem_alloc_description<T>::release_object_overhead (void *ptr)
 {
   std::pair <T *, size_t> *entry = m_reverse_object_map->get (ptr);
+  if (!entry)
+    return;
   entry->first->release_overhead (entry->second);
   m_reverse_object_map->remove (ptr);
 }
@@ -550,33 +540,17 @@ mem_alloc_description<T>::unregister_descriptor (void *ptr)
   m_reverse_map->remove (ptr);
 }
 
-/* Default contructor.  */
+/* Default constructor.  */
 
 template <class T>
 inline
 mem_alloc_description<T>::mem_alloc_description ()
 {
+  /* Note it is important to pass false for the 4th argument (GATHER_MEM_STATS)
+     to avoid infinite recursion in instance ().  */
   m_map = new mem_map_t (13, false, false, false);
   m_reverse_map = new reverse_mem_map_t (13, false, false, false);
   m_reverse_object_map = new reverse_object_map_t (13, false, false, false);
-}
-
-/* Default destructor.  */
-
-template <class T>
-inline
-mem_alloc_description<T>::~mem_alloc_description ()
-{
-  for (typename mem_map_t::iterator it = m_map->begin (); it != m_map->end ();
-       ++it)
-    {
-      delete (*it).first;
-      delete (*it).second;
-    }
-
-  delete m_map;
-  delete m_reverse_map;
-  delete m_reverse_object_map;
 }
 
 /* Get all tracked instances registered by the description. Items are filtered

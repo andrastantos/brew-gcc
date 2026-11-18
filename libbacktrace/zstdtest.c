@@ -182,7 +182,50 @@ static const struct zstd_test tests[] =
      "\xb4\x21\x45\x3b\x10\xe4\x7b\x99\x4d\x8a\x36\x64\x5c\x77\x08\x02"
      "\xcb\xe0\xce"),
     179,
-  }
+  },
+  {
+    "window-descriptor",
+    "hello, world\n",
+    0,
+    ("\x28\xb5\x2f\xfd"
+     "\x04" /* no Single_Segment_flag; Frame_Content_Size_flag = 0 */
+     "\x00" /* Window_Descriptor */
+     "\x69\x00\x00"
+     "\x68\x65\x6c\x6c\x6f\x2c\x20\x77\x6f\x72\x6c\x64\x0a"
+     "\x4c\x1f\xf9\xf1"),
+    26,
+  },
+  {
+    "window-descriptor-and-content-size",
+    "hello, world\n",
+    0,
+    ("\x28\xb5\x2f\xfd"
+     "\x84" /* no Single_Segment_flag; Frame_Content_Size_flag = 2 */
+     "\x00" /* Window_Descriptor */
+     "\x0d\x00\x00\x00" /* Frame_Content_Size */
+     "\x69\x00\x00"
+     "\x68\x65\x6c\x6c\x6f\x2c\x20\x77\x6f\x72\x6c\x64\x0a"
+     "\x4c\x1f\xf9\xf1"),
+    30,
+  },
+  {
+    "rle-sequence-tables",
+    "AAAA",
+    0,
+    ("\x28\xb5\x2f\xfd"
+     "\x20" /* Single_Segment_flag; Frame_Content_Size_flag = 0 */
+     "\x04" /* Frame_Content_Size */
+     "\x45\x00\x00" /* Last_Block, Compressed_Block, size 8 */
+     "\x08" /* Raw_Literals_Block, Regenerated_Size 1 */
+     "A"
+     "\x01" /* Number_of_Sequences */
+     "\x54" /* RLE literals length, offset, and match length tables */
+     "\x01" /* literal length code: 1 */
+     "\x00" /* offset code: repeat offset 1 */
+     "\x00" /* match length code: 3 */
+     "\x80"), /* bitstream end marker */
+    17,
+  },
 };
 
 /* Test the hand coded samples.  */
@@ -217,7 +260,7 @@ test_samples (struct backtrace_state *state)
 				      error_callback_compress, NULL,
 				      uncompressed, uncompressed_len))
 	{
-	  fprintf (stderr, "test %s: uncompress failed\n", tests[i].name);
+	  fprintf (stderr, "FAIL: test %s: uncompress failed\n", tests[i].name);
 	  ++failures;
 	}
       else
@@ -227,7 +270,7 @@ test_samples (struct backtrace_state *state)
 	    {
 	      size_t j;
 
-	      fprintf (stderr, "test %s: uncompressed data mismatch\n",
+	      fprintf (stderr, "FAIL: test %s: uncompressed data mismatch\n",
 		       tests[i].name);
 	      for (j = 0; j < uncompressed_len; ++j)
 		if (tests[i].uncompressed[j] != uncompressed[j])
@@ -297,8 +340,8 @@ test_large (struct backtrace_state *state ATTRIBUTE_UNUSED)
   size_t orig_bufsize;
   size_t i;
   char *compressed_buf;
-  size_t compressed_bufsize;
   size_t compressed_size;
+  size_t chunk_size;
   unsigned char *uncompressed_buf;
   size_t r;
   clockid_t cid;
@@ -370,22 +413,39 @@ test_large (struct backtrace_state *state ATTRIBUTE_UNUSED)
       return;
     }
 
-  compressed_bufsize = ZSTD_compressBound (orig_bufsize);
-  compressed_buf = malloc (compressed_bufsize);
-  if (compressed_buf == NULL)
-    {
-      perror ("malloc");
-      goto fail;
-    }
+  /* Split the input into 100K chunks. This is to approximate the fact that lld
+     splits the input into 1M shards. */
 
-  r = ZSTD_compress (compressed_buf, compressed_bufsize,
-		     orig_buf, orig_bufsize, 3);
-  if (ZSTD_isError (r))
+  compressed_size = 0;
+  compressed_buf = NULL;
+  chunk_size = 100 << 10;
+  for (i = 0; i < orig_bufsize; i += chunk_size)
     {
-      fprintf (stderr, "zstd compress failed: %s\n", ZSTD_getErrorName (r));
-      goto fail;
+      size_t chunk_input_size;
+      size_t chunk_compressed_size;
+
+      chunk_input_size = orig_bufsize - i;
+      if (chunk_input_size > chunk_size)
+	chunk_input_size = chunk_size;
+
+      chunk_compressed_size = ZSTD_compressBound (chunk_input_size);
+      compressed_buf = realloc (compressed_buf, compressed_size + chunk_compressed_size);
+      if (compressed_buf == NULL)
+	{
+	  perror ("realloc");
+	  goto fail;
+	}
+
+      r = ZSTD_compress (compressed_buf + compressed_size,
+			 chunk_compressed_size,
+			 orig_buf + i, chunk_input_size, 3);
+      if (ZSTD_isError (r))
+	{
+	  fprintf (stderr, "zstd compress failed: %s\n", ZSTD_getErrorName (r));
+	  goto fail;
+	}
+      compressed_size += r;
     }
-  compressed_size = r;
 
   uncompressed_buf = malloc (orig_bufsize);
   if (uncompressed_buf == NULL)

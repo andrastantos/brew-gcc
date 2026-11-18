@@ -80,7 +80,7 @@ typedef struct cand *cand_t;
 typedef const struct cand *const_cand_t;
 
 /* Insn candidates for rematerialization.  The candidate insn should
-   have the following properies:
+   have the following properties:
    o no any memory (as access to memory is non-profitable) or
      div/mod operations (as they are usually more expensive than loads)
    o no INOUT regs (it means no non-paradoxical subreg of output reg)
@@ -131,7 +131,7 @@ public:
   /* Registers becoming dead in the BB.  */
   bitmap_head dead_regs;
   /* Cands present in the BB whose in/out regs are not changed after
-     the cands occurence and are not dead (except the reload
+     the cands occurrence and are not dead (except the reload
      regno).  */
   bitmap_head gen_cands;
   bitmap_head livein_cands; /* cands whose inputs live at the BB start.  */
@@ -634,10 +634,10 @@ set_bb_regs (basic_block bb, rtx_insn *insn)
       if (regno >= FIRST_PSEUDO_REGISTER && reg->subreg_p)
 	bitmap_set_bit (&subreg_regs, regno);
     }
-  if (CALL_P (insn))
+  if (auto call = dyn_cast<rtx_call_insn *> (insn))
     {
       /* Partially-clobbered registers might still be live.  */
-      HARD_REG_SET clobbers = insn_callee_abi (insn).full_reg_clobbers ();
+      HARD_REG_SET clobbers = insn_callee_abi (call).full_reg_clobbers ();
       bitmap_ior_into (&get_remat_bb_data (bb)->dead_regs,
 		       bitmap_view<HARD_REG_SET> (clobbers));
     }
@@ -697,7 +697,7 @@ reg_overlap_for_remat_p (lra_insn_reg *reg, rtx_insn *insn)
 	if (regno2 >= FIRST_PSEUDO_REGISTER)
 	  nregs2 = 1;
 	else
-	  nregs2 = hard_regno_nregs (regno2, reg->biggest_mode);
+	  nregs2 = hard_regno_nregs (regno2, reg2->biggest_mode);
 
 	if ((regno2 + nregs2 - 1 >= regno && regno2 < regno + nregs)
 	    || (regno + nregs - 1 >= regno2 && regno < regno2 + nregs2))
@@ -809,9 +809,9 @@ calculate_gen_cands (void)
 			}
 		    }
 
-	    if (CALL_P (insn))
+	    if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	      {
-		function_abi callee_abi = insn_callee_abi (insn);
+		function_abi callee_abi = insn_callee_abi (call);
 		EXECUTE_IF_SET_IN_BITMAP (gen_insns, 0, uid, bi)
 		  {
 		    rtx_insn *insn2 = lra_insn_recog_data[uid]->insn;
@@ -1073,11 +1073,17 @@ do_remat (void)
       CLEAR_HARD_REG_SET (live_hard_regs);
       EXECUTE_IF_SET_IN_BITMAP (df_get_live_in (bb), 0, regno, bi)
 	{
-	  int hard_regno = regno < FIRST_PSEUDO_REGISTER
-			   ? regno
-			   : reg_renumber[regno];
-	  if (hard_regno >= 0)
-	    SET_HARD_REG_BIT (live_hard_regs, hard_regno);
+	  int nregs = 1;
+	  int hard_regno = regno;
+	  if (regno >= FIRST_PSEUDO_REGISTER)
+	    {
+	      hard_regno = reg_renumber[regno];
+	      if (hard_regno < 0)
+		continue;
+	      nregs = hard_regno_nregs (hard_regno, PSEUDO_REGNO_MODE (regno));
+	    }
+	  for (int i = 0; i < nregs; i++)
+	    SET_HARD_REG_BIT (live_hard_regs, hard_regno + i);
 	}
       bitmap_and (avail_cands, &get_remat_bb_data (bb)->avin_cands,
 		  &get_remat_bb_data (bb)->livein_cands);
@@ -1217,9 +1223,9 @@ do_remat (void)
 		      bitmap_set_bit (&temp_bitmap, cand->index);
 		  }
 
-	  if (CALL_P (insn))
+	  if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	    {
-	      function_abi callee_abi = insn_callee_abi (insn);
+	      function_abi callee_abi = insn_callee_abi (call);
 	      EXECUTE_IF_SET_IN_BITMAP (avail_cands, 0, cid, bi)
 		{
 		  cand = all_cands[cid];

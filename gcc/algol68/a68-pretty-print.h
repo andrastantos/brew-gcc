@@ -129,11 +129,9 @@ struct a68_attr_format_token : public a68_format_token
 public:
   a68_attr_format_token (enum a68_attribute a)
   {
-    KEYWORD_T *nt = a68_find_keyword_from_attribute (A68 (top_keyword), a);
-    if (nt != NO_KEYWORD)
-      m_str = xstrdup (a68_strop_keyword (TEXT (nt)));
-    else
-      m_str = xstrdup ("keyword");
+    const char *attr_name = a68_attribute_name (a);
+    gcc_assert (attr_name != NULL);
+    m_str = xstrdup (attr_name);
   }
 };
 
@@ -225,14 +223,15 @@ public:
   a68_line_format_token (LINE_T *l, NODE_T *n)
   {
     gcc_assert (l != NO_LINE);
-    if (NUMBER (l) == 0)
+    const char *fname = FILENAME (l);
+    if (strcmp (fname, "prelude") == 0 || strcmp (fname, "postlude") == 0)
       m_str = xstrdup ("in standard environment");
-    else if (n != NO_NODE && NUMBER (l) == LINE_NUMBER (n))
+    else if (n != NO_NODE && LINE_NO (l) == LINE_NUMBER (n))
       m_str = xstrdup ("in this line");
     else
       {
 	m_str = (char *) xmalloc (18);
-	if (snprintf (m_str, 18, "in line %d", NUMBER (l)) < 0)
+	if (snprintf (m_str, 18, "in line %d", LINE_NO (l)) < 0)
 	  gcc_unreachable ();
       }
   }

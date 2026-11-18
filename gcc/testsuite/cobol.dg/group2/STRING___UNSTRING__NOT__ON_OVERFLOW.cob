@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/STRING___UNSTRING__NOT__ON_OVERFLOW.out" }
 
        identification division.

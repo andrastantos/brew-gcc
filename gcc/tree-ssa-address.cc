@@ -450,7 +450,6 @@ move_hint_to_base (tree type, struct mem_address *parts, tree base_hint,
 {
   unsigned i;
   tree val = NULL_TREE;
-  int qual;
 
   for (i = 0; i < addr->n; i++)
     {
@@ -469,7 +468,7 @@ move_hint_to_base (tree type, struct mem_address *parts, tree base_hint,
      to TYPE directly, as the back-end will assume registers of pointer
      type are aligned, and just the base itself may not actually be.
      We use void pointer to the type's address space instead.  */
-  qual = ENCODE_QUAL_ADDR_SPACE (TYPE_ADDR_SPACE (type));
+  qualifier_set qual {TYPE_UNQUALIFIED, TYPE_ADDR_SPACE (type)};
   type = build_qualified_type (void_type_node, qual);
   parts->base = fold_convert (build_pointer_type (type), val);
   aff_combination_remove_elt (addr, i);
@@ -546,10 +545,15 @@ add_to_parts (struct mem_address *parts, tree elt)
       return;
     }
 
-  /* Add ELT to base.  */
+  /* Add ELT to base.  As we have arbitrarily associated address parts
+     make sure to use unsigned arithmetic.  */
   type = TREE_TYPE (parts->base);
   if (POINTER_TYPE_P (type))
-    parts->base = fold_build_pointer_plus (parts->base, elt);
+    parts->base
+      = fold_convert (TREE_TYPE (parts->base),
+		      fold_build2 (PLUS_EXPR, sizetype,
+				   fold_convert (sizetype, parts->base),
+				   fold_convert (sizetype, elt)));
   else
     parts->base = fold_build2 (PLUS_EXPR, type, parts->base, elt);
 }
@@ -1021,23 +1025,24 @@ copy_ref_info (tree new_ref, tree old_ref)
      or decl base to the new one.  */
   if (new_ptr_base
       && TREE_CODE (new_ptr_base) == SSA_NAME
-      && !SSA_NAME_PTR_INFO (new_ptr_base))
+      && !ssa_name_pt_solution (new_ptr_base))
     {
       if ((TREE_CODE (base) == MEM_REF
 	   || TREE_CODE (base) == TARGET_MEM_REF)
 	  && TREE_CODE (TREE_OPERAND (base, 0)) == SSA_NAME
-	  && SSA_NAME_PTR_INFO (TREE_OPERAND (base, 0)))
+	  && ssa_name_pt_solution (TREE_OPERAND (base, 0)))
 	{
-	  duplicate_ssa_name_ptr_info
-	    (new_ptr_base, SSA_NAME_PTR_INFO (TREE_OPERAND (base, 0)));
+	  duplicate_ssa_name_pt_solution (new_ptr_base,
+					  TREE_OPERAND (base, 0));
 	  reset_flow_sensitive_info (new_ptr_base);
 	}
       else if (VAR_P (base)
 	       || TREE_CODE (base) == PARM_DECL
 	       || TREE_CODE (base) == RESULT_DECL)
 	{
-	  struct ptr_info_def *pi = get_ptr_info (new_ptr_base);
-	  pt_solution_set_var (&pi->pt, base);
+	  pt_solution pt;
+	  pt_solution_set_var (&pt, base);
+	  set_ssa_name_pt_solution (new_ptr_base, pt);
 	}
     }
 

@@ -5,7 +5,7 @@
 
 /* { dg-final { scan-assembler-not {\tptrue\tp[0-7]\.s} } } */
 /* { dg-final { scan-assembler-not {\tptrue\tp[0-7]\.d} } } */
-/* { dg-final { scan-assembler-times {\tptrue\tp[0-7]\.b} 12 } } */
+/* { dg-final { scan-assembler-times {\tptrue\tp[0-7]\.b} 15 } } */
 
 /* { dg-final { scan-assembler-times {\tld1w\tz[0-9]+\.d} 11 } } */
 /* { dg-final { scan-assembler-times {\tld1h\tz[0-9]+\.s} 11 } } */

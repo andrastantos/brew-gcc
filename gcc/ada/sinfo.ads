@@ -749,20 +749,6 @@ package Sinfo is
    --    how this field is used, as well as the description of the specific use
    --    for a particular node type.
 
-   --  Activation_Chain_Entity
-   --    This is used in tree nodes representing task activators (blocks,
-   --    subprogram bodies, package declarations, and task bodies). It is
-   --    initially Empty, and then gets set to point to the entity for the
-   --    declared Activation_Chain variable when the first task is declared.
-   --    When tasks are declared in the corresponding declarative region this
-   --    entity is located by name (its name is always _Chain) and the declared
-   --    tasks are added to the chain. Note that N_Extended_Return_Statement
-   --    also has this attribute, although it is not really a task activator:
-   --    this chain is only used to store the tasks temporarily, and is not
-   --    used for activating them. On successful completion of the return
-   --    statement, the tasks are moved to the caller's chain, and the caller
-   --    activates them.
-
    --  Acts_As_Spec
    --    A flag set in the N_Subprogram_Body node for a subprogram body which
    --    is acting as its own spec. In the case of a library-level subprogram
@@ -807,7 +793,7 @@ package Sinfo is
    --    Present on an N_Aspect_Specification node. For an aspect that applies
    --    to a type entity, indicates whether the specification appears on the
    --    partial view of a private type or extension. Undefined for aspects
-   --    that apply to other entities.
+   --    that apply to other entities. Used only by SPARK.
 
    --  Aspect_Rep_Item
    --    Present in N_Aspect_Specification nodes. Points to the corresponding
@@ -900,7 +886,7 @@ package Sinfo is
    --    additional cleanup actions carried over from the transient scope.
 
    --  Check_Address_Alignment
-   --    A flag present in N_Attribute_Definition clause for a 'Address
+   --    A flag present in N_Attribute_Definition_Clause for a 'Address
    --    attribute definition. This flag is set if a dynamic check should be
    --    generated at the freeze point for the entity to which this address
    --    clause applies. The reason that we need this flag is that we want to
@@ -1264,10 +1250,11 @@ package Sinfo is
    --    temporary for them.
 
    --  Expression_Copy
-   --    Present in N_Pragma_Argument_Association nodes. Contains a copy of the
-   --    original expression. This field is best used to store pragma-dependent
-   --    modifications performed on the original expression such as replacement
-   --    of the current type instance or substitutions of primitives.
+   --    Present in N_Pragma_Argument_Association and N_Aspect_Specification
+   --    nodes. Contains a copy of the original expression. This field is best
+   --    used to store pragma-dependent modifications performed on the original
+   --    expression such as replacement of the current type instance or
+   --    substitutions of primitives.
 
    --  File_Index
    --    Present in N_External_Initializer nodes. Contains a Source_File_Index
@@ -1522,10 +1509,6 @@ package Sinfo is
    --    expansion of an asynchronous entry call. Such a block needs cleanup
    --    handler to assure that the call is cancelled.
 
-   --  Is_Boolean_Aspect
-   --    Present in N_Aspect_Specification node. Set if the aspect is for a
-   --    boolean aspect (i.e. Aspect_Id is in Boolean_Aspect subtype).
-
    --  Is_Checked
    --    Present in N_Aspect_Specification and N_Pragma nodes. Set for an
    --    assertion aspect or pragma, or check pragma for an assertion, that
@@ -1665,6 +1648,7 @@ package Sinfo is
    --      Global
    --      Initial_Condition
    --      Initializes
+   --      Modifies
    --      Post
    --      Post_Class
    --      Postcondition
@@ -2265,9 +2249,17 @@ package Sinfo is
    --    scope all use this field to reference the corresponding scope entity.
    --    See Einfo for further details.
 
+   --  Scope_Link
+   --    Present in N_Expression_With_Actions nodes. References the internally
+   --    built scope created to provide proper visibility of the declare_items
+   --    to the expander.
+
    --  Selector_Name
-   --    Present in N_Expanded_Name N_Selected_Component,
-   --    N_Generic_Association, and N_Parameter_Association nodes.
+   --    Present in N_Expanded_Name and N_Selected_Component nodes, where it
+   --    references a name that denotes an entity declared in the prefix, as
+   --    well as in N_Generic_Association and N_Parameter_Association nodes,
+   --    where it references a name that denotes a formal parameter of the
+   --    generic unit or callable entity.
 
    --  Shift_Count_OK
    --    A flag present in shift nodes to indicate that the shift count is
@@ -5198,7 +5190,6 @@ package Sinfo is
       --  Identifier block direct name (set to Empty if not present)
       --  Declarations (set to No_List if no DECLARE part)
       --  Handled_Statement_Sequence
-      --  Activation_Chain_Entity
       --  Cleanup_Actions
       --  At_End_Proc (set to Empty if no clean up procedure)
       --  Exception_Junk
@@ -5497,7 +5488,6 @@ package Sinfo is
       --  Specification
       --  Declarations
       --  Handled_Statement_Sequence
-      --  Activation_Chain_Entity
       --  Corresponding_Spec
       --  At_End_Proc (set to Empty if no clean up procedure)
       --  Acts_As_Spec
@@ -5694,7 +5684,6 @@ package Sinfo is
       --  Specification
       --  Corresponding_Body
       --  Parent_Spec
-      --  Activation_Chain_Entity
 
       --------------------------------
       -- 7.1  Package Specification --
@@ -6033,7 +6022,6 @@ package Sinfo is
       --  Declarations
       --  Handled_Statement_Sequence
       --  Is_Task_Master
-      --  Activation_Chain_Entity
       --  Corresponding_Spec
       --  Was_Originally_Stub
 
@@ -6217,7 +6205,6 @@ package Sinfo is
       --  Entry_Body_Formal_Part
       --  Declarations
       --  Handled_Statement_Sequence
-      --  Activation_Chain_Entity
       --  Corresponding_Spec
       --  At_End_Proc (set to Empty if no clean up procedure)
 
@@ -7624,6 +7611,7 @@ package Sinfo is
       --  Next_Rep_Item
       --  Class_Present Set if 'Class present
       --  Is_Ignored
+      --  Expression_Copy
       --  Is_Checked
       --  Is_Delayed_Aspect
       --  Is_Disabled
@@ -8001,9 +7989,9 @@ package Sinfo is
       --  operation) are also in this list.
 
       --  Contract_Test_Cases contains a collection of pragmas that correspond
-      --  to aspects/pragmas Contract_Cases, Exceptional_Cases, Program_Exit,
-      --  Test_Case and Subprogram_Variant. The ordering in the list is in LIFO
-      --  fashion.
+      --  to aspects/pragmas Contract_Cases, Exceptional_Cases, Modifies,
+      --  Program_Exit, Test_Case and Subprogram_Variant. The ordering in the
+      --  list is in LIFO fashion.
 
       --  Classifications contains pragmas that either declare, categorize, or
       --  establish dependencies between subprogram or package inputs and
@@ -8103,6 +8091,7 @@ package Sinfo is
       --  N_Expression_With_Actions
       --  Actions
       --  Expression
+      --  Scope_Link
       --  plus fields for expression
 
       --  Note: In the final generated tree presented to the code generator,

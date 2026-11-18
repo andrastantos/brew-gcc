@@ -2,9 +2,7 @@
 // { dg-output "slice_access=3\r*\n" }
 #![feature(no_core)]
 #![no_core]
-
-#![feature(intrinsics)]
-
+#![feature(intrinsics, staged_api)]
 #![feature(lang_items)]
 #[lang = "sized"]
 pub trait Sized {}
@@ -109,8 +107,7 @@ unsafe impl<T> SliceIndex<[T]> for usize {
 
     fn index(self, slice: &[T]) -> &T {
         // N.B., use intrinsic indexing
-        // &(*slice)[self]
-        unsafe { &*self.get_unchecked(slice) }
+        &(*slice)[self]
     }
 }
 

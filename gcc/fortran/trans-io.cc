@@ -32,6 +32,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "trans-array.h"
 #include "trans-types.h"
 #include "trans-const.h"
+#include "trans-descriptor.h"
 #include "options.h"
 
 /* Members of the ioparm structure.  */
@@ -416,7 +417,7 @@ gfc_build_io_library_fndecls (void)
 	integer_type_node, gfc_charlen_type_node);
 
   iocall[IOCALL_X_DERIVED] = gfc_build_library_function_decl_with_spec (
-	get_identifier (PREFIX("transfer_derived")), ". w r ",
+	get_identifier (PREFIX("transfer_derived")), ". w w ",
 	void_type_node, 2, dt_parm_type, pvoid_type_node);
 
   /* Library entry points */
@@ -943,7 +944,7 @@ set_internal_unit (stmtblock_t * block, stmtblock_t * post_block,
 	  /* Use a temporary for components of arrays of derived types
 	     or substring array references.  */
 	  gfc_conv_subref_array_arg (&se, e, 0,
-		last_dt == READ ? INTENT_IN : INTENT_OUT, false);
+		last_dt == READ ? INTENT_IN : INTENT_OUT);
 	  tmp = build_fold_indirect_ref_loc (input_location,
 					 se.expr);
 	  se.expr = gfc_build_addr_expr (pchar_type_node, tmp);
@@ -1649,7 +1650,10 @@ nml_get_addr_expr (gfc_symbol * sym, gfc_component * c,
     tmp = gfc_class_data_get (tmp);
 
   if (GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (tmp)))
-    tmp = gfc_conv_array_data (tmp);
+    {
+      tmp = gfc_conv_array_data (tmp);
+      STRIP_NOPS (tmp);
+    }
   else
     {
       if (!POINTER_TYPE_P (TREE_TYPE (tmp)))
@@ -1819,6 +1823,9 @@ transfer_namelist_element (stmtblock_t * block, const char * var_name,
 
   for ( n_dim = 0 ; n_dim < rank ; n_dim++ )
     {
+      if (c && c->attr.pdt_array)
+	decl = TREE_OPERAND (nml_get_addr_expr (sym, c, base_addr), 0);
+
       tmp = build_call_expr_loc (input_location,
 			     iocall[IOCALL_SET_NML_VAL_DIM], 5,
 			     dt_parm_addr,
@@ -2654,6 +2661,9 @@ gfc_trans_transfer (gfc_code * code)
 		 && gfc_expr_attr (expr).target)))
 	goto scalarize;
 
+      if (gfc_expr_attr (expr).pdt_string)
+	goto scalarize;
+
       /* With array-bounds checking enabled, force scalarization in some
 	 situations, e.g., when an array index depends on a function
 	 evaluation or an expression and possibly has side-effects.  */
@@ -2696,7 +2706,7 @@ gfc_trans_transfer (gfc_code * code)
 	  if (seen_vector && last_dt == READ)
 	    {
 	      /* Create a temp, read to that and copy it back.  */
-	      gfc_conv_subref_array_arg (&se, expr, 0, INTENT_OUT, false);
+	      gfc_conv_subref_array_arg (&se, expr, 0, INTENT_OUT);
 	      tmp =  se.expr;
 	    }
 	  else

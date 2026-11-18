@@ -31,11 +31,10 @@ AC_CONFIG_SRCDIR(libdruntime/gcc/attribute.d)
 AC_CONFIG_HEADERS(config.h)
 
 AM_ENABLE_MULTILIB(, ..)
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_TARGET
 AC_USE_SYSTEM_EXTENSIONS
 
 target_alias=${target_alias-$target}
-AC_SUBST(target_alias)
 
 # 1.11.1: Require that version of automake.
 # foreign: Don't require README, INSTALL, NEWS, etc.
@@ -86,7 +85,6 @@ AC_SUBST(CFLAGS_FOR_BUILD)
 
 # Enable libtool
 LT_INIT(dlopen)
-AM_PROG_LIBTOOL
 WITH_LOCAL_DRUNTIME([LT_LANG([D])], [])
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
@@ -288,7 +286,7 @@ AC_CONFIG_FILES([testsuite/testsuite_flags],[chmod +x testsuite/testsuite_flags]
 # append it here.  Only modify Makefiles that have just been created.
 #
 # Also, get rid of this simulated-VPATH thing that automake does.
-AC_CONFIG_FILES(AC_FOREACH([DIR], [libdruntime src testsuite], [DIR/Makefile ]),
+AC_CONFIG_FILES(m4_foreach_w([DIR], [libdruntime src testsuite], [DIR/Makefile ]),
   [cat > vpsed$$ << \_EOF
 s!`test -f '$<' || echo '$(srcdir)/'`!!
 _EOF

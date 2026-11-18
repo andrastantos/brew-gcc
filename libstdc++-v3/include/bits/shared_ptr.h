@@ -49,7 +49,7 @@
 #ifndef _SHARED_PTR_H
 #define _SHARED_PTR_H 1
 
-#include <iosfwd>           	  // std::basic_ostream
+#include <bits/iosfwd.h>           	  // std::basic_ostream
 #include <bits/shared_ptr_base.h>
 
 namespace std _GLIBCXX_VISIBILITY(default)
@@ -102,6 +102,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /// @cond undocumented
 
+  // Used as parameter type when constraining nullptr constructor
+  struct __shared_nullptr_ctor_tag
+  {
+    constexpr explicit
+    __shared_nullptr_ctor_tag(__shared_nullptr_ctor_tag*)
+    { }
+  };
+
   // Constraint for overloads taking non-array types.
 #if __cpp_concepts && __glibcxx_type_trait_variable_templates
   template<typename _Tp>
@@ -114,38 +122,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #if __glibcxx_shared_ptr_arrays >= 201707L
   // Constraint for overloads taking array types with unknown bound, U[].
-#if __cpp_concepts
   template<typename _Tp>
     requires is_array_v<_Tp> && (extent_v<_Tp> == 0)
     using _UnboundedArray = _Tp;
-#else
-  template<typename _Tp>
-    using _UnboundedArray
-      = __enable_if_t<__is_array_unknown_bounds<_Tp>::value, _Tp>;
-#endif
 
   // Constraint for overloads taking array types with known bound, U[N].
-#if __cpp_concepts
   template<typename _Tp>
     requires (extent_v<_Tp> != 0)
     using _BoundedArray = _Tp;
-#else
-  template<typename _Tp>
-    using _BoundedArray
-      = __enable_if_t<__is_array_known_bounds<_Tp>::value, _Tp>;
-#endif
 
 #if __glibcxx_smart_ptr_for_overwrite
   // Constraint for overloads taking either non-array or bounded array, U[N].
-#if __cpp_concepts
   template<typename _Tp>
     requires (!is_array_v<_Tp>) || (extent_v<_Tp> != 0)
     using _NotUnboundedArray = _Tp;
-#else
-  template<typename _Tp>
-    using _NotUnboundedArray
-      = __enable_if_t<!__is_array_unknown_bounds<_Tp>::value, _Tp>;
-#endif
 #endif // smart_ptr_for_overwrite
 #endif // shared_ptr_arrays
 
@@ -183,6 +173,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	using _Assignable = typename enable_if<
 	  is_assignable<__shared_ptr<_Tp>&, _Arg>::value, shared_ptr&
 	>::type;
+
+      template<typename _Deleter>
+	using _NullptrDeleter = __enable_if_t<
+	  __is_invocable<_Deleter&, nullptr_t&>::value,
+	  __shared_nullptr_ctor_tag>;
 
     public:
 
@@ -230,6 +225,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	shared_ptr(_Yp* __p, _Deleter __d)
         : __shared_ptr<_Tp>(__p, std::move(__d)) { }
 
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 4110. shared_ptr(nullptr_t, Deleter) is overconstrained...
+
       /**
        *  @brief  Construct a %shared_ptr that owns a null pointer
        *          and the deleter @a __d.
@@ -244,7 +242,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  The last owner will call __d(__p)
        */
       template<typename _Deleter>
-	shared_ptr(nullptr_t __p, _Deleter __d)
+	shared_ptr(nullptr_t __p, _Deleter __d,
+		   _NullptrDeleter<_Deleter> = __shared_nullptr_ctor_tag(nullptr))
         : __shared_ptr<_Tp>(__p, std::move(__d)) { }
 
       /**
@@ -283,7 +282,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  The last owner will call __d(__p)
        */
       template<typename _Deleter, typename _Alloc>
-	shared_ptr(nullptr_t __p, _Deleter __d, _Alloc __a)
+	shared_ptr(nullptr_t __p, _Deleter __d, _Alloc __a,
+		   _NullptrDeleter<_Deleter> = __shared_nullptr_ctor_tag(nullptr))
 	: __shared_ptr<_Tp>(__p, std::move(__d), std::move(__a)) { }
 
       // Aliasing constructor

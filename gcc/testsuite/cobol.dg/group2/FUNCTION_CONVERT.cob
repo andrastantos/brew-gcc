@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/FUNCTION_CONVERT.out" }
         identification      division.
         program-id.         conv.
@@ -6,7 +7,7 @@
         configuration       section.
         special-names.
             locale sbc  is "cp1252"
-            locale ebcd is "cp1140".
+            locale ebcd is "ibm1140".
         object-computer.
             gnu-linux
                 classification

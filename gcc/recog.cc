@@ -71,7 +71,8 @@ struct target_recog *this_target_recog = &default_target_recog;
 
 int volatile_ok;
 
-struct recog_data_d recog_data;
+static struct recog_data_d main_recog_data;
+struct recog_data_d *recog_data_ptr = &main_recog_data;
 
 /* Contains a vector of operand_alternative structures, such that
    operand OP of alternative A is at index A * n_operands + OP.
@@ -95,6 +96,8 @@ bool raw_constraint_p;
    Controls the significance of (SUBREG (MEM)).  */
 
 int reload_completed;
+
+bool post_ra_split_completed;
 
 /* Nonzero after thread_prologue_and_epilogue_insns has run.  */
 int epilogue_completed;
@@ -1630,7 +1633,8 @@ address_operand (rtx op, machine_mode mode)
 {
   /* Wrong mode for an address expr.  */
   if (GET_MODE (op) != VOIDmode
-      && ! SCALAR_INT_MODE_P (GET_MODE (op)))
+      && ! SCALAR_INT_MODE_P (GET_MODE (op))
+      && ! (GET_MODE_CLASS (GET_MODE (op)) == MODE_VECTOR_INT))
     return false;
 
   return memory_address_p (mode, op);
@@ -2230,6 +2234,52 @@ decode_asm_operands (rtx body, rtx *operands, rtx **operand_locs,
   return ASM_OPERANDS_TEMPLATE (asmop);
 }
 
+/* Parse an operand reference that starts with %[...].
+
+   The forms are %[N] and %[MODIFIER:N[,N...]].  */
+
+bool
+parse_bracketed_operand (const char **p, bracketed_operand &operand)
+{
+  const char *start = *p;
+  gcc_assert (*start == '[');
+  operand.opnums.truncate (0);
+
+  const char *end = strchr (start + 1, ']');
+  if (!end)
+    return false;
+
+  const char *contents = start + 1;
+  const char *colon = (const char *) memchr (contents, ':', end - contents);
+
+  if (colon)
+    {
+      if (colon == contents)
+	return false;
+      for (const char *q = contents; q != colon; ++q)
+	if (*q == ',' && (q == contents || q[-1] == ',' || q + 1 == colon))
+	  return false;
+    }
+
+  const char *number = colon ? colon + 1 : contents;
+  char *next;
+  do
+    {
+      if (!ISDIGIT (*number))
+	return false;
+      unsigned long opnum = strtoul (number, &next, 10);
+      if (next != end && (!colon || *next != ','))
+	return false;
+      operand.opnums.safe_push (opnum);
+      number = next + 1;
+    }
+  while (next != end);
+
+  operand.modifier = string_slice (contents, colon ? colon : contents);
+  *p = end + 1;
+  return true;
+}
+
 /* Parse inline assembly string STRING and determine which operands are
    referenced by % markers.  For the first NOPERANDS operands, set USED[I]
    to true if operand I is referenced.
@@ -2253,7 +2303,20 @@ get_referenced_operands (const char *string, bool *used,
       {
       case '%':
 	p += 1;
+	if (*p == '[')
+	  {
+	    bracketed_operand operand;
+	    if (parse_bracketed_operand (&p, operand))
+	      {
+		for (unsigned long opnum : operand.opnums)
+		  if (opnum < noperands)
+		    used[opnum] = true;
+		break;
+	      }
+	  }
 	/* A letter followed by a digit indicates an operand number.  */
+	if (p[0] == 'c' && p[1] == 'c')
+	  p += 1;
 	if (ISALPHA (p[0]) && ISDIGIT (p[1]))
 	  p += 1;
 	if (ISDIGIT (*p))
@@ -2264,7 +2327,7 @@ get_referenced_operands (const char *string, bool *used,
 	      used[opnum] = true;
 	    p = endptr;
 	  }
-	else
+	else if (*p)
 	  p += 1;
 	break;
 
@@ -2946,6 +3009,7 @@ preprocess_constraints (int n_operands, int n_alternatives,
 	{
 	  op_alt[i].cl = NO_REGS;
 	  op_alt[i].register_filters = 0;
+	  op_alt[i].dependent_filters = 0;
 	  op_alt[i].constraint = p;
 	  op_alt[i].matches = -1;
 	  op_alt[i].matched = -1;
@@ -3013,6 +3077,9 @@ preprocess_constraints (int n_operands, int n_alternatives,
 			  auto filter_id = get_register_filter_id (cn);
 			  if (filter_id >= 0)
 			    op_alt[i].register_filters |= 1U << filter_id;
+			  auto dep_filter_id = get_dependent_filter_id (cn);
+			  if (dep_filter_id >= 0)
+			    op_alt[i].dependent_filters |= 1U << dep_filter_id;
 			}
 		      break;
 
@@ -3135,6 +3202,29 @@ struct funny_match
 {
   int this_op, other;
 };
+
+/* For a register constraint CN with a dependent filter, return true if
+   the respective filter allows REGNO (OP) + OFFSET given the ref-operand
+   in recog_data.operand or false if it doesn't.
+   If the filter cannot be evaluated, for example when no hard reg
+   has been chosen yet, return true.  */
+
+static bool
+test_dependent_filter (constraint_num cn, rtx op, int offset,
+		       machine_mode mode)
+{
+  int id = get_dependent_filter_id (cn);
+  if (id < 0 || !REG_P (op))
+    return true;
+  int ref_opno = get_dependent_filter_ref (id);
+  if (ref_opno < 0 || ref_opno >= recog_data.n_operands)
+    return true;
+  rtx ref_op = recog_data.operand[ref_opno];
+  if (!REG_P (ref_op))
+    return true;
+  return eval_dependent_filter (id, REGNO (op) + offset, mode,
+				REGNO (ref_op), GET_MODE (ref_op));
+}
 
 bool
 constrain_operands (int strict, alternative_mask alternatives)
@@ -3337,7 +3427,10 @@ constrain_operands (int strict, alternative_mask alternatives)
 			      && reg_fits_class_p (op, cl, offset, mode)
 			      && (!filter
 				  || TEST_HARD_REG_BIT (*filter,
-							REGNO (op) + offset))))
+							REGNO (op) + offset))
+			      && (strict <= 0
+				  || test_dependent_filter (cn, op, offset,
+							    mode))))
 			win = true;
 		    }
 
@@ -3525,6 +3618,8 @@ split_insn (rtx_insn *insn)
      splitters instead of computing the proper hard register.  */
   if (reload_completed && first != last)
     {
+      auto old_post_ra_split_completed = post_ra_split_completed;
+      post_ra_split_completed = true;
       first = NEXT_INSN (first);
       for (;;)
 	{
@@ -3534,6 +3629,7 @@ split_insn (rtx_insn *insn)
 	    break;
 	  first = NEXT_INSN (first);
 	}
+      post_ra_split_completed = old_post_ra_split_completed;
     }
 
   return last;
@@ -3609,6 +3705,9 @@ split_all_insns (void)
 	}
     }
 
+  if (reload_completed)
+    post_ra_split_completed = true;
+
   default_rtl_profile ();
   if (changed)
     {
@@ -3658,6 +3757,9 @@ split_all_insns_noflow (void)
 	    split_insn (insn);
 	}
     }
+
+  if (reload_completed)
+    post_ra_split_completed = true;
 }
 
 struct peep2_insn_data
@@ -4023,6 +4125,7 @@ peep2_attempt (basic_block bb, rtx_insn *insn, int match_len, rtx_insn *attempt)
 
       CALL_INSN_FUNCTION_USAGE (new_insn)
 	= CALL_INSN_FUNCTION_USAGE (old_insn);
+      CALL_INSN_ABI_ID (new_insn) = CALL_INSN_ABI_ID (old_insn);
       SIBLING_CALL_P (new_insn) = SIBLING_CALL_P (old_insn);
 
       for (note = REG_NOTES (old_insn);
@@ -4074,7 +4177,7 @@ peep2_attempt (basic_block bb, rtx_insn *insn, int match_len, rtx_insn *attempt)
 				 peep2_insn_data[i].insn,
 				 INSN_LOCATION (peepinsn));
   if (JUMP_P (peepinsn) && JUMP_P (last))
-    CROSSING_JUMP_P (last) = CROSSING_JUMP_P (peepinsn);
+    set_crossing_jump (last, CROSSING_JUMP_P (peepinsn));
   before_try = PREV_INSN (insn);
   delete_insn_chain (insn, peep2_insn_data[i].insn, false);
 

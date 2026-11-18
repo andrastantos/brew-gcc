@@ -1,3 +1,75 @@
+2026-09-10  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/127032
+	* libf7-asm.sx (config.h): Include it.
+	(DALIAS) [sizeof(double)==8 && HAVE_AS_AVR_GNU_ATTRIBUTE]:
+	Add .gnu_attribute 8,64.
+	(LALIAS) [sizeof(long double)==8 && HAVE_AS_AVR_GNU_ATTRIBUTE]:
+	Add .gnu_attribute 12,64.
+
+2026-08-25  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/127071
+	* t-libf7-math-symbols: Adjust comment.
+
+2026-08-24  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/127024
+	* libf7-asm.sx (to_integer): Don't skip XJMP
+	if __AVR_ERRATA_SKIP_JMP_CALL__.
+
+2026-06-28  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/125752
+	* libf7.c (d_to_ufx, d_to_sfx): Remove prototypes.
+	(__fractdfda, __fractdfuda, __fractdfta, __fractdfuta)
+	(__fractdfdq, __fractdfudq): Move implementation to...
+	* libf7-asm.sx: ...here.
+	(d_to_fx64): Remove.
+	* libf7-common.mk (F7_ASM_PARTS): Add D2dq, D2udq, D2da,
+	D2uda, D2ta, D2uta.
+	(F7F_asm): Remove d_to_fx64.
+	* t-libf7 (LIBF7_DF_CONV): Remove fractdfda, fractdfta,
+	fractdfdq, fractdfuda, fractdfuta, fractdfudq.
+	* f7-renames.h: Rebuild.
+
+2026-06-13  Georg-Johann Lay  <avr@gjlay.de>
+
+	* asm-defs.h (REGNO): New .macro.
+	(wmov): Use it.
+	(do_epilogue_restores) <\n_frame>: Put in () where needed.
+
+2026-06-11  Georg-Johann Lay  <avr@gjlay.de>
+
+	* libf7.c (__floatdidf, __floatundidf): Minor tweak.
+
+2026-06-11  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/125752
+	* libf7-asm.sx (ufx64_to_d, d_to_fx64): New DEFUNs.
+	(__fractdadf, __fractudadf, __fracttadf, __fractutadf)
+	(__fractdqdf, __fractudqdf): New _DEFUNs.
+	* libf7-common.mk (F7_ASM_PARTS) Add: fx2D, D2fx,
+	dq2D, udq2D, da2D, uda2D, ta2D uta2D.
+	(F7F): Add d_to_fx64, ufx64_to_d, sfx64_to_d.
+	* libf7.c (d_to_ufx, d_to_sfx): New protos.
+	(__fractdfda, __fractdfuda, __fractdfta, __fractdfuta)
+	(__fractdfdq, __fractdfudq): New modules.
+	* t-libf7 (LIBF7_DF_CONV): Add fractdfda,
+	fractdfta, fractdfdq, fractdfuda, fractdfuta, fractdfudq.
+	* f7-renames.h: Rebuild.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* libf7.c (f7_addsub): Likewise.
+	(f7_madd_msub): Likewise.
+	* libf7.h (f7_Ildexp): Likewise.
+
+2026-05-28  Georg-Johann Lay  <avr@gjlay.de>
+
+	* libf7.h: Add "[len=...]]" notes to all non-empty inline asm's.
+	* libf7.c: Dito.
+
 2025-10-09  Georg-Johann Lay  <avr@gjlay.de>
 
 	PR target/122222

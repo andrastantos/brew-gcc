@@ -50,14 +50,14 @@
 **	.cfi_startproc
 **	subq	\$504, %rsp
 **...
+**	movq	%rdi, 304\(%rsp\)
+**...
+**	movl	\$code\+8, %edi
 **	movq	%rax, 264\(%rsp\)
 **	movq	%rdx, 272\(%rsp\)
 **	movq	%rcx, 280\(%rsp\)
 **	movq	%rbx, 288\(%rsp\)
 **	movq	%rsi, 296\(%rsp\)
-**	movq	%rdi, 304\(%rsp\)
-**...
-**	movl	\$code\+8, %edi
 **	movq	%r8, 312\(%rsp\)
 **	movq	%r9, 320\(%rsp\)
 **	movq	%r10, 328\(%rsp\)

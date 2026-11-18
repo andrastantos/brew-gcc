@@ -43,6 +43,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-nested.h"
 #include "gimplify.h"
 #include "gimple-iterator.h"
+#include "gimple-fold.h"
 #include "gimplify-me.h"
 #include "tree-cfg.h"
 #include "tree-into-ssa.h"
@@ -392,7 +393,7 @@ condition_uid (struct function *fn, basic_block b)
    Masking and short circuiting are deeply connected - masking occurs when
    control flow reaches a state that is also reachable with short circuiting.
    In fact, masking corresponds to short circuiting for the reversed
-   expression.  This means we can find the limits, the last term in preceeding
+   expression.  This means we can find the limits, the last term in preceding
    subexpressions, by following the edges that short circuit to the same
    outcome.  The algorithm treats the CFG as a reduced order binary decision
    diagram (see Randall E. Bryant's Graph Based Algorithms for Boolean
@@ -455,7 +456,7 @@ condition_uid (struct function *fn, basic_block b)
    We only have to consider the pairs of top, bot where top is the the closest
    (highest-index'd) candidate that still satisfies top < bot in the
    topological order, as this will be the immediate left operand.  The nodes of
-   the other left operands will also be found when going through the righmost
+   the other left operands will also be found when going through the rightmost
    term, and a lower-index'd top would just find subsets.  This has a
    significant performance impact, 15-20x faster for the worst cases of (x && y
    && ..) with no nesting.
@@ -611,32 +612,32 @@ masking_vectors (conds_ctx& ctx, array_slice<basic_block> blocks,
     }
 }
 
-/* Emit LHS = RHS on edges.  This is just a short hand that automates the
-   building of the assign and immediately puts it on the edge, which becomes
-   noisy.  */
-tree
-emit_assign (edge e, tree lhs, tree rhs)
+/* Emit LHS = RHS onto SEQ.  This is just a short hand that automates the
+   building of the assign, which becomes noisy.  */
+static tree
+emit_assign (gimple_seq *seq, tree lhs, tree rhs)
 {
   gassign *w = gimple_build_assign (lhs, rhs);
-  gsi_insert_on_edge (e, w);
+  gimple_seq_add_stmt (seq, w);
   return lhs;
 }
 
-/* Emit lhs = RHS on edges.  The lhs is created.  */
-tree
-emit_assign (edge e, tree rhs)
+/* Emit lhs = RHS onto SEQ.  The lhs is created.  */
+static tree
+emit_assign (gimple_seq *seq, tree rhs)
 {
-  return emit_assign (e, make_ssa_name (gcov_type_node), rhs);
+  return emit_assign (seq, make_ssa_name (gcov_type_node), rhs);
 }
 
-/* Emit LHS = OP1 <OP> OP2 on edges.  */
-tree
-emit_bitwise_op (edge e, tree op1, tree_code op, tree op2 = NULL_TREE)
+/* Emit/fold OP1 <OP> [OP2] onto SEQ.
+   Return folded constant or SSA name.  */
+static tree
+emit_bitwise_op (gimple_seq *seq, tree op1, tree_code op,
+		 tree op2 = NULL_TREE)
 {
-  tree lhs = make_ssa_name (gcov_type_node);
-  gassign *w = gimple_build_assign (lhs, op, op1, op2);
-  gsi_insert_on_edge (e, w);
-  return lhs;
+  return op2 == NULL_TREE
+    ? gimple_build (seq, op, gcov_type_node, op1)
+    : gimple_build (seq, op, gcov_type_node, op1, op2);
 }
 
 /* Visitor for make_top_index.  */
@@ -818,7 +819,7 @@ cov_length (const struct condcov *cov)
   return cov->m_index.length () - 1;
 }
 
-/* The subgraph, exluding intermediates, for the nth Boolean expression.  */
+/* The subgraph, excluding intermediates, for the nth Boolean expression.  */
 array_slice<basic_block>
 cov_blocks (struct condcov *cov, size_t n)
 {
@@ -1032,6 +1033,53 @@ resolve_counters (vec<counters> &cands)
 
 }
 
+/* Append statements to SEQ that update the decision counter referenced by
+   REF with the COUNTER.  Generate two separate 32-bit atomic bitwise-or
+   operations specified by ATOMIC_IOR_32 in the RELAXED memory order.  If a
+   32-bit part of COUNTER folds to a constant zero, then the atomic
+   bitwise-or operation for this part is a no-op and is omitted.  */
+static void
+split_update_decision_counter (gimple_seq *seq, tree ref, tree counter,
+			       tree atomic_ior_32, tree relaxed)
+{
+  ref = unshare_expr (ref);
+
+  /* Get the low and high addresses of the referenced counter.  */
+  tree addr_low = build_addr (ref);
+  tree four = build_int_cst (size_type_node, 4);
+  tree addr_high = gimple_build (seq, POINTER_PLUS_EXPR,
+				 TREE_TYPE (addr_low), addr_low, four);
+  if (WORDS_BIG_ENDIAN)
+    std::swap (addr_low, addr_high);
+
+  /* Get the low and high 32-bit parts of the counter.  Fold to a
+     constant if COUNTER is a compile-time constant, so that a part
+     which is known to be zero can be recognized below.  */
+  tree counter_low_32 = gimple_build (seq, NOP_EXPR, uint32_type_node,
+				      counter);
+  tree shift_32 = build_int_cst (integer_type_node, 32);
+  tree counter_high_64 = gimple_build (seq, RSHIFT_EXPR, gcov_type_node,
+				       counter, shift_32);
+  tree counter_high_32 = gimple_build (seq, NOP_EXPR, uint32_type_node,
+				       counter_high_64);
+
+  /* Atomically bitwise-or the low 32-bit counter parts.  */
+  if (!integer_zerop (counter_low_32))
+    {
+      gcall *call1 = gimple_build_call (atomic_ior_32, 3, addr_low,
+					counter_low_32, relaxed);
+      gimple_seq_add_stmt (seq, call1);
+    }
+
+  /* Atomically bitwise-or the high 32-bit counter parts.  */
+  if (!integer_zerop (counter_high_32))
+    {
+      gcall *call2 = gimple_build_call (atomic_ior_32, 3, addr_high,
+					counter_high_32, relaxed);
+      gimple_seq_add_stmt (seq, call2);
+    }
+}
+
 /* Add instrumentation to a decision subgraph.  EXPR should be the
    (topologically sorted) block of nodes returned by cov_blocks, MAPS the
    bitmaps returned by cov_maps, and MASKS the block of bitsets returned by
@@ -1101,15 +1149,16 @@ instrument_decisions (array_slice<basic_block> expr, size_t condno,
 	{
 	  counters next = prev;
 	  next.e = e;
+	  gimple_seq seq = NULL;
 
 	  if (bitmap_bit_p (core, e->src->index) && (e->flags & EDGE_CONDITION))
 	    {
 	      const int k = condition_index (e->flags);
-	      next[k] = emit_bitwise_op (e, prev[k], BIT_IOR_EXPR, rhs);
+	      next[k] = emit_bitwise_op (&seq, prev[k], BIT_IOR_EXPR, rhs);
 	      if (masks[2 * xi + k])
 		{
 		  tree m = build_int_cst (gcov_type_node, masks[2 * xi + k]);
-		  next[2] = emit_bitwise_op (e, prev[2], BIT_IOR_EXPR, m);
+		  next[2] = emit_bitwise_op (&seq, prev[2], BIT_IOR_EXPR, m);
 		}
 	      increment = true;
 	    }
@@ -1122,6 +1171,8 @@ instrument_decisions (array_slice<basic_block> expr, size_t condno,
 	      next[1] = poison;
 	      next[2] = poison;
 	    }
+	  if (seq)
+	    gsi_insert_seq_on_edge (e, seq);
 	  table.get_or_insert (e->dest).safe_push (next);
 	}
     }
@@ -1134,11 +1185,17 @@ instrument_decisions (array_slice<basic_block> expr, size_t condno,
   gcc_assert (xi == bitmap_count_bits (core));
 
   const tree relaxed = build_int_cst (integer_type_node, MEMMODEL_RELAXED);
-  const bool atomic = flag_profile_update == PROFILE_UPDATE_ATOMIC;
+  const bool use_atomic_builtin
+    = counter_update == COUNTER_UPDATE_ATOMIC_BUILTIN;
+  const bool use_atomic_split
+    = counter_update == COUNTER_UPDATE_ATOMIC_SPLIT
+      || counter_update == COUNTER_UPDATE_ATOMIC_PARTIAL;
+  const tree atomic_ior_32
+    = builtin_decl_explicit (BUILT_IN_ATOMIC_FETCH_OR_4);
   const tree atomic_ior
-    = builtin_decl_explicit (TYPE_PRECISION (gcov_type_node) > 32
-			     ? BUILT_IN_ATOMIC_FETCH_OR_8
-			     : BUILT_IN_ATOMIC_FETCH_OR_4);
+    = TYPE_PRECISION (gcov_type_node) > 32
+      ? builtin_decl_explicit (BUILT_IN_ATOMIC_FETCH_OR_8)
+      : atomic_ior_32;
 
   /* Flush to the gcov accumulators.  */
   for (const basic_block b : expr)
@@ -1164,33 +1221,41 @@ instrument_decisions (array_slice<basic_block> expr, size_t condno,
 	  counters *prevp = find_counters (*cands, e);
 	  gcc_assert (prevp);
 	  counters prev = *prevp;
+	  gimple_seq seq = NULL;
 
 	  /* _true &= ~mask, _false &= ~mask  */
 	  counters next;
-	  next[2] = emit_bitwise_op (e, prev[2], BIT_NOT_EXPR);
-	  next[0] = emit_bitwise_op (e, prev[0], BIT_AND_EXPR, next[2]);
-	  next[1] = emit_bitwise_op (e, prev[1], BIT_AND_EXPR, next[2]);
+	  next[2] = emit_bitwise_op (&seq, prev[2], BIT_NOT_EXPR);
+	  next[0] = emit_bitwise_op (&seq, prev[0], BIT_AND_EXPR, next[2]);
+	  next[1] = emit_bitwise_op (&seq, prev[1], BIT_AND_EXPR, next[2]);
 
 	  /* _global_true |= _true, _global_false |= _false  */
 	  for (size_t k = 0; k != 2; ++k)
 	    {
+	      if (integer_zerop (next[k]))
+		continue;
 	      tree ref = tree_coverage_counter_ref (GCOV_COUNTER_CONDS,
 						    2 * condno + k);
-	      if (atomic)
+	      if (use_atomic_builtin)
 		{
 		  ref = unshare_expr (ref);
 		  gcall *flush = gimple_build_call (atomic_ior, 3,
 						    build_addr (ref),
 						    next[k], relaxed);
-		  gsi_insert_on_edge (e, flush);
+		  gimple_seq_add_stmt (&seq, flush);
 		}
+	      else if (use_atomic_split)
+		split_update_decision_counter (&seq, ref, next[k],
+					       atomic_ior_32, relaxed);
 	      else
 		{
-		  tree get = emit_assign (e, ref);
-		  tree put = emit_bitwise_op (e, next[k], BIT_IOR_EXPR, get);
-		  emit_assign (e, unshare_expr (ref), put);
+		  tree get = emit_assign (&seq, ref);
+		  tree put = emit_bitwise_op (&seq, next[k], BIT_IOR_EXPR, get);
+		  emit_assign (&seq, unshare_expr (ref), put);
 		}
 	    }
+	  if (seq)
+	    gsi_insert_seq_on_edge (e, seq);
 	}
     }
 
@@ -1932,7 +1997,7 @@ tree_profiling (void)
 	continue;
       /* Do not instrument extern inline functions when testing coverage.
 	 While this is not perfectly consistent (early inlined extern inlines
-	 will get acocunted), testsuite expects that.  */
+	 will get accounted), testsuite expects that.  */
       if (DECL_EXTERNAL (node->decl)
 	  && flag_test_coverage)
 	continue;
@@ -2049,7 +2114,7 @@ tree_profiling (void)
 		tree fntype = gimple_call_fntype (call);
 		if (fntype && TYPE_READONLY (fntype))
 		  {
-		    int quals = TYPE_QUALS (fntype) & ~TYPE_QUAL_CONST;
+		    auto quals = TYPE_QUALS (fntype).without (TYPE_QUAL_CONST);
 		    fntype = build_qualified_type (fntype, quals);
 		    gimple_call_set_fntype (call, fntype);
 		  }

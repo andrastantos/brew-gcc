@@ -22,6 +22,14 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_SYSTEM_H
 #define GCC_SYSTEM_H
 
+/* True if __builtin_* () is supported.
+   This is done for optimizing GCC itself.  */
+#ifdef __has_builtin
+# define STAGE0_CXX_HAS_BUILTIN(NAME) __has_builtin (__builtin_ ## NAME)
+#else
+# define STAGE0_CXX_HAS_BUILTIN(NAME) 0
+#endif
+
 /* Define this so that inttypes.h defines the PRI?64 macros even
    when compiling with a C++ compiler.  Define it here so in the
    event inttypes.h gets pulled in by another header it is already
@@ -39,10 +47,7 @@ along with GCC; see the file COPYING3.  If not see
 # endif
 #endif
 
-#ifdef HAVE_STDDEF_H
-# include <stddef.h>
-#endif
-
+#include <stddef.h>
 #include <stdio.h>
 
 /* Define a generic NULL if one hasn't already been defined.  */
@@ -198,7 +203,7 @@ extern int fprintf_unlocked (FILE *, const char *, ...);
    poisoning the ctype macros through safe-ctype.h */
 
 #ifdef __cplusplus
-#if defined (INCLUDE_ALGORITHM) || !defined (HAVE_SWAP_IN_UTILITY)
+#ifdef INCLUDE_ALGORITHM
 # include <algorithm>
 #endif
 #ifdef INCLUDE_DEQUE
@@ -228,6 +233,9 @@ extern int fprintf_unlocked (FILE *, const char *, ...);
 #ifdef INCLUDE_SSTREAM
 # include <sstream>
 #endif
+#ifdef INCLUDE_ITERATOR
+# include <iterator>
+#endif
 # include <memory>
 # include <cstring>
 # include <initializer_list>
@@ -244,10 +252,6 @@ extern int fprintf_unlocked (FILE *, const char *, ...);
 #include <sys/types.h>
 
 #include <errno.h>
-
-#if !defined (errno) && defined (HAVE_DECL_ERRNO) && !HAVE_DECL_ERRNO
-extern int errno;
-#endif
 
 /* Some of glibc's string inlines cause warnings.  Plus we'd rather
    rely on (and therefore test) GCC's string builtins.  */
@@ -266,9 +270,7 @@ extern int errno;
 # endif
 #endif
 
-#ifdef HAVE_STDLIB_H
-# include <stdlib.h>
-#endif
+#include <stdlib.h>
 
 /* When compiling C++ we need to include <cstdlib> as well as <stdlib.h> so
    that it is processed before we poison "malloc"; otherwise, if a source
@@ -282,22 +284,13 @@ extern int errno;
 #undef vec_free
 
 /* If we don't have an overriding definition, set SUCCESS_EXIT_CODE and
-   FATAL_EXIT_CODE to EXIT_SUCCESS and EXIT_FAILURE respectively,
-   or 0 and 1 if those macros are not defined.  */
+   FATAL_EXIT_CODE to EXIT_SUCCESS and EXIT_FAILURE respectively.  */
 #ifndef SUCCESS_EXIT_CODE
-# ifdef EXIT_SUCCESS
-#  define SUCCESS_EXIT_CODE EXIT_SUCCESS
-# else
-#  define SUCCESS_EXIT_CODE 0
-# endif
+# define SUCCESS_EXIT_CODE EXIT_SUCCESS
 #endif
 
 #ifndef FATAL_EXIT_CODE
-# ifdef EXIT_FAILURE
-#  define FATAL_EXIT_CODE EXIT_FAILURE
-# else
-#  define FATAL_EXIT_CODE 1
-# endif
+# define FATAL_EXIT_CODE EXIT_FAILURE
 #endif
 
 #define ICE_EXIT_CODE 4
@@ -313,9 +306,7 @@ extern int errno;
 # undef m_slot
 #endif
 
-#if HAVE_LIMITS_H
-# include <limits.h>
-#endif
+#include <limits.h>
 
 /* A macro to determine whether a VALUE lies inclusively within a
    certain range without evaluating the VALUE more than once.  This
@@ -338,11 +329,6 @@ extern int errno;
 #define INTTYPE_MINIMUM(t) ((t) (INTTYPE_SIGNED (t) \
 			    ? (t) 1 << (sizeof (t) * CHAR_BIT - 1) : (t) 0))
 #define INTTYPE_MAXIMUM(t) ((t) (~ (t) 0 - INTTYPE_MINIMUM (t)))
-
-/* Use that infrastructure to provide a few constants.  */
-#ifndef UCHAR_MAX
-# define UCHAR_MAX INTTYPE_MAXIMUM (unsigned char)
-#endif
 
 #ifdef TIME_WITH_SYS_TIME
 # include <sys/time.h>
@@ -468,24 +454,8 @@ extern int errno;
 extern "C" {
 #endif
 
-#if defined (HAVE_DECL_ATOF) && !HAVE_DECL_ATOF
-extern double atof (const char *);
-#endif
-
-#if defined (HAVE_DECL_ATOL) && !HAVE_DECL_ATOL
-extern long atol (const char *);
-#endif
-
-#if defined (HAVE_DECL_FREE) && !HAVE_DECL_FREE
-extern void free (void *);
-#endif
-
 #if defined (HAVE_DECL_GETCWD) && !HAVE_DECL_GETCWD
 extern char *getcwd (char *, size_t);
-#endif
-
-#if defined (HAVE_DECL_GETENV) && !HAVE_DECL_GETENV
-extern char *getenv (const char *);
 #endif
 
 #if defined (HAVE_DECL_GETOPT) && !HAVE_DECL_GETOPT
@@ -508,28 +478,12 @@ extern void *sbrk (int);
 int setenv(const char *, const char *, int);
 #endif
 
-#if defined (HAVE_DECL_STRSTR) && !HAVE_DECL_STRSTR
-extern char *strstr (const char *, const char *);
-#endif
-
 #if defined (HAVE_DECL_STPCPY) && !HAVE_DECL_STPCPY
 extern char *stpcpy (char *, const char *);
 #endif
 
 #if defined (HAVE_DECL_UNSETENV) && !HAVE_DECL_UNSETENV
 int unsetenv(const char *);
-#endif
-
-#if defined (HAVE_DECL_MALLOC) && !HAVE_DECL_MALLOC
-extern void *malloc (size_t);
-#endif
-
-#if defined (HAVE_DECL_CALLOC) && !HAVE_DECL_CALLOC
-extern void *calloc (size_t, size_t);
-#endif
-
-#if defined (HAVE_DECL_REALLOC) && !HAVE_DECL_REALLOC
-extern void *realloc (void *, size_t);
 #endif
 
 #ifdef __cplusplus
@@ -579,10 +533,6 @@ extern int setrlimit (int, const struct rlimit *);
 # endif
 #endif
 
-#if defined (HAVE_DECL_ABORT) && !HAVE_DECL_ABORT
-extern void abort (void);
-#endif
-
 #if defined (HAVE_DECL_SNPRINTF) && !HAVE_DECL_SNPRINTF
 extern int snprintf (char *, size_t, const char *, ...);
 #endif
@@ -601,15 +551,6 @@ extern int vsnprintf (char *, size_t, const char *, va_list);
 #define HAVE_DESIGNATED_INITIALIZERS 0
 #else
 #define HAVE_DESIGNATED_INITIALIZERS \
-  ((GCC_VERSION >= 2007) || (__STDC_VERSION__ >= 199901L))
-#endif
-#endif
-
-#if !defined(HAVE_DESIGNATED_UNION_INITIALIZERS)
-#ifdef __cplusplus
-#define HAVE_DESIGNATED_UNION_INITIALIZERS (GCC_VERSION >= 4007)
-#else
-#define HAVE_DESIGNATED_UNION_INITIALIZERS \
   ((GCC_VERSION >= 2007) || (__STDC_VERSION__ >= 199901L))
 #endif
 #endif
@@ -895,9 +836,6 @@ extern void fancy_abort (const char *, int, const char *)
 # define FALSE false
 #endif /* !__cplusplus */
 
-/* Some compilers do not allow the use of unsigned char in bitfields.  */
-#define BOOL_BITFIELD unsigned int
-
 /* As the last action in this file, we poison the identifiers that
    shouldn't be used.  Note, luckily gcc-3.0's token-based integrated
    preprocessor won't trip on poisoned identifiers that arrive from
@@ -1069,7 +1007,7 @@ extern void fancy_abort (const char *, int, const char *)
 	STANDARD_INCLUDE_DIR STANDARD_INCLUDE_COMPONENT			   \
 	LINK_ELIMINATE_DUPLICATE_LDIRECTORIES MIPS_DEBUGGING_INFO	   \
 	IDENT_ASM_OP ALL_COP_ADDITIONAL_REGISTER_NAMES			   \
-	RANGE_TEST_NON_SHORT_CIRCUIT					   \
+	RANGE_TEST_NON_SHORT_CIRCUIT EXTENDED_SDB_BASIC_TYPES		   \
 	REAL_VALUE_TRUNCATE REVERSE_CONDEXEC_PREDICATES_P		   \
 	TARGET_ALIGN_ANON_BITFIELDS TARGET_NARROW_VOLATILE_BITFIELDS	   \
 	IDENT_ASM_OP UNALIGNED_SHORT_ASM_OP UNALIGNED_INT_ASM_OP	   \
@@ -1089,7 +1027,8 @@ extern void fancy_abort (const char *, int, const char *)
 	EH_FRAME_IN_DATA_SECTION TARGET_FLT_EVAL_METHOD_NON_DEFAULT	   \
 	JCR_SECTION_NAME TARGET_USE_JCR_SECTION SDB_DEBUGGING_INFO	   \
 	SDB_DEBUG NO_IMPLICIT_EXTERN_C NOTICE_UPDATE_CC			   \
-	CC_STATUS_MDEP_INIT CC_STATUS_MDEP CC_STATUS SLOW_SHORT_ACCESS
+	CC_STATUS_MDEP_INIT CC_STATUS_MDEP CC_STATUS SLOW_SHORT_ACCESS	   \
+	WIDEST_HARDWARE_FP_SIZE ADA_LONG_TYPE_SIZE
 
 /* Hooks that are no longer used.  */
  #pragma GCC poison LANG_HOOKS_FUNCTION_MARK LANG_HOOKS_FUNCTION_FREE	\
@@ -1106,7 +1045,7 @@ extern void fancy_abort (const char *, int, const char *)
 	TARGET_VECTORIZE_BUILTIN_MUL_WIDEN_EVEN \
 	TARGET_VECTORIZE_BUILTIN_MUL_WIDEN_ODD \
 	TARGET_MD_ASM_CLOBBERS TARGET_RELAXED_ORDERING \
-	EXTENDED_SDB_BASIC_TYPES TARGET_INVALID_PARAMETER_TYPE \
+	TARGET_INVALID_PARAMETER_TYPE \
 	TARGET_INVALID_RETURN_TYPE
 
 /* Arrays that were deleted in favor of a functional interface.  */
@@ -1117,7 +1056,8 @@ extern void fancy_abort (const char *, int, const char *)
    LIBGCC2_FLOAT_WORDS_BIG_ENDIAN
 
 /* Miscellaneous macros that are no longer used.  */
- #pragma GCC poison USE_MAPPED_LOCATION GET_ENVIRONMENT
+ #pragma GCC poison USE_MAPPED_LOCATION GET_ENVIRONMENT \
+  HAVE_DESIGNATED_UNION_INITIALIZERS
 
 /* Libiberty macros that are no longer used in GCC.  */
 #undef ANSI_PROTOTYPES
@@ -1229,7 +1169,7 @@ void gcc_stablesort_r (void *, size_t, size_t, sort_r_cmp_fn *, void *data);
    - the character 'k', if the number is higher than 10 K (in base 2)
      but strictly lower than 10 M (in base 2)
    - the character 'M' if the number is higher than 10 M (in base2)
-   - the charcter ' ' if the number is strictly lower  than 10 K  */
+   - the character ' ' if the number is strictly lower  than 10 K  */
 #define SIZE_LABEL(x) ((x) < 10 * ONE_K ? ' ' : ((x) < 10 * ONE_M ? 'k' : 'M'))
 
 /* Display an integer amount as multiple of 1K or 1M (in base 2).

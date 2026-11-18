@@ -1173,10 +1173,10 @@ inline __attribute__((__always_inline__))\n\
 #else\n\
 extern __inline__ __attribute__((__always_inline__, __gnu_inline__))\n\
 #endif\n\
-unsigned char\n\
+MODE_UNIT_SIZE_TYPE\n\
 mode_unit_size_inline (machine_mode mode)\n\
 {\n\
-  extern CONST_MODE_UNIT_SIZE unsigned char mode_unit_size[NUM_MACHINE_MODES];\
+  extern CONST_MODE_UNIT_SIZE MODE_UNIT_SIZE_TYPE mode_unit_size[NUM_MACHINE_MODES];\
 \n\
   gcc_assert (mode >= 0 && mode < NUM_MACHINE_MODES);\n\
   switch (mode)\n\
@@ -1366,6 +1366,22 @@ enum machine_mode\n{");
   printf ("#define CONST_MODE_SIZE%s\n",
 	  adj_bytesize || adj_nunits ? "" : " const");
   printf ("#define CONST_MODE_UNIT_SIZE%s\n", adj_bytesize ? "" : " const");
+
+  unsigned int max_unit_size = 0;
+  for_all_modes (c, m)
+    {
+      unsigned int unit_size = (c != MODE_PARTIAL_INT && m->component)
+			       ? m->component->bytesize : m->bytesize;
+      if (max_unit_size < unit_size)
+	max_unit_size = unit_size;
+    }
+  if (max_unit_size < (1 << 8))
+    puts ("#define MODE_UNIT_SIZE_TYPE unsigned char");
+  else if (max_unit_size < (1 << 16))
+    puts ("#define MODE_UNIT_SIZE_TYPE unsigned short");
+  else
+    puts ("#define MODE_UNIT_SIZE_TYPE unsigned int");
+
   printf ("#define CONST_MODE_BASE_ALIGN%s\n", adj_alignment ? "" : " const");
 #if 0 /* disabled for backward compatibility, temporary */
   printf ("#define CONST_REAL_FORMAT_FOR_MODE%s\n", adj_format ? "" :" const");
@@ -1683,7 +1699,7 @@ emit_mode_unit_size (void)
   int c;
   struct mode_data *m;
 
-  print_maybe_const_decl ("%sunsigned char", "mode_unit_size",
+  print_maybe_const_decl ("%sMODE_UNIT_SIZE_TYPE", "mode_unit_size",
 			  "NUM_MACHINE_MODES", adj_bytesize);
 
   for_all_modes (c, m)

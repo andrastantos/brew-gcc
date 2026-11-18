@@ -35,7 +35,8 @@ public:
   static TyTy::BaseType *
   ResolveOpOverload (LangItem::Kind lang_item_type, HIR::OperatorExprMeta expr,
 		     TyTy::BaseType *lhs, TyTy::BaseType *rhs,
-		     HIR::PathIdentSegment specified_segment);
+		     HIR::PathIdentSegment specified_segment,
+		     TyTy::BaseType *result_type);
 
   void visit (HIR::TupleIndexExpr &expr) override;
   void visit (HIR::TupleExpr &expr) override;
@@ -74,12 +75,12 @@ public:
   void visit (HIR::RangeFromExpr &expr) override;
   void visit (HIR::RangeToExpr &expr) override;
   void visit (HIR::RangeFullExpr &expr) override;
-  void visit (HIR::RangeFromToInclExpr &expr) override;
   void visit (HIR::WhileLoopExpr &expr) override;
   void visit (HIR::ClosureExpr &expr) override;
   void visit (HIR::InlineAsm &expr) override;
   void visit (HIR::LlvmInlineAsm &expr) override;
   void visit (HIR::OffsetOf &expr) override;
+  void visit (HIR::BoxExpr &expr) override;
 
   // TODO
   void visit (HIR::ErrorPropagationExpr &) override {}
@@ -109,7 +110,10 @@ protected:
 				  HIR::OperatorExprMeta expr,
 				  TyTy::BaseType *lhs, TyTy::BaseType *rhs,
 				  HIR::PathIdentSegment specified_segment
-				  = HIR::PathIdentSegment::create_error ());
+				  = HIR::PathIdentSegment::create_error (),
+				  bool allow_defer = true,
+				  TyTy::BaseType *result_type = nullptr,
+				  TyTy::BaseType *probe_lhs = nullptr);
 
   bool resolve_fn_trait_call (HIR::CallExpr &expr,
 			      TyTy::BaseType *function_tyty,

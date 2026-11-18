@@ -46,7 +46,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
    For other sorts of data transfer, there are zero or more data
    transfer statement that depend on the format of the data transfer
-   statement. For READ (and for backwards compatibily: for WRITE), one has
+   statement. For READ (and for backwards compatibility: for WRITE), one has
 
       transfer_integer
       transfer_logical
@@ -835,7 +835,7 @@ write_block (st_parameter_dt *dtp, size_t length)
 
   if (is_internal_unit (dtp))
     {
-      if (is_char4_unit(dtp)) /* char4 internel unit.  */
+      if (is_char4_unit(dtp)) /* char4 internal unit.  */
 	{
 	  gfc_char4_t *dest4;
 	  dest4 = mem_alloc_w4 (dtp->u.p.current_unit->s, &length);
@@ -1153,7 +1153,7 @@ unformatted_read (st_parameter_dt *dtp, bt type,
   convert = dtp->u.p.current_unit->flags.convert;
   if (unlikely (convert != GFC_CONVERT_NATIVE) && kind != 1)
     {
-      /* Handle wide chracters.  */
+      /* Handle wide characters.  */
       if (type == BT_CHARACTER)
   	{
   	  nelems *= size;
@@ -1312,7 +1312,7 @@ unformatted_write (st_parameter_dt *dtp, bt type,
 
       p = source;
 
-      /* Handle wide chracters.  */
+      /* Handle wide characters.  */
       if (type == BT_CHARACTER && kind != 1)
 	{
 	  nelems *= size;
@@ -1840,6 +1840,14 @@ formatted_transfer_scalar_read (st_parameter_dt *dtp, bt type, void *p, int kind
 	  read_f (dtp, f, p, kind);
 	  break;
 
+	case FMT_EX:
+	  if (n == 0)
+	    goto need_read_data;
+	  if (require_type (dtp, BT_REAL, type, f))
+	    return;
+	  read_ex (dtp, f, p, kind);
+	  break;
+
 	case FMT_F:
 	  if (n == 0)
 	    goto need_read_data;
@@ -2129,7 +2137,7 @@ formatted_transfer_scalar_write (st_parameter_dt *dtp, bt type, void *p, int kin
 		    || t == FMT_Z  || t == FMT_F  || t == FMT_E
 		    || t == FMT_EN || t == FMT_ES || t == FMT_G
 		    || t == FMT_L  || t == FMT_A  || t == FMT_D
-		    || t == FMT_DT))
+		    || t == FMT_DT || t == FMT_EX))
 	    || t == FMT_STRING))
 	{
 	  if (dtp->u.p.skips > 0)
@@ -2154,7 +2162,7 @@ formatted_transfer_scalar_write (st_parameter_dt *dtp, bt type, void *p, int kin
 	}
 
       if (is_stream_io(dtp))
-	bytes_used = dtp->u.p.current_unit->fbuf->act;
+	bytes_used = dtp->u.p.current_unit->fbuf->pos;
       else
 	bytes_used = dtp->u.p.current_unit->recl
 		    - dtp->u.p.current_unit->bytes_left;
@@ -2351,6 +2359,15 @@ formatted_transfer_scalar_write (st_parameter_dt *dtp, bt type, void *p, int kin
 	    write_es (dtp, f, p, kind);
 	  break;
 
+	case FMT_EX:
+	  if (n == 0)
+	    goto need_data;
+	  if (require_type (dtp, BT_REAL, type, f))
+	    return;
+	  write_ex (dtp, f, p, kind);
+	  break;
+
+
 	case FMT_F:
 	  if (n == 0)
 	    goto need_data;
@@ -2403,6 +2420,28 @@ formatted_transfer_scalar_write (st_parameter_dt *dtp, bt type, void *p, int kin
 	  dtp->u.p.skips += f->u.n;
 	  tab_pos = bytes_used + dtp->u.p.skips - 1;
 	  dtp->u.p.pending_spaces = tab_pos - dtp->u.p.max_pos + 1;
+	  if (dtp->u.p.pending_spaces < 0 && dtp->u.p.skips > 0)
+	    {
+	      /* The advance falls within already-written content (e.g. after
+		 a backward tab).  FMT_X sets positions to blank per the
+		 standard; FMT_TR skips without overwriting existing characters.  */
+	      gfc_offset new_max;
+	      int nspaces = f->format == FMT_X ? dtp->u.p.skips : 0;
+	      write_x (dtp, dtp->u.p.skips, nspaces);
+
+	      /* Adjust the max position depending on the type of write.  */
+	      if (is_stream_io (dtp))
+		new_max = dtp->u.p.current_unit->fbuf->act;
+	      else
+		new_max = dtp->u.p.current_unit->recl
+			  - dtp->u.p.current_unit->bytes_left;
+
+	      dtp->u.p.max_pos = dtp->u.p.max_pos > new_max
+				  ? dtp->u.p.max_pos : new_max;
+
+	      dtp->u.p.skips = dtp->u.p.pending_spaces = 0;
+	      break;
+	    }
 	  dtp->u.p.pending_spaces = dtp->u.p.pending_spaces < 0
 				    ? f->u.n : dtp->u.p.pending_spaces;
 
@@ -2592,7 +2631,7 @@ formatted_transfer_scalar_write (st_parameter_dt *dtp, bt type, void *p, int kin
 
   /* This function is first called from data_init_transfer to initiate the loop
      over each item in the format, transferring data as required.  Subsequent
-     calls to this function occur for each data item foound in the READ/WRITE
+     calls to this function occur for each data item found in the READ/WRITE
      statement.  The item_count is incremented for each call.  Since the first
      call is from data_transfer_init, the item_count is always one greater than
      the actual count number of the item being transferred.  */
@@ -4547,7 +4586,7 @@ finalize_transfer (st_parameter_dt *dtp)
 	  && dtp->u.p.current_unit->s)
 	{
 	  sclose (dtp->u.p.current_unit->s);
-	  dtp->u.p.current_unit->s = NULL;
+	  set_unit_stream (dtp->u.p.current_unit, NULL);
 	}
     }
 
@@ -4668,7 +4707,7 @@ st_read_done_worker (st_parameter_dt *dtp, bool unlock)
 	}
       if (dtp->u.p.unit_is_internal || dtp->u.p.format_not_saved)
 	{
-	  free_format_data (dtp->u.p.fmt);
+	  free_format_data (&dtp->u.p.fmt);
 	  free_format (dtp);
 	}
     }
@@ -4764,7 +4803,7 @@ st_write_done_worker (st_parameter_dt *dtp, bool unlock)
 	}
       if (dtp->u.p.unit_is_internal || dtp->u.p.format_not_saved)
 	{
-	  free_format_data (dtp->u.p.fmt);
+	  free_format_data (&dtp->u.p.fmt);
 	  free_format (dtp);
 	}
     }

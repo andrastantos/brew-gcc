@@ -48,6 +48,17 @@ extern bool alpha_expand_mov_nobwx (machine_mode, rtx *);
 extern void alpha_expand_movmisalign (machine_mode, rtx *);
 extern void alpha_emit_floatuns (rtx[]);
 extern rtx alpha_emit_conditional_move (rtx, machine_mode);
+
+/* Selects the test performed by alpha_expand_fp_classify.  */
+enum alpha_fp_class
+{
+  ALPHA_FPCLASS_FINITE,
+  ALPHA_FPCLASS_INF,
+  ALPHA_FPCLASS_NAN,
+  ALPHA_FPCLASS_NORMAL
+};
+
+extern void alpha_expand_fp_classify (rtx, rtx, enum alpha_fp_class);
 extern void alpha_split_tmode_pair (rtx[], machine_mode, bool);
 extern void alpha_split_tfmode_frobsign (rtx[], rtx (*)(rtx, rtx, rtx));
 extern void alpha_expand_unaligned_load (rtx, rtx, HOST_WIDE_INT,
@@ -63,7 +74,7 @@ extern rtx alpha_expand_zap_mask (HOST_WIDE_INT);
 extern void alpha_expand_builtin_vector_binop (rtx (*)(rtx, rtx, rtx),
 					       machine_mode,
 					       rtx, rtx, rtx);
-extern rtx alpha_emit_unlikely_jump (rtx, rtx);
+extern rtx_insn *alpha_emit_unlikely_jump (rtx, rtx);
 extern void alpha_expand_builtin_establish_vms_condition_handler (rtx, rtx);
 extern void alpha_expand_builtin_revert_vms_condition_handler (rtx);
 
@@ -76,7 +87,7 @@ extern rtx alpha_va_arg (tree, tree);
 extern void alpha_start_function (FILE *, const char *, tree);
 extern void alpha_end_function (FILE *, const char *, tree);
 
-extern bool alpha_find_lo_sum_using_gp (rtx);
+extern bool alpha_find_lo_sum_using_gp (rtx_insn *);
 
 extern int alpha_store_data_bypass_p (rtx_insn *, rtx_insn *);
 

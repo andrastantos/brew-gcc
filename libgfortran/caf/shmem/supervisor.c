@@ -37,6 +37,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include <sys/wait.h>
 #endif
 #if !defined(_SC_PAGE_SIZE) && defined(WIN32)
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
 #if defined(__hpux__)
@@ -106,7 +107,7 @@ get_memory_size_from_envvar (void)
     {
       char suffix[2];
       int rv;
-      rv = sscanf (e, "%zu%1s", &sz, suffix);
+      rv = sscanf (e, "%" FLM_Z "u%1s", &sz, suffix);
       if (rv == 2)
 	{
 	  switch (suffix[0])
@@ -134,11 +135,11 @@ get_memory_size_from_envvar (void)
       if (sizeof (size_t) == 4)
 	sz = ((size_t) 1) << 28;
       else
-#ifndef WIN32
-	sz = ((size_t) 1) << 34;
-#else
-	/* Use 1GB on Windows.  */
+#if defined(WIN32) || defined(__hpux__)
+	/* Use 1GB on Windows and HP-UX.  */
 	sz = ((size_t) 1) << 30;
+#else
+	sz = ((size_t) 1) << 34;
 #endif
     }
   return sz;
@@ -217,16 +218,26 @@ ensure_shmem_initialization (void)
       caf_initial_team = caf_current_team
 	= (caf_shmem_team_t) calloc (1, sizeof (struct caf_shmem_team));
       allocator_lock (&local->ai.alloc);
-      *caf_initial_team = (struct caf_shmem_team) {
-	NULL,
-	-1,
-	this_image.image_num,
-	0,
-	NULL,
-	{alloc_get_memory_by_id_created (&local->ai,
-					 local->total_num_images * sizeof (int)
-					   + sizeof (struct shmem_image_info),
-					 next_memid++, &created)}};
+
+      *caf_initial_team = (struct caf_shmem_team)
+	{
+	  NULL,
+	  -1,
+	  this_image.image_num,
+	  0,
+	  NULL,
+	  {
+	    alloc_get_memory_by_id_created (&local->ai,
+				  local->total_num_images * sizeof (int)
+				    + sizeof (struct shmem_image_info),
+				  next_memid++,
+				  &created)
+	  }
+	};
+
+      if (caf_initial_team->u.image_info == NULL)
+	caf_runtime_error ("Shared memory exhausted; increase "
+			   "GFORTRAN_SHARED_MEMORY_SIZE");
       if (created)
 	{
 	  counter_barrier_init (&caf_initial_team->u.image_info->image_count,
@@ -239,9 +250,11 @@ ensure_shmem_initialization (void)
 	  caf_initial_team->u.image_info->image_map_size
 	    = local->total_num_images;
 	  caf_initial_team->u.image_info->num_term_images = 0;
-	  caf_initial_team->u.image_info->lastmemid = 0;
+	  caf_initial_team->u.image_info->id = 0;
+	  caf_initial_team->u.image_info->new_teams = SHMPTR_NULL;
 	  for (int i = 0; i < local->total_num_images; ++i)
 	    caf_initial_team->u.image_info->image_map[i] = i;
+	  register_team (caf_initial_team);
 	}
       allocator_unlock (&local->ai.alloc);
       sync_init (&local->si, &local->sm);
@@ -253,6 +266,8 @@ ensure_shmem_initialization (void)
       thread_support_init_supervisor ();
       counter_barrier_init (&this_image.supervisor->num_active_images,
 			    local->total_num_images);
+      this_image.supervisor->teams = SHMPTR_NULL;
+      this_image.supervisor->next_team_id = 1;
       alloc_init_supervisor (&local->ai, &local->sm);
       sync_init_supervisor (&local->si, &local->ai);
     }
@@ -408,26 +423,33 @@ supervisor_main_loop (int *argc __attribute__ ((unused)),
 	  --i;
 	  continue;
 	}
+      for (j = 0;
+	   j < local->total_num_images && m->images[j].pid != finished_pid;
+	   j++)
+	;
+
+      /* An ERROR STOP on any image terminates all images.  */
+      if (j < local->total_num_images
+	  && m->images[j].status == IMAGE_ERROR_STOP)
+	{
+	  kill_all_images (m);
+	  while (wait (NULL) > 0)
+	    ;
+	  *exit_code = WIFEXITED (chstatus) ? WEXITSTATUS (chstatus) : 1;
+	  return 0;
+	}
+
       if (WIFEXITED (chstatus) && !WEXITSTATUS (chstatus))
 	{
-	  for (j = 0;
-	       j < local->total_num_images && m->images[j].pid != finished_pid;
-	       j++)
-	    ;
 	  /* Only set the status, when it has not been set by the (failing)
 	     image already.  */
 	  if (m->images[j].status == IMAGE_OK)
 	    {
-	      m->images[j].status = IMAGE_SUCCESS;
-	      atomic_fetch_add (&m->finished_images, 1);
+	      notify_image_terminated (&local->si, j, true);
 	    }
 	}
       else if (!WIFEXITED (chstatus) || WEXITSTATUS (chstatus))
 	{
-	  for (j = 0;
-	       j < local->total_num_images && m->images[j].pid != finished_pid;
-	       j++)
-	    ;
 	  if (WEXITSTATUS (chstatus) == 210)
 	    {
 	      --i;
@@ -470,19 +492,21 @@ supervisor_main_loop (int *argc __attribute__ ((unused)),
 			   WTERMSIG (chstatus), finished_pid);
 		  continue;
 		}
-	      m->images[j].status = IMAGE_FAILED;
-	      atomic_fetch_add (&m->failed_images, 1);
+	      /* Only set the status, when it has not been set by the image
+		 already, e.g. by a STOP with a non-zero stop code.  */
+	      if (m->images[j].status == IMAGE_OK)
+		{
+		  notify_image_terminated (&local->si, j, false);
+		  /* The image did not leave the barriers of its teams, so do
+		     it for it.  */
+		  update_registered_teams ();
+		}
 	      if (*exit_code < WTERMSIG (chstatus))
 		*exit_code = WTERMSIG (chstatus);
 	      else if (*exit_code == 0)
 		*exit_code = 1;
 	    }
 	}
-      /* Trigger waiting sync images aka sync_table.  */
-      for (j = 0; j < local->total_num_images; j++)
-	caf_shmem_cond_signal (&SHMPTR_AS (caf_shmem_condvar *,
-					   m->sync_shared.sync_images_cond_vars,
-					   &local->sm)[j]);
       counter_barrier_add (&m->num_active_images, -1);
 #elif defined(WIN32)
       DWORD res = WaitForMultipleObjects (count_waiting, waiting_handles, FALSE,

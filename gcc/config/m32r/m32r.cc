@@ -65,7 +65,7 @@ static char m32r_punct_chars[256];
 static void  m32r_option_override (void);
 static void  init_reg_tables (void);
 static void  block_move_call (rtx, rtx, rtx);
-static int   m32r_is_insn (rtx);
+static int   m32r_is_insn (rtx_insn *);
 static bool  m32r_legitimate_address_p (machine_mode, rtx, bool,
 					code_helper = ERROR_MARK);
 static rtx   m32r_legitimize_address (rtx, rtx, machine_mode);
@@ -1046,13 +1046,13 @@ gen_cond_store (enum rtx_code code, rtx op0, rtx op1, rtx op2)
 
 /* Split a 2 word move (DI or DF) into component parts.  */
 
-rtx
+rtx_insn *
 gen_split_move_double (rtx operands[])
 {
   machine_mode mode = GET_MODE (operands[0]);
   rtx dest = operands[0];
   rtx src  = operands[1];
-  rtx val;
+  rtx_insn *val;
 
   /* We might have (SUBREG (MEM)) here, so just get rid of the
      subregs to make this code simpler.  It is safe to call
@@ -1319,7 +1319,7 @@ m32r_setup_incoming_varargs (cumulative_args_t cum,
 /* Return true if INSN is real instruction bearing insn.  */
 
 static int
-m32r_is_insn (rtx insn)
+m32r_is_insn (rtx_insn *insn)
 {
   return (NONDEBUG_INSN_P (insn)
 	  && GET_CODE (PATTERN (insn)) != USE
@@ -1777,10 +1777,8 @@ m32r_output_function_prologue (FILE * file)
 static void
 pop (int regno)
 {
-  rtx x;
-
-  x = emit_insn (gen_movsi_pop (gen_rtx_REG (Pmode, regno),
-				stack_pointer_rtx));
+  rtx_insn *x = emit_insn (gen_movsi_pop (gen_rtx_REG (Pmode, regno),
+					  stack_pointer_rtx));
   add_reg_note (x, REG_INC, stack_pointer_rtx);
 }
 
@@ -2615,7 +2613,7 @@ m32r_expand_block_move (rtx operands[])
    operands[4] is a temp register.  */
 
 void
-m32r_output_block_move (rtx insn ATTRIBUTE_UNUSED, rtx operands[])
+m32r_output_block_move (rtx_insn *insn ATTRIBUTE_UNUSED, rtx operands[])
 {
   HOST_WIDE_INT bytes = INTVAL (operands[2]);
   int		first_time;

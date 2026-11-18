@@ -111,7 +111,8 @@ enum rid
   RID_TYPES_COMPATIBLE_P,      RID_BUILTIN_COMPLEX,	   RID_BUILTIN_SHUFFLE,
   RID_BUILTIN_SHUFFLEVECTOR,   RID_BUILTIN_CONVERTVECTOR,  RID_BUILTIN_TGMATH,
   RID_BUILTIN_HAS_ATTRIBUTE,   RID_BUILTIN_ASSOC_BARRIER,  RID_BUILTIN_STDC,
-  RID_BUILTIN_COUNTED_BY_REF,
+  RID_BUILTIN_COUNTED_BY_REF,  RID_BUILTIN_BSWAPG,
+  RID_BUILTIN_BITREVERSEG,     RID_BUILTIN_CLMULG,
   RID_DFLOAT32, RID_DFLOAT64, RID_DFLOAT128, RID_DFLOAT64X,
 
   /* TS 18661-3 keywords, in the same sequence as the TI_* values.  */
@@ -399,7 +400,7 @@ struct GTY(()) c_common_identifier {
 struct c_common_resword
 {
   const char *const word;
-  ENUM_BITFIELD(rid) const rid : 16;
+  enum rid const rid : 16;
   const unsigned int disable   : 32;
 };
 
@@ -750,7 +751,9 @@ enum cxx_dialect {
   /* C++23 */
   cxx23,
   /* C++26 */
-  cxx26
+  cxx26,
+  /* C++29 */
+  cxx29
 };
 
 /* The C++ dialect being used.  C++20 is the default.  */
@@ -894,7 +897,10 @@ extern bool decl_with_nonnull_addr_p (const_tree);
 extern tree c_fully_fold (tree, bool, bool *, bool = false);
 extern tree c_wrap_maybe_const (tree, bool);
 extern tree c_common_truthvalue_conversion (location_t, tree);
-extern void c_apply_type_quals_to_decl (int, tree);
+extern void c_apply_type_quals_to_decl (cv_qualifier, tree);
+inline void
+c_apply_type_quals_to_decl (qualifier_set qs, tree decl)
+{ c_apply_type_quals_to_decl (qs.cv_quals (), decl); }
 extern tree c_sizeof_or_alignof_type (location_t, tree, bool, bool, int);
 extern tree c_alignof_expr (location_t, tree);
 extern tree c_countof_type (location_t, tree);
@@ -925,7 +931,6 @@ extern tree fold_for_warn (tree);
 extern tree c_common_get_narrower (tree, int *);
 extern bool get_attribute_operand (tree, unsigned HOST_WIDE_INT *);
 extern void c_common_finalize_early_debug (void);
-extern bool c_flexible_array_member_type_p (const_tree);
 extern unsigned int c_strict_flex_array_level_of (tree);
 extern bool c_option_is_from_cpp_diagnostics (int);
 extern tree c_hardbool_type_attr_1 (tree, tree *, tree *);
@@ -973,7 +978,8 @@ extern tree pointer_int_sum (location_t, enum tree_code, tree, tree,
 			     bool = true);
 
 /* Add qualifiers to a type, in the fashion for C.  */
-extern tree c_build_qualified_type (tree, int, tree = NULL_TREE, size_t = 0);
+extern tree c_build_qualified_type (tree, qualifier_set, tree = NULL_TREE,
+				    size_t = 0);
 
 /* Build tree nodes and builtin functions common to both C and C++ language
    frontends.  */
@@ -1312,9 +1318,11 @@ enum c_omp_region_type
   C_ORT_EXIT_DATA		= 1 << 4,
   C_ORT_INTEROP			= 1 << 5,
   C_ORT_DECLARE_MAPPER		= 1 << 6,
+  C_ORT_UPDATE			= 1 << 7,
   C_ORT_OMP_DECLARE_SIMD	= C_ORT_OMP | C_ORT_DECLARE_SIMD,
   C_ORT_OMP_TARGET		= C_ORT_OMP | C_ORT_TARGET,
   C_ORT_OMP_EXIT_DATA		= C_ORT_OMP | C_ORT_EXIT_DATA,
+  C_ORT_OMP_UPDATE		= C_ORT_OMP | C_ORT_UPDATE,
   C_ORT_OMP_INTEROP		= C_ORT_OMP | C_ORT_INTEROP,
   C_ORT_OMP_DECLARE_MAPPER	= C_ORT_OMP | C_ORT_DECLARE_MAPPER,
   C_ORT_ACC_TARGET		= C_ORT_ACC | C_ORT_TARGET
@@ -1357,7 +1365,7 @@ extern void c_omp_mark_declare_variant (location_t, tree, tree);
 extern void c_omp_adjust_map_clauses (tree, bool);
 template<typename T> struct omp_mapper_list;
 extern void c_omp_find_nested_mappers (struct omp_mapper_list<tree> *, tree);
-extern tree c_omp_instantiate_mappers (tree);
+extern tree c_omp_instantiate_mappers (tree, enum c_omp_region_type);
 
 namespace omp_addr_tokenizer { struct omp_addr_token; }
 typedef omp_addr_tokenizer::omp_addr_token omp_addr_token;
@@ -1591,7 +1599,7 @@ extern tree build_userdef_literal (tree suffix_id, tree value,
 
 extern bool convert_vector_to_array_for_subscript (location_t, tree *, tree);
 
-/* Possibe cases of scalar_to_vector conversion.  */
+/* Possible cases of scalar_to_vector conversion.  */
 enum stv_conv {
   stv_error,        /* Error occurred.  */
   stv_nothing,      /* Nothing happened.  */
@@ -1685,6 +1693,8 @@ extern void check_for_xor_used_as_pow (location_t lhs_loc, tree lhs_val,
 
 /* In c-attribs.cc.  */
 extern bool attribute_takes_identifier_p (const_tree);
+extern bool parse_tls_model (const_tree, enum tls_model *);
+extern void weak_decl_tls_model (tree);
 extern tree handle_deprecated_attribute (tree *, tree, tree, int, bool *);
 extern tree handle_unused_attribute (tree *, tree, tree, int, bool *);
 extern tree handle_fallthrough_attribute (tree *, tree, tree, int, bool *);
@@ -1747,5 +1757,56 @@ namespace selftest {
   extern void c_family_tests (void);
 } // namespace selftest
 #endif /* #if CHECKING_P */
+
+/* Wrapping a template parameter in type_identity_t hides it from template
+   argument deduction.  */
+#if __cpp_lib_type_identity
+using std::type_identity_t;
+#else
+template <typename T>
+struct type_identity { typedef T type; };
+template <typename T>
+using type_identity_t = typename type_identity<T>::type;
+#endif
+
+/* RAII sentinel that saves the value of a variable, optionally
+   overrides it right away, and restores its value when the sentinel
+   id destructed.  */
+
+template <typename T>
+class temp_override
+{
+  T& overridden_variable;
+  T saved_value;
+public:
+  temp_override (T& var) : overridden_variable (var), saved_value (var) {}
+  temp_override (T& var, type_identity_t<T> overrider)
+    : overridden_variable (var), saved_value (var)
+  {
+    overridden_variable = overrider;
+  }
+  ~temp_override() { overridden_variable = saved_value; }
+};
+
+/* Object generator function for temp_override, so you don't need to write the
+   type of the object as a template argument.
+
+   Use as auto x = make_temp_override (flag); */
+
+template <typename T>
+inline temp_override<T>
+make_temp_override (T& var)
+{
+  return { var };
+}
+
+/* Likewise, but use as auto x = make_temp_override (flag, value); */
+
+template <typename T>
+inline temp_override<T>
+make_temp_override (T& var, type_identity_t<T> overrider)
+{
+  return { var, overrider };
+}
 
 #endif /* ! GCC_C_COMMON_H */

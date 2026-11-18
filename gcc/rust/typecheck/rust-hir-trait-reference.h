@@ -21,6 +21,7 @@
 
 #include "rust-hir-full.h"
 #include "rust-tyty-visitor.h"
+#include "rust-hir-impl-trait-context.h"
 
 namespace Rust {
 namespace Resolver {
@@ -101,11 +102,9 @@ public:
   // resolution on construction it can lead to a case where the trait being
   // resolved recursively trying to resolve the trait itself infinitely since
   // the trait will not be stored in its own map yet
-  void on_resolved ();
+  void on_resolved (const TraitReference *tref);
 
-  void associated_type_set (TyTy::BaseType *ty) const;
-
-  void associated_type_reset (bool only_projections) const;
+  void resolve_default_function_body (const TraitReference *tref);
 
   bool is_object_safe () const;
 
@@ -121,9 +120,9 @@ private:
   TyTy::BaseType *get_type_from_fn (/*const*/ HIR::TraitItemFunc &fn) const;
 
   bool is_item_resolved () const;
-  void resolve_item (HIR::TraitItemType &type);
-  void resolve_item (HIR::TraitItemConst &constant);
-  void resolve_item (HIR::TraitItemFunc &func);
+  void resolve_item (const TraitReference *tref, HIR::TraitItemType &type);
+  void resolve_item (const TraitReference *tref, HIR::TraitItemConst &constant);
+  void resolve_item (const TraitReference *tref, HIR::TraitItemFunc &func);
 
   std::string identifier;
   bool optional_flag;
@@ -212,9 +211,7 @@ public:
 
   void on_resolved ();
 
-  void clear_associated_types () const;
-
-  void clear_associated_type_projections () const;
+  void resolve_default_function_bodies ();
 
   bool is_equal (const TraitReference &other) const;
 
@@ -242,8 +239,7 @@ class AssociatedImplTrait
 public:
   AssociatedImplTrait (TraitReference *trait,
 		       TyTy::TypeBoundPredicate predicate, HIR::ImplBlock *impl,
-		       TyTy::BaseType *self,
-		       Resolver::TypeCheckContext *context);
+		       TyTy::BaseType *self, ImplTraitContextFrame frame);
 
   TyTy::TypeBoundPredicate &get_predicate ();
 
@@ -254,13 +250,15 @@ public:
   TyTy::BaseType *get_self ();
   const TyTy::BaseType *get_self () const;
 
-  void setup_raw_associated_types ();
+  ImplTraitContextFrame get_frame () const;
 
-  TyTy::BaseType *setup_associated_types (
-    const TyTy::BaseType *self, const TyTy::TypeBoundPredicate &bound,
-    TyTy::SubstitutionArgumentMappings *args = nullptr, bool infer = true);
+  TyTy::SubstitutionArgumentMappings
+  bind_impl_for_projection (TyTy::ProjectionType &proj, location_t locus);
 
-  void reset_associated_types ();
+  TyTy::SubstitutionArgumentMappings
+  bind_impl_for_bound (TyTy::BaseType *receiver,
+		       const TyTy::TypeBoundPredicate &bound, location_t locus,
+		       bool emit_error = false);
 
 private:
   TraitReference *trait;
@@ -268,6 +266,7 @@ private:
   HIR::ImplBlock *impl;
   TyTy::BaseType *self;
   Resolver::TypeCheckContext *context;
+  ImplTraitContextFrame frame;
 };
 
 } // namespace Resolver

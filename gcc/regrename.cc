@@ -630,17 +630,17 @@ init_rename_info (class bb_rename_info *p, basic_block bb)
 	  remove_range_from_hard_reg_set (&live_hard_regs, i, iri->nregs);
 	}
     }
-  for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
+  struct incoming_reg_info *iri;
+  unsigned int j = 0;
+  hard_reg_set_iterator hrsi;
+  EXECUTE_IF_SET_IN_HARD_REG_SET (start_chains_set, 0, j, hrsi)
     {
-      struct incoming_reg_info *iri = p->incoming + i;
-      if (TEST_HARD_REG_BIT (start_chains_set, i))
-	{
-	  du_head_p chain;
-	  if (dump_file)
-	    fprintf (dump_file, "opening incoming chain\n");
-	  chain = create_new_chain (i, iri->nregs, NULL, NULL, NO_REGS);
-	  bitmap_set_bit (&p->incoming_open_chains_set, chain->id);
-	}
+      du_head_p chain;
+      if (dump_file)
+	fprintf (dump_file, "opening incoming chain\n");
+      iri = p->incoming + j;
+      chain = create_new_chain (j, iri->nregs, NULL, NULL, NO_REGS);
+      bitmap_set_bit (&p->incoming_open_chains_set, chain->id);
     }
 }
 
@@ -1299,16 +1299,17 @@ scan_rtx_reg (rtx_insn *insn, rtx *loc, enum reg_class cl, enum scan_actions act
 }
 
 /* A wrapper around base_reg_class which returns ALL_REGS if INSN is a
-   DEBUG_INSN.  The arguments MODE, AS, CODE and INDEX_CODE are as for
-   base_reg_class.  */
+   DEBUG_INSN.  The arguments MODE, AS, CODE, INDEX_CODE and MEM are as
+   for base_reg_class.  */
 
 static reg_class
 base_reg_class_for_rename (rtx_insn *insn, machine_mode mode, addr_space_t as,
-			   rtx_code code, rtx_code index_code)
+			   rtx_code code, rtx_code index_code,
+			   rtx mem = NULL_RTX)
 {
   if (DEBUG_INSN_P (insn))
     return ALL_REGS;
-  return base_reg_class (mode, as, code, index_code);
+  return base_reg_class (mode, as, code, index_code, mem, insn);
 }
 
 /* Adapted from find_reloads_address_1.  CL is INDEX_REG_CLASS or
@@ -1340,6 +1341,12 @@ scan_rtx_address (rtx_insn *insn, rtx *loc, enum reg_class cl,
 	rtx *locI = NULL;
 	rtx *locB = NULL;
 	enum rtx_code index_code = SCRATCH;
+
+	if (GET_CODE (op0) == UNSPEC)
+	  {
+	    /* We have a "segment" unspec; skip it.  */
+	    return scan_rtx_address (insn, &XEXP (x, 1), cl, action, mode, as);
+	  }
 
 	if (GET_CODE (op0) == SUBREG)
 	  {
@@ -1446,7 +1453,7 @@ scan_rtx_address (rtx_insn *insn, rtx *loc, enum reg_class cl,
       {
 	reg_class bclass = base_reg_class_for_rename (insn, GET_MODE (x),
 						      MEM_ADDR_SPACE (x),
-						      MEM, SCRATCH);
+						      MEM, SCRATCH, x);
 	scan_rtx_address (insn, &XEXP (x, 0), bclass, action, GET_MODE (x),
 			  MEM_ADDR_SPACE (x));
       }
@@ -1497,7 +1504,7 @@ scan_rtx (rtx_insn *insn, rtx *loc, enum reg_class cl, enum scan_actions action,
       {
 	reg_class bclass = base_reg_class_for_rename (insn, GET_MODE (x),
 						      MEM_ADDR_SPACE (x),
-						      MEM, SCRATCH);
+						      MEM, SCRATCH, x);
 
 	scan_rtx_address (insn, &XEXP (x, 0), bclass, action, GET_MODE (x),
 			  MEM_ADDR_SPACE (x));
@@ -1808,8 +1815,9 @@ build_def_use (basic_block bb)
 	  restore_operands (insn, n_ops, old_operands, old_dups);
 
 	  /* Step 2B: Can't rename function call argument registers.  */
-	  if (CALL_P (insn) && CALL_INSN_FUNCTION_USAGE (insn))
-	    scan_rtx (insn, &CALL_INSN_FUNCTION_USAGE (insn),
+	  auto call = dyn_cast<rtx_call_insn *> (insn);
+	  if (call && CALL_INSN_FUNCTION_USAGE (call))
+	    scan_rtx (call, &CALL_INSN_FUNCTION_USAGE (call),
 		      NO_REGS, mark_all_read, OP_IN);
 
 	  /* Step 2C: Can't rename asm operands that were originally
@@ -1882,9 +1890,9 @@ build_def_use (basic_block bb)
 
 	  /* Step 4B: If this is a call, any chain live at this point
 	     requires a caller-saved reg.  */
-	  if (CALL_P (insn))
+	  if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	    {
-	      function_abi callee_abi = insn_callee_abi (insn);
+	      function_abi callee_abi = insn_callee_abi (call);
 	      class du_head *p;
 	      for (p = open_chains; p; p = p->next_chain)
 		{

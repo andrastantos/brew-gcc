@@ -234,7 +234,7 @@ preprocessor directives.
 
 Here we introduce flags on match expressions.  The flag used
 above, @code{c}, denotes that the expression should
-be also matched commutated.  Thus the above match expression
+be also matched commuted.  Thus the above match expression
 is really the following four match expressions:
 
 @smallexample
@@ -360,6 +360,27 @@ type of a generated expression with the @code{:type} syntax where
 Usually the types of the generated result expressions are
 determined from the context, but sometimes like in the above case
 it is required that you specify them explicitly.
+
+In addition, with can simplify a resulting operation
+and its possible operations.  Note currently functions and tree
+codes cannot be intermixed as possible resulting operations.
+The C expression of the @code{with} needs to fully declare
+the variable too.
+
+@smallexample
+ (simplify
+  (bit_xor (cmp @@0 @@1) integer_truep)
+  (with rescmpcode (tcc_comparison)
+     @{
+       enum tree_code rescmpcode;
+       rescmpcode = invert_tree_comparison (cmp, HONOR_NANS (@@0));
+     @}
+    (if (TREE_CODE_CLASS (rescmpcode) == tcc_comparison)
+     (rescmpcode @@0 @@1))))
+@end smallexample
+
+Here rescmpcode is declared as a possible resulting operation where
+the tree codes could be tcc_comparison.
 
 Another modifier for generated expressions is @code{^} which
 tells the machinery to try more matches for some special cases.

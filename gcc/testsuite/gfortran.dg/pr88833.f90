@@ -6,4 +6,4 @@ subroutine foo(x)
   x = x + 10
 end subroutine foo
 
-! { dg-final { scan-assembler {\twhilelo\tp[0-9]+\.s, wzr, (w[0-9]+).*\twhilelo\tp[0-9]+\.s, w[0-9]+, \1} } }
+! { dg-final { scan-assembler-not {\twhilelo\tp[0-9]+\.s, wzr, (w[0-9]+).*\twhilelo\tp[0-9]+\.s, w[0-9]+, \1} } }

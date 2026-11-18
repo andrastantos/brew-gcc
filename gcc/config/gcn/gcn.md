@@ -67,6 +67,7 @@
   UNSPEC_VECTOR
   UNSPEC_BPERMUTE
   UNSPEC_SGPRBASE
+  UNSPEC_MASKLOAD
   UNSPEC_MEMORY_BARRIER
   UNSPEC_SMIN_DPP_SHR UNSPEC_SMAX_DPP_SHR
   UNSPEC_UMIN_DPP_SHR UNSPEC_UMAX_DPP_SHR
@@ -81,13 +82,12 @@
   UNSPEC_CMUL_ADD UNSPEC_CMUL_SUB
   UNSPEC_CADD90
   UNSPEC_CADD270
-  UNSPEC_GATHER
-  UNSPEC_SCATTER
   UNSPEC_RCP
   UNSPEC_FLBIT_INT
   UNSPEC_FLOOR UNSPEC_CEIL UNSPEC_SIN UNSPEC_COS UNSPEC_EXP2 UNSPEC_LOG2
   UNSPEC_LDEXP UNSPEC_FREXP_EXP UNSPEC_FREXP_MANT
-  UNSPEC_DIV_SCALE UNSPEC_DIV_FMAS UNSPEC_DIV_FIXUP])
+  UNSPEC_DIV_SCALE UNSPEC_DIV_FMAS UNSPEC_DIV_FIXUP
+  UNSPEC_PAIR])
 
 ;; }}}
 ;; {{{ Attributes
@@ -98,7 +98,7 @@
 ;
 ; sop2 - scalar, two inputs, one output
 ;	 ssrc0/ssrc1: sgpr 0-102; flat_scratch,xnack,vcc,tba,tma,ttmp0-11,exec
-;		      vccz,execz,scc,inline immedate,fp inline immediate
+;		      vccz,execz,scc,inline immediate,fp inline immediate
 ;	 sdst: sgpr 0-102; flat_scratch,xnack,vcc,tba,tma,ttmp0-11,exec
 ;
 ;	 Constraints "=SD, SD", "SSA,SSB","SSB,SSA"
@@ -115,7 +115,7 @@
 ;
 ;	 Constraints "=SD", "SSA"
 ;
-; sopc - scalar, two inputs, one comparsion
+; sopc - scalar, two inputs, one comparison
 ;	 ssrc0: same as sop2/ssc0.
 ;
 ;	 Constraints "SSI,SSA","SSA,SSI"
@@ -147,7 +147,7 @@
 ;
 ;	 constraints: "=v", "vBSv"
 ;
-; vopc - vector, two inputs, one comparsion output;
+; vopc - vector, two inputs, one comparison output;
 ;	 vsrc0: same as vop2/src0
 ;	 vsrc1: vgpr0-255
 ;	 vdst:
@@ -287,16 +287,23 @@
 ; Disable alternatives that only apply to specific ISA variants.
 
 (define_attr "cdna" "any,cdna2" (const_string "any"))
-(define_attr "rdna" "any,no,yes" (const_string "any"))
+(define_attr "rdna" "any,no,yes,n3,3p" (const_string "any"))
 
 (define_attr "xnack" "na,off,on" (const_string "na"))
 
 (define_attr "enabled" ""
-  (cond [(and (eq_attr "rdna" "no")
+  (cond [
+	 (and (eq_attr "rdna" "no")
 	      (ne (symbol_ref "TARGET_RDNA2_PLUS") (const_int 0)))
 	   (const_int 0)
 	 (and (eq_attr "rdna" "yes")
 	      (eq (symbol_ref "TARGET_RDNA2_PLUS") (const_int 0)))
+	   (const_int 0)
+	 (and (eq_attr "rdna" "n3")
+	      (ne (symbol_ref "TARGET_RDNA3_PLUS") (const_int 0)))
+	   (const_int 0)
+	 (and (eq_attr "rdna" "3p")
+	      (eq (symbol_ref "TARGET_RDNA3_PLUS") (const_int 0)))
 	   (const_int 0)
 	 (and (eq_attr "cdna" "cdna2")
 	      (eq (symbol_ref "TARGET_CDNA2_PLUS") (const_int 0)))
@@ -371,7 +378,13 @@
    (umin "min%u")
    (umax "max%u")
    (not "not%B")
-   (popcount "bcnt_u32%b")])
+   (popcount "bcnt_u32%b")
+   (clz "ffbh%u")
+   (ctz "ffbl%b")])
+
+(define_code_attr rdna_mnemonic
+  [(clz "clz_i32%u")
+   (ctz "ctz_i32%b")])
 
 (define_code_attr bare_mnemonic
   [(plus "add")
@@ -555,7 +568,7 @@
 (define_insn "*mov<mode>_insn"
   [(set (match_operand:SISF 0 "nonimmediate_operand")
 	(match_operand:SISF 1 "gcn_load_operand"))]
-  ""
+  "!(MEM_P (operands[0]) && MEM_P (operands[1]))"
   {@ [cons: =0, 1; attrs: type, exec, length, cdna, xnack, laneselect, flatmemaccess]
    [SD  ,SSA ;sop1 ,*   ,4 ,*    ,*  ,*    ,*    ] s_mov_b32\t%0, %1
    [SD  ,J   ;sopk ,*   ,4 ,*    ,*  ,*    ,*    ] s_movk_i32\t%0, %1
@@ -629,7 +642,8 @@
 (define_insn_and_split "*mov<mode>_insn"
   [(set (match_operand:DIDF 0 "nonimmediate_operand")
 	(match_operand:DIDF 1 "general_operand"))]
-  "GET_CODE(operands[1]) != SYMBOL_REF"
+  "GET_CODE(operands[1]) != SYMBOL_REF
+   && !(MEM_P (operands[0]) && MEM_P (operands[1]))"
   {@ [cons: =0, 1; attrs: type, length, cdna, xnack, flatmemaccess]
   [SD  ,SSA ;sop1 ,4 ,*    ,*  ,*    ] s_mov_b64\t%0, %1
   [SD  ,C   ;sop1 ,8 ,*    ,*  ,*    ] ^
@@ -694,7 +708,7 @@
 (define_insn_and_split "*movti_insn"
   [(set (match_operand:TI 0 "nonimmediate_operand")
 	(match_operand:TI 1 "general_operand"  ))]
-  ""
+  "!(MEM_P (operands[0]) && MEM_P (operands[1]))"
   {@ [cons: =0, 1; attrs: type, length, cdna, xnack, flatmemaccess]
   [SD ,SSB;mult ,* ,*    ,*  ,*       ] #
   [RS ,Sm ;smem ,12,*    ,*  ,*       ] s_store_dwordx4\t%1, %A0
@@ -1459,12 +1473,15 @@
 	    (const_int 32))))]
   ""
 {
-  if (REG_P (operands[2]))
-    emit_insn (gen_<su>mulsi3_highpart_reg (operands[0], operands[1],
-					    operands[2]));
-  else
+  /* The _imm insn reads the DImode constant as the extended SImode
+     value, so only use it where the two are the same.  */
+  if (CONST_INT_P (operands[2])
+      && ('<su>' == 's' || INTVAL (operands[2]) >= 0))
     emit_insn (gen_<su>mulsi3_highpart_imm (operands[0], operands[1],
 					    operands[2]));
+  else
+    emit_insn (gen_<su>mulsi3_highpart_reg (operands[0], operands[1],
+					    force_reg (SImode, operands[2])));
 
   DONE;
 })
@@ -1495,7 +1512,9 @@
 		(match_operand:SI 1 "register_operand"         "Sg,Sg,v"))
 	      (match_operand:DI 2 "gcn_32bit_immediate_operand" "A, B,A"))
 	    (const_int 32))))]
-  ""
+  "CONST_INT_P (operands[2])
+   && INTVAL (operands[2]) == trunc_int_for_mode (INTVAL (operands[2]), SImode)
+   && ('<su>' == 's' || INTVAL (operands[2]) >= 0)"
   "@
   s_mul_hi<sgnsuffix>0\t%0, %1, %2
   s_mul_hi<sgnsuffix>0\t%0, %1, %2
@@ -1511,10 +1530,14 @@
 		   (match_operand:SI 2 "nonmemory_operand" ""))))]
   ""
 {
-  if (REG_P (operands[2]))
-    emit_insn (gen_<su>mulsidi3_reg (operands[0], operands[1], operands[2]));
-  else
+  /* The _imm insn reads the DImode constant as the extended SImode
+     value, so only use it where the two are the same.  */
+  if (CONST_INT_P (operands[2])
+      && ('<su>' == 's' || INTVAL (operands[2]) >= 0))
     emit_insn (gen_<su>mulsidi3_imm (operands[0], operands[1], operands[2]));
+  else
+    emit_insn (gen_<su>mulsidi3_reg (operands[0], operands[1],
+				     force_reg (SImode, operands[2])));
 
   DONE;
 })
@@ -1543,7 +1566,9 @@
 		   (match_operand:SI 1 "register_operand"       "Sg, Sg, v"))
 		 (match_operand:DI 2 "gcn_32bit_immediate_operand"
 								 "A,  B, A")))]
-  ""
+  "CONST_INT_P (operands[2])
+   && INTVAL (operands[2]) == trunc_int_for_mode (INTVAL (operands[2]), SImode)
+   && ('<su>' == 's' || INTVAL (operands[2]) >= 0)"
   "#"
   "&& reload_completed"
   [(const_int 0)]
@@ -1572,7 +1597,16 @@
     rtx op1hi = gcn_operand_part (DImode, operands[1], 1);
     rtx op2lo = gcn_operand_part (DImode, operands[2], 0);
     rtx op2hi = gcn_operand_part (DImode, operands[2], 1);
-    emit_insn (gen_umulsidi3 (operands[0], op1lo, op2lo));
+    rtx op2lo_ext = op2lo;
+    /* The low part is unsigned, so the expander would force a negative
+       constant into a new register, which we can't do after reload.
+       Use TMP (which is not needed yet) instead.  */
+    if (CONST_INT_P (op2lo) && INTVAL (op2lo) < 0)
+      {
+	emit_move_insn (tmp, op2lo);
+	op2lo_ext = tmp;
+      }
+    emit_insn (gen_umulsidi3 (operands[0], op1lo, op2lo_ext));
     emit_insn (gen_mulsi3 (tmp, op1lo, op2hi));
     rtx add = gen_rtx_SET (dsthi, gen_rtx_PLUS (SImode, dsthi, tmp));
     rtx clob = gen_rtx_CLOBBER (VOIDmode, operands[4]);
@@ -1596,7 +1630,7 @@
   [(set_attr "type" "vop_sdwa")
    (set_attr "length" "8")])
 
-(define_insn "<u>mulqihi3_scalar"
+(define_insn "<u>mulqihi3"
   [(set (match_operand:HI 0 "register_operand"			"=v")
 	(mult:HI
 	  (any_extend:HI (match_operand:QI 1 "register_operand" "%v"))
@@ -1731,12 +1765,16 @@
 ;; {{{ ALU: generic 64-bit
 
 (define_insn_and_split "one_cmpldi2"
-  [(set (match_operand:DI 0 "register_operand"        "=Sg,   ?v")
-	(not:DI (match_operand:DI 1 "gcn_alu_operand" "SgA,vSvDB")))
-   (clobber (match_scratch:BI 2			      "=cs,    X"))]
+  [(set (match_operand:DI 0 "register_operand")
+	(not:DI (match_operand:DI 1 "gcn_alu_operand")))
+   (clobber (match_scratch:BI 2))]
   ""
-  "#"
-  "reload_completed"
+  {@ [cons: =0,1,=2; attrs: type,length]
+   [Sg,SgA  ,cs;sop1,4] s_not_b64\t%0, %1
+   [Sg,C    ,cs;sop1,8] ^
+   [?v,vSvDB,X ;mult,*] #
+  }
+  "reload_completed && gcn_vgpr_register_operand (operands[0], DImode)"
   [(parallel [(set (match_dup 3) (not:SI (match_dup 4)))
 	      (clobber (match_dup 2))])
    (parallel [(set (match_dup 5) (not:SI (match_dup 6)))
@@ -1747,7 +1785,6 @@
     operands[5] = gcn_operand_part (DImode, operands[0], 1);
     operands[6] = gcn_operand_part (DImode, operands[1], 1);
   }
-  [(set_attr "type" "mult")]
 )
 
 (define_code_iterator vec_and_scalar64_com [and ior xor])
@@ -1794,6 +1831,44 @@
   [(set_attr "type" "sop2,sop2,vop2")
    (set_attr "length" "8")])
 
+; Without these, the middle end sets the two halves via subregs, which
+; leaves the DImode pseudo live (partially undefined) all the way back
+; to the function entry.  Splitting after reload avoids that.
+
+(define_insn_and_split "zero_extendsidi2"
+  [(set (match_operand:DI 0 "register_operand")
+	(zero_extend:DI (match_operand:SI 1 "register_operand")))]
+  ""
+  {@ [cons: =0,1; attrs: type,length]
+   [Sg,Sg;mult,8] #
+   [v ,v ;mult,8] #
+  }
+  "&& reload_completed"
+  [(set (match_dup 2) (match_dup 1))
+   (set (match_dup 3) (const_int 0))]
+  {
+    operands[2] = gcn_operand_part (DImode, operands[0], 0);
+    operands[3] = gcn_operand_part (DImode, operands[0], 1);
+  })
+
+(define_insn_and_split "extendsidi2"
+  [(set (match_operand:DI 0 "register_operand")
+	(sign_extend:DI (match_operand:SI 1 "register_operand")))
+   (clobber (match_scratch:BI 2))]
+  ""
+  {@ [cons: =0,1,=2; attrs: type,length]
+   [Sg,Sg,cs;mult,12] #
+   [v ,v ,X ;mult,12] #
+  }
+  "&& reload_completed"
+  [(set (match_dup 3) (match_dup 1))
+   (parallel [(set (match_dup 4) (ashiftrt:SI (match_dup 3) (const_int 31)))
+	      (clobber (match_dup 2))])]
+  {
+    operands[3] = gcn_operand_part (DImode, operands[0], 0);
+    operands[4] = gcn_operand_part (DImode, operands[0], 1);
+  })
+
 ;; }}}
 ;; {{{ ALU: generic 128-bit binop
 
@@ -1830,7 +1905,7 @@
         : shiftval < 64 ? SMALL
         : LARGE);
 
-    rtx large_label, zero_label, exit_label;
+    rtx_code_label *large_label, *zero_label, *exit_label;
 
     if (shiftcomparison == RUNTIME)
       {
@@ -1915,14 +1990,18 @@
 ; into the L1 cache, this is not actually safe.
 ;
 ; Additionally, scalar flat instructions access L2 via a different cache
-; (the "constant cache"), so they have separate constrol instructions.  We
+; (the "constant cache"), so they have separate control instructions.  We
 ; do not attempt to invalidate both caches at once; instead, atomics
 ; operating on scalar flat pointers will flush the constant cache, and
 ; atomics operating on flat or global pointers will flush L1.  It is up to
 ; the programmer to get this right.
 
 (define_code_iterator atomicops [plus minus and ior xor])
-(define_mode_attr X [(SI "") (DI "_X2")])
+(define_mode_attr X [(SI "") (V64SI "")
+		     (DI "_X2") (V64DI "_X2")])
+
+(define_mode_iterator ATOMICMODE
+		      [SI DI V64SI V64DI])
 
 ;; TODO compare_and_swap test_and_set inc dec
 ;; Hardware also supports min and max, but GCC does not.
@@ -1964,19 +2043,19 @@
 ; reliably - they can cause hangs or incorrect results.
 ; TODO: flush caches according to memory model
 (define_insn "atomic_fetch_<bare_mnemonic><mode>"
-  [(set (match_operand:SIDI 0 "register_operand"     "=Sm, v, v")
-	(match_operand:SIDI 1 "memory_operand"	     "+RS,RF,RM"))
+  [(set (match_operand:ATOMICMODE 0 "register_operand"     "=Sm,   v,   v")
+	(match_operand:ATOMICMODE 1 "memory_operand"	   "+RS,RfRF,RmRM"))
    (set (match_dup 1)
-	(unspec_volatile:SIDI
-	  [(atomicops:SIDI
+	(unspec_volatile:ATOMICMODE
+	  [(atomicops:ATOMICMODE
 	    (match_dup 1)
-	    (match_operand:SIDI 2 "register_operand" " Sm, v, v"))]
+	    (match_operand:ATOMICMODE 2 "register_operand" " Sm,   v,   v"))]
 	   UNSPECV_ATOMIC))
    (use (match_operand 3 "const_int_operand"))]
   "0 /* Disabled.  */"
   "@
    s_atomic_<bare_mnemonic><X>\t%0, %1, %2 glc\;s_waitcnt\tlgkmcnt(0)
-   flat_atomic_<bare_mnemonic><X>\t%0, %1, %2 %G2\;s_waitcnt\t0
+   flat_atomic_<bare_mnemonic><X>\t%0, %1, %2%O1 %G2\;s_waitcnt\t0
    global_atomic_<bare_mnemonic><X>\t%0, %A1, %2%O1 %G2\;s_waitcnt\tvmcnt(0)"
   [(set_attr "type" "smem,flat,flat")
    (set_attr "flatmemaccess" "*,atomicwait,atomicwait")
@@ -1988,31 +2067,51 @@
 ; you might expect from a concurrent non-atomic read-modify-write.
 ; TODO: flush caches according to memory model
 (define_insn "atomic_<bare_mnemonic><mode>"
-  [(set (match_operand:SIDI 0 "memory_operand"       "+RS,RF,RM")
-	(unspec_volatile:SIDI
-	  [(atomicops:SIDI
+  [(set (match_operand:ATOMICMODE 0 "memory_operand"       "+RS,RfRF,RmRM")
+	(unspec_volatile:ATOMICMODE
+	  [(atomicops:ATOMICMODE
 	    (match_dup 0)
-	    (match_operand:SIDI 1 "register_operand" " Sm, v, v"))]
+	    (match_operand:ATOMICMODE 1 "register_operand" " Sm,   v,   v"))]
 	  UNSPECV_ATOMIC))
    (use (match_operand 2 "const_int_operand"))]
   "0 /* Disabled.  */"
   "@
    s_atomic_<bare_mnemonic><X>\t%0, %1\;s_waitcnt\tlgkmcnt(0)
-   flat_atomic_<bare_mnemonic><X>\t%0, %1\;s_waitcnt\t0
+   flat_atomic_<bare_mnemonic><X>\t%0, %1%O0\;s_waitcnt\t0
    global_atomic_<bare_mnemonic><X>\t%A0, %1%O0\;s_waitcnt\tvmcnt(0)"
   [(set_attr "type" "smem,flat,flat")
    (set_attr "flatmemaccess" "*,atomicwait,atomicwait")
    (set_attr "length" "12")])
 
-(define_mode_attr x2 [(SI "DI") (DI "TI")])
-(define_mode_attr size [(SI "4") (DI "8")])
-(define_mode_attr bitsize [(SI "32") (DI "64")])
+(define_mode_attr x2 [(SI "DI") (DI "TI") (V64SI "V64DI") (V64DI "V64TI")])
+(define_mode_attr bitsize [(SI "32") (DI "64") (V64SI "32") (V64DI "64")])
+
+(define_insn_and_split "createpair<mode>"
+  [(set (match_operand:<x2> 0 "register_operand"		   "=&v,&Sm")
+        (unspec:<x2> [(match_operand:ATOMICMODE 1 "register_operand" "v, Sm")
+		      (match_operand:ATOMICMODE 2 "register_operand" "v, Sm")]
+		     UNSPEC_PAIR))]
+  ""
+  "#"
+  "reload_completed"
+  [(const_int 0)]
+  {
+    int parts = <bitsize> / 32;
+    int outpart = 0;
+    for (int inpart = 0; inpart < parts; inpart++, outpart++)
+      emit_move_insn (gcn_operand_part (<x2>mode, operands[0], outpart),
+		      gcn_operand_part (<MODE>mode, operands[1], inpart));
+    for (int inpart = 0; inpart < parts; inpart++, outpart++)
+      emit_move_insn (gcn_operand_part (<x2>mode, operands[0], outpart),
+		      gcn_operand_part (<MODE>mode, operands[2], inpart));
+    DONE;
+  })
 
 (define_expand "sync_compare_and_swap<mode>"
-  [(match_operand:SIDI 0 "register_operand")
-   (match_operand:SIDI 1 "memory_operand")
-   (match_operand:SIDI 2 "register_operand")
-   (match_operand:SIDI 3 "register_operand")]
+  [(match_operand:ATOMICMODE 0 "register_operand")
+   (match_operand:ATOMICMODE 1 "memory_operand")
+   (match_operand:ATOMICMODE 2 "register_operand")
+   (match_operand:ATOMICMODE 3 "register_operand")]
   ""
   {
     if (MEM_ADDR_SPACE (operands[1]) == ADDR_SPACE_LDS)
@@ -2025,41 +2124,40 @@
       }
 
     /* Operands 2 and 3 must be placed in consecutive registers, and passed
-       as a combined value.  */
+       as a combined value.  Subregs would work for the scalar case, but
+       not for the vector case.  */
     rtx src_cmp = gen_reg_rtx (<x2>mode);
-    emit_move_insn (gen_rtx_SUBREG (<MODE>mode, src_cmp, 0), operands[3]);
-    emit_move_insn (gen_rtx_SUBREG (<MODE>mode, src_cmp, <size>), operands[2]);
-    emit_insn (gen_sync_compare_and_swap<mode>_insn (operands[0],
-						     operands[1],
+    emit_insn (gen_createpair<mode> (src_cmp, operands[3], operands[2]));
+    emit_insn (gen_sync_compare_and_swap<mode>_insn (operands[0], operands[1],
 						     src_cmp));
     DONE;
   })
 
 (define_insn "sync_compare_and_swap<mode>_insn"
-  [(set (match_operand:SIDI 0 "register_operand"    "=Sm, v, v")
-	(match_operand:SIDI 1 "memory_operand"      "+RS,RF,RM"))
+  [(set (match_operand:ATOMICMODE 0 "register_operand" "=Sm,   v,   v")
+	(match_operand:ATOMICMODE 1 "memory_operand"   "+RS,RfRF,RmRM"))
    (set (match_dup 1)
-	(unspec_volatile:SIDI
-	  [(match_operand:<x2> 2 "register_operand" " Sm, v, v")]
+	(unspec_volatile:ATOMICMODE
+	  [(match_operand:<x2> 2 "register_operand"    " Sm,   v,   v")]
 	  UNSPECV_ATOMIC))]
   ""
   "@
    s_atomic_cmpswap<X>\t%0, %1, %2 glc\;s_waitcnt\tlgkmcnt(0)
-   flat_atomic_cmpswap<X>\t%0, %1, %2 %G2\;s_waitcnt\t0
+   flat_atomic_cmpswap<X>\t%0, %1, %2%O1 %G2\;s_waitcnt\t0
    global_atomic_cmpswap<X>\t%0, %A1, %2%O1 %G2\;s_waitcnt\tvmcnt(0)"
   [(set_attr "type" "smem,flat,flat")
    (set_attr "length" "12")
    (set_attr "flatmemaccess" "*,cmpswapx2,cmpswapx2")])
 
 (define_insn "sync_compare_and_swap<mode>_lds_insn"
-  [(set (match_operand:SIDI 0 "register_operand"    "= v")
-	(unspec_volatile:SIDI
-	  [(match_operand:SIDI 1 "memory_operand"   "+RL")]
+  [(set (match_operand:ATOMICMODE 0 "register_operand"    "=   v")
+	(unspec_volatile:ATOMICMODE
+	  [(match_operand:ATOMICMODE 1 "memory_operand"   "+RLRl")]
 	  UNSPECV_ATOMIC))
    (set (match_dup 1)
-	(unspec_volatile:SIDI
-	  [(match_operand:SIDI 2 "register_operand" "  v")
-	   (match_operand:SIDI 3 "register_operand" "  v")]
+	(unspec_volatile:ATOMICMODE
+	  [(match_operand:ATOMICMODE 2 "register_operand" "    v")
+	   (match_operand:ATOMICMODE 3 "register_operand" "    v")]
 	  UNSPECV_ATOMIC))]
   ""
   {
@@ -2072,11 +2170,11 @@
    (set_attr "length" "12")])
 
 (define_insn "atomic_load<mode>"
-  [(set (match_operand:SIDI 0 "register_operand"  "=Sm, v, v")
-	(unspec_volatile:SIDI
-	  [(match_operand:SIDI 1 "memory_operand" " RS,RF,RM")]
+  [(set (match_operand:ATOMICMODE 0 "register_operand"  "=Sm,   v,   v")
+	(unspec_volatile:ATOMICMODE
+	  [(match_operand:ATOMICMODE 1 "memory_operand" " RS,RfRF,RmRM")]
 	  UNSPECV_ATOMIC))
-   (use (match_operand:SIDI 2 "immediate_operand" "  i, i, i"))]
+   (use (match_operand:SI 2 "immediate_operand" "  i,   i,   i"))]
   ""
   {
     /* FIXME: RDNA cache instructions may be too conservative?  */
@@ -2174,11 +2272,11 @@
    (set_attr "rdna" "no,*,*")])
 
 (define_insn "atomic_store<mode>"
-  [(set (match_operand:SIDI 0 "memory_operand"      "=RS,RF,RM")
-	(unspec_volatile:SIDI
-	  [(match_operand:SIDI 1 "register_operand" " Sm, v, v")]
+  [(set (match_operand:ATOMICMODE 0 "memory_operand"      "=RS,RfRF,RmRM")
+	(unspec_volatile:ATOMICMODE
+	  [(match_operand:ATOMICMODE 1 "register_operand" " Sm,   v,   v")]
 	  UNSPECV_ATOMIC))
-  (use (match_operand:SIDI 2 "immediate_operand"    "  i, i, i"))]
+  (use (match_operand:SI 2 "immediate_operand"    "  i,   i,   i"))]
   ""
   {
     switch (INTVAL (operands[2]))
@@ -2261,11 +2359,11 @@
    (set_attr "rdna" "no,*,*")])
 
 (define_insn "atomic_exchange<mode>"
-  [(set (match_operand:SIDI 0 "register_operand"    "=Sm, v, v")
-        (match_operand:SIDI 1 "memory_operand"	    "+RS,RF,RM"))
+  [(set (match_operand:ATOMICMODE 0 "register_operand"    "=Sm,   v,   v")
+        (match_operand:ATOMICMODE 1 "memory_operand"	  "+RS,RfRF,RmRM"))
    (set (match_dup 1)
-	(unspec_volatile:SIDI
-	  [(match_operand:SIDI 2 "register_operand" " Sm, v, v")]
+	(unspec_volatile:ATOMICMODE
+	  [(match_operand:ATOMICMODE 2 "register_operand" " Sm,   v,   v")]
 	  UNSPECV_ATOMIC))
    (use (match_operand 3 "immediate_operand"))]
   ""
@@ -2278,7 +2376,7 @@
 	  case 0:
 	    return "s_atomic_swap<X>\t%0, %1, %2 glc\;s_waitcnt\tlgkmcnt(0)";
 	  case 1:
-	    return "flat_atomic_swap<X>\t%0, %1, %2 %G1\;s_waitcnt\t0";
+	    return "flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;s_waitcnt\t0";
 	  case 2:
 	    return "global_atomic_swap<X>\t%0, %A1, %2%O1 %G1\;"
 		   "s_waitcnt\tvmcnt(0)";
@@ -2294,13 +2392,13 @@
 		   "s_dcache_wb_vol\;s_dcache_inv_vol";
 	  case 1:
 	    return (TARGET_GLn_CACHE
-		    ? "flat_atomic_swap<X>\t%0, %1, %2 %G1\;s_waitcnt\t0\;"
+		    ? "flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;s_waitcnt\t0\;"
 		      "buffer_gl1_inv\;buffer_gl0_inv"
 		    : TARGET_WBINVL1_CACHE
-            ? "flat_atomic_swap<X>\t%0, %1, %2 %G1\;s_waitcnt\t0\;"
+            ? "flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;s_waitcnt\t0\;"
 		      "buffer_wbinvl1_vol"
 	    : TARGET_TARGET_SC_CACHE
-            ? "flat_atomic_swap<X>\t%0, %1, %2 %G1\;s_waitcnt\t0\;"
+            ? "flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;s_waitcnt\t0\;"
 		      "buffer_inv sc1"
             : "error: cache architecture unspecified");
 	  case 2:
@@ -2325,13 +2423,13 @@
 		   "s_waitcnt\tlgkmcnt(0)";
 	  case 1:
 	    return (TARGET_GLn_CACHE
-		    ? "buffer_gl1_inv\;buffer_gl0_inv\;flat_atomic_swap<X>\t%0, %1, %2 %G1\;"
+		    ? "buffer_gl1_inv\;buffer_gl0_inv\;flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;"
 		      "s_waitcnt\t0"
 		    : TARGET_WBINVL1_CACHE
-            ? "buffer_wbinvl1_vol\;flat_atomic_swap<X>\t%0, %1, %2 %G1\;"
+            ? "buffer_wbinvl1_vol\;flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;"
 		      "s_waitcnt\t0"
 	    : TARGET_TARGET_SC_CACHE
-            ? "buffer_wbl2\tsc0\;s_waitcnt\t0\;flat_atomic_swap<X>\t%0, %1, %2 %G1\;"
+            ? "buffer_wbl2\tsc0\;s_waitcnt\t0\;flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;"
 		      "s_waitcnt\t0"
             : "error: cache architecture unspecified");
 	  case 2:
@@ -2360,13 +2458,13 @@
 		   "s_waitcnt\tlgkmcnt(0)\;s_dcache_inv_vol";
 	  case 1:
 	    return (TARGET_GLn_CACHE
-		    ? "buffer_gl1_inv\;buffer_gl0_inv\;flat_atomic_swap<X>\t%0, %1, %2 %G1\;"
+		    ? "buffer_gl1_inv\;buffer_gl0_inv\;flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;"
 		      "s_waitcnt\t0\;buffer_gl1_inv\;buffer_gl0_inv"
 		    : TARGET_WBINVL1_CACHE
-            ? "buffer_wbinvl1_vol\;flat_atomic_swap<X>\t%0, %1, %2 %G1\;"
+            ? "buffer_wbinvl1_vol\;flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;"
 		      "s_waitcnt\t0\;buffer_wbinvl1_vol"
 	    : TARGET_TARGET_SC_CACHE
-            ? "buffer_wbl2\tsc0\;s_waitcnt\t0\;flat_atomic_swap<X>\t%0, %1, %2 %G1\;"
+            ? "buffer_wbl2\tsc0\;s_waitcnt\t0\;flat_atomic_swap<X>\t%0, %1, %2%O1 %G1\;"
 		      "s_waitcnt\t0\;buffer_inv sc1"
             : "error: cache architecture unspecified");
 	  case 2:

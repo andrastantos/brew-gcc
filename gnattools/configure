@@ -593,6 +593,7 @@ EXTRA_GNATTOOLS
 TOOLS_TARGET_PAIRS
 LN_S
 target_noncanonical
+ADAC
 GNATMAKE
 GNATBIND
 OBJEXT
@@ -670,7 +671,8 @@ CC
 CFLAGS
 LDFLAGS
 LIBS
-CPPFLAGS'
+CPPFLAGS
+ADAC'
 
 
 # Initialize some variables set by options.
@@ -1297,6 +1299,7 @@ Some influential environment variables:
   LIBS        libraries to pass to the linker, e.g. -l<library>
   CPPFLAGS    (Objective) C/C++ preprocessor flags, e.g. -I<include dir> if
               you have headers in a nonstandard directory <include dir>
+  ADAC        Ada compiler command
 
 Use these variables to override the choices made by `configure' or to help
 it to find libraries and programs with nonstandard names/locations.
@@ -2023,7 +2026,6 @@ test -n "$target_alias" &&
   test "$program_prefix$program_suffix$program_transform_name" = \
     NONENONEs,x,x, &&
   program_prefix=${target_alias}-
-
 
 ac_ext=c
 ac_cpp='$CPP $CPPFLAGS'
@@ -2815,7 +2817,6 @@ ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $
 ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
-
 if test -n "$ac_tool_prefix"; then
   # Extract the first word of "${ac_tool_prefix}gnatbind", so it can be a program name with args.
 set dummy ${ac_tool_prefix}gnatbind; ac_word=$2
@@ -3000,8 +3001,11 @@ else
   GNATMAKE="$ac_cv_prog_GNATMAKE"
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether compiler driver understands Ada and is recent enough" >&5
-$as_echo_n "checking whether compiler driver understands Ada and is recent enough... " >&6; }
+test x"$ADAC" != x || ADAC=$CC
+
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether $ADAC understands Ada and is recent enough" >&5
+$as_echo_n "checking whether $ADAC understands Ada and is recent enough... " >&6; }
 if ${acx_cv_cc_gcc_supports_ada+:} false; then :
   $as_echo_n "(cached) " >&6
 else
@@ -3021,7 +3025,7 @@ acx_cv_cc_gcc_supports_ada=no
 # Other compilers, like HP Tru64 UNIX cc, exit successfully when
 # given a .adb file, but produce no object file.  So we must check
 # if an object file was really produced to guard against this.
-errors=`(${CC} -c conftest.adb) 2>&1 || echo failure`
+errors=`(${ADAC} -c conftest.adb) 2>&1 || echo failure`
 if test x"$errors" = x && test -f conftest.$ac_objext; then
   acx_cv_cc_gcc_supports_ada=yes
 fi
@@ -3092,7 +3096,7 @@ case "${target}" in
   *-*-vxworks*)
     TOOLS_TARGET_PAIRS="indepsw.adb<indepsw-gnu.adb"
     ;;
-  *-*-cygwin32* | *-*-mingw32* | *-*-pe)
+  *-*-cygwin* | *-*-mingw32* | *-*-pe)
     TOOLS_TARGET_PAIRS="indepsw.adb<indepsw-gnu.adb"
     EXTRA_GNATTOOLS='../../gnatdll$(exeext)'
     ;;

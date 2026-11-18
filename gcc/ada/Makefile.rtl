@@ -56,6 +56,8 @@ GNATRTL_TASKING_OBJS= \
   s-inmaop$(objext) \
   s-interr$(objext) \
   s-intman$(objext) \
+  s-intnam$(objext) \
+  s-inttyp$(objext) \
   s-mudido$(objext) \
   s-osinte$(objext) \
   s-proinf$(objext) \
@@ -3369,6 +3371,8 @@ setup-rts: rts-err force
 	  if [ -f $(RTSDIR)/$$f ]; then echo $$f >> $(RTSDIR)/libgnarl.lst; fi \
 	done
 	@echo thread.c >> $(RTSDIR)/libgnarl.lst
+# s-intnam.ads is generated later, so hardcode it here
+	@echo s-intnam.ads >> $(RTSDIR)/libgnarl.lst
 	@for f in \
 	  $(foreach F,$(GNATRTL_NONTASKING_OBJS),$(subst $(objext),.ads,$(F))) \
 	  $(foreach F,$(GNATRTL_NONTASKING_OBJS),$(subst $(objext),.adb,$(F))); \
@@ -3401,11 +3405,16 @@ system.o: system.ads
 	  $(ADA_TARGET_PROPERTIES) \
 	  $(OUTPUT_OPTION)
 
-# Force no sibling call optimization on s-traceb.o so the number of stack
-# frames to be skipped when computing a call chain is not modified by
-# optimization. We don't want inlining, either.
+# Force no sibling call optimization on s-traceb.o and g-traceb.o so the
+# number of stack frames to be skipped when computing a call chain is not
+# modified by optimization. We don't want inlining, either.
 
 s-traceb.o: s-traceb.adb s-traceb.ads
+	$(ADAC) -c $(ALL_ADAFLAGS) $(FORCE_DEBUG_ADAFLAGS) \
+	  $(NO_INLINE_ADAFLAGS) $(NO_SIBLING_ADAFLAGS) $(ADA_INCLUDES) $< \
+	  $(OUTPUT_OPTION)
+
+g-traceb.o: g-traceb.adb g-traceb.ads
 	$(ADAC) -c $(ALL_ADAFLAGS) $(FORCE_DEBUG_ADAFLAGS) \
 	  $(NO_INLINE_ADAFLAGS) $(NO_SIBLING_ADAFLAGS) $(ADA_INCLUDES) $< \
 	  $(OUTPUT_OPTION)

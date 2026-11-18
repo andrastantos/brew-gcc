@@ -1,3 +1,430 @@
+2026-11-17  Zhongteng Gui  <dragon-archer@outlook.com>
+
+	* Makefile.in: Regenerate.
+	* Makefile.tpl (POSTSTAGE1_CXX_EXPORT): Add
+	SYSROOT_CFLAGS_FOR_TARGET.
+	(GCC_FOR_TARGET): Likewise.
+
+2026-11-16  Jiahao Xu  <xujiahao@loongson.cn>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself.
+
+2026-11-14  Guo Jie  <guojie@loongson.cn>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself.
+
+2026-11-12  Jiawei  <jiawei@iscas.ac.cn>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself.
+
+2026-11-12  Alexandre Oliva  <oliva@adacore.com>
+
+	* Makefile.tpl (HOST_EXPORTS, POSTSTAGE1_HOST_EXPORTS): Pass
+	ADAC to sub configures.
+	* Makefile.in: Rebuild.
+	* configure: Rebuild.
+
+2026-11-11  Matt Turner  <mattst88@gmail.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself.
+
+2026-11-09  Alexandre Oliva  <oliva@adacore.com>
+
+	* configure: Rebuild.
+	* Makefile.tpl (ADAC): New.
+	(STAGE1_FLAGS_TO_PASS): Pass it down.
+	(POSTSTAGE1_FLAGS_TO_PASS): Pass CC.
+	* Makefile.in: Rebuild.
+
+2026-11-09  Ezra Sitorus  <ezra.sitorus@arm.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself.
+
+2026-10-22  LIU Hao  <lh_mouse@126.com>
+	    Zhongteng Gui  <dragon-archer@outlook.com>
+
+	PR middle-end/108300
+	* libgo/misc/cgo/test/callback_c.c: Define `WIN32_LEAN_AND_MEAN`
+	before <windows.h>.
+
+2026-10-21  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	PR bootstrap/112422
+	* Makefile.def (configure-gcc): Depend on configure-gmp rather
+	than all-gmp, all-mpfr, all-mpc and all-isl.  Add a comment.
+	(all-gcc): Depend on all-gmp.
+	* Makefile.in: Regenerate.
+
+2026-10-20  Achim Gratz  <Achim.Gratz@Stromeko.DE>
+	    Zhongteng Gui  <dragon-archer@outlook.com>
+
+	* configure.ac (jit): Don't disable jit for Cygwin without
+	-enable-host-shared, like MinGW.
+	* configure: Regenerate.
+
+2026-10-19  Tamar Christina  <tamar.christina@arm.com>
+
+	PR bootstrap/127376
+	* Makefile.in: Renegerate.
+	* Makefile.tpl: Strip checking flags for mpfr and gmp.
+
+2026-10-19  David Faust  <david.faust@oss.qualcomm.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself as a bpf port maintainer.
+
+2026-10-18  Igor Shevlyakov  <igor.shevlyakov@gmail.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add record for myself.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* libgo/configure: Regenerate.
+
+2026-10-13  Simon Marchi  <simon.marchi@efficios.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add record for myself.
+
+2026-10-12  Zhongteng Gui  <dragon-archer@outlook.com>
+
+	PR target/126608
+	* configure.ac (x86_64-*mingw* | *-w64-mingw*): Do not use
+	/mingw symlink.
+	* configure: Regenerate.
+
+2026-10-09  Gabriel Dos Reis  <gdr@integrable-solutions.net>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add record for myself.
+
+2026-10-07  Uros Bizjak  <ubizjak@gmail.com>
+
+	* config.rpath: Update from gnulib.
+
+2026-09-30  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/120106
+	* Makefile.def (GNATMAKE_FOR_BUILD): New flag to pass.
+	* Makefile.tpl (HOST_EXPORTS): Remove GNATMAKE_FOR_BUILD.
+	(BASE_TARGET_EXPORTS): Likewise.
+	* Makefile.in: Regenerate.
+
+2026-09-25  Dominic P  <gcc@gcc.dp11.uk>
+
+	* MAINTAINERS.yml: Add myself.
+	* MAINTAINERS: Regenerate.
+
+2026-09-19  Michiel Derhaeg  <michiel.derhaeg@globalfoundries.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself.
+
+2026-09-10  Rohith Kapelli  <kapellirohith@gmail.com>
+
+	* MAINTAINERS.yml: Add myself to Write After Approval and DCO.
+	* MAINTAINERS: Regenerate.
+
+2026-09-04  Arthur Cohen  <arthur.cohen@opensrcsec.com>
+
+	* MAINTAINERS.yml: Update my email, add a section for inactive emails.
+	* MAINTAINERS: Regenerate.
+
+2026-09-04  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	PR bootstrap/126875
+	* Makefile.tpl ([+compare-target+]): Escape the comparison command
+	with $(subst) rather than a sed pipe.  Clean up from the exit trap
+	without resetting it or re-deriving the exit status.  Name the shell
+	in the generated makefile.  Remove any previous result file and
+	result shards before comparing.
+	* Makefile.in: Regenerate.
+	* configure: Regenerate.
+
+2026-09-03  Filip Kastl  <fkastl@suse.cz>
+
+	* configure: Regenerate.
+
+2026-09-03  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* Makefile.in: Regenerate.
+	* Makefile.tpl: Pass "--perf perf.data" to gcc-auto-profile. Separate
+	the make invocation from perf using "--".
+
+2026-09-03  Uros Bizjak  <ubizjak@gmail.com>
+
+	* Makefile.tpl (mail-report.log): Mark as .PHONY.
+	(mail-report-with-warnings.log): Likewise.
+	* Makefile.in: Regenerate.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS.yml: Convert an entry to use inactive_DCO.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS.yml: Move all DCO 'roles' to a separate list.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS.yml: Add initial comment
+
+2026-09-02  Peter Bergner  <bergner@gcc.gnu.org>
+
+	PR target/122535
+	* configure.ac: Error out on --with-long-double-64.
+	* configure: Regenerate.
+
+2026-09-01  Pierre-Emmanuel Patry  <pierre.emmanuel.patry@opensrcsec.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Replace old email address with the new one and add
+	old address to the list of inactive email.
+
+2026-08-21  David Faust  <david.faust@oss.qualcomm.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Update my email and add myself to DCO.
+
+2026-08-19  Claudio Bantaloukas  <claudio.bantaloukas@arm.com>
+
+	PR other/126226
+	* .gitignore: Ignore python eggs.
+	* pyproject.toml: New file.
+
+2026-08-19  Longjun Luo  <luolongjuna@gmail.com>
+
+	* MAINTAINERS.yml: Add myself.
+	* MAINTAINERS (Write After Approval): Regenerate.
+	(Contributing under the DCO): Regenerate.
+
+2026-08-18  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS.yml (users): Add forgeid for some users.
+	(subsystems): Add some labels and teams to the data.
+
+2026-08-18  Claudio Bantaloukas  <claudio.bantaloukas@arm.com>
+
+	* MAINTAINERS.yml: Add inactive_email entries.
+
+2026-08-17  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	* Makefile.def (dependencies): Remove the configure-target-libstdc++-v3
+	on configure-target-libgomp dependency.
+	* Makefile.in: Regenerate.
+
+2026-08-14  Pierre-Emmanuel Patry  <pierre-emmanuel.patry@embecosm.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself to rust and libgrust maintainers.
+
+2026-08-10  Tobias Burnus  <tburnus@baylibre.com>
+
+	* MAINTAINERS.yml (Burnus): Add private email as
+	additional active email.
+
+2026-08-10  Surya Kumari Jangala  <jskumari@linux.ibm.com>
+
+	* MAINTAINERS.yml: Add myself.
+	* MAINTAINERS: Regenerate.
+
+2026-08-07  Michael Meissner  <meissner@linux.ibm.com>
+
+	* MAINTAINERS.yml: Update Michael Meissner's information.
+	* MAINTAINERS: Regenerate.
+
+2026-08-07  Michael Meissner  <meissner@linux.ibm.com>
+
+	* MAINTAINERS: Update Michael Meissner to be a PowerPC maintainer.
+	Update to use meissner@gcc.gnu.org email address instead of
+	gnu@the-meissners.org.  Drop Michael Meissner being a scheduler maintainer.
+	* MAINTAINERS.yml: Update.
+
+2026-08-04  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	* Makefile.tpl ([+compare-target+]): Run object comparisons through an
+	invocation-specific parallel sub-make.  Collect sorted failure shards
+	and clean temporary state on exit.
+	* Makefile.in: Regenerate.
+	* configure: Regenerate.
+
+2026-08-04  Jim Lin  <jim@andestech.com>
+
+	* MAINTAINERS: Add myself.
+	* MAINTAINERS.yml: Regenerate.
+
+2026-07-25  Egas Ribeiro  <egas.g.ribeiro@gmail.com>
+
+	* MAINTAINERS: Add myself.
+	* MAINTAINERS.yml: Regenerate.
+
+2026-07-24  Claudio Bantaloukas  <claudio.bantaloukas@arm.com>
+
+	* .github/CONTRIBUTING.md: Update text.
+	* .github/PULL_REQUEST_TEMPLATE.md: Link
+	to CONTRIBUTING.md directly.
+
+2026-07-22  Andrea Pinski  <andrew.pinski@oss.qualcomm.com>
+
+	* MAINTAINERS.yml: Update my name.
+	* MAINTAINERS: Regenerate.
+
+2026-07-16  Craig Blackmore  <craig.blackmore@embecosm.com>
+
+	* MAINTAINERS (Write After Approval): Regenerate.
+	* MAINTAINERS.yml: Add myself.
+
+2026-07-13  Eikansh Gupta  <eikansh.gupta@oss.qualcomm.com>
+
+	* MAINTAINERS.yml: Add myself.
+	* MAINTAINERS (Write After Approval): Regenerate.
+	(Contributing under the DCO): Regenerate.
+
+2026-07-12  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	* MAINTAINERS (Write After Approval): Add myself.
+	(Contributing under the DCO): Add myself.
+	* MAINTAINERS.yml: Add myself.
+
+2026-07-12  Manuel Jacob  <me@manueljacob.de>
+
+	* configure: Regenerated.
+
+2026-07-09  Stefan Schulze Frielinghaus  <stefansf@gcc.gnu.org>
+
+	* configure: Regenerate.
+	* configure.ac: Remove deprecation warning for -m31.
+
+2026-07-07  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS.yml: New file.
+	* MAINTAINERS: Regenerate from MAINTAINERS.yml.
+
+2026-07-07  Richard Earnshaw  <rearnsha@arm.com>
+
+	* .editorconfig (*.yaml/.yml): Add rules.
+
+2026-07-06  Nina Ranns  <dinka.ranns@gmail.com>
+
+	* MAINTAINERS (Write After Approval): Add myself.
+
+2026-07-02  Eugene Rozenfeld  <erozen@microsoft.com>
+
+	* MAINTAINERS: Update my email address.
+
+2026-06-29  Abhishek Kaushik  <abhishek.kaushik@arm.com>
+
+	* MAINTAINERS (Write After Approval): Add myself.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Replace AC_TRY_COMPILE with AC_COMPILE_IFELSE.
+	Replace AC_TRY_LINK with AC_LINK_IFELSE.
+
+2026-06-23  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS (Write After): Add details for Robert Dubner,
+	Ben Kosnik, James Lowden, Yunhai Shang and Andrew Waterman.
+	(CPU Ports, nds32): Remove Shiva Chen - stepped down.
+
+2026-06-10  Pierre-Emmanuel Patry  <pierre-emmanuel.patry@embecosm.com>
+
+	* MAINTAINERS (Write After Approval): Add myself.
+	(Contributing under the DCO): Add myself.
+
+2026-06-05  Richard Earnshaw  <rearnsha@arm.com>
+
+	* .forgejo/CODEOWNERS: New file.
+
+2026-06-03  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS: Add all known missing account names to
+	write-after.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* Makefile.def: Fix typos.
+	* Makefile.in: Likewise.
+	* Makefile.tpl: Likewise.
+
+2026-05-27  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS (Contributing under the DCO): Secondary sort
+	by email address.
+
+2026-05-27  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS (Write After Approval): Secondary sort by email.
+
+2026-05-27  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS (Reviewers): Sort entries.
+
+2026-05-27  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS (Various Maintainers): Sort entries.
+
+2026-05-27  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS (Language Front Ends Maintainers): Sort entries.
+
+2026-05-27  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS (OS Port Maintainers): Sort entries.
+
+2026-05-27  Richard Earnshaw  <rearnsha@arm.com>
+
+	* MAINTAINERS (CPU Maintainers): Sort by CPU and then user.
+
+2026-05-27  Evgeny Karpov  <evgeny.karpov@arm.com>
+
+	* MAINTAINERS: Update my email address.
+
+2026-05-15  Karl Meakin  <karl.meakin@arm.com>
+
+	* .editorconfig (COMMIT_EDITMSG): New section.
+
+2026-05-13  Zhongyao Chen  <chen.zhongyao@zte.com.cn>
+
+	* MAINTAINERS (Write After Approval): Add myself.
+	(Contributing under the DCO): Add myself.
+
+2026-05-11  Naveen  <naveen.siddegowda@oss.qualcomm.com>
+
+	* MAINTAINERS: Update my email and add myself to the DCO
+	section.
+
+2026-05-04  Vijay Shankar  <vijay@linux.ibm.com>
+
+	* MAINTAINERS: Add myself to write after approval.
+
+2026-05-01  Manuel Jacob  <me@manueljacob.de>
+
+	* configure.ac: Set default for CPP_FOR_BUILD environment variable in all cases.
+	* configure: Regenerate.
+
+2026-05-01  Manuel Jacob  <me@manueljacob.de>
+
+	* configure.ac: Preserve *_FOR_BUILD environment variables in all cases.
+	* configure: Regenerate.
+
+2026-04-30  Christopher Bazley  <chris.bazley@arm.com>
+
+	* MAINTAINERS: Add myself to write after approval.
+
+2026-04-28  Bohan Lei  <garthlei@linux.alibaba.com>
+
+	* MAINTAINERS: Add myself to write after approval and DCO.
+
 2026-04-01  David Faust  <david.faust@oracle.com>
 
 	* MAINTAINERS: Add my bugzilla account.

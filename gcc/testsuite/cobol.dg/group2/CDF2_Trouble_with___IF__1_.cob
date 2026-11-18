@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
 
       *> This compiles correctly; there should be no period after "prog"
       *> and there should be a period after INITIAL.  But, IS INITIAL is

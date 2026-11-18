@@ -64,7 +64,7 @@ along with GCC; see the file COPYING3.  If not see
    For random-access sparse sets of unknown universe, the binary tree
    representation is likely to be a more suitable choice.  Theoretical
    access times for the binary tree representation are better than those
-   for the linked-list, but in practice this is only true for truely
+   for the linked-list, but in practice this is only true for truly
    random access.
 
    Often the most suitable representation during construction of the set
@@ -128,6 +128,7 @@ along with GCC; see the file COPYING3.  If not see
      * largest_member		: bitmap_last_set_bit (but this could
 				  in constant time with a pointer to
 				  the last element in the chain)
+     * pop_largest              : bitmap_clear_last_set_bit
      * set_size			: bitmap_last_set_bit
 
    In tree view the following operations can all be performed in O(log E)
@@ -136,6 +137,7 @@ along with GCC; see the file COPYING3.  If not see
      * smallest_member
      * pop_smallest
      * largest_member
+     * pop_largest
      * set_size
      * member_p
      * add_member
@@ -218,7 +220,7 @@ along with GCC; see the file COPYING3.  If not see
 class bitmap_usage: public mem_usage
 {
 public:
-  /* Default contructor.  */
+  /* Default constructor.  */
   bitmap_usage (): m_nsearches (0), m_search_iter (0) {}
   /* Constructor.  */
   bitmap_usage (size_t allocated, size_t times, size_t peak,
@@ -270,9 +272,6 @@ public:
   uint64_t m_search_iter;
 };
 
-/* Bitmap memory description.  */
-extern mem_alloc_description<bitmap_usage> bitmap_mem_desc;
-
 /* Fundamental storage type for bitmap.  */
 
 typedef unsigned long BITMAP_WORD;
@@ -311,10 +310,10 @@ struct bitmap_obstack {
 
 struct GTY((chain_next ("%h.next"))) bitmap_element {
   /* In list form, the next element in the linked list;
-     in tree form, the left child node in the tree.  */
+     in tree form, the right child node in the tree.  */
   struct bitmap_element *next;
   /* In list form, the previous element in the linked list;
-     in tree form, the right child node in the tree.  */
+     in tree form, the left child node in the tree.  */
   struct bitmap_element *prev;
   /* regno/BITMAP_ELEMENT_ALL_BITS.  */
   unsigned int indx;
@@ -329,7 +328,7 @@ class GTY(()) bitmap_head {
 public:
   static bitmap_obstack crashme;
   /* Poison obstack to not make it not a valid initialized GC bitmap.  */
-  CONSTEXPR bitmap_head()
+  constexpr bitmap_head()
     : indx (0), tree_form (false), padding (0), alloc_descriptor (0), first (NULL),
       current (NULL), obstack (&crashme)
   {}
@@ -505,6 +504,7 @@ extern void debug (const bitmap_head *ptr);
 extern unsigned bitmap_first_set_bit (const_bitmap);
 extern unsigned bitmap_clear_first_set_bit (bitmap);
 extern unsigned bitmap_last_set_bit (const_bitmap);
+extern unsigned bitmap_clear_last_set_bit (bitmap);
 
 /* Compute bitmap hash (for purposes of hashing etc.)  */
 extern hashval_t bitmap_hash (const_bitmap);

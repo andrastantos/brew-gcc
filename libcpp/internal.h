@@ -329,7 +329,11 @@ struct _cpp_line_note
 };
 
 /* Tail padding required by search_line_fast alternatives.  */
-#ifdef HAVE_SSSE3
+#ifdef HAVE_SVE2
+/* Architectural maximum SVE vector length.  search_line_sve2 may read a
+   full vector starting at END rounded down to a VL boundary.  */
+#define CPP_BUFFER_PADDING 256
+#elif defined HAVE_SSSE3
 #define CPP_BUFFER_PADDING 64
 #else
 #define CPP_BUFFER_PADDING 16
@@ -359,7 +363,7 @@ struct cpp_buffer
   struct _cpp_file *file;
 
   /* Saved value of __TIMESTAMP__ macro - date and time of last modification
-     of the assotiated file.  */
+     of the associated file.  */
   const unsigned char *timestamp;
 
   /* Value of if_stack at start of this file.

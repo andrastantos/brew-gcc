@@ -6,7 +6,7 @@ This file is part of GCC.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 3, or(at your option)
+the Free Software Foundation; either version 3, or (at your option)
 any later version.
 
 GCC is distributed in the hope that it will be useful,
@@ -19,21 +19,22 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 /* The values of the vl and vtype registers will affect the behavior of RVV
-   insns. That is, when we need to execute an RVV instruction, we need to set
+   insns.  That is, when we need to execute an RVV instruction, we need to set
    the correct vl and vtype values by executing the vsetvl instruction before.
    Executing the fewest number of vsetvl instructions while keeping the behavior
-   the same is the problem this pass is trying to solve. This vsetvl pass is
+   the same is the problem this pass is trying to solve.  This vsetvl pass is
    divided into 5 phases:
 
      - Phase 1 (fuse local vsetvl infos): traverses each Basic Block, parses
        each instruction in it that affects vl and vtype state and generates an
-       array of vsetvl_info objects. Then traverse the vsetvl_info array from
-       front to back and perform fusion according to the fusion rules. The fused
-       vsetvl infos are stored in the vsetvl_block_info object's `infos` field.
+       array of vsetvl_info objects.  Then traverse the vsetvl_info array from
+       front to back and perform fusion according to the fusion rules.  The
+       fused vsetvl infos are stored in the vsetvl_block_info object's `infos`
+       field.
 
      - Phase 2 (earliest fuse global vsetvl infos): The header_info and
        footer_info of vsetvl_block_info are used as expressions, and the
-       earliest of each expression is computed. Based on the earliest
+       earliest of each expression is computed.  Based on the earliest
        information, try to lift up the corresponding vsetvl info to the src
        basic block of the edge (mainly to reduce the total number of vsetvl
        instructions, this uplift will cause some execution paths to execute
@@ -51,9 +52,9 @@ along with GCC; see the file COPYING3.  If not see
      - Phase 5 (cleanup): Clean up the avl operand in the RVV operator
        instruction and cleanup the unused dest operand of the vsetvl insn.
 
-     After the Phase 1 a virtual CFG of vsetvl_info is generated. The virtual
+     After the Phase 1 a virtual CFG of vsetvl_info is generated.  The virtual
      basic block is represented by vsetvl_block_info, and the virtual vsetvl
-     statements inside are represented by vsetvl_info. The later phases 2 and 3
+     statements inside are represented by vsetvl_info.  The later phases 2 and 3
      are constantly modifying and adjusting this virtual CFG. Phase 4 performs
      insertion, modification and deletion of vsetvl instructions based on the
      optimized virtual CFG. The Phase 1, 2 and 3 do not involve modifications to
@@ -93,10 +94,10 @@ using namespace riscv_vector;
 
 /* Set the bitmap DST to the union of SRC of predecessors of
    basic block B.
-   It's a bit different from bitmap_union_of_preds in cfganal.cc. This function
-   takes into account the case where pred is ENTRY basic block. The main reason
+   It's a bit different from bitmap_union_of_preds in cfganal.cc.  This function
+   takes into account the case where pred is ENTRY basic block.  The main reason
    for this difference is to make it easier to insert some special value into
-   the ENTRY base block. For example, vsetvl_info with a status of UNKNOWN.  */
+   the ENTRY base block.  For example, vsetvl_info with a status of UNKNOWN.  */
 static void
 bitmap_union_of_preds_with_entry (sbitmap dst, sbitmap *src, basic_block b)
 {
@@ -256,7 +257,22 @@ policy_to_str (bool agnostic_p)
   return agnostic_p ? "agnostic" : "undisturbed";
 }
 
-/* Return true if it is an RVV instruction depends on VTYPE global
+/* Return a printable name for the VTYPE altfmt value ALTFMT.  */
+static const char *
+altfmt_to_str (uint8_t altfmt)
+{
+  switch (altfmt)
+    {
+    case ALTFMT_NONE:
+      return "none";
+    case ALTFMT_ALT:
+      return "alt";
+    default:
+      return "any";
+    }
+}
+
+/* Return true if it is an RVV instruction that depends on VTYPE global
    status register.  */
 bool
 has_vtype_op (rtx_insn *rinsn)
@@ -485,8 +501,9 @@ get_avl (rtx_insn *rinsn)
 static bool
 get_default_ma ()
 {
-  /* For the instruction that doesn't require MA, we still need a default value
-     to emit vsetvl. We pick up the default value according to prefer policy. */
+  /* For the instruction that does not require MA, we still need a default
+     value to emit vsetvl.  We pick up the default value according to
+     preferred policy.  */
   return (bool) (get_prefer_mask_policy () & 0x1
 		 || (get_prefer_mask_policy () >> 1 & 0x1));
 }
@@ -499,6 +516,15 @@ mask_agnostic_p (rtx_insn *rinsn)
   extract_insn_cached (rinsn);
   int ma = get_attr_ma (rinsn);
   return ma == INVALID_ATTRIBUTE ? get_default_ma () : IS_AGNOSTIC (ma);
+}
+
+/* Return the alternate FP8 format requirement of RINSN.  INVALID_ATTRIBUTE
+   means that RINSN does not require a specific VTYPE altfmt value.  */
+static uint8_t
+get_altfmt (rtx_insn *rinsn)
+{
+  extract_insn_cached (rinsn);
+  return get_attr_altfmt (rinsn);
 }
 
 /* Return true if FN has a vector instruction that use VL/VTYPE.  */
@@ -558,7 +584,7 @@ enum def_type
   BB_END_SET = 1 << 3,
   /* ??? TODO: In RTL_SSA framework, we have REAL_SET,
      PHI_SET, BB_HEAD_SET, BB_END_SET and
-     CLOBBER_DEF def_info types. Currently,
+     CLOBBER_DEF def_info types.  Currently,
      we conservatively do not optimize clobber
      def since we don't see the case that we
      need to optimize it.  */
@@ -617,7 +643,7 @@ get_all_real_uses (insn_info *insn, unsigned regno)
   return uses;
 }
 
-/* Recursively find all define instructions. The kind of instruction is
+/* Recursively find all define instructions.  The kind of instruction is
    specified by the DEF_TYPE.  */
 static hash_set<set_info *>
 get_all_sets (phi_info *phi, unsigned int types)
@@ -755,9 +781,12 @@ invalid_opt_bb_p (basic_block cfg_bb)
   edge e;
   edge_iterator ei;
 
-  /* We don't do LCM optimizations on complex edges.  */
+  /* Keep local configurations when an incoming edge cannot be split for
+     a vsetvl insertion.  */
   FOR_EACH_EDGE (e, ei, cfg_bb->preds)
-    if (e->flags & EDGE_COMPLEX)
+    if ((e->flags & EDGE_COMPLEX)
+	|| (e->src != ENTRY_BLOCK_PTR_FOR_FN (cfun)
+	    && shared_tablejump_p (BB_END (e->src), nullptr, nullptr)))
       return true;
 
   /* We only do LCM optimizations on blocks that are post dominated by
@@ -795,7 +824,7 @@ get_all_predecessors (basic_block bb)
 }
 
 /* This flags indicates the minimum demand of the vl and vtype values by the
-   RVV instruction. For example, DEMAND_RATIO_P indicates that this RVV
+   RVV instruction.  For example, DEMAND_RATIO_P indicates that this RVV
    instruction only needs the SEW/LMUL ratio to remain the same, and does not
    require SEW and LMUL to be fixed.
    Therefore, if the former RVV instruction needs DEMAND_RATIO_P and the latter
@@ -817,19 +846,21 @@ enum demand_flags : unsigned
   DEMAND_MASK_POLICY_P = 1 << 5,
   DEMAND_AVL_P = 1 << 6,
   DEMAND_NON_ZERO_AVL_P = 1 << 7,
+  DEMAND_ALTFMT_P = 1 << 8,
 };
 
-/* We split the demand information into three parts. They are sew and lmul
+/* We split the demand information into four parts.  They are sew and lmul
    related (sew_lmul_demand_type), tail and mask policy related
-   (policy_demand_type) and avl related (avl_demand_type). Then we define three
-   interfaces available_p, compatible_p and merge. available_p is
-   used to determine whether the two vsetvl infos prev_info and next_info are
-   available or not. If prev_info is available for next_info, it means that the
-   RVV insn corresponding to next_info on the path from prev_info to next_info
-   can be used without inserting a separate vsetvl instruction. compatible_p
-   is used to determine whether prev_info is compatible with next_info, and if
-   so, merge can be used to merge the stricter demand information from
-   next_info into prev_info so that prev_info becomes available to next_info.
+   (policy_demand_type), avl related (avl_demand_type) and alternate FP8 format
+   related (altfmt_demand_type).  Then we define three interfaces available_p,
+   compatible_p and merge.  available_p is used to determine whether the two
+   vsetvl infos prev_info and next_info are available or not.  If prev_info is
+   available for next_info, it means that the RVV insn corresponding to
+   next_info on the path from prev_info to next_info can be used without
+   inserting a separate vsetvl instruction.  compatible_p is used to determine
+   whether prev_info is compatible with next_info, and if so, merge can be used
+   to merge the stricter demand information from next_info into prev_info so
+   that prev_info becomes available to next_info.
  */
 
 enum class sew_lmul_demand_type : unsigned
@@ -856,6 +887,12 @@ enum class avl_demand_type : unsigned
   avl = demand_flags::DEMAND_AVL_P,
   non_zero_avl = demand_flags::DEMAND_NON_ZERO_AVL_P,
   ignore_avl = demand_flags::DEMAND_EMPTY_P,
+};
+
+enum class altfmt_demand_type : unsigned
+{
+  altfmt = demand_flags::DEMAND_ALTFMT_P,
+  ignore_altfmt = demand_flags::DEMAND_EMPTY_P,
 };
 
 /* Go through all uses of INSN looking for a single use of register REG.
@@ -902,10 +939,12 @@ private:
   uint8_t m_ratio;
   bool m_ta;
   bool m_ma;
+  uint8_t m_altfmt;
 
   sew_lmul_demand_type m_sew_lmul_demand;
   policy_demand_type m_policy_demand;
   avl_demand_type m_avl_demand;
+  altfmt_demand_type m_altfmt_demand;
 
   enum class state_type
   {
@@ -925,11 +964,13 @@ public:
   vsetvl_info ()
     : m_insn (nullptr), m_bb (nullptr), m_avl (NULL_RTX), m_vl (NULL_RTX),
       m_avl_def (nullptr), m_sew (0), m_max_sew (0), m_vlmul (LMUL_RESERVED),
-      m_ratio (0), m_ta (false), m_ma (false),
+      m_ratio (0), m_ta (false), m_ma (false), m_altfmt (ALTFMT_NONE),
       m_sew_lmul_demand (sew_lmul_demand_type::sew_lmul),
       m_policy_demand (policy_demand_type::tail_mask_policy),
-      m_avl_demand (avl_demand_type::avl), m_state (state_type::UNINITIALIZED),
-      m_delete (false), m_change_vtype_only (false), m_read_vl_insn (nullptr),
+      m_avl_demand (avl_demand_type::avl),
+      m_altfmt_demand (altfmt_demand_type::altfmt),
+      m_state (state_type::UNINITIALIZED), m_delete (false),
+      m_change_vtype_only (false), m_read_vl_insn (nullptr),
       m_vl_used_by_non_rvv_insn (false)
   {}
 
@@ -950,6 +991,7 @@ public:
   void set_max_sew (uint8_t max_sew) { m_max_sew = max_sew; }
   void set_change_vtype_only () { m_change_vtype_only = true; }
   void set_read_vl_insn (insn_info *insn) { m_read_vl_insn = insn; }
+  void set_altfmt (uint8_t altfmt) { m_altfmt = altfmt; }
 
   rtx get_avl () const { return m_avl; }
   rtx get_vl () const { return m_vl; }
@@ -957,6 +999,7 @@ public:
   uint8_t get_sew () const { return m_sew; }
   vlmul_type get_vlmul () const { return m_vlmul; }
   uint8_t get_ratio () const { return m_ratio; }
+  uint8_t get_altfmt () const { return m_altfmt; }
   bool get_ta () const { return m_ta; }
   bool get_ma () const { return m_ma; }
   insn_info *get_insn () const { return m_insn; }
@@ -994,9 +1037,9 @@ public:
 
 	E.g.  BB 2 (Empty) ---> BB 3 (VALID, has rvv insn 1)
 
-     BB 2 has empty VSETVL_INFO, wheras BB 3 has VSETVL_INFO that satisfies
+     BB 2 has empty VSETVL_INFO, whereas BB 3 has VSETVL_INFO that satisfies
      get_insn ()->bb () == get_bb (). In earliest fusion, we may fuse bb 3 and
-     bb 2 so that the 'get_bb ()' of BB2 VSETVL_INFO will be BB2 wheras the
+     bb 2 so that the 'get_bb ()' of BB2 VSETVL_INFO will be BB2 whereas the
      'get_insn ()' of BB2 VSETVL INFO will be the rvv insn 1 (which is located
      at BB3).  */
   bool insn_inside_bb_p () const { return get_insn ()->bb () == get_bb (); }
@@ -1032,8 +1075,13 @@ public:
   {
     return m_sew_lmul_demand;
   }
+  void set_altfmt_demand (altfmt_demand_type demand)
+  {
+    m_altfmt_demand = demand;
+  }
   policy_demand_type get_policy_demand () const { return m_policy_demand; }
   avl_demand_type get_avl_demand () const { return m_avl_demand; }
+  altfmt_demand_type get_altfmt_demand () const { return m_altfmt_demand; }
 
   void normalize_demand (unsigned demand_flags)
   {
@@ -1091,6 +1139,18 @@ public:
       default:
 	gcc_unreachable ();
       }
+
+    switch (demand_flags & DEMAND_ALTFMT_P)
+      {
+      case (unsigned) altfmt_demand_type::altfmt:
+	m_altfmt_demand = altfmt_demand_type::altfmt;
+	break;
+      case (unsigned) altfmt_demand_type::ignore_altfmt:
+	m_altfmt_demand = altfmt_demand_type::ignore_altfmt;
+	break;
+      default:
+	gcc_unreachable ();
+      }
   }
 
   void parse_insn (rtx_insn *rinsn)
@@ -1109,6 +1169,10 @@ public:
     m_vlmul = ::get_vlmul (rinsn);
     m_ta = tail_agnostic_p (rinsn);
     m_ma = mask_agnostic_p (rinsn);
+    m_altfmt = ::get_altfmt (rinsn);
+    m_altfmt_demand = m_altfmt == INVALID_ATTRIBUTE
+			? altfmt_demand_type::ignore_altfmt
+			: altfmt_demand_type::altfmt;
   }
 
   void parse_insn (insn_info *insn)
@@ -1122,7 +1186,8 @@ public:
     if (insn->is_debug_insn ())
       return;
 
-    /* We set it as unknown since we don't what will happen in CALL or ASM.  */
+    /* We set it as unknown since we don't know what will happen in CALL
+       or ASM.  */
     if (insn->is_call () || insn->is_asm ())
       {
 	set_unknown ();
@@ -1162,12 +1227,13 @@ public:
     m_vlmul = ::get_vlmul (insn->rtl ());
     m_ratio = get_attr_ratio (insn->rtl ());
     /* when get_attr_ratio is invalid, this kind of instructions
-       doesn't care about ratio. However, we still need this value
+       doesn't care about ratio.  However, we still need this value
        in demand info backward analysis.  */
     if (m_ratio == INVALID_ATTRIBUTE)
       m_ratio = calculate_ratio (m_sew, m_vlmul);
     m_ta = tail_agnostic_p (insn->rtl ());
     m_ma = mask_agnostic_p (insn->rtl ());
+    m_altfmt = ::get_altfmt (insn->rtl ());
 
     /* If merge operand is undef value, we prefer agnostic.  */
     int merge_op_idx = get_attr_merge_op_idx (insn->rtl ());
@@ -1232,6 +1298,9 @@ public:
 	  dflags |= demand_flags::DEMAND_MASK_POLICY_P;
       }
 
+    if (m_altfmt != INVALID_ATTRIBUTE)
+      dflags |= demand_flags::DEMAND_ALTFMT_P;
+
     normalize_demand (dflags);
 
     /* Optimize AVL from the vsetvl instruction.  */
@@ -1290,21 +1359,25 @@ public:
     rtx vlmul = gen_int_mode (get_vlmul (), Pmode);
     rtx ta = gen_int_mode (get_ta (), Pmode);
     rtx ma = gen_int_mode (get_ma (), Pmode);
+    /* If this vsetvl_info has no specific altfmt demand, default to
+       ALTFMT_NONE.  */
+    rtx altfmt = gen_int_mode (
+      get_altfmt () == ALTFMT_ALT ? ALTFMT_ALT : ALTFMT_NONE, Pmode);
 
     if (change_vtype_only_p ())
-      return gen_vsetvl_vtype_change_only (sew, vlmul, ta, ma);
+      return gen_vsetvl_vtype_change_only (sew, vlmul, ta, ma, altfmt);
     else if (has_vl () && !ignore_vl)
-      return gen_vsetvl (Pmode, get_vl (), avl, sew, vlmul, ta, ma);
+      return gen_vsetvl (Pmode, get_vl (), avl, sew, vlmul, ta, ma, altfmt);
     else
-      return gen_vsetvl_discard_result (Pmode, avl, sew, vlmul, ta, ma);
+      return gen_vsetvl_discard_result (Pmode, avl, sew, vlmul, ta, ma, altfmt);
   }
 
   /* Return true that the non-AVL operands of THIS will be modified
      if we fuse the VL modification from OTHER into THIS.  */
   bool vl_modify_non_avl_op_p (const vsetvl_info &other) const
   {
-    /* We don't need to worry about any operands from THIS be
-       modified by OTHER vsetvl since we OTHER vsetvl doesn't
+    /* We don't need to worry about any operands from THIS being
+       modified by OTHER vsetvl since OTHER vsetvl doesn't
        modify any operand.  */
     if (!other.has_vl ())
       return false;
@@ -1336,9 +1409,11 @@ public:
 	   && get_sew () == other.get_sew ()
 	   && get_vlmul () == other.get_vlmul () && get_ta () == other.get_ta ()
 	   && get_ma () == other.get_ma ()
+	   && get_altfmt () == other.get_altfmt ()
 	   && get_avl_demand () == other.get_avl_demand ()
 	   && get_sew_lmul_demand () == other.get_sew_lmul_demand ()
-	   && get_policy_demand () == other.get_policy_demand ();
+	   && get_policy_demand () == other.get_policy_demand ()
+	   && get_altfmt_demand () == other.get_altfmt_demand ();
   }
 
   void dump (FILE *file, const char *indent = "") const
@@ -1387,6 +1462,9 @@ public:
       fprintf (file, " demand_avl");
     else if (m_avl_demand == avl_demand_type::non_zero_avl)
       fprintf (file, " demand_non_zero_avl");
+
+    if (m_altfmt_demand == altfmt_demand_type::altfmt)
+      fprintf (file, " demand_altfmt");
     fprintf (file, "\n");
 
     fprintf (file, "%sSEW=%d, ", indent, get_sew ());
@@ -1395,7 +1473,8 @@ public:
     fprintf (file, "MAX_SEW=%d\n", get_max_sew ());
 
     fprintf (file, "%sTAIL_POLICY=%s, ", indent, policy_to_str (get_ta ()));
-    fprintf (file, "MASK_POLICY=%s\n", policy_to_str (get_ma ()));
+    fprintf (file, "MASK_POLICY=%s, ", policy_to_str (get_ma ()));
+    fprintf (file, "ALTFMT=%s\n", altfmt_to_str (get_altfmt ()));
 
     fprintf (file, "%sAVL=", indent);
     print_rtl_single (file, get_avl ());
@@ -1668,6 +1747,13 @@ private:
     return tail_policy_eq_p (prev, next) && mask_policy_eq_p (prev, next);
   }
 
+  /* Predictors for altfmt.  */
+
+  inline bool altfmt_eq_p (const vsetvl_info &prev, const vsetvl_info &next)
+  {
+    return prev.get_altfmt () == next.get_altfmt ();
+  }
+
   /* predictors for avl */
 
   inline bool modify_or_use_vl_p (insn_info *i, const vsetvl_info &info)
@@ -1915,6 +2001,13 @@ private:
     use_mask_policy (prev, next);
   }
 
+  /* Modifiers for altfmt.  */
+
+  inline void use_next_altfmt (vsetvl_info &prev, const vsetvl_info &next)
+  {
+    prev.set_altfmt (next.get_altfmt ());
+  }
+
   /* modifiers for avl */
 
   inline void use_next_avl (vsetvl_info &prev, const vsetvl_info &next)
@@ -2155,6 +2248,59 @@ public:
     gcc_unreachable ();
   }
 
+  bool altfmt_compatible_p (const vsetvl_info &prev, const vsetvl_info &next)
+  {
+    gcc_assert (prev.valid_p () && next.valid_p ());
+    altfmt_demand_type prev_flags = prev.get_altfmt_demand ();
+    altfmt_demand_type next_flags = next.get_altfmt_demand ();
+#define DEF_ALTFMT_RULE(PREV_FLAGS, NEXT_FLAGS, NEW_FLAGS, COMPATIBLE_P,       \
+			AVAILABLE_P, FUSE)                                     \
+  if (prev_flags == altfmt_demand_type::PREV_FLAGS                             \
+      && next_flags == altfmt_demand_type::NEXT_FLAGS)                         \
+    return COMPATIBLE_P (prev, next);
+
+#include "riscv-vsetvl.def"
+
+    gcc_unreachable ();
+  }
+
+  bool altfmt_available_p (const vsetvl_info &prev, const vsetvl_info &next)
+  {
+    gcc_assert (prev.valid_p () && next.valid_p ());
+    altfmt_demand_type prev_flags = prev.get_altfmt_demand ();
+    altfmt_demand_type next_flags = next.get_altfmt_demand ();
+#define DEF_ALTFMT_RULE(PREV_FLAGS, NEXT_FLAGS, NEW_FLAGS, COMPATIBLE_P,       \
+			AVAILABLE_P, FUSE)                                     \
+  if (prev_flags == altfmt_demand_type::PREV_FLAGS                             \
+      && next_flags == altfmt_demand_type::NEXT_FLAGS)                         \
+    return AVAILABLE_P (prev, next);
+
+#include "riscv-vsetvl.def"
+
+    gcc_unreachable ();
+  }
+
+  void merge_altfmt (vsetvl_info &prev, const vsetvl_info &next)
+  {
+    gcc_assert (prev.valid_p () && next.valid_p ());
+    altfmt_demand_type prev_flags = prev.get_altfmt_demand ();
+    altfmt_demand_type next_flags = next.get_altfmt_demand ();
+#define DEF_ALTFMT_RULE(PREV_FLAGS, NEXT_FLAGS, NEW_FLAGS, COMPATIBLE_P,       \
+			AVAILABLE_P, FUSE)                                     \
+  if (prev_flags == altfmt_demand_type::PREV_FLAGS                             \
+      && next_flags == altfmt_demand_type::NEXT_FLAGS)                         \
+    {                                                                          \
+      gcc_assert (COMPATIBLE_P (prev, next));                                  \
+      FUSE (prev, next);                                                       \
+      prev.set_altfmt_demand (altfmt_demand_type::NEW_FLAGS);                  \
+      return;                                                                  \
+    }
+
+#include "riscv-vsetvl.def"
+
+    gcc_unreachable ();
+  }
+
   bool vl_not_in_conflict_p (const vsetvl_info &prev, const vsetvl_info &next)
   {
     /* We don't fuse this following case:
@@ -2224,19 +2370,19 @@ public:
 
   bool compatible_p (const vsetvl_info &prev, const vsetvl_info &next)
   {
-    bool compatible_p = sew_lmul_compatible_p (prev, next)
-			&& policy_compatible_p (prev, next)
-			&& avl_compatible_p (prev, next)
-			&& vl_not_in_conflict_p (prev, next);
+    bool compatible_p
+      = sew_lmul_compatible_p (prev, next) && policy_compatible_p (prev, next)
+	&& altfmt_compatible_p (prev, next) && avl_compatible_p (prev, next)
+	&& vl_not_in_conflict_p (prev, next);
     return compatible_p;
   }
 
   bool available_p (const vsetvl_info &prev, const vsetvl_info &next)
   {
-    bool available_p = sew_lmul_available_p (prev, next)
-		       && policy_available_p (prev, next)
-		       && avl_available_p (prev, next)
-		       && vl_not_in_conflict_p (prev, next);
+    bool available_p
+      = sew_lmul_available_p (prev, next) && policy_available_p (prev, next)
+	&& altfmt_available_p (prev, next) && avl_available_p (prev, next)
+	&& vl_not_in_conflict_p (prev, next);
     gcc_assert (!available_p || compatible_p (prev, next));
     return available_p;
   }
@@ -2246,6 +2392,7 @@ public:
     gcc_assert (compatible_p (prev, next));
     merge_sew_lmul (prev, next);
     merge_policy (prev, next);
+    merge_altfmt (prev, next);
     merge_avl (prev, next);
     gcc_assert (available_p (prev, next));
   }
@@ -2467,8 +2614,8 @@ private:
 	  continue;
 	else
 	  /* We pick the highest probability among those incompatible VSETVL
-	     infos. When all incompatible VSETVL infos have same probability, we
-	     don't pick any of them.  */
+	     infos.  When all incompatible VSETVL infos have same probability,
+	     we don't pick any of them.  */
 	  return false;
       }
     return true;
@@ -2835,7 +2982,7 @@ pre_vsetvl::compute_lcm_local_properties ()
   bitmap_vector_ones (m_transp, last_basic_block_for_fn (cfun));
 
   /* -  If T is locally available at the end of a block, then T' must be
-	available at the end of the same block. Since some optimization has
+	available at the end of the same block.  Since some optimization has
 	occurred earlier, T' might not be locally available, however, it must
 	have been previously computed on all paths. As a formula, T at AVLOC(B)
 	implies that T' at AVOUT(B).
@@ -3710,20 +3857,23 @@ pre_vsetvl::remove_unused_dest_operand ()
 	  rtx vl = get_vl (rinsn);
 	  vsetvl_info info = vsetvl_info (rinsn);
 	  if (has_no_uses (cfg_bb, rinsn, REGNO (vl)))
-	    if (!info.has_vlmax_avl ())
-	      {
-		rtx new_pat = info.get_vsetvl_pat (true);
-		if (dump_file)
-		  {
-		    fprintf (dump_file,
-			     "  Remove vsetvl insn %u's dest(vl) operand since "
-			     "it unused:\n",
-			     INSN_UID (rinsn));
-		    print_rtl_single (dump_file, rinsn);
-		  }
-		validate_change_or_fail (rinsn, &PATTERN (rinsn), new_pat,
-					 false);
-	      }
+	    {
+	      if (!info.has_vlmax_avl ())
+		{
+		  rtx new_pat = info.get_vsetvl_pat (true);
+		  if (dump_file)
+		    {
+		      fprintf (dump_file,
+			       "  Remove vsetvl insn %u's dest(vl) operand"
+			       " since "
+			       "it unused:\n",
+			       INSN_UID (rinsn));
+		      print_rtl_single (dump_file, rinsn);
+		    }
+		  validate_change_or_fail (rinsn, &PATTERN (rinsn), new_pat,
+					   false);
+		}
+	    }
 	}
 }
 
@@ -3877,7 +4027,7 @@ pass_vsetvl::execute (function *)
     return 0;
 
   /* The RVV instruction may change after split which is not a stable
-     instruction. We need to split it here to avoid potential issue
+     instruction.  We need to split it here to avoid potential issue
      since the VSETVL PASS is insert before split PASS.  */
   split_all_insns ();
 

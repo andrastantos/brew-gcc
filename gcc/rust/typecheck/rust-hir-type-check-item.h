@@ -30,6 +30,10 @@ class TypeCheckItem : private TypeCheckBase, private HIR::HIRVisItemVisitor
 public:
   static TyTy::BaseType *Resolve (HIR::Item &item);
 
+  static TyTy::FnType *ResolveFunctionSignature (HIR::Function &function);
+
+  static TyTy::BaseType *ResolveTraitSignature (HIR::Trait &trait);
+
   static TyTy::BaseType *ResolveImplItem (HIR::ImplBlock &impl_block,
 					  HIR::ImplItem &item);
 
@@ -38,6 +42,17 @@ public:
   static TyTy::BaseType *ResolveImplBlockSelfWithInference (
     HIR::ImplBlock &impl, location_t locus,
     TyTy::SubstitutionArgumentMappings *infer_arguments);
+
+  static std::vector<TyTy::SubstitutionParamMapping>
+  ResolveImplBlockSubstitutions (HIR::ImplBlock &impl_block,
+				 bool &failure_flag);
+
+  static void ResolveImplTraitAssociatedTypes (
+    TypeCheckContext *context, HIR::ImplBlock &impl_block,
+    TyTy::TypeBoundPredicate &specified_bound, TyTy::BaseType *self,
+    std::vector<TyTy::SubstitutionParamMapping> &substitutions,
+    std::map<DefId, AssocTypeEntry> &assoc_types_by_trait_item,
+    std::vector<const TraitItemReference *> &trait_item_refs);
 
   void visit (HIR::Module &module) override;
   void visit (HIR::Function &function) override;
@@ -57,12 +72,17 @@ public:
   void visit (HIR::UseDeclaration &) override {}
 
 protected:
+  void resolve_impl_block (HIR::ImplBlock &impl_block);
+  void resolve_trait_impl_block (HIR::ImplBlock &impl_block);
+
   std::pair<std::vector<TyTy::SubstitutionParamMapping>,
 	    TyTy::RegionConstraints>
   resolve_impl_block_substitutions (HIR::ImplBlock &impl_block,
 				    bool &failure_flag);
 
   void validate_trait_impl_block (
+    const TyTy::TypeBoundPredicate &specified_bound,
+    std::vector<const TraitItemReference *> trait_item_refs,
     TraitReference *trait_reference, HIR::ImplBlock &impl_block,
     TyTy::BaseType *self,
     std::vector<TyTy::SubstitutionParamMapping> &substitutions);
@@ -71,6 +91,13 @@ protected:
 				     HIR::ImplItem &item);
 
   TyTy::BaseType *resolve_impl_block_self (HIR::ImplBlock &impl_block);
+
+  TyTy::FnType *resolve_function_signature (HIR::Function &function);
+
+  TyTy::BaseType *resolve_trait (HIR::Trait &trait, bool resolve_bodies);
+
+  bool validate_repr_simd (const std::vector<TyTy::StructFieldType *> &fields,
+			   location_t locus);
 
 private:
   TypeCheckItem ();

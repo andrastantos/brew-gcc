@@ -1,6 +1,6 @@
 /* PR tree-optimization/94589 */
 /* { dg-do compile { target inf } } */
-/* { dg-options "-O2 -g0 -fdump-tree-optimized" } */
+/* { dg-options "-O2 -g0 -fdump-tree-optimized -ftrapping-math" } */
 /* { dg-final { scan-tree-dump-times "\[ij]_\[0-9]+\\(D\\) (?:<|<=|>|>=) \[ij]_\[0-9]+\\(D\\)" 24 "optimized" } } */
 /* { dg-final { scan-tree-dump-times "i_\[0-9]+\\(D\\) (?:<|<=|>|>=) 5\\.0" 24 "optimized" } } */
 

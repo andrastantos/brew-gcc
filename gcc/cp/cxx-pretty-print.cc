@@ -1442,9 +1442,13 @@ cxx_pretty_printer::simple_type_specifier (tree t)
       pp_cxx_trait (this, t);
       break;
 
-    case META_TYPE:
-      pp_cxx_ws_string (this, "std::meta::info");
-      break;
+    case OPAQUE_TYPE:
+      if (REFLECTION_TYPE_P (t))
+	{
+	  pp_cxx_ws_string (this, "std::meta::info");
+	  break;
+	}
+      gcc_fallthrough ();
 
     default:
       c_pretty_printer::simple_type_specifier (t);
@@ -1942,7 +1946,6 @@ cxx_pretty_printer::type_id (tree t)
     case NULLPTR_TYPE:
     case TEMPLATE_ID_EXPR:
     case OFFSET_TYPE:
-    case META_TYPE:
       pp_cxx_type_specifier_seq (this, t);
       if (TYPE_PTRMEM_P (t))
 	abstract_declarator (t);
@@ -1974,6 +1977,14 @@ cxx_pretty_printer::type_id (tree t)
 	pp_cxx_right_brace (this);
       }
       break;
+
+    case OPAQUE_TYPE:
+      if (REFLECTION_TYPE_P (t))
+	{
+	  pp_cxx_type_specifier_seq (this, t);
+	  break;
+	}
+      gcc_fallthrough ();
 
     default:
       c_pretty_printer::type_id (t);
@@ -2830,7 +2841,7 @@ pp_cxx_requires_expr (cxx_pretty_printer *pp, tree t)
       pp_cxx_right_paren (pp);
       pp_cxx_whitespace (pp);
     }
-  pp_cxx_requirement_body (pp, TREE_OPERAND (t, 1));
+  pp_cxx_requirement_body (pp, REQUIRES_EXPR_REQS (t));
 }
 
 /* simple-requirement:
@@ -2860,8 +2871,14 @@ pp_cxx_compound_requirement (cxx_pretty_printer *pp, tree t)
   pp->expression (TREE_OPERAND (t, 0));
   pp_cxx_right_brace (pp);
 
-  if (COMPOUND_REQ_NOEXCEPT_P (t))
+  if (TREE_OPERAND (t, 2) == boolean_true_node)
     pp_cxx_ws_string (pp, "noexcept");
+  else if (TREE_OPERAND (t, 2) != boolean_false_node)
+    {
+      pp_cxx_ws_string (pp, "noexcept(");
+      pp->expression (TREE_OPERAND (t, 2));
+      pp_cxx_right_paren (pp);
+    }
 
   if (tree type = TREE_OPERAND (t, 1))
     {

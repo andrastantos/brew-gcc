@@ -21,6 +21,7 @@
 #include "rust-function-collector.h"
 #include "rust-bir-fact-collector.h"
 #include "rust-bir-builder.h"
+#include "rust-bir-drop-analysis.h"
 #include "rust-bir-dump.h"
 #include "polonius/rust-polonius.h"
 
@@ -48,12 +49,14 @@ BorrowChecker::go (HIR::Crate &crate)
 {
   std::string crate_name;
 
+  BIR::DropAnalysis::get ().clear ();
+
   if (enable_dump_bir)
     {
       mkdir ("bir_dump", 0755);
       auto &mappings = Analysis::Mappings::get ();
-      crate_name
-	= *mappings.get_crate_name (crate.get_mappings ().get_crate_num ());
+      crate_name = *mappings.crate.crate_names.lookup (
+	crate.get_mappings ().get_crate_num ());
       mkdir ("nll_facts_gccrs", 0755);
     }
 
@@ -68,6 +71,8 @@ BorrowChecker::go (HIR::Crate &crate)
       BIR::BuilderContext ctx;
       BIR::Builder builder (ctx);
       auto bir = builder.build (*func);
+
+      BIR::DropAnalysis::get ().analyze (bir);
 
       if (enable_dump_bir)
 	{

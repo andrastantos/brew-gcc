@@ -81,7 +81,7 @@ opt_pass *current_pass;
    need to implement cloning, but passes that support multiple instances
    *must* provide their own implementation of the clone method.
 
-   Handle this by providing a default implemenation, but make it a fatal
+   Handle this by providing a default implementation, but make it a fatal
    error to call it.  */
 
 opt_pass *
@@ -1914,7 +1914,7 @@ account_profile_1 (function *fn, void *data)
   pop_cfun ();
 }
 
-/* Account profile chnages to all passes in list starting in SUB.  */
+/* Account profile changes to all passes in list starting in SUB.  */
 
 static void
 account_profile_in_list (opt_pass *sub)
@@ -2092,6 +2092,11 @@ execute_function_todo (function *fn, void *data)
 
       if (flags & TODO_verify_il)
 	{
+	  /* Shared tables are introduced after leaving CFG layout mode.
+	     Check their RTL links even after the CFG has been released.  */
+	  if ((cfun->curr_properties & PROP_rtl)
+	      && !(cfun->curr_properties & PROP_cfglayout))
+	    verify_jump_tables ();
 	  if (cfun->curr_properties & PROP_gimple)
 	    {
 	      if (cfun->curr_properties & PROP_cfg)
@@ -2179,15 +2184,6 @@ execute_todo (unsigned int flags)
      df problems.  */
   if (flags & TODO_df_finish)
     df_finish_pass ((flags & TODO_df_verify) != 0);
-}
-
-/* Verify invariants that should hold between passes.  This is a place
-   to put simple sanity checks.  */
-
-static void
-verify_interpass_invariants (void)
-{
-  gcc_checking_assert (!fold_deferring_overflow_warnings_p ());
 }
 
 /* Helper function. Verify that the properties has been turn into the
@@ -2338,7 +2334,6 @@ execute_one_ipa_transform_pass (struct cgraph_node *node,
   /* Run post-pass cleanup.  */
   gcc_checking_assert (!(todo_after & TODO_verify_il));
   execute_todo (todo_after);
-  verify_interpass_invariants ();
 
   /* Stop timevar.  */
   if (pass->tv_id != TV_NONE)
@@ -2713,8 +2708,6 @@ execute_one_pass (opt_pass *pass)
 	  account_profile (pass->static_pass_number, true);
 	}
     }
-
-  verify_interpass_invariants ();
 
   /* Stop timevar.  */
   if (pass->tv_id != TV_NONE)

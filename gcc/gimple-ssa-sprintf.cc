@@ -728,14 +728,6 @@ struct format_result
     return *this += 1;
   }
 
-  /* Postincrement the number of output characters by 1.  */
-  format_result operator++ (int)
-  {
-    format_result prev (*this);
-    *this += 1;
-    return prev;
-  }
-
   /* Increment the number of output characters by N.  */
   format_result& operator+= (unsigned HOST_WIDE_INT);
 
@@ -1128,7 +1120,7 @@ get_int_range (tree arg, gimple *stmt,
 	    *pmin = *pmax = -*pmin;
 	  else
 	    {
-	      /* Make sure signed overlow is avoided.  */
+	      /* Make sure signed overflow is avoided.  */
 	      gcc_assert (*pmin != HOST_WIDE_INT_MIN);
 
 	      HOST_WIDE_INT tmp = -*pmin;
@@ -2182,8 +2174,10 @@ format_character (const directive &dir, tree arg, pointer_query &ptr_qry)
       /* A wide character can result in as few as zero bytes.  */
       res.range.min = 0;
 
+      /* A negative value is represented by -1.  It converts to a wide
+	 character outside the ASCII range.  */
       HOST_WIDE_INT min, max;
-      if (get_int_range (arg, dir.info->callstmt, &min, &max, false, 0,
+      if (get_int_range (arg, dir.info->callstmt, &min, &max, false, -1,
 			 ptr_qry.rvals))
 	{
 	  if (min == 0 && max == 0)
@@ -2196,7 +2190,7 @@ format_character (const directive &dir, tree arg, pointer_query &ptr_qry)
 	      res.range.max = 1;
 	      res.range.likely = res.range.unlikely = 1;
 	    }
-	  else if (min >= 0 && min < 128)
+	  else if (min >= 0 && max < 128)
 	    {
 	      /* Be conservative if the target execution character set
 		 is not a 1-to-1 mapping to the source character set or
@@ -4401,7 +4395,7 @@ handle_printf_call (gimple_stmt_iterator *gsi, pointer_query &ptr_qry)
   /* Object size argument number (snprintf_chk and vsnprintf_chk).  */
   unsigned idx_objsize = UINT_MAX;
 
-  /* Destinaton argument number (valid for sprintf functions only).  */
+  /* Destination argument number (valid for sprintf functions only).  */
   unsigned idx_dstptr = 0;
 
   switch (info.fncode)

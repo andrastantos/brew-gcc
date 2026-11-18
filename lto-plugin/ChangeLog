@@ -1,3 +1,38 @@
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Replace AC_CANONICAL_SYSTEM with AC_CANONICAL_TARGET.
+	Replace AC_TRY_LINK with AC_LINK_IFELSE. Replace AM_PROG_LIBTOOL with
+	LT_INIT.
+
+2026-06-22  Filip Kastl  <fkastl@suse.cz>
+
+	* lto-plugin.c (process_symtab): char *s -> const char *s.
+	(process_symtab_extension): Ditto.
+
+2026-06-22  Filip Kastl  <fkastl@suse.cz>
+
+	* lto-plugin.c (startswith): Remove trailing whitespace.
+	(parse_table_entry): Ditto.
+	(translate): Ditto.
+	(dump_symtab): Ditto.
+	(finish_conflict_resolution): Ditto.
+	(symbol_strength): Ditto.
+	(resolve_conflicts): Ditto.
+
+2026-06-13  Sunil Dora  <sunilkumar.dora@windriver.com>
+
+	PR driver/111527
+	* lto-plugin.c (read_collect_gcc_options): New function.
+	(onload): Use read_collect_gcc_options instead of getenv.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* lto-plugin.c (startswith): Fix typos.
+	(exec_lto_wrapper): Likewise.
+	(symbol_strength): Likewise.
+
 2025-12-29  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
 
 	* configure: Regenerate.

@@ -166,7 +166,7 @@ func_checker::compare_decl (const_tree t1, const_tree t2)
   /* We do not really need to check types of variables, since they are just
      blocks of memory and we verify types of the accesses to them.
      However do compare types of other kinds of decls
-     (parm decls and result decl types may affect ABI convetions).  */
+     (parm decls and result decl types may affect ABI conventions).  */
   if (t != VAR_DECL)
     {
       if (!compatible_types_p (TREE_TYPE (t1), TREE_TYPE (t2)))
@@ -238,7 +238,7 @@ func_checker::compatible_types_p (tree t1, tree t2)
 }
 
 /* Add hash of ARG to HSTATE. FLAGS have same meaning
-   as for operand_equal_p.  Works only if operand acces type is OP_NORMAL.  */
+   as for operand_equal_p.  Works only if operand access type is OP_NORMAL.  */
 
 void
 func_checker::hash_operand (const_tree arg, inchash::hash &hstate,
@@ -439,7 +439,8 @@ func_checker::compare_operand (tree t1, tree t2, operand_access_type access)
     }
   else
     {
-      if (operand_equal_p (t1, t2, OEP_MATCH_SIDE_EFFECTS))
+      if (operand_equal_p (t1, t2, OEP_MATCH_SIDE_EFFECTS
+				       | OEP_ADDRESS_OF_SAME_FIELD))
 	return true;
       return return_false_with_msg
 		 ("operand_equal_p failed");
@@ -931,17 +932,8 @@ func_checker::compare_gimple_switch (const gswitch *g1, const gswitch *g2)
       if (!tree_int_cst_equal (high1, high2))
 	return return_false_with_msg ("case high values are different");
 
-      if (TREE_CODE (label1) == CASE_LABEL_EXPR
-	  && TREE_CODE (label2) == CASE_LABEL_EXPR)
-	{
-	  label1 = CASE_LABEL (label1);
-	  label2 = CASE_LABEL (label2);
-
-	  if (!compare_operand (label1, label2, OP_NORMAL))
-	    return return_false_with_msg ("switch label_exprs are different");
-	}
-      else if (!tree_int_cst_equal (label1, label2))
-	return return_false_with_msg ("switch labels are different");
+      if (!compare_operand (CASE_LABEL (label1), CASE_LABEL (label2), OP_NORMAL))
+	return return_false_with_msg ("switch label_exprs are different");
     }
 
   return true;
@@ -1016,7 +1008,7 @@ func_checker::compare_gimple_asm (const gasm *g1, const gasm *g2)
   if (gimple_asm_noutputs (g1) != gimple_asm_noutputs (g2))
     return false;
 
-  /* We do not suppport goto ASM statement comparison.  */
+  /* We do not support goto ASM statement comparison.  */
   if (gimple_asm_nlabels (g1) || gimple_asm_nlabels (g2))
     return false;
 

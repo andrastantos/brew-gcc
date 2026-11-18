@@ -58,6 +58,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-ssa.h"
 #include "gimple-range.h"
 #include "tree-ssa-dce.h"
+#include "tree-ssa-math-opts.h"
 
 /* This pass propagates the RHS of assignment statements into use
    sites of the LHS of the assignment.  It's basically a specialized
@@ -407,13 +408,9 @@ combine_cond_expr_cond (gimple *stmt, enum tree_code code, tree type,
 
   gcc_assert (TREE_CODE_CLASS (code) == tcc_comparison);
 
-  fold_defer_overflow_warnings ();
   t = fold_binary_loc (gimple_location (stmt), code, type, op0, op1);
   if (!t)
-    {
-      fold_undefer_overflow_warnings (false, NULL, 0);
-      return NULL_TREE;
-    }
+    return NULL_TREE;
 
   /* Require that we got a boolean type out if we put one in.  */
   gcc_assert (TREE_CODE (TREE_TYPE (t)) == TREE_CODE (type));
@@ -423,13 +420,7 @@ combine_cond_expr_cond (gimple *stmt, enum tree_code code, tree type,
 
   /* Bail out if we required an invariant but didn't get one.  */
   if (!t || (invariant_only && !is_gimple_min_invariant (t)))
-    {
-      fold_undefer_overflow_warnings (false, NULL, 0);
-      return NULL_TREE;
-    }
-
-  bool nowarn = warning_suppressed_p (stmt, OPT_Wstrict_overflow);
-  fold_undefer_overflow_warnings (!nowarn, stmt, 0);
+    return NULL_TREE;
 
   return t;
 }
@@ -770,8 +761,10 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
 	      new_base = build_fold_addr_expr (*def_rhs_basep);
 	      new_offset = TREE_OPERAND (lhs, 1);
 	    }
-	  *def_rhs_basep = build2 (MEM_REF, TREE_TYPE (*def_rhs_basep),
-				   new_base, new_offset);
+	  tree atype = TREE_TYPE (*def_rhs_basep);
+	  if (TYPE_ALIGN (TREE_TYPE (lhs)) < TYPE_ALIGN (atype))
+	    atype = build_aligned_type (atype, TYPE_ALIGN (TREE_TYPE (lhs)));
+	  *def_rhs_basep = build2 (MEM_REF, atype, new_base, new_offset);
 	  TREE_THIS_VOLATILE (*def_rhs_basep) = TREE_THIS_VOLATILE (lhs);
 	  TREE_SIDE_EFFECTS (*def_rhs_basep) = TREE_SIDE_EFFECTS (lhs);
 	  TREE_THIS_NOTRAP (*def_rhs_basep) = TREE_THIS_NOTRAP (lhs);
@@ -856,8 +849,10 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
 	      new_base = build_fold_addr_expr (*def_rhs_basep);
 	      new_offset = TREE_OPERAND (rhs, 1);
 	    }
-	  *def_rhs_basep = build2 (MEM_REF, TREE_TYPE (*def_rhs_basep),
-				   new_base, new_offset);
+	  tree atype = TREE_TYPE (*def_rhs_basep);
+	  if (TYPE_ALIGN (TREE_TYPE (rhs)) < TYPE_ALIGN (atype))
+	    atype = build_aligned_type (atype, TYPE_ALIGN (TREE_TYPE (rhs)));
+	  *def_rhs_basep = build2 (MEM_REF, atype, new_base, new_offset);
 	  TREE_THIS_VOLATILE (*def_rhs_basep) = TREE_THIS_VOLATILE (rhs);
 	  TREE_SIDE_EFFECTS (*def_rhs_basep) = TREE_SIDE_EFFECTS (rhs);
 	  TREE_THIS_NOTRAP (*def_rhs_basep) = TREE_THIS_NOTRAP (rhs);
@@ -1462,7 +1457,7 @@ static tree
 new_src_based_on_copy (tree src2, tree dest, tree src)
 {
   /* If the second src is not exactly the same as dest,
-     try to handle it seperately; see it is address/size equivalent.
+     try to handle it separately; see it is address/size equivalent.
      Handles `a` and `a.b` and `MEM<char[N]>(&a)` which all have
      the same size and offsets as address/size equivalent.
      This allows copying over a memcpy and also one for copying
@@ -1603,7 +1598,7 @@ optimize_agr_copyprop_1 (gimple *stmt, gimple *use_stmt,
   src = new_src_based_on_copy (src2, dest, src);
   if (!src)
     return;
-  /* For 2 memory refences and using a temporary to do the copy,
+  /* For 2 memory references and using a temporary to do the copy,
      don't remove the temporary as the 2 memory references might overlap.
      Note t does not need to be decl as it could be field.
      See PR 22237 for full details.
@@ -1683,7 +1678,7 @@ optimize_agr_copyprop_1 (gimple *stmt, gimple *use_stmt,
       print_gimple_stmt (dump_file, use_stmt, 0, dump_flags);
     }
   if (maybe_clean_or_replace_eh_stmt (orig_stmt, use_stmt))
-    bitmap_set_bit (to_purge, gimple_bb (stmt)->index);
+    bitmap_set_bit (to_purge, gimple_bb (use_stmt)->index);
   statistics_counter_event (cfun, "copy prop for aggregate", 1);
 }
 
@@ -2460,6 +2455,35 @@ optimize_stack_restore (gimple_stmt_iterator *gsi, gimple *call)
   return true;
 }
 
+/* Optimizes strlen (s) ==/!= 0 to *s ==/!= 0. */
+static bool
+optimize_strlen_comp (gimple_stmt_iterator *gsi, gimple *call)
+{
+  if (!fold_before_rtl_expansion_p ())
+    return false;
+
+  tree lhs = gimple_call_lhs (call);
+  if (lhs == NULL_TREE || use_in_zero_equality (lhs, true) == NULL)
+    return false;
+
+  /* The string passed to strlen. */
+  tree ptr = gimple_call_arg (call, 0);
+
+  /* Dereference the string. */
+  tree deref = fold_build2 (MEM_REF, char_type_node, ptr,
+			    build_zero_cst (ptr_type_node));
+
+  /* Perform a type conversion. */
+  deref = fold_convert_loc (gimple_location (call),
+			    TREE_TYPE (lhs),
+			    deref);
+
+  /* Replace the original call to strlen with the dereference we just built. */
+  gimplify_and_update_call_from_tree (gsi, deref);
+
+  return true;
+}
+
 /* *GSI_P is a GIMPLE_CALL to a builtin function.
    Optimize
    memcpy (p, "abcd", 4);
@@ -2491,6 +2515,8 @@ simplify_builtin_call (gimple_stmt_iterator *gsi_p, tree callee2, bool full_walk
 
   switch (DECL_FUNCTION_CODE (callee2))
     {
+    case BUILT_IN_STRLEN:
+      return optimize_strlen_comp (gsi_p, as_a<gcall*>(stmt2));
     case BUILT_IN_STACK_RESTORE:
       return optimize_stack_restore (gsi_p, as_a<gcall*>(stmt2));
     case BUILT_IN_MEMCMP:
@@ -2612,16 +2638,6 @@ simplify_builtin_call (gimple_stmt_iterator *gsi_p, tree callee2, bool full_walk
 		  crhs1 = gimple_assign_rhs1 (use_stmt);
 		  crhs2 = gimple_assign_rhs2 (use_stmt);
 		}
-	      else if (gimple_assign_rhs_code (use_stmt) == COND_EXPR)
-		{
-		  tree cond = gimple_assign_rhs1 (use_stmt);
-		  if (COMPARISON_CLASS_P (cond))
-		    {
-		      ccode = TREE_CODE (cond);
-		      crhs1 = TREE_OPERAND (cond, 0);
-		      crhs2 = TREE_OPERAND (cond, 1);
-		    }
-		}
 	    }
 	  if (ccode == EQ_EXPR || ccode == NE_EXPR)
 	    {
@@ -2728,14 +2744,6 @@ simplify_builtin_call (gimple_stmt_iterator *gsi_p, tree callee2, bool full_walk
 		    {
 		      gimple_assign_set_rhs1 (use_stmt, crhs1);
 		      gimple_assign_set_rhs2 (use_stmt, crhs2);
-		    }
-		  else
-		    {
-		      gcc_checking_assert (gimple_assign_rhs_code (use_stmt)
-					   == COND_EXPR);
-		      tree cond = build2 (ccode, boolean_type_node,
-					  crhs1, crhs2);
-		      gimple_assign_set_rhs1 (use_stmt, cond);
 		    }
 		}
 	      update_stmt (use_stmt);
@@ -3380,6 +3388,7 @@ check_table (tree ctor, tree type, HOST_WIDE_INT &zero_val, unsigned bits,
 /* Match.pd function to match the ctz expression.  */
 extern bool gimple_ctz_table_index (tree, tree *, tree (*)(tree));
 extern bool gimple_clz_table_index (tree, tree *, tree (*)(tree));
+extern bool gimple_clz_msb_iso_table_index (tree, tree *, tree (*)(tree));
 
 /* Recognize count leading and trailing zeroes idioms.
    The canonical form is array[((x & -x) * C) >> SHIFT] where C is a magic
@@ -3399,6 +3408,12 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
   gcc_checking_assert (TREE_CODE (array_ref) == ARRAY_REF);
 
   internal_fn fn = IFN_LAST;
+  /* When true, the matched idiom is a CLZ using DeBruijn CTZ on the
+     isolated MSB -- see clz_msb_iso_table_index in match.pd.  The
+     table stores MSB positions and must satisfy the direct CTZ
+     DeBruijn property, so we validate it with the CTZ checkfn even
+     though we emit IFN_CLZ code.  */
+  bool clz_via_ctz = false;
   /* For CTZ we recognize ((x & -x) * C) >> SHIFT where the array data
      represents the number of trailing zeros.  */
   if (gimple_ctz_table_index (TREE_OPERAND (array_ref, 1), &res_ops[0], NULL))
@@ -3414,6 +3429,17 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
   else if (gimple_clz_table_index (TREE_OPERAND (array_ref, 1), &res_ops[0],
 				   NULL))
     fn = IFN_CLZ;
+  /* Variant CLZ idiom: after the OR-cascade sets all bits from 0 to
+     the original MSB, (value - (value >> 1)) isolates the MSB as a
+     power of two (2^k), and the subsequent DeBruijn multiply-and-shift
+     is a CTZ-style lookup on 2^k.  The table stores MSB positions
+     directly.  */
+  else if (gimple_clz_msb_iso_table_index (TREE_OPERAND (array_ref, 1),
+					   &res_ops[0], NULL))
+    {
+      fn = IFN_CLZ;
+      clz_via_ctz = true;
+    }
   else
     return false;
 
@@ -3423,9 +3449,13 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
   tree input_type = TREE_TYPE (res_ops[0]);
   unsigned input_bits = tree_to_shwi (TYPE_SIZE (input_type));
 
-  /* Check the array element type is not wider than 32 bits and the input is
-     an unsigned 32-bit or 64-bit type.  */
-  if (TYPE_PRECISION (type) > 32 || !TYPE_UNSIGNED (input_type))
+  /* Check the array element type is integral and not wider than 64 bits,
+     and the input is an unsigned 32-bit or 64-bit type.  The table values
+     are bit positions in [0, input_bits - 1], so any integer element type
+     with at least 6 bits of precision suffices; the cap is just to keep
+     the transformation simple.  */
+  if (!INTEGRAL_TYPE_P (type) || TYPE_PRECISION (type) > 64
+      || !TYPE_UNSIGNED (input_type))
     return false;
   if (input_bits != 32 && input_bits != 64)
     return false;
@@ -3447,7 +3477,9 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
   if (!ctor)
     return false;
   unsigned HOST_WIDE_INT mulval = tree_to_uhwi (res_ops[1]);
-  if (fn == IFN_CTZ)
+  /* CTZ and the MSB-isolation CLZ variant both use the direct CTZ
+     DeBruijn check (table[(magic << data) >> shift] == data).  */
+  if (fn == IFN_CTZ || clz_via_ctz)
     {
       auto checkfn = [&](unsigned data, unsigned i) -> bool
 	{
@@ -3464,12 +3496,34 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
 	{
 	  unsigned HOST_WIDE_INT mask
 	    = ((HOST_WIDE_INT_1U << (input_bits - shiftval)) - 1) << shiftval;
-	  return (((((HOST_WIDE_INT_1U << (data + 1)) - 1) * mulval) & mask)
-		  >> shiftval) == i;
+	  /* The OR-cascade produces a value with all bits from 0 to the
+	     original MSB set.  Compute (1 << (data + 1)) - 1 to simulate
+	     that value.  When data + 1 equals HOST_BITS_PER_WIDE_INT
+	     (i.e. data is the MSB position of a 64-bit input) the shift
+	     is undefined behavior, so handle that case explicitly using
+	     all-ones.  Without this, any well-formed 64-bit DeBruijn CLZ
+	     table is rejected because its entry for the all-ones input
+	     correctly maps to the MSB (e.g. table[...] == 63).
+	     PR tree-optimization/122569.  */
+	  unsigned HOST_WIDE_INT all_bits_below
+	    = (data + 1 == HOST_BITS_PER_WIDE_INT)
+	      ? HOST_WIDE_INT_M1U
+	      : ((HOST_WIDE_INT_1U << (data + 1)) - 1);
+	  return (((all_bits_below * mulval) & mask) >> shiftval) == i;
 	};
     if (!check_table (ctor, type, zero_val, input_bits, checkfn))
       return false;
     }
+
+  /* The sequence below computes the result in int, for a CLZ as
+     INPUT_BITS - 1 minus the count.  If the table entry for zero does not
+     survive that, select it in TYPE after the conversion instead.  */
+  HOST_WIDE_INT table_zero = zero_val;
+  bool late_select
+    = (!wi::fits_to_tree_p (zero_val, integer_type_node)
+       || (fn == IFN_CLZ
+	   && !wi::fits_to_tree_p (input_bits - 1 - zero_val,
+				 integer_type_node)));
 
   HOST_WIDE_INT ctz_val = -1;
   bool zero_ok;
@@ -3484,9 +3538,12 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
       ctz_val = 32;
       zero_ok = CLZ_DEFINED_VALUE_AT_ZERO (SCALAR_INT_TYPE_MODE (input_type),
 					   ctz_val) == 2;
-      zero_val = input_bits - 1 - zero_val;
+      if (!late_select)
+	zero_val = input_bits - 1 - zero_val;
     }
-  int nargs = 2;
+  /* Pass the value at zero only if the target defines it; otherwise the
+     COND_EXPR below supplies the result for zero.  */
+  int nargs = zero_ok ? 2 : 1;
 
   /* If the input value can't be zero, don't special case ctz (0).  */
   range_query *q = get_range_query (cfun);
@@ -3500,6 +3557,7 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
       zero_val = 0;
       ctz_val = 0;
       nargs = 1;
+      late_select = false;
     }
 
   gimple_seq seq = NULL;
@@ -3514,7 +3572,7 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
 
   tree prev_lhs = gimple_call_lhs (call);
 
-  if (zero_ok && zero_val == ctz_val)
+  if (late_select || (zero_ok && zero_val == ctz_val))
     ;
   /* Emit ctz (x) & 31 if ctz (0) is 32 but we need to return 0.  */
   else if (zero_ok && zero_val == 0 && ctz_val == input_bits)
@@ -3556,12 +3614,1360 @@ simplify_count_zeroes (gimple_stmt_iterator *gsi)
       prev_lhs = gimple_assign_lhs (g);
     }
 
-  g = gimple_build_assign (gimple_assign_lhs (stmt), NOP_EXPR, prev_lhs);
+  if (late_select)
+    {
+      g = gimple_build_assign (make_ssa_name (type), NOP_EXPR, prev_lhs);
+      gimple_set_location (g, gimple_location (stmt));
+      gimple_seq_add_stmt (&seq, g);
+      prev_lhs = gimple_assign_lhs (g);
+      g = gimple_build_assign (make_ssa_name (boolean_type_node), EQ_EXPR,
+			       res_ops[0], build_zero_cst (input_type));
+      gimple_set_location (g, gimple_location (stmt));
+      gimple_seq_add_stmt (&seq, g);
+      g = gimple_build_assign (gimple_assign_lhs (stmt), COND_EXPR,
+			       gimple_assign_lhs (g),
+			       build_int_cst (type, table_zero), prev_lhs);
+    }
+  else
+    g = gimple_build_assign (gimple_assign_lhs (stmt), NOP_EXPR, prev_lhs);
   gimple_seq_add_stmt (&seq, g);
   gsi_replace_with_seq (gsi, seq, true);
   return true;
 }
 
+/* Long-multiply fold framework.
+
+   Walks the outer addition or bit_ior chain on a candidate statement,
+   classifies each summand against the atom match patterns from
+   match.pd, and looks the resulting multiset of (kind, extract) tuples
+   up in a table.  On a hit, three cross-summand consistency checks
+   decide whether the wide multiply is emitted.  */
+
+/* Match.pd recognizers for the conditional carry-add pattern. */
+
+extern bool gimple_cond_carry_add (tree, tree *, tree (*)(tree));
+
+/* Match.pd functions to match long multiplication.  */
+
+extern bool gimple_mul_hi (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_lo (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_hilo (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_lolo (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_hihi (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_cross_sum (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_low_sum (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_low_accum (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_carry_cross_sum (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_carry_low_sum (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_carry_low (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_ladder_sum1 (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_ladder_sum2 (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_ladder_sum3 (tree, tree *, tree (*)(tree));
+extern bool gimple_mul_ladder_part_sum (tree, tree *, tree (*)(tree));
+
+/* Append to SEQ statements assigning DEST the high-part multiply of
+   OP1 and OP2, emitted as
+     (N)(((2N) op1 * (2N) op2) >> N).
+   pass_optimize_widening_mul's convert_mult_to_widen and
+   convert_mult_to_highpart later rewrite this to a single
+   WIDEN_MULT_EXPR or MULT_HIGHPART_EXPR when the target supports it,
+   otherwise the 2N multiply expands directly.  Emitting the canonical
+   widening shape keeps target-capability decisions in the layer that
+   already owns them.  */
+
+static void
+build_mul_high_seq (tree op1, tree op2, tree dest, location_t loc,
+		    gimple_seq *seq)
+{
+  tree op_type = TREE_TYPE (op1);
+  unsigned int width = TYPE_PRECISION (op_type);
+  tree wide_type = build_nonstandard_integer_type (width * 2, 1);
+
+  tree wide_a = gimple_convert (seq, loc, wide_type, op1);
+  tree wide_b = gimple_convert (seq, loc, wide_type, op2);
+  tree wide_prod = gimple_build (seq, loc, MULT_EXPR, wide_type,
+				 wide_a, wide_b);
+  tree hi = gimple_build (seq, loc, RSHIFT_EXPR, wide_type, wide_prod,
+			  build_int_cst (integer_type_node, width));
+
+  gimple *prod = gimple_build_assign (dest, NOP_EXPR, hi);
+  gimple_set_location (prod, loc);
+  gimple_seq_add_stmt (seq, prod);
+}
+
+/* Append to SEQ statements combining ACC with each of EXTRAS under
+   OUTER, the last one assigning to STMT's lhs.  EXTRAS are leaves of
+   STMT's own chain, so any combining order is valid.  */
+
+static void
+long_mul_apply_extras (tree acc, const vec<tree> &extras, tree_code outer,
+		       gassign *stmt, gimple_seq *seq)
+{
+  location_t loc = gimple_location (stmt);
+  tree lhs = gimple_assign_lhs (stmt);
+  for (unsigned i = 0; i + 1 < extras.length (); i++)
+    acc = gimple_build (seq, loc, outer, TREE_TYPE (lhs), acc, extras[i]);
+  gimple *last = gimple_build_assign (lhs, outer, acc, extras.last ());
+  gimple_set_location (last, loc);
+  gimple_seq_add_stmt (seq, last);
+}
+
+/* Replace STMT with a high-part multiply of OP1 and OP2, combining any
+   EXTRAS back on top under OUTER.  */
+
+static void
+create_mul_high_seq (tree op1, tree op2, gassign *stmt,
+		     const vec<tree> &extras, tree_code outer)
+{
+  gimple_seq seq = NULL;
+  tree lhs = gimple_assign_lhs (stmt);
+  tree dest = extras.is_empty () ? lhs : make_ssa_name (TREE_TYPE (lhs));
+  build_mul_high_seq (op1, op2, dest, gimple_location (stmt), &seq);
+  if (!extras.is_empty ())
+    long_mul_apply_extras (dest, extras, outer, stmt, &seq);
+  gimple_stmt_iterator gsi = gsi_for_stmt (stmt);
+  gsi_replace_with_seq (&gsi, seq, true);
+}
+
+/* Replace STMT with a low-part multiply of OP1 and OP2, combining any
+   EXTRAS back on top under OUTER.  */
+
+static void
+create_mul_low_seq (tree op1, tree op2, gassign *stmt,
+		    const vec<tree> &extras, tree_code outer)
+{
+  gimple_seq seq = NULL;
+  tree lhs = gimple_assign_lhs (stmt);
+  tree dest = extras.is_empty () ? lhs : make_ssa_name (TREE_TYPE (lhs));
+  gimple *prod = gimple_build_assign (dest, MULT_EXPR, op1, op2);
+  gimple_set_location (prod, gimple_location (stmt));
+  gimple_seq_add_stmt (&seq, prod);
+  if (!extras.is_empty ())
+    long_mul_apply_extras (dest, extras, outer, stmt, &seq);
+  gimple_stmt_iterator gsi = gsi_for_stmt (stmt);
+  gsi_replace_with_seq (&gsi, seq, true);
+}
+
+/* Widest match.pd atom (mul_carry_low_sum) takes 7 captures; round up
+   to 8 for the scratch buffers below.  */
+static constexpr unsigned LONG_MUL_MAX_CAPTURES = 8;
+
+/* Longest variant in long_mul_table has 4 summands.  */
+static constexpr unsigned LONG_MUL_MAX_SUMMANDS = 4;
+
+/* Cap on the leaves set aside as not part of the idiom, so an
+   arbitrarily long unrelated chain still bails early.  */
+static constexpr unsigned LONG_MUL_MAX_EXTRAS = 4;
+
+namespace {
+
+enum long_mul_kind : unsigned char {
+  LMK_INVALID,
+  LMK_MUL_HIHI,
+  LMK_MUL_LOLO,
+  LMK_MUL_HILO,
+  LMK_CROSS_SUM,
+  LMK_LOW_ACCUM,
+  LMK_LOW_SUM,
+  LMK_LADDER_SUM1,
+  LMK_LADDER_SUM2,
+  LMK_LADDER_SUM3,
+  LMK_LADDER_PART_SUM,
+  LMK_CARRY_LOW,
+  LMK_CARRY_CROSS_SUM,
+  LMK_CARRY_LOW_SUM,
+};
+
+/* How the leaf wraps its inner kind.  Carry kinds use LMX_NONE: their
+   match.pd pattern bakes the lshift in, so the leaf is already the
+   complete carry expression.  */
+
+enum long_mul_extract : unsigned char  {
+  LMX_NONE,
+  LMX_HI,
+  LMX_LO,
+  LMX_SHL_N,
+};
+
+struct long_mul_summand {
+  long_mul_summand () {}
+  long_mul_summand (tree);
+  long_mul_summand (const long_mul_summand &) = default;
+  long_mul_kind kind = LMK_INVALID;
+  long_mul_extract extract = LMX_NONE;
+  tree op0 = NULL_TREE, op1 = NULL_TREE;
+  tree hilo[3] = { NULL_TREE, NULL_TREE, NULL_TREE };
+  tree carry_a = NULL_TREE, carry_b = NULL_TREE;
+  unsigned HOST_WIDE_INT shift = 0;
+  operator bool () { return kind != LMK_INVALID; }
+private:
+  bool classify_carry (tree leaf);
+  bool classify_hi_extract (tree, unsigned HOST_WIDE_INT);
+  bool classify_lo_extract (tree);
+  bool classify_shl_extract (tree, unsigned HOST_WIDE_INT);
+  bool classify_plus_kinds (tree);
+  bool classify_bare (tree);
+  void set (long_mul_kind kind, const tree *res_ops);
+};
+
+}
+
+/* Walk the OUTER addition or BIT_IOR chain rooted at STMT and collect
+   the leaf operands into LEAVES.  Descends through single-use
+   intermediate stmts of the same code.  Returns false once the leaf
+   count exceeds LONG_MUL_MAX_SUMMANDS + LONG_MUL_MAX_EXTRAS, so an
+   overlong chain bails mid-walk instead of after a full traversal.
+
+   If SHARED_DEF_OUT is non-NULL, record there the first inner stmt that
+   shares the outer code but has more than one use -- descending into it
+   would change semantics, so it stays as a leaf.  Such a leaf often
+   classifies as something no row matches, silently disabling the fold;
+   the caller surfaces this as a dump-file hint.  */
+
+static bool
+long_mul_linearize_chain (gimple *stmt, tree_code outer, vec<tree> &leaves,
+			  gimple **shared_def_out = NULL)
+{
+  auto_vec<tree, 8> stack;
+  stack.safe_push (gimple_assign_rhs2 (stmt));
+  stack.safe_push (gimple_assign_rhs1 (stmt));
+
+  while (!stack.is_empty ())
+    {
+      tree t = stack.pop ();
+      if (TREE_CODE (t) == SSA_NAME)
+	{
+	  gimple *def = SSA_NAME_DEF_STMT (t);
+	  if (def
+	      && is_gimple_assign (def)
+	      && gimple_assign_rhs_code (def) == outer)
+	    {
+	      if (has_single_use (t))
+		{
+		  stack.safe_push (gimple_assign_rhs2 (def));
+		  stack.safe_push (gimple_assign_rhs1 (def));
+		  continue;
+		}
+	      if (shared_def_out && !*shared_def_out)
+		*shared_def_out = def;
+	    }
+	}
+      leaves.safe_push (t);
+      if (leaves.length () > LONG_MUL_MAX_SUMMANDS + LONG_MUL_MAX_EXTRAS)
+	return false;
+    }
+  return !leaves.is_empty ();
+}
+
+/* If EXPR is defined by LSHIFT_EXPR with a uhwi-valued amount, return
+   the shifted input via *INNER_OUT and the amount via *SHIFT_OUT.  */
+
+static bool
+long_mul_is_lshift_def (tree expr, tree *inner_out,
+			unsigned HOST_WIDE_INT *shift_out)
+{
+  if (TREE_CODE (expr) != SSA_NAME)
+    return false;
+  gimple *def = SSA_NAME_DEF_STMT (expr);
+  if (!def || !is_gimple_assign (def)
+      || gimple_assign_rhs_code (def) != LSHIFT_EXPR)
+    return false;
+  tree amount = gimple_assign_rhs2 (def);
+  if (!tree_fits_uhwi_p (amount))
+    return false;
+  *inner_out = gimple_assign_rhs1 (def);
+  *shift_out = tree_to_uhwi (amount);
+  return true;
+}
+
+/* Fill THIS's kind plus the captures from RES_OPS that the kind requires.
+   The kind itself determines how many (op0, op1) and hilo captures to
+   pick up from RES_OPS, and whether a baked-in shift is present.  */
+
+void
+long_mul_summand::set (long_mul_kind kind, const tree *res_ops)
+{
+  this->kind = kind;
+  unsigned n_ops = 0;
+  unsigned n_hilos = 0;
+  int shift_idx = -1;
+  switch (kind)
+    {
+    default:
+      gcc_unreachable ();
+    case LMK_MUL_HIHI:
+    case LMK_MUL_LOLO:
+    case LMK_MUL_HILO:
+      n_ops = 2;
+      break;
+    case LMK_CROSS_SUM:
+      n_hilos = 2;
+      break;
+    case LMK_LOW_ACCUM:
+    case LMK_LOW_SUM:
+    case LMK_LADDER_SUM1:
+    case LMK_LADDER_SUM2:
+    case LMK_LADDER_SUM3:
+      n_ops = 2;
+      n_hilos = 2;
+      break;
+    case LMK_LADDER_PART_SUM:
+      n_ops = 2;
+      n_hilos = 1;
+      break;
+    case LMK_CARRY_CROSS_SUM:
+      n_hilos = 3;
+      shift_idx = 3;
+      break;
+    case LMK_CARRY_LOW_SUM:
+      n_ops = 2;
+      n_hilos = 3;
+      shift_idx = 5;
+      break;
+    case LMK_CARRY_LOW:
+      this->carry_a = res_ops[0];
+      this->carry_b = res_ops[1];
+      return;
+    }
+  if (n_ops >= 1)
+    this->op0 = res_ops[0];
+  if (n_ops >= 2)
+    this->op1 = res_ops[1];
+  gcc_checking_assert (n_hilos <= 3);
+  for (unsigned i = 0; i < n_hilos; i++)
+    this->hilo[i] = res_ops[n_ops + i];
+  if (shift_idx >= 0)
+    /* The carry atoms (mul_carry_cross_sum, mul_carry_low_sum) capture the
+       shift since it is always less than TYPE_PRECISION, using tree_to_uhwi is safe.  */
+    this->shift = tree_to_uhwi (res_ops[shift_idx]);
+}
+
+/* Classify LEAF as a carry-kind summand.  The lshift amount is baked
+   into mul_carry_cross_sum / mul_carry_low_sum, so they're tried before
+   any branch that looks for a generic (X >> N) or (X << N) wrapper.  */
+
+bool
+long_mul_summand::classify_carry (tree leaf)
+{
+  tree res_ops[LONG_MUL_MAX_CAPTURES];
+  /* mul_carry_low_sum's inner is constrained to mul_low_sum (cross_sum
+     + mul_hi(mul_lolo)); mul_carry_cross_sum's inner is just
+     mul_cross_sum (any plus); mul_carry_low matches gt:c (@0, plus(@0,
+     @1)) without a baked-in shift.  Most specific first, so the
+     less-constrained pattern doesn't shadow the more-constrained one.  */
+  if (gimple_mul_carry_low_sum (leaf, res_ops, NULL))
+    {
+      set (LMK_CARRY_LOW_SUM, res_ops);
+      return true;
+    }
+  if (gimple_mul_carry_cross_sum (leaf, res_ops, NULL))
+    {
+      set (LMK_CARRY_CROSS_SUM, res_ops);
+      return true;
+    }
+  if (gimple_mul_carry_low (leaf, res_ops, NULL))
+    {
+      set (LMK_CARRY_LOW, res_ops);
+      return true;
+    }
+  return false;
+}
+
+/* Plus-based summand kinds shared by the (X >> SHIFT) and (X << SHIFT)
+   classifiers.  Order is by specificity: mul_low_sum's first arm is any
+   plus, so mul_ladder_sum1/3 (which constrain that arm to a plus
+   containing a mul_lo) and mul_low_accum (which constrains both arms)
+   shadow it and must come first.  */
+
+bool
+long_mul_summand::classify_plus_kinds (tree inner)
+{
+  tree res_ops[LONG_MUL_MAX_CAPTURES];
+  if (gimple_mul_low_accum (inner, res_ops, NULL))
+    {
+      set (LMK_LOW_ACCUM, res_ops);
+      return true;
+    }
+  if (gimple_mul_ladder_sum3 (inner, res_ops, NULL))
+    {
+      set (LMK_LADDER_SUM3, res_ops);
+      return true;
+    }
+  if (gimple_mul_ladder_sum1 (inner, res_ops, NULL))
+    {
+      set (LMK_LADDER_SUM1, res_ops);
+      return true;
+    }
+  if (gimple_mul_low_sum (inner, res_ops, NULL))
+    {
+      set (LMK_LOW_SUM, res_ops);
+      return true;
+    }
+  if (gimple_mul_ladder_sum2 (inner, res_ops, NULL))
+    {
+      set (LMK_LADDER_SUM2, res_ops);
+      return true;
+    }
+  return false;
+}
+
+/* Classify INNER -- already unwrapped from an outer (X >> SHIFT) -- as
+   a high-half-extracted summand.  mul_hilo (mult-shape) is orthogonal
+   to the plus-based kinds and is tried first; ladder_part_sum (one arm
+   unconstrained) and mul_cross_sum (any plus) are the fallbacks after
+   the shared plus-based ladder.  */
+
+bool
+long_mul_summand::classify_hi_extract (tree inner, unsigned HOST_WIDE_INT shift)
+{
+  tree res_ops[LONG_MUL_MAX_CAPTURES];
+  this->extract = LMX_HI;
+  this->shift = shift;
+  if (gimple_mul_hilo (inner, res_ops, NULL))
+    {
+      set (LMK_MUL_HILO, res_ops);
+      return true;
+    }
+  if (classify_plus_kinds (inner))
+    return true;
+  if (gimple_mul_ladder_part_sum (inner, res_ops, NULL))
+    {
+      set (LMK_LADDER_PART_SUM, res_ops);
+      return true;
+    }
+  if (gimple_mul_cross_sum (inner, res_ops, NULL))
+    {
+      set (LMK_CROSS_SUM, res_ops);
+      return true;
+    }
+  return false;
+}
+
+/* Classify INNER -- already unwrapped from an outer (X & MASK) -- as
+   a low-half-masked summand.  */
+
+bool
+long_mul_summand::classify_lo_extract (tree inner)
+{
+  tree res_ops[LONG_MUL_MAX_CAPTURES];
+  this->extract = LMX_LO;
+  if (gimple_mul_lolo (inner, res_ops, NULL))
+    {
+      set (LMK_MUL_LOLO, res_ops);
+      return true;
+    }
+  return false;
+}
+
+/* Classify INNER -- already unwrapped from an outer (X << SHIFT) -- as
+   a left-shifted summand.  No mul_hilo / ladder_part_sum here -- those
+   shapes appear only under (X >> SHIFT).  */
+
+bool
+long_mul_summand::classify_shl_extract (tree inner,
+					unsigned HOST_WIDE_INT shift)
+{
+  tree res_ops[LONG_MUL_MAX_CAPTURES];
+  this->extract = LMX_SHL_N;
+  this->shift = shift;
+  if (classify_plus_kinds (inner))
+    return true;
+  if (gimple_mul_cross_sum (inner, res_ops, NULL))
+    {
+      set (LMK_CROSS_SUM, res_ops);
+      return true;
+    }
+  return false;
+}
+
+/* Classify LEAF as one of the bare-kind summands (no extraction
+   wrapper): mul_hihi or mul_lolo standing on their own.  */
+
+bool
+long_mul_summand::classify_bare (tree leaf)
+{
+  tree res_ops[LONG_MUL_MAX_CAPTURES];
+  if (gimple_mul_hihi (leaf, res_ops, NULL))
+    {
+      set (LMK_MUL_HIHI, res_ops);
+      return true;
+    }
+  if (gimple_mul_lolo (leaf, res_ops, NULL))
+    {
+      set (LMK_MUL_LOLO, res_ops);
+      return true;
+    }
+  return false;
+}
+
+/* Classify LEAF as one of the long-multiply summand shapes.  On success,
+   fill *INFO with the kind, extract, captured operands and shift.
+   Dispatches to per-extract helpers; the order matters because the
+   carry kinds bake an lshift into the pattern and would otherwise be
+   misread by the (X << N) branch.  */
+
+long_mul_summand::long_mul_summand (tree leaf)
+ : long_mul_summand()
+{
+  tree res_ops[LONG_MUL_MAX_CAPTURES];
+
+  if (classify_carry (leaf))
+    return;
+
+  if (gimple_mul_hi (leaf, res_ops, NULL))
+    {
+      classify_hi_extract (res_ops[0], tree_to_uhwi (res_ops[1]));
+      return;
+    }
+
+  if (gimple_mul_lo (leaf, res_ops, NULL))
+    {
+      classify_lo_extract (res_ops[0]);
+      return;
+    }
+
+  tree inner;
+  unsigned HOST_WIDE_INT shift;
+  if (long_mul_is_lshift_def (leaf, &inner, &shift))
+    {
+      classify_shl_extract (inner, shift);
+      return;
+    }
+
+  classify_bare (leaf);
+}
+
+/* qsort comparator: sort summands by (kind, extract) to put a multiset
+   into canonical order for table lookup.  Unstable sort within a tie is
+   harmless: no row in long_mul_table pairs distinct subterms under the
+   same (kind, extract), and long_mul_check_consistency cross-validates
+   that matching summands share one canonical (op0, op1).  */
+
+static int
+long_mul_summand_compare (const void *a, const void *b)
+{
+  const long_mul_summand *sa = (const long_mul_summand *) a;
+  const long_mul_summand *sb = (const long_mul_summand *) b;
+  gcc_checking_assert (sa->kind != LMK_INVALID);
+  gcc_checking_assert (sb->kind != LMK_INVALID);
+  if (sa->kind != sb->kind)
+    return (int) sa->kind - (int) sb->kind;
+  return (int) sa->extract - (int) sb->extract;
+}
+
+/* One row of the long-multiply variant table.  COUNT is how many entries
+   of SIG carry the row's signature (2 to LONG_MUL_MAX_SUMMANDS); a row
+   with fewer summands leaves the remaining SIG entries zero-initialized.
+   Those zeros are not a terminator -- {LMK_MUL_HIHI, LMX_NONE} is itself a
+   valid signature -- so long_mul_signature_matches is bounded by COUNT,
+   never by a sentinel entry.  */
+
+struct long_mul_row {
+  enum long_mul_row_part { HIGH_PART, LOW_PART } part;
+  tree_code outer;
+  unsigned char count;
+  struct {
+    long_mul_kind kind;
+    long_mul_extract extract;
+  } sig[LONG_MUL_MAX_SUMMANDS];
+  bool (*extra_check) (const vec<long_mul_summand> &, gimple *);
+};
+
+/* True if (A, B) is the same pair as (OP0, OP1) in either order.  */
+
+static inline bool
+long_mul_same_ops (tree a, tree b, tree op0, tree op1)
+{
+  return (a == op0 && b == op1) || (a == op1 && b == op0);
+}
+
+/* True if H is a cross-half product of (OP0, OP1) -- gimple_mul_hilo
+   recognizes it and its captured operands match the pair.  */
+
+static bool
+long_mul_is_cross_half (tree h, tree op0, tree op1)
+{
+  tree scratch[LONG_MUL_MAX_CAPTURES];
+  return gimple_mul_hilo (h, scratch, NULL)
+	 && long_mul_same_ops (scratch[0], scratch[1], op0, op1);
+}
+
+/* Orientation of the mul_hilo capture H relative to (OP0, OP1):
+   returns 0 for high(OP0)*low(OP1), 1 for high(OP1)*low(OP0), or -1
+   if H does not decompose that way.  A cross-sum of two mul_hilos must
+   see one of each orientation -- otherwise a doubled factor would fold
+   to the wrong value.  (In a self-multiply the two orientations
+   coincide; see the OP0 == OP1 bypass in long_mul_check_consistency.)  */
+
+static int
+long_mul_hilo_orientation (tree h, tree op0, tree op1)
+{
+  tree scratch[LONG_MUL_MAX_CAPTURES];
+  if (!gimple_mul_hilo (h, scratch, NULL))
+    return -1;
+  if (scratch[0] == op0 && scratch[1] == op1)
+    return 0;
+  if (scratch[0] == op1 && scratch[1] == op0)
+    return 1;
+  return -1;
+}
+
+/* Find the first summand that carries operand captures, and return its
+   (op0, op1) pair in *OP0_OUT / *OP1_OUT.  Returns false if no summand
+   provides them.  */
+
+static bool
+long_mul_canonical_ops (const vec<long_mul_summand> &summands,
+			tree *op0_out, tree *op1_out)
+{
+  for (const long_mul_summand &s : summands)
+    if (s.op0)
+      {
+	*op0_out = s.op0;
+	*op1_out = s.op1;
+	return true;
+      }
+  return false;
+}
+
+/* Return the first summand in SUMMANDS whose kind matches KIND, or NULL.  */
+
+static const long_mul_summand *
+long_mul_find_summand (const vec<long_mul_summand> &summands,
+		       long_mul_kind kind)
+{
+  gcc_checking_assert (kind != LMK_INVALID);
+  for (const long_mul_summand &s : summands)
+    if (s.kind == kind)
+      return &s;
+  return NULL;
+}
+
+/* Run the cross-summand validation invariants and return the canonical
+   (op0, op1).  Returns false unless all summands that carry operands use
+   the same (op0, op1) pair (in either order), every LMX_HI/LMX_SHL_N shift
+   equals halfwidth, every captured hilo is a true cross-half product of
+   (op0, op1), and every cross-half pair (both those inside a single
+   mul_cross_sum-bearing summand and those spread across separate
+   LMK_MUL_HILO summands) contains one of each orientation.  */
+
+static bool
+long_mul_check_consistency (const vec<long_mul_summand> &summands,
+		   tree *op0_out, tree *op1_out)
+{
+  tree op0, op1;
+  if (!long_mul_canonical_ops (summands, &op0, &op1))
+    return false;
+
+  tree op_type = TREE_TYPE (op0);
+  if (!INTEGRAL_TYPE_P (op_type)
+      || TYPE_PRECISION (op_type) % 2 != 0)
+    return false;
+  unsigned int halfwidth = TYPE_PRECISION (op_type) / 2;
+
+  /* Self-multiply (x*x) collapses the two cross-halves onto one value,
+     so the complementarity constraint is a trivial no-op there.  */
+  bool need_orient = op0 != op1;
+  int mul_hilo_orient[2] = { 0, 0 };
+
+  for (const long_mul_summand &s : summands)
+    {
+      if (s.op0 && !long_mul_same_ops (s.op0, s.op1, op0, op1))
+	return false;
+      if ((s.extract == LMX_HI || s.extract == LMX_SHL_N)
+	  && s.shift != halfwidth)
+	return false;
+      for (tree h : s.hilo)
+	if (h && !long_mul_is_cross_half (h, op0, op1))
+	  return false;
+
+      if (!need_orient)
+	continue;
+
+      /* The two cross-sum operands are the last two non-null hilos:
+	 (hilo[1], hilo[2]) for the CARRY_*_SUM kinds, (hilo[0], hilo[1]) for
+	 the CROSS_SUM / SUM / ACCUM / LADDER_SUM kinds, none for the
+	 rest.  */
+      tree a = NULL_TREE;
+      tree b = NULL_TREE;
+      if (s.hilo[2])
+	{
+	  a = s.hilo[1];
+	  b = s.hilo[2];
+	}
+      else if (s.hilo[1])
+	{
+	  a = s.hilo[0];
+	  b = s.hilo[1];
+	}
+      if (a && b
+	  && (long_mul_hilo_orientation (a, op0, op1)
+	      == long_mul_hilo_orientation (b, op0, op1)))
+	return false;
+
+      /* Two LMK_MUL_HILO summands (the two-hilos ladder form) stand for
+	 the two cross-halves separately; count orientations and require
+	 the pair to be complementary.  s.op0/op1 is already validated to
+	 match (op0, op1) in some order above.  */
+      if (s.kind == LMK_MUL_HILO && s.op0)
+	mul_hilo_orient[s.op0 == op1]++;
+    }
+
+  if (mul_hilo_orient[0] + mul_hilo_orient[1] >= 2
+      && (mul_hilo_orient[0] == 0 || mul_hilo_orient[1] == 0))
+    return false;
+
+  *op0_out = op0;
+  *op1_out = op1;
+  return true;
+}
+
+/* Compare the (already-sorted) SUMMANDS multiset against ROW.sig.  */
+
+static bool
+long_mul_signature_matches (const vec<long_mul_summand> &summands,
+		   const long_mul_row &row)
+{
+  if (row.count != summands.length ())
+    return false;
+  for (unsigned i = 0; i < row.count; i++)
+    if (summands[i].kind != row.sig[i].kind
+	|| summands[i].extract != row.sig[i].extract)
+      return false;
+  return true;
+}
+
+/* Extra check for the two-carries high-part row: the LMK_CARRY_LOW summand's
+   two operands (carry_a, carry_b) must be a (cross_shifted, mul_lolo) pair
+   consistent with the multiset's canonical (op0, op1).  */
+
+static bool
+long_mul_check_two_carries (const vec<long_mul_summand> &summands,
+			    gimple *)
+{
+  tree op0, op1;
+  if (!long_mul_canonical_ops (summands, &op0, &op1))
+    return false;
+  unsigned int halfwidth = TYPE_PRECISION (TREE_TYPE (op0)) / 2;
+
+  const long_mul_summand *cl = long_mul_find_summand (summands, LMK_CARRY_LOW);
+  if (!cl)
+    return false;
+
+  /* The two carry_low operands must be (cross_shifted, mul_lolo) in either
+     order.  cross_shifted = LSHIFT_EXPR (mul_cross_sum, halfwidth).  */
+  tree cs = cl->carry_a, lolo = cl->carry_b;
+  tree inner;
+  unsigned HOST_WIDE_INT shift;
+  if (!long_mul_is_lshift_def (cs, &inner, &shift))
+    {
+      std::swap (cs, lolo);
+      if (!long_mul_is_lshift_def (cs, &inner, &shift))
+	return false;
+    }
+  if (shift != halfwidth)
+    return false;
+
+  tree scratch[LONG_MUL_MAX_CAPTURES];
+  if (!gimple_mul_cross_sum (inner, scratch, NULL))
+    return false;
+  for (int i = 0; i < 2; i++)
+    if (!long_mul_is_cross_half (scratch[i], op0, op1))
+      return false;
+  if (!gimple_mul_lolo (lolo, scratch, NULL)
+      || !long_mul_same_ops (scratch[0], scratch[1], op0, op1))
+    return false;
+
+  return true;
+}
+
+/* Extra check for xh*yh + (hilo >> N) + (ladder_sum1 >> N).  hilo must be
+   the product that ladder_sum1 masks, since the high half of the unmasked
+   one is already in the sum.  */
+
+static bool
+long_mul_check_ladder_sum1 (const vec<long_mul_summand> &summands,
+			    gimple *)
+{
+  const long_mul_summand *hilo
+    = long_mul_find_summand (summands, LMK_MUL_HILO);
+  const long_mul_summand *sum
+    = long_mul_find_summand (summands, LMK_LADDER_SUM1);
+  return long_mul_hilo_orientation (sum->hilo[0], hilo->op0, hilo->op1) == 0;
+}
+
+/* Likewise for xh*yh + (ladder_sum2 >> N) + (ladder_part_sum >> N):
+   ladder_part_sum must hold the product that ladder_sum2 masks.  */
+
+static bool
+long_mul_check_ladder_sum2 (const vec<long_mul_summand> &summands,
+			    gimple *)
+{
+  const long_mul_summand *part
+    = long_mul_find_summand (summands, LMK_LADDER_PART_SUM);
+  const long_mul_summand *sum
+    = long_mul_find_summand (summands, LMK_LADDER_SUM2);
+  tree masked[LONG_MUL_MAX_CAPTURES];
+  return (gimple_mul_hilo (sum->hilo[0], masked, NULL)
+	  && (long_mul_hilo_orientation (part->hilo[0], masked[0], masked[1])
+	      == 0));
+}
+
+/* The lolo + cross_shifted shape is also the low half of a two-carry
+   long-multiply, where an unsigned overflow compare against one of
+   the PLUS operands is the low-carry term consumed by the matching
+   high-part fold.  Folding to mul_lo here destroys cross_shifted,
+   which both the compare and the high-part match still need; defer
+   so the high-part fold runs first.  After it does, the compare is
+   dead and the surviving lolo + cross_shifted is picked up by this
+   row in the next forwprop instance.  Returns false to defer.  */
+
+static bool
+long_mul_check_low_plus_defer (const vec<long_mul_summand> &, gimple *stmt)
+{
+  /* The PHI entry passes its gphi as the candidate but commits only to
+     HIGH_PART rows, so a LOW_PART row never folds from there.  Guard the
+     gimple_assign accessors regardless, so this stays correct if a future
+     PLUS-shaped row reachable from the PHI path uses it.  */
+  if (!is_gimple_assign (stmt))
+    return false;
+
+  tree lhs = gimple_assign_lhs (stmt);
+  tree rhs1 = gimple_assign_rhs1 (stmt);
+  tree rhs2 = gimple_assign_rhs2 (stmt);
+
+  imm_use_iterator iter;
+  gimple *use_stmt;
+  FOR_EACH_IMM_USE_STMT (use_stmt, iter, lhs)
+    {
+      tree cmp_op1 = NULL_TREE, cmp_op2 = NULL_TREE;
+      enum tree_code use_code = ERROR_MARK;
+      if (is_gimple_assign (use_stmt))
+	{
+	  use_code = gimple_assign_rhs_code (use_stmt);
+	  cmp_op1 = gimple_assign_rhs1 (use_stmt);
+	  cmp_op2 = gimple_assign_rhs2 (use_stmt);
+	}
+      else if (gcond *cond = dyn_cast<gcond *> (use_stmt))
+	{
+	  use_code = gimple_cond_code (cond);
+	  cmp_op1 = gimple_cond_lhs (cond);
+	  cmp_op2 = gimple_cond_rhs (cond);
+	}
+      if (use_code == GT_EXPR || use_code == LT_EXPR
+	  || use_code == GE_EXPR || use_code == LE_EXPR)
+	{
+	  tree other = (cmp_op1 == lhs) ? cmp_op2
+		     : (cmp_op2 == lhs) ? cmp_op1 : NULL_TREE;
+	  if (other && (other == rhs1 || other == rhs2))
+	    return false;
+	}
+    }
+  return true;
+}
+
+/* Long-multiply variant table.  Each row enumerates the multiset of
+   (kind, extract) summands that compose one long-multiply form.  Rows
+   are sorted by long_mul_summand_compare, matching the input summands'
+   sort order, so a plain element-wise compare suffices.  Rows describe
+   unsigned schoolbook expansions on an even-width 2N-bit type split at
+   half-width N; EXTRA_CHECK carries invariants the (kind, extract)
+   signature cannot express.
+
+   The formula on each row uses xh, xl, yh, yl for the half-width pieces
+   of x and y, cross_sum for xh*yl + xl*yh, and hilo for either cross-half
+   product (consumers validate the operand shape).  */
+
+static const long_mul_row long_mul_table[] = {
+  /* HIGH-PART folds.  */
+  /* xh*yh + (low_sum >> N) + ((hilo > low_sum) << N),
+     low_sum = cross_sum + (xl*yl >> N).  */
+  { long_mul_row::HIGH_PART, PLUS_EXPR, 3,
+    { { LMK_MUL_HIHI, LMX_NONE },
+      { LMK_LOW_SUM, LMX_HI },
+      { LMK_CARRY_LOW_SUM, LMX_NONE } },
+    NULL },
+  /* xh*yh + (low_accum >> N) + (cross_sum >> N) + ((hilo > cross_sum) << N),
+     low_accum = (xl*yl >> N) + (cross_sum & mask).  */
+  { long_mul_row::HIGH_PART, PLUS_EXPR, 4,
+    { { LMK_MUL_HIHI, LMX_NONE },
+      { LMK_CROSS_SUM, LMX_HI },
+      { LMK_LOW_ACCUM, LMX_HI },
+      { LMK_CARRY_CROSS_SUM, LMX_NONE } },
+    NULL },
+  /* xh*yh + (cross_sum >> N) + carry_low + ((hilo > cross_sum) << N),
+     carry_low = (xl*yl + (cross_sum << N)) < (cross_sum << N).  */
+  { long_mul_row::HIGH_PART, PLUS_EXPR, 4,
+    { { LMK_MUL_HIHI, LMX_NONE },
+      { LMK_CROSS_SUM, LMX_HI },
+      { LMK_CARRY_LOW, LMX_NONE },
+      { LMK_CARRY_CROSS_SUM, LMX_NONE } },
+    long_mul_check_two_carries },
+  /* xh*yh + (hilo >> N) + (ladder_sum1 >> N),
+     ladder_sum1 = (hilo & mask) + hilo' + (xl*yl >> N),
+     hilo, hilo' the two cross-half products.  */
+  { long_mul_row::HIGH_PART, PLUS_EXPR, 3,
+    { { LMK_MUL_HIHI, LMX_NONE },
+      { LMK_MUL_HILO, LMX_HI },
+      { LMK_LADDER_SUM1, LMX_HI } },
+    long_mul_check_ladder_sum1 },
+  /* xh*yh + (ladder_sum2 >> N) + (ladder_part_sum >> N),
+     ladder_part_sum = (xl*yl >> N) + hilo,
+     ladder_sum2 = (ladder_part_sum & mask) + hilo'.  */
+  { long_mul_row::HIGH_PART, PLUS_EXPR, 3,
+    { { LMK_MUL_HIHI, LMX_NONE },
+      { LMK_LADDER_SUM2, LMX_HI },
+      { LMK_LADDER_PART_SUM, LMX_HI } },
+    long_mul_check_ladder_sum2 },
+  /* xh*yh + (hilo >> N) + (hilo' >> N) + (ladder_sum3 >> N),
+     ladder_sum3 = (hilo & mask) + (hilo' & mask) + (xl*yl >> N).  */
+  { long_mul_row::HIGH_PART, PLUS_EXPR, 4,
+    { { LMK_MUL_HIHI, LMX_NONE },
+      { LMK_MUL_HILO, LMX_HI },
+      { LMK_MUL_HILO, LMX_HI },
+      { LMK_LADDER_SUM3, LMX_HI } },
+    NULL },
+  /* LOW-PART folds.  Recover the lower 2N bits from xl*yl plus a
+     shifted cross-half term.  */
+  /* xl*yl + (cross_sum << N).  */
+  { long_mul_row::LOW_PART, PLUS_EXPR, 2,
+    { { LMK_MUL_LOLO, LMX_NONE },
+      { LMK_CROSS_SUM, LMX_SHL_N } },
+    long_mul_check_low_plus_defer },
+  /* (xl*yl & mask) | (low_accum << N),
+     low_accum = (xl*yl >> N) + (cross_sum & mask).  */
+  { long_mul_row::LOW_PART, BIT_IOR_EXPR, 2,
+    { { LMK_MUL_LOLO, LMX_LO },
+      { LMK_LOW_ACCUM, LMX_SHL_N } },
+    NULL },
+  /* (xl*yl & mask) | (low_sum << N),
+     low_sum = cross_sum + (xl*yl >> N).  */
+  { long_mul_row::LOW_PART, BIT_IOR_EXPR, 2,
+    { { LMK_MUL_LOLO, LMX_LO },
+      { LMK_LOW_SUM, LMX_SHL_N } },
+    NULL },
+  /* (xl*yl & mask) | (ladder_sum1 << N),
+     ladder_sum1 as in the high ladder row above.  */
+  { long_mul_row::LOW_PART, BIT_IOR_EXPR, 2,
+    { { LMK_MUL_LOLO, LMX_LO },
+      { LMK_LADDER_SUM1, LMX_SHL_N } },
+    NULL },
+  /* (xl*yl & mask) | (ladder_sum2 << N),
+     ladder_sum2 as in the high ladder row above.  */
+  { long_mul_row::LOW_PART, BIT_IOR_EXPR, 2,
+    { { LMK_MUL_LOLO, LMX_LO },
+      { LMK_LADDER_SUM2, LMX_SHL_N } },
+    NULL },
+  /* (xl*yl & mask) | (ladder_sum3 << N),
+     ladder_sum3 as in the high ladder-long row above.  */
+  { long_mul_row::LOW_PART, BIT_IOR_EXPR, 2,
+    { { LMK_MUL_LOLO, LMX_LO },
+      { LMK_LADDER_SUM3, LMX_SHL_N } },
+    NULL },
+};
+
+/* If a multi-used inner addition (sharing the chain's outer code) blocked
+   linearization of a long-mul candidate, emit a dump-file hint pointing
+   at it.  */
+
+static void
+long_mul_hint_shared_intermediate (gimple *shared_def)
+{
+  if (!shared_def || !dump_file || !(dump_flags & TDF_DETAILS))
+    return;
+  fprintf (dump_file, "long-mul fold rejected: shared intermediate at ");
+  print_gimple_stmt (dump_file, shared_def, 0, TDF_SLIM);
+}
+
+/* Search long_mul_table for a row whose multiset matches SUMMANDS for
+   outer kind OUTER on a result of type LHS_TYPE.  CANDIDATE_STMT is
+   passed to per-row extra_check predicates.  On a hit, returns the
+   matching row and writes the half-width operands via OUT_OP0/OUT_OP1.
+   No IR mutation.  */
+
+static const long_mul_row *
+long_mul_classify_match (const vec<long_mul_summand> &summands,
+			 tree lhs_type, tree_code outer,
+			 gimple *candidate_stmt,
+			 tree *out_op0, tree *out_op1)
+{
+  /* HIGH_PART rows emit a 2N-bit multiply that pass_optimize_widening_mul
+     consumes -- either via WIDEN_MULT_EXPR / MULT_HIGHPART conversion when
+     the target has a native 2N multiply, or via lower_long_mul_high_chain
+     when it does not.  LOW_PART rows emit a plain MULT_EXPR.  Emission
+     needs a 2N mode to exist in the mode table AND the widening_mul pass
+     to be active: without the pass, the emit could reach RTL expand as an
+     unexpandable 2N multiply (e.g. OImode).  BITINT_TYPE is
+     refused -- the long_mul_high_chain atom excludes it.  */
+  scalar_int_mode mode, wide_mode;
+  bool can_emit_high
+    = optimize_widening_mul_active_p ()
+      && TREE_CODE (lhs_type) != BITINT_TYPE
+      && is_a <scalar_int_mode> (TYPE_MODE (lhs_type), &mode)
+      && GET_MODE_2XWIDER_MODE (mode).exists (&wide_mode);
+
+  for (const long_mul_row &row : long_mul_table)
+    {
+      if (row.outer != outer
+	  || (row.part == long_mul_row::HIGH_PART && !can_emit_high)
+	  || !long_mul_signature_matches (summands, row))
+	continue;
+
+      tree op0, op1;
+      if (!long_mul_check_consistency (summands, &op0, &op1))
+	continue;
+
+      /* Do not emit the wide chain when an operand is subject to
+	 abnormal coalescing: the widening_mul-side consumers refuse
+	 such operands (see convert_mult_to_widen), which would leave
+	 the chain without a consumer.  */
+      if (row.part == long_mul_row::HIGH_PART
+	  && ((TREE_CODE (op0) == SSA_NAME
+	       && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (op0))
+	      || (TREE_CODE (op1) == SSA_NAME
+		  && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (op1))))
+	continue;
+
+      if (row.extra_check && !row.extra_check (summands, candidate_stmt))
+	continue;
+
+      *out_op0 = op0;
+      *out_op1 = op1;
+      return &row;
+    }
+  return NULL;
+}
+
+/* Walk STMT's outer chain (kind OUTER), classify each leaf as a
+   long-multiply summand, optionally add the already-classified EXTRA,
+   and look the multiset up in long_mul_table for a result of type
+   LHS_TYPE.  CANDIDATE is passed to per-row extra_check predicates.
+
+   If EXTRAS_OUT is non-NULL, leaves matching no summand are set aside
+   there instead of failing the match, and the caller must re-apply
+   them on top of the folded multiply.  A leaf that does match is
+   always consumed: if that makes the signature miss every row the
+   match fails, rather than retrying with the leaf demoted to an extra
+   (subset search would be exponential).
+
+   Returns the matched row and the half-width operands via
+   OUT_OP0/OUT_OP1, or NULL on a miss.  No IR mutation.  */
+
+static const long_mul_row *
+long_mul_classify_chain (gimple *stmt, tree_code outer, tree lhs_type,
+			 gimple *candidate, const long_mul_summand *extra,
+			 vec<tree> *extras_out,
+			 tree *out_op0, tree *out_op1)
+{
+  auto_vec<tree, LONG_MUL_MAX_SUMMANDS + LONG_MUL_MAX_EXTRAS> leaves;
+  gimple *shared_def = NULL;
+  if (!long_mul_linearize_chain (stmt, outer, leaves, &shared_def))
+    return NULL;
+
+  auto_vec<long_mul_summand,
+	   LONG_MUL_MAX_SUMMANDS + LONG_MUL_MAX_EXTRAS + 1> summands;
+  for (tree leaf : leaves)
+    {
+      if (long_mul_summand s{leaf})
+	{
+	  gcc_checking_assert (s.kind != LMK_INVALID);
+	  summands.quick_push (s);
+	}
+      else if (extras_out && extras_out->length () < LONG_MUL_MAX_EXTRAS)
+	extras_out->safe_push (leaf);
+      else
+	{
+	  long_mul_hint_shared_intermediate (shared_def);
+	  return NULL;
+	}
+    }
+  if (extra)
+    {
+      gcc_checking_assert (extra->kind != LMK_INVALID);
+      summands.quick_push (*extra);
+    }
+  if (summands.length () < 2
+      || summands.length () > LONG_MUL_MAX_SUMMANDS)
+    return NULL;
+  summands.qsort (long_mul_summand_compare);
+
+  const long_mul_row *row
+    = long_mul_classify_match (summands, lhs_type, outer, candidate,
+			       out_op0, out_op1);
+  if (!row)
+    long_mul_hint_shared_intermediate (shared_def);
+  return row;
+}
+
+/* Top-level entry for long-multiply folding.  Walks STMT's outer
+   addition or BIT_IOR chain, classifies the summands, and dispatches
+   to create_mul_high_seq / create_mul_low_seq if the multiset matches
+   a known long-multiply form.  Returns true on success.  */
+
+static bool
+match_long_mul (gassign *stmt)
+{
+  tree_code outer = gimple_assign_rhs_code (stmt);
+  if (outer != PLUS_EXPR && outer != BIT_IOR_EXPR)
+    return false;
+
+  /* Skip non-candidate adds (signed, pointer, odd-width) before walking the
+     chain.  No legitimate long-mul leaf has a type the atoms would reject.
+     This just avoids the linearize/classify work on every other PLUS/IOR.  */
+  tree lhs_type = TREE_TYPE (gimple_assign_lhs (stmt));
+  if (!INTEGRAL_TYPE_P (lhs_type)
+      || !TYPE_UNSIGNED (lhs_type)
+      || TYPE_PRECISION (lhs_type) % 2 != 0)
+    return false;
+
+  /* Only start at the end of a chain: a consumer with the same code
+     linearizes through this statement anyway, so starting here is
+     redundant.  A consumer in another block does not count -- folding
+     at the later use could sink a loop-invariant multiply into a
+     loop.  */
+  use_operand_p use_p;
+  gimple *use_stmt;
+  if (single_imm_use (gimple_assign_lhs (stmt), &use_p, &use_stmt)
+      && is_gimple_assign (use_stmt)
+      && gimple_assign_rhs_code (use_stmt) == outer
+      && gimple_bb (use_stmt) == gimple_bb (stmt))
+    return false;
+
+  auto_vec<tree, LONG_MUL_MAX_EXTRAS> extras;
+  tree op0, op1;
+  const long_mul_row *row
+    = long_mul_classify_chain (stmt, outer, lhs_type, stmt, NULL, &extras,
+			       &op0, &op1);
+  if (!row)
+    return false;
+
+  if (row->part == long_mul_row::HIGH_PART)
+    {
+      create_mul_high_seq (op0, op1, stmt, extras, outer);
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file, "Long multiplication high part folded.\n");
+      return true;
+    }
+  create_mul_low_seq (op0, op1, stmt, extras, outer);
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, "Long multiplication low part folded.\n");
+  return true;
+}
+
+/* PHI-driven entry for long-multiply folding.  When PHI's value
+   flattens to base + (carry << N), probe sum to classify the carry
+   kind, linearize base for the remaining high-part summands, and run
+   the long-multiply table.  On a hit, emit a 2N-bit multiply at the
+   top of the join block with PHI_RES as its LHS and remove the PHI.
+   Otherwise leave the IR untouched.  Only HIGH_PART rows are
+   reachable.  LOW_PART rows are BIT_IOR-shaped and never produce a
+   carry PHI.  */
+
+static bool
+match_long_mul_phi (gphi *phi)
+{
+  tree phi_res = gimple_phi_result (phi);
+  tree lhs_type = TREE_TYPE (phi_res);
+  if (!INTEGRAL_TYPE_P (lhs_type) || !TYPE_UNSIGNED (lhs_type)
+      || TYPE_PRECISION (lhs_type) % 2 != 0)
+    return false;
+
+  tree cca_ops[4];
+  if (!gimple_cond_carry_add (phi_res, cca_ops, NULL))
+    return false;
+  tree cmp_lhs = cca_ops[0];
+  tree sum = cca_ops[1];
+  tree base = cca_ops[2];
+
+  /* Classify sum and populate the carry summand directly.  Most
+     specific first, mirroring long_mul_classify_carry's order.  */
+  long_mul_summand carry{};
+  tree sum_ops[LONG_MUL_MAX_CAPTURES];
+  unsigned HOST_WIDE_INT shift_amt
+    = wi::exact_log2 (wi::to_wide (cca_ops[3]));
+  unsigned HOST_WIDE_INT halfwidth = TYPE_PRECISION (lhs_type) / 2;
+  carry.shift = shift_amt;
+
+  if (shift_amt == halfwidth
+      && gimple_mul_low_sum (sum, sum_ops, NULL))
+    {
+      /* mul_carry_low_sum's flat form ties the outer lshift amount to
+	 the inner mul_hi's INTEGER_CST@0 via match.pd capture re-use;
+	 the PHI form has no such tie, so gate on shift_amt explicitly.  */
+      carry.kind = LMK_CARRY_LOW_SUM;
+      carry.op0 = sum_ops[0];
+      carry.op1 = sum_ops[1];
+      carry.hilo[0] = cmp_lhs;
+      carry.hilo[1] = sum_ops[2];
+      carry.hilo[2] = sum_ops[3];
+    }
+  else if (shift_amt == halfwidth
+	   && gimple_mul_cross_sum (sum, sum_ops, NULL))
+    {
+      /* mul_cross_sum is just (plus:c @0 @1) with no half-width
+	 constraint.  Gate here to mirror mul_carry_cross_sum;
+	 a mismatch falls through to the LMK_CARRY_LOW branch.  */
+      carry.kind = LMK_CARRY_CROSS_SUM;
+      carry.hilo[0] = cmp_lhs;
+      carry.hilo[1] = sum_ops[0];
+      carry.hilo[2] = sum_ops[1];
+    }
+  else if (shift_amt == 0 && TREE_CODE (sum) == SSA_NAME)
+    {
+      gimple *def = SSA_NAME_DEF_STMT (sum);
+      if (!is_gimple_assign (def)
+	  || gimple_assign_rhs_code (def) != PLUS_EXPR)
+	return false;
+      tree p1 = gimple_assign_rhs1 (def);
+      tree p2 = gimple_assign_rhs2 (def);
+      if (p1 != cmp_lhs && p2 != cmp_lhs)
+	return false;
+      carry.kind = LMK_CARRY_LOW;
+      carry.carry_a = cmp_lhs;
+      carry.carry_b = p1 == cmp_lhs ? p2 : p1;
+    }
+  else
+    return false;
+
+  /* Linearize base, the rest of the high-part chain.  */
+  if (TREE_CODE (base) != SSA_NAME)
+    return false;
+  gimple *base_def = SSA_NAME_DEF_STMT (base);
+  if (!is_gimple_assign (base_def)
+      || gimple_assign_rhs_code (base_def) != PLUS_EXPR)
+    return false;
+
+  tree op0, op1;
+  const long_mul_row *row
+    = long_mul_classify_chain (base_def, PLUS_EXPR, lhs_type, phi, &carry,
+			       NULL, &op0, &op1);
+  if (!row || row->part != long_mul_row::HIGH_PART)
+    return false;
+
+  gimple_seq seq = NULL;
+  build_mul_high_seq (op0, op1, phi_res, gimple_location (phi), &seq);
+  gimple_stmt_iterator gsi = gsi_after_labels (gimple_bb (phi));
+  gsi_insert_seq_before (&gsi, seq, GSI_SAME_STMT);
+  gimple_stmt_iterator psi = gsi_for_stmt (phi);
+  remove_phi_node (&psi, false);
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file,
+	     "Long multiplication high part folded (carry PHI).\n");
+  return true;
+}
+
+/* Verify if we have the following structure:
+
+   iftmp1 = PHI <pow2a, pow2b, pow2c, ...>
+   _ssa1 = _ssa2 MOD|DIV iftmp1;
+   _ssa3 = _ssa1 EQ|NE 0;
+
+   And, if the right conditions are met, change the PHI args
+   and "_ssa1" stmt to a cheaper alternative.
+
+   - for MOD, if either "_ssa2" is known to be positive or
+   "_ssa1" is used just in zero comparisons:
+
+   iftmp1 = PHI <(pow2a - 1), (pow2b - 1), (pow2c - 1), ...>
+   _ssa1 = _ssa2 & iftmp1;
+
+   - for DIV, if "_ssa2" is known to be positive:
+
+   iftmp1 = PHI <log2 (pow2a), log2 (pow2b), log2 (pow2c), ...>
+   _ssa1 = _ssa2 >> iftmp1;  */
+static bool
+simplify_phi_result_movdiv (gimple *stmt, tree_code code)
+{
+  tree rhs1 = gimple_assign_rhs1 (stmt);
+  tree_code new_code;
+  bool needs_reset = false;
+
+  /* Skip complex types (PR127163) */
+  if (!INTEGRAL_TYPE_P (TREE_TYPE (rhs1)))
+    return false;
+
+  switch (code)
+    {
+      case TRUNC_MOD_EXPR:
+      case FLOOR_MOD_EXPR:
+	if (!tree_expr_nonnegative_p (rhs1))
+	  {
+	    /* For a negative X, the truncating X % 2^k and X & (2^k - 1)
+	       differ (e.g. -3 % 4 is -3 but -3 & 3 is 1), though both are
+	       zero for the same X.  That is enough when the result is only
+	       compared with zero, but the range recorded for the MOD result
+	       no longer holds for the AND, so reset it.  */
+	    needs_reset = true;
+	    if (!use_in_zero_equality (gimple_assign_lhs (stmt), true))
+	      return false;
+	  }
+
+	new_code = BIT_AND_EXPR;
+	break;
+
+      case TRUNC_DIV_EXPR:
+      case FLOOR_DIV_EXPR:
+      case EXACT_DIV_EXPR:
+	if (!tree_expr_nonnegative_p (rhs1))
+	  return false;
+
+	new_code = RSHIFT_EXPR;
+	break;
+
+     default:
+	return false;
+    }
+
+  gphi *phi = as_a<gphi *> (SSA_NAME_DEF_STMT (gimple_assign_rhs2 (stmt)));
+
+  for (unsigned int i = 0; i < gimple_phi_num_args (phi); i++)
+    if (!integer_pow2p (gimple_phi_arg_def (phi, i))
+	|| tree_int_cst_sgn (gimple_phi_arg_def (phi, i)) < 0)
+      return false;
+
+  tree type = TREE_TYPE (gimple_phi_result (phi));
+  tree new_phires = make_ssa_name (type);
+  gphi *new_phi = create_phi_node (new_phires, phi->bb);
+
+  for (unsigned int i = 0; i < gimple_phi_num_args (phi); i++)
+    {
+      tree phi_arg = gimple_phi_arg_def (phi, i);
+      edge e = gimple_phi_arg_edge (phi, i);
+      tree arg;
+
+      if (new_code == RSHIFT_EXPR)
+	arg = wide_int_to_tree (type, wi::exact_log2 (wi::to_wide (phi_arg)));
+      else
+	arg = wide_int_to_tree (type, wi::to_wide (phi_arg) - 1);
+
+      add_phi_arg (new_phi, arg, e,
+		   gimple_phi_arg_location (phi, e->dest_idx));
+    }
+
+  /* Add a gimple_convert to integer_type_node for new_phires
+     since it might be a long long which we want to convert
+     into an integer or a bit_int that we want to convert into
+     an integer.  */
+  gimple_stmt_iterator gsi;
+  if (new_code == RSHIFT_EXPR)
+    {
+      gsi = gsi_for_stmt (stmt);
+      new_phires = gimple_convert (&gsi, true, GSI_SAME_STMT,
+				   gimple_location (stmt),
+				   integer_type_node, new_phires);
+    }
+
+  gimple_assign_set_rhs2 (stmt, new_phires);
+  gimple_assign_set_rhs_code (stmt, new_code);
+  if (needs_reset)
+    reset_flow_sensitive_info (gimple_assign_lhs (stmt));
+  update_stmt (stmt);
+
+  gsi = gsi_for_phi (phi);
+  remove_phi_node (&gsi, true);
+
+  return true;
+}
 
 /* Determine whether applying the 2 permutations (mask1 then mask2)
    gives back one of the input.  */
@@ -3684,6 +5090,15 @@ simplify_permutation (gimple_stmt_iterator *gsi)
 	return false;
       op3 = gimple_assign_rhs3 (def_stmt);
       if (TREE_CODE (op3) != VECTOR_CST)
+	return false;
+      /* is_combined_permutation_identity assumes that both permutes and
+	 their inputs have the same number of elements.  Mixed widths are
+	 left to the match.pd VEC_PERM merge patterns.  */
+      if (maybe_ne (TYPE_VECTOR_SUBPARTS (TREE_TYPE (op2)),
+		    TYPE_VECTOR_SUBPARTS (TREE_TYPE (op3)))
+	  || maybe_ne (TYPE_VECTOR_SUBPARTS (TREE_TYPE (op0)),
+		       TYPE_VECTOR_SUBPARTS
+			 (TREE_TYPE (gimple_assign_rhs1 (def_stmt)))))
 	return false;
       ident = is_combined_permutation_identity (op3, op2);
       if (!ident)
@@ -3923,6 +5338,9 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
       op1 = get_bit_field_ref_def (elt->value, conv_code);
       if (op1
 	  && TREE_CODE ((ref = TREE_OPERAND (op1, 0))) == SSA_NAME
+	  /* Do not extend the live range of an SSA name that occurs in an
+	     abnormal PHI.  */
+	  && !SSA_NAME_OCCURS_IN_ABNORMAL_PHI (ref)
 	  && VECTOR_TYPE_P (TREE_TYPE (ref))
 	  && (tree_nop_conversion_p (TREE_TYPE (op1),
 				     TREE_TYPE (TREE_TYPE (ref)))
@@ -4003,7 +5421,13 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
 	  subelt = VECTOR_TYPE_P (TREE_TYPE (elt->value))
 		   ? ssa_uniform_vector_p (elt->value)
 		   : elt->value;
-	  if (!subelt)
+	  if (!subelt
+	      /* The splat of the element of a uniform vector is a new use
+		 of that element.  Do not extend the live range of an SSA
+		 name that occurs in an abnormal PHI.  */
+	      || (VECTOR_TYPE_P (TREE_TYPE (elt->value))
+		  && TREE_CODE (subelt) == SSA_NAME
+		  && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (subelt)))
 	    return false;
 	  if (!one_nonconstant)
 	    one_nonconstant = subelt;
@@ -4051,8 +5475,7 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
       if (conv_code == ERROR_MARK && nelts != refnelts)
 	conv_src_type = type;
       if (conv_code != ERROR_MARK
-	  && !supportable_convert_operation (conv_code, type, conv_src_type,
-					     &conv_code))
+	  && !supportable_convert_operation (conv_code, type, conv_src_type))
 	{
 	  /* Only few targets implement direct conversion patterns so try
 	     some simple special cases via VEC_[UN]PACK[_FLOAT]_LO_EXPR.  */
@@ -4214,8 +5637,7 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
       tree mask_type, perm_type;
       perm_type = TREE_TYPE (orig[0]);
       if (conv_code != ERROR_MARK
-	  && !supportable_convert_operation (conv_code, type, conv_src_type,
-					     &conv_code))
+	  && !supportable_convert_operation (conv_code, type, conv_src_type))
 	return false;
 
       /* Now that we know the number of elements of the source build the
@@ -4246,7 +5668,8 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
 			   ? 0 : refnelts) + i);
       vec_perm_indices indices (sel, orig[1] ? 2 : 1, refnelts);
       machine_mode vmode = TYPE_MODE (perm_type);
-      if (!can_vec_perm_const_p (vmode, vmode, indices))
+      if ((cfun->curr_properties & PROP_gimple_lvec)
+	  && !can_vec_perm_const_p (vmode, vmode, indices))
 	return false;
       mask_type = build_vector_type (ssizetype, refnelts);
       tree op2 = vec_perm_indices_to_tree (mask_type, indices);
@@ -4311,7 +5734,8 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
 			    ? elts[i].second + nelts : i);
 	  vec_perm_indices indices (sel, 2, nelts);
 	  machine_mode vmode = TYPE_MODE (type);
-	  if (!can_vec_perm_const_p (vmode, vmode, indices))
+	  if ((cfun->curr_properties & PROP_gimple_lvec)
+	      && !can_vec_perm_const_p (vmode, vmode, indices))
 	    return false;
 	  mask_type = build_vector_type (ssizetype, nelts);
 	  blend_op2 = vec_perm_indices_to_tree (mask_type, indices);
@@ -4320,6 +5744,7 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
       /* For a real orig[1] (no splat, constant etc.) we might need to
 	 nop-convert it.  Do so here.  */
       if (orig[1] && orig[1] != error_mark_node
+	  && !converted_orig1
 	  && !useless_type_conversion_p (perm_type, TREE_TYPE (orig[1]))
 	  && tree_nop_conversion_p (TREE_TYPE (perm_type),
 				    TREE_TYPE (TREE_TYPE (orig[1]))))
@@ -4419,7 +5844,13 @@ optimize_vector_load (gimple_stmt_iterator *gsi)
 	  gimple *use_stmt = USE_STMT (use_p);
 	  if (is_gimple_debug (use_stmt))
 	    continue;
-	  if (!is_gimple_assign (use_stmt))
+	  tree use_lhs;
+	  if (!is_gimple_assign (use_stmt)
+	      /* For alias reasons we move the use to the place of the
+		 load.  Avoid this when abnormals are involved.  */
+	      || ((TREE_CODE ((use_lhs = gimple_assign_lhs (use_stmt)))
+		   == SSA_NAME)
+		  && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (use_lhs)))
 	    {
 	      rewrite = false;
 	      break;
@@ -5211,7 +6642,7 @@ public:
   bool m_full_walk = false;
 }; // class pass_forwprop
 
-/* Attemp to make the BB block of __builtin_unreachable unreachable by changing
+/* Attempt to make the BB block of __builtin_unreachable unreachable by changing
    the incoming jumps.  Return true if at least one jump was changed.  */
 
 static bool
@@ -5248,8 +6679,7 @@ optimize_unreachable (basic_block bb)
 	}
       else
 	{
-	  /* Todo: handle other cases.  Note that unreachable switch case
-	     statements have already been removed.  */
+	  /* Todo: handle other cases.  e.g. switch.  */
 	  continue;
 	}
 
@@ -5341,13 +6771,18 @@ pass_forwprop::execute (function *fun)
 	    }
 	}
 
-      /* Record degenerate PHIs in the lattice.  */
-      for (gphi_iterator si = gsi_start_phis (bb); !gsi_end_p (si);
-	   gsi_next (&si))
+      /* Fold PHI-form long-multiply carries and record degenerate
+	 PHIs in the lattice.  Iterator advanced up front so a folded
+	 PHI can be removed in-flight; a long-mul carry PHI is never
+	 degenerate, so the two cases are disjoint.  */
+      for (gphi_iterator si = gsi_start_phis (bb); !gsi_end_p (si);)
 	{
 	  gphi *phi = si.phi ();
+	  gsi_next (&si);
 	  tree res = gimple_phi_result (phi);
 	  if (virtual_operand_p (res))
+	    continue;
+	  if (match_long_mul_phi (phi))
 	    continue;
 
 	  tree first = NULL_TREE;
@@ -5398,6 +6833,12 @@ pass_forwprop::execute (function *fun)
 	  gimple *stmt = gsi_stmt (gsi);
 	  tree lhs, rhs;
 	  enum tree_code code;
+
+	  if (is_gimple_debug (stmt))
+	    {
+	      gsi_next (&gsi);
+	      continue;
+	    }
 
 	  gimple_set_uid (stmt, uid++);
 
@@ -5498,7 +6939,10 @@ pass_forwprop::execute (function *fun)
 		  if (!is_gimple_assign (use_stmt)
 		      || (gimple_assign_rhs_code (use_stmt) != REALPART_EXPR
 			  && gimple_assign_rhs_code (use_stmt) != IMAGPART_EXPR)
-		      || TREE_OPERAND (gimple_assign_rhs1 (use_stmt), 0) != lhs)
+		      || TREE_OPERAND (gimple_assign_rhs1 (use_stmt), 0) != lhs
+		      /* We are moving the def, so avoid abnormals.  */
+		      || SSA_NAME_OCCURS_IN_ABNORMAL_PHI
+			   (gimple_assign_lhs (use_stmt)))
 		    {
 		      rewrite = false;
 		      break;
@@ -5814,11 +7258,15 @@ pass_forwprop::execute (function *fun)
 		      }
 		    else if (TREE_CODE_CLASS (code) == tcc_comparison)
 		      changed |= forward_propagate_into_comparison (&gsi);
-		    else if ((code == PLUS_EXPR
-			      || code == BIT_IOR_EXPR
-			      || code == BIT_XOR_EXPR)
-			     && simplify_rotate (&gsi))
-		      changed = true;
+		    else if ((code == PLUS_EXPR || code == BIT_IOR_EXPR))
+		      {
+			bool folded = match_long_mul (as_a <gassign *> (stmt));
+			if (!folded)
+			  folded = simplify_rotate (&gsi);
+			changed |= folded;
+		      }
+		    else if (code == BIT_XOR_EXPR)
+		      changed |= simplify_rotate (&gsi);
 		    else if (code == VEC_PERM_EXPR)
 		      changed |= simplify_permutation (&gsi);
 		    else if (code == CONSTRUCTOR
@@ -5826,6 +7274,13 @@ pass_forwprop::execute (function *fun)
 		      changed |= simplify_vector_constructor (&gsi);
 		    else if (code == ARRAY_REF)
 		      changed |= simplify_count_zeroes (&gsi);
+		    else if (get_gimple_rhs_class (code) == GIMPLE_BINARY_RHS
+			     && TREE_CODE (
+				    gimple_assign_rhs2 (stmt)) == SSA_NAME
+			     && has_single_use (gimple_assign_rhs2 (stmt))
+			     && is_a<gphi*> (SSA_NAME_DEF_STMT (
+						gimple_assign_rhs2 (stmt))))
+		      changed |= simplify_phi_result_movdiv (stmt, code);
 		    break;
 		  }
 
@@ -5928,7 +7383,7 @@ pass_forwprop::execute (function *fun)
 	      propagate_value (use_p, val);
 	  }
 
-      /* Mark outgoing exectuable edges.  */
+      /* Mark outgoing executable edges.  */
       if (edge e = find_taken_edge (bb, NULL))
 	{
 	  e->flags |= EDGE_EXECUTABLE;
@@ -5990,7 +7445,7 @@ pass_forwprop::execute (function *fun)
 
   /* Fixup stmts that became noreturn calls.  This may require splitting
      blocks and thus isn't possible during the walk.  Do this
-     in reverse order so we don't inadvertedly remove a stmt we want to
+     in reverse order so we don't inadvertently remove a stmt we want to
      fixup by visiting a dominating now noreturn call first.  */
   while (!to_fixup.is_empty ())
     {

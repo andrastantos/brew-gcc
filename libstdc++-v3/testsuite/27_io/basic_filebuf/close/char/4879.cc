@@ -1,5 +1,6 @@
 // { dg-require-fork "" }
 // { dg-require-mkfifo "" }
+// { dg-require-sysv-or-posix-semaphore "" }
  
 // Copyright (C) 2001-2026 Free Software Foundation, Inc.
 //
@@ -33,6 +34,7 @@
 #include <sys/stat.h>
 
 #include <testsuite_hooks.h>
+#include <testsuite_semaphore.h>
 
 // libstdc++/2913, libstdc++/4879
 // John Fardo  <jfardo@laurelnetworks.com>, Brad Garcia <garsh@attbi.com>
@@ -76,7 +78,7 @@ test_04()
   ofs.put('t');
 
   /*
-   * ISO/IED 14882:1998(E) 27.8.1.10.4
+   * ISO/IEC 14882:1998(E) 27.8.1.10.4
    *
    * void close();
    *

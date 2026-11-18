@@ -38,6 +38,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #ifdef HAVE_SYS_MMAN_H
 #include <sys/mman.h>
 #elif defined(WIN32)
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <memoryapi.h>
 #endif
@@ -58,6 +59,10 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 static const char *ENV_PPID = "GFORTRAN_SHMEM_PPID";
 static const char *ENV_BASE = "GFORTRAN_SHMEM_BASE";
+#if defined(HAVE_MMAP) && defined(HAVE_SETENV)
+/* The descriptor of the shared memory object the images inherit.  */
+static const char *ENV_FD = "GFORTRAN_SHMEM_FD";
+#endif
 
 void
 shared_memory_set_env (pid_t pid)
@@ -75,7 +80,7 @@ shared_memory_set_env (pid_t pid)
   int res;
 
   /* HP-UX / Legacy Fallback using putenv */
-  res = snprintf (buffer, 28, "%s=%d", "ENV_PPID", (int)pid);
+  res = snprintf (buffer, 28, "%s=%d", ENV_PPID, (int)pid);
   if (res != -1)
     putenv (buffer);
 #endif
@@ -87,14 +92,17 @@ shared_memory_get_env (void)
   return getenv (ENV_PPID);
 }
 
-/* Get a pointer into the shared memory block with alignemnt
-   (works similar to sbrk).  */
+/* Get a pointer into the shared memory block with alignment
+   (works similar to sbrk).  Returns a null pointer when the block is
+   exhausted.  */
 
 shared_mem_ptr
 shared_memory_get_mem_with_alignment (shared_memory_act *mem, size_t size,
 				      size_t align)
 {
   size_t aligned_curr_size = alignto (mem->glbl.meta->used, align);
+  if (aligned_curr_size > mem->size || size > mem->size - aligned_curr_size)
+    return SHMPTR_NULL;
   mem->glbl.meta->used = aligned_curr_size + size;
   return (shared_mem_ptr) {aligned_curr_size};
 }
@@ -122,6 +130,17 @@ shared_memory_prepare (shared_memory_act *)
   asm volatile ("" ::: "memory");
 }
 
+#if defined(__hpux__)
+/* On HP-UX, shm_open parses the name argument directly through file
+   system checks.  We need to provide a file path inside a globally
+   writeable directory.  */
+#define SHM_NAME_FMTD "/tmp/gfor-shm-%d"
+#define SHM_NAME_FMTS "/tmp/gfor-shm-%s"
+#else
+#define SHM_NAME_FMTD "/gfor-shm-%d"
+#define SHM_NAME_FMTS "/gfor-shm-%s"
+#endif
+
 #define SHM_NAME_MAX 255
 
 /* Initialize the memory with one page, the shared metadata of the
@@ -140,7 +159,7 @@ shared_memory_init (shared_memory_act *mem, size_t size)
       int n = sscanf (env_val, "%d", &ppid);
       assert (n == 1);
     }
-  snprintf (shm_name, SHM_NAME_MAX, "/gfor-shm-%d", ppid);
+  snprintf (shm_name, SHM_NAME_MAX, SHM_NAME_FMTD, ppid);
   if (base)
     {
       int n = sscanf (base, "%p", &base_ptr);
@@ -167,6 +186,17 @@ shared_memory_init (shared_memory_act *mem, size_t size)
 	  perror ("resizing shared memory segment failed.");
 	  exit (1);
 	}
+#ifdef HAVE_SETENV
+      /* Pass the descriptor to the images and remove the name, so that the
+	 object goes away with the last process however the program ends.  */
+      if (fcntl (mem->shm_fd, F_SETFD, 0) == 0)
+	{
+	  char val[20];
+	  snprintf (val, 20, "%d", mem->shm_fd);
+	  setenv (ENV_FD, val, 1);
+	  shm_unlink (shm_name);
+	}
+#endif
 #elif defined(WIN32)
       mem->shm_fd
 	= CreateFileMapping (INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
@@ -202,7 +232,13 @@ shared_memory_init (shared_memory_act *mem, size_t size)
   else
     {
 #ifdef HAVE_MMAP
-      mem->shm_fd = shm_open (shm_name, O_RDWR, 0600);
+#ifdef HAVE_SETENV
+      const char *fd_val = getenv (ENV_FD);
+      if (fd_val)
+	mem->shm_fd = atoi (fd_val);
+      else
+#endif
+	mem->shm_fd = shm_open (shm_name, O_RDWR, 0600);
       if (mem->shm_fd == -1)
 	{
 	  perror ("opening shared memory segment failed.");
@@ -232,10 +268,15 @@ shared_memory_init (shared_memory_act *mem, size_t size)
       perror ("mmap failed");
       exit (1);
     }
+#ifdef MADV_DONTDUMP
+  /* Keep the unlinked object, which counts as anonymous shared memory, out
+     of core dumps.  */
+  madvise (mem->glbl.base, size, MADV_DONTDUMP);
+#endif
 #elif defined(WIN32)
   mem->glbl.base
-    = (LPTSTR) MapViewOfFileExNuma (mem->shm_fd, FILE_MAP_ALL_ACCESS, 0, 0,
-				    size, base_ptr, NUMA_NO_PREFERRED_NODE);
+    = (LPTSTR) MapViewOfFileEx (mem->shm_fd, FILE_MAP_ALL_ACCESS, 0, 0,
+				size, base_ptr);
   if (mem->glbl.base == NULL)
     {
       perror ("MapViewOfFile failed");
@@ -257,7 +298,7 @@ shared_memory_init (shared_memory_act *mem, size_t size)
       int res;
 
       /* HP-UX / Legacy Fallback using putenv */
-      res = snprintf (buffer, 28, "%s=%p", "ENV_BASE", mem->glbl.base);
+      res = snprintf (buffer, 28, "%s=%p", ENV_BASE, mem->glbl.base);
       if (res != -1)
 	putenv (buffer);
 #endif
@@ -282,11 +323,16 @@ shared_memory_cleanup (shared_memory_act *mem)
     {
       perror ("closing shm file handle failed. Trying to continue...");
     }
-  if (this_image.image_num == -1)
+  if (this_image.image_num == -1
+#ifdef HAVE_SETENV
+      && !getenv (ENV_FD)
+#endif
+     )
     {
       char shm_name[SHM_NAME_MAX];
 
-      snprintf (shm_name, SHM_NAME_MAX, "/gfor-shm-%s", shared_memory_get_env ());
+      snprintf (shm_name, SHM_NAME_MAX, SHM_NAME_FMTS,
+		shared_memory_get_env ());
       /* Only the supervisor is to delete the shm-file.  */
       res = shm_unlink (shm_name);
       if (res == -1)

@@ -97,7 +97,7 @@
 #  include <bits/out_ptr.h>
 #endif
 
-#if __cplusplus > 202302L
+#if __cplusplus > 202302L && _GLIBCXX_HOSTED
 #  include <bits/indirect.h>
 #endif
 
@@ -110,6 +110,7 @@
 #define __glibcxx_want_constexpr_dynamic_alloc
 #define __glibcxx_want_constexpr_memory
 #define __glibcxx_want_enable_shared_from_this
+#define __glibcxx_want_hardened_shared_ptr_array
 #define __glibcxx_want_indirect
 #define __glibcxx_want_is_sufficiently_aligned
 #define __glibcxx_want_make_unique
@@ -126,6 +127,7 @@
 #define __glibcxx_want_transparent_operators
 #define __glibcxx_want_smart_ptr_owner_equality
 #define __glibcxx_want_allocate_at_least
+#define __glibcxx_want_start_lifetime
 #include <bits/version.h>
 
 #if __cplusplus >= 201103L && __cplusplus <= 202002L && _GLIBCXX_HOSTED

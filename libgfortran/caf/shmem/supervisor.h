@@ -41,7 +41,9 @@ typedef enum
   IMAGE_UNKNOWN = 0,
   IMAGE_OK,
   IMAGE_FAILED,
-  IMAGE_SUCCESS
+  IMAGE_SUCCESS,
+  /* The image executed an ERROR STOP and requires all images to terminate.  */
+  IMAGE_ERROR_STOP
 } image_status;
 
 typedef struct
@@ -60,6 +62,12 @@ typedef struct supervisor
   atomic_int failed_images;
   atomic_int finished_images;
   counter_barrier num_active_images;
+  /* The teams formed so far, linked through their next_team, so that the
+     supervisor can reach the barriers of an image that terminated without
+     leaving them.  Pushed to without a lock.  */
+  shared_mem_ptr teams;
+  /* The id of the next team formed; guarded by the allocator lock.  */
+  memid next_team_id;
   caf_shmem_mutex image_tracker_lock;
 #ifdef WIN32
   size_t global_used_handles;
@@ -98,7 +106,7 @@ struct caf_shmem_token
   void *base;
   /* The size of memory in each image aligned on pointer borders, i.e. each
      images memory starts on an address that is aligned to enable maximum speed
-     for the processor architecure used.  */
+     for the processor architecture used.  */
   size_t image_size;
   /* The id of this token.  */
   memid token_id;

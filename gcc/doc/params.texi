@@ -122,7 +122,8 @@ to a computed goto.  To avoid @math{O(N^2)} behavior in a number of
 passes, GCC factors computed gotos early in the compilation process,
 and unfactors them as late as possible.  Only computed jumps at the
 end of a basic blocks with no more than @code{max-goto-duplication-insns} are
-unfactored.
+unfactored.  With @option{-fduplicate-switch-dispatch}, the same limit applies
+to switch dispatches.
 
 @paindex max-delay-slot-insn-search
 @item max-delay-slot-insn-search
@@ -889,6 +890,17 @@ protection when @option{-fstack-protector} is used.
 The minimum size of variables taking part in stack slot sharing when not
 optimizing.
 
+@paindex max-niter-dominators-walk
+@item max-niter-dominators-walk
+Maximum number of dominators BBs to walk when simplifying loop bounds
+and conditions.
+
+@paindex dom-jump-threading
+@item dom-jump-threading
+Enable jump threading in the dominator optimizer pass.  Disabling it
+is useful to isolate the jump threads found by the backward threader,
+which runs regardless.
+
 @paindex max-jump-thread-duplication-stmts
 @item max-jump-thread-duplication-stmts
 Maximum number of statements allowed in a block that needs to be
@@ -1280,6 +1292,11 @@ When IPA-CP determines that a cloning candidate would make the number
 of iterations of a loop known, it adds a bonus of
 @option{ipa-cp-loop-hint-bonus} to the profitability score of
 the candidate.
+
+@paindex ipa-cp-profile-runtime-scaling
+@item ipa-cp-profile-runtime-scaling
+When using profile feedback, by how many bits to shift the run-time
+before it is used as the basis for IPA-CP evaluations.
 
 @paindex ipa-max-loop-predicates
 @item ipa-max-loop-predicates
@@ -1699,6 +1716,12 @@ reassociation considers the benefit of parallelizing FMA's multiplication
 part and addition part, assuming FMUL and FMA use the same units that can
 also do FADD.
 
+@paindex widening-mul-defer-fma
+@item widening-mul-defer-fma
+When nonzero, the widening-multiply pass defers forming an FMA whose result
+feeds a loop-header PHI, leaving a separate multiply and add.  Set to zero to
+contract such loop-carried reductions into an FMA instead.
+
 @paindex sms-loop-average-count-threshold
 @item sms-loop-average-count-threshold
 A threshold on the average loop count considered by the swing modulo scheduler.
@@ -1867,14 +1890,19 @@ the value as unknown.
 The maximum number of infeasible edges to reject before declaring
 a diagnostic as infeasible.
 
+@paindex analyzer-max-macro-alias-depth
+@item analyzer-max-macro-alias-depth
+The maximum number of macro aliases to follow when resolving named constants
+in the analyzer.
+
 @paindex gimple-fe-computed-hot-bb-threshold
 @item gimple-fe-computed-hot-bb-threshold
 The number of executions of a basic block that is considered hot.
 The parameter is used only in GIMPLE FE.
 
-@paindex analyzer-bb-explosion-factor
-@item analyzer-bb-explosion-factor
-The maximum number of ``after supernode'' exploded nodes within the analyzer
+@paindex analyzer-supernode-explosion-factor
+@item analyzer-supernode-explosion-factor
+The maximum number of exploded nodes within the analyzer
 per supernode, before terminating analysis.
 
 @paindex analyzer-text-art-string-ellipsis-threshold
@@ -2010,6 +2038,10 @@ An old alias for @option{-mautovec-preference}.  If both
 @option{-mautovec-preference} and @option{--param=aarch64-autovec-preference}
 are passed, the @option{--param} value is used.
 
+@paindex aarch64-autovec-mode
+@item aarch64-autovec-preference
+Force a specific mode to be the only one considered for auto vectorization.
+
 @paindex aarch64-ldp-policy
 @item aarch64-ldp-policy
 Fine-grained policy for load pair (@code{stp}) instructions.
@@ -2068,7 +2100,7 @@ loop.  The default value is four.
 
 @paindex aarch64-tag-memory-loop-threshold
 @item aarch64-tag-memory-loop-threshold
-Parameter to control the treshold in number of granules beyond which an
+Parameter to control the threshold in number of granules beyond which an
 explicit loop for tagging a memory block is emitted.  The memory block
 is tagged using MTE instructions.
 

@@ -183,7 +183,8 @@ enum c_lang {CLK_GNUC89 = 0, CLK_GNUC99, CLK_GNUC11, CLK_GNUC17, CLK_GNUC23,
 	     CLK_GNUCXX, CLK_CXX98, CLK_GNUCXX11, CLK_CXX11,
 	     CLK_GNUCXX14, CLK_CXX14, CLK_GNUCXX17, CLK_CXX17,
 	     CLK_GNUCXX20, CLK_CXX20, CLK_GNUCXX23, CLK_CXX23,
-	     CLK_GNUCXX26, CLK_CXX26, CLK_ASM};
+	     CLK_GNUCXX26, CLK_CXX26, CLK_GNUCXX29, CLK_CXX29,
+	     CLK_ASM};
 
 /* Payload of a NUMBER, STRING, CHAR or COMMENT token.  */
 struct GTY(()) cpp_string {
@@ -201,7 +202,7 @@ struct GTY(()) cpp_string {
 #define STRINGIFY_ARG	(1 << 2) /* If macro argument to be stringified.  */
 #define PASTE_LEFT	(1 << 3) /* If on LHS of a ## operator.  */
 #define NAMED_OP	(1 << 4) /* C++ named operators.  */
-#define PREV_FALLTHROUGH (1 << 5) /* On a token preceeded by FALLTHROUGH
+#define PREV_FALLTHROUGH (1 << 5) /* On a token preceded by FALLTHROUGH
 				     comment.  */
 #define DECIMAL_INT     (1 << 6) /* Decimal integer, set in c-lex.cc.  */
 #define PURE_ZERO	(1 << 7) /* Single 0 digit, used by the C++ frontend,
@@ -267,7 +268,7 @@ struct GTY(()) cpp_token {
   /* Location of first char of token, together with range of full token.  */
   location_t src_loc;
 
-  ENUM_BITFIELD(cpp_ttype) type : CHAR_BIT;  /* token type */
+  enum cpp_ttype type : CHAR_BIT;  /* token type */
   unsigned short flags;		/* flags - see above */
 
   union cpp_token_u
@@ -515,7 +516,7 @@ struct cpp_options
   unsigned char user_literals;
 
   /* Nonzero means warn when a string or character literal is followed by a
-     ud-suffix which does not beging with an underscore.  */
+     ud-suffix which does not begin with an underscore.  */
   unsigned char warn_literal_suffix;
 
   /* Nonzero means interpret imaginary, fixed-point, or other gnu extension
@@ -760,6 +761,7 @@ enum cpp_warning_reason {
   CPP_W_CXX20_EXTENSIONS,
   CPP_W_CXX23_EXTENSIONS,
   CPP_W_CXX26_EXTENSIONS,
+  CPP_W_CXX29_EXTENSIONS,
   CPP_W_EXPANSION_TO_DEFINED,
   CPP_W_BIDIRECTIONAL,
   CPP_W_INVALID_UTF8,
@@ -1074,7 +1076,7 @@ struct GTY(()) cpp_hashnode {
 					   Otherwise, a NODE_OPERATOR.  */
   unsigned int rid_code : 8;		/* Rid code - for front ends.  */
   unsigned int flags : 9;		/* CPP flags.  */
-  ENUM_BITFIELD(node_type) type : 2;	/* CPP node type.  */
+  enum node_type type : 2;		/* CPP node type.  */
 
   /* 5 bits spare.  */
 

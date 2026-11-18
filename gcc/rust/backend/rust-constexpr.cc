@@ -22,6 +22,7 @@
 #include "realmpfr.h"
 #include "convert.h"
 #include "print-tree.h"
+#include "tree-pretty-print.h"
 #include "gimplify.h"
 #include "tree-iterator.h"
 #include "timevar.h"
@@ -548,11 +549,15 @@ static tree eval_unary_expression (const constexpr_ctx *ctx, tree t,
 static bool eval_check_shift_p (location_t loc, const constexpr_ctx *ctx,
 				enum tree_code code, tree type, tree lhs,
 				tree rhs);
+static bool eval_check_overflow_p (location_t loc, const constexpr_ctx *ctx,
+				   enum tree_code code, tree type, tree lhs,
+				   tree rhs);
 static tree fold_pointer_plus_expression (const constexpr_ctx *ctx, tree t,
 					  tree lhs, tree rhs,
 					  bool *non_constant_p,
 					  bool *overflow_p, tree *jump_target);
 static tree maybe_fold_addr_pointer_plus (tree t);
+static tree maybe_fold_reference_address_to_pointer (tree t);
 
 /* Variables and functions to manage constexpr call expansion context.
    These do not need to be marked for PCH or GC.  */
@@ -1583,6 +1588,13 @@ adjust_temp_type (tree type, tree temp)
   if (same_type_p (TREE_TYPE (temp), type))
     return temp;
 
+  if (TREE_CODE (temp) == CONSTRUCTOR)
+    {
+      tree t = copy_node (temp);
+      TREE_TYPE (t) = type;
+      return t;
+    }
+
   gcc_assert (scalarish_type_p (type));
   /* Now we know we're dealing with a scalar, and a prvalue of non-class
      type is cv-unqualified.  */
@@ -1917,6 +1929,9 @@ eval_constant_expression (const constexpr_ctx *ctx, tree t, bool lval,
 			  bool *non_constant_p, bool *overflow_p,
 			  tree *jump_target)
 {
+  if (t == NULL_TREE)
+    return NULL_TREE;
+
   if (jump_target && *jump_target)
     {
       /* If we are jumping, ignore all statements/expressions except those
@@ -1949,9 +1964,6 @@ eval_constant_expression (const constexpr_ctx *ctx, tree t, bool lval,
     }
 
   location_t loc = EXPR_LOCATION (t);
-
-  if (t == NULL_TREE)
-    return NULL_TREE;
 
   if (CONSTANT_CLASS_P (t))
     {
@@ -2389,6 +2401,29 @@ eval_constant_expression (const constexpr_ctx *ctx, tree t, bool lval,
 				 jump_target);
       break;
 
+    case GOTO_EXPR:
+      {
+	tree target = TREE_OPERAND (t, 0);
+	if (breaks (&target) || continues (&target) || returns (&target)
+	    || (TREE_CODE (target) == LABEL_DECL && DECL_ARTIFICIAL (target)))
+	  {
+	    if (jump_target)
+	      *jump_target = target;
+	    else
+	      {
+		gcc_assert (ctx->quiet);
+		*non_constant_p = true;
+	      }
+	  }
+	else
+	  {
+	    if (!ctx->quiet)
+	      error_at (loc, "%<goto%> is not a constant expression");
+	    *non_constant_p = true;
+	  }
+      }
+      break;
+
     case LOOP_EXPR:
     case WHILE_STMT:
     case FOR_STMT:
@@ -2739,7 +2774,14 @@ eval_store_expression (const constexpr_ctx *ctx, tree t, bool lval,
       /* Evaluate the value to be stored without knowing what object it will be
 	 stored in, so that any side-effects happen first.  */
       if (!SCALAR_TYPE_P (type))
-	new_ctx.ctor = new_ctx.object = NULL_TREE;
+	{
+	  new_ctx.ctor = new_ctx.object = NULL_TREE;
+	  if (TREE_CODE (init) == CONSTRUCTOR)
+	    {
+	      new_ctx.ctor = build_constructor (TREE_TYPE (init), NULL);
+	      CONSTRUCTOR_NO_CLEARING (new_ctx.ctor) = true;
+	    }
+	}
       init = eval_constant_expression (&new_ctx, init, false, non_constant_p,
 				       overflow_p, jump_target);
       if (*non_constant_p)
@@ -3157,6 +3199,9 @@ eval_binary_expression (const constexpr_ctx *ctx, tree t, bool lval,
   if (r == NULL_TREE && TREE_CODE_CLASS (code) == tcc_comparison
       && POINTER_TYPE_P (TREE_TYPE (lhs)))
     {
+      lhs = maybe_fold_reference_address_to_pointer (lhs);
+      rhs = maybe_fold_reference_address_to_pointer (rhs);
+
       if (tree lhso = maybe_fold_addr_pointer_plus (lhs))
 	lhs = fold_convert (TREE_TYPE (lhs), lhso);
       if (tree rhso = maybe_fold_addr_pointer_plus (rhs))
@@ -3180,7 +3225,10 @@ eval_binary_expression (const constexpr_ctx *ctx, tree t, bool lval,
 
   if (r == NULL_TREE)
     {
-      r = fold_binary_loc (loc, code, type, lhs, rhs);
+      if (ctx->manifestly_const_eval && TREE_CODE (type) != REAL_TYPE)
+	r = fold_binary_initializer_loc (loc, code, type, lhs, rhs);
+      else
+	r = fold_binary_loc (loc, code, type, lhs, rhs);
     }
 
   if (r == NULL_TREE && (code == LSHIFT_EXPR || code == RSHIFT_EXPR)
@@ -3205,6 +3253,16 @@ eval_binary_expression (const constexpr_ctx *ctx, tree t, bool lval,
     }
   else if (eval_check_shift_p (loc, ctx, code, type, lhs, rhs))
     *non_constant_p = true;
+  else if (eval_check_overflow_p (loc, ctx, code, type, lhs, rhs))
+    {
+      *non_constant_p = true;
+      /* The overflow has been diagnosed here, with a location.  Clear the
+	 flag so that the generic TREE_OVERFLOW check in
+	 eval_constant_expression does not report it a second time against
+	 the folded constant, which carries no location.  */
+      if (r != NULL_TREE && CONSTANT_CLASS_P (r))
+	TREE_OVERFLOW (r) = false;
+    }
   /* Don't VERIFY_CONSTANT if this might be dealing with a pointer to
      a local array in a constexpr function.  */
   bool ptr = INDIRECT_TYPE_P (TREE_TYPE (lhs));
@@ -3657,13 +3715,15 @@ eval_call_expression (const constexpr_ctx *ctx, tree t, bool lval,
 
       /* If we have seen this call before, we are done.  */
       maybe_initialize_constexpr_call_table ();
+      bool insert = depth_ok < constexpr_cache_depth;
       rust_constexpr_call **slot
-	= constexpr_call_table->find_slot (&new_call, INSERT);
-      entry = *slot;
+	= constexpr_call_table->find_slot (&new_call,
+					   insert ? INSERT : NO_INSERT);
+      entry = slot ? *slot : NULL;
       if (entry == NULL)
 	{
 	  /* Only cache up to constexpr_cache_depth to limit memory use.  */
-	  if (depth_ok < constexpr_cache_depth)
+	  if (insert)
 	    {
 	      /* We need to keep a pointer to the entry, not just the slot, as
 		 the slot can move during evaluation of the body.  */
@@ -6648,6 +6708,21 @@ potential_constant_expression_1 (tree t, bool want_rval, bool strict, bool now,
       /* We can see these in statement-expressions.  */
       return true;
 
+    case GOTO_EXPR:
+      {
+	tree *target = &TREE_OPERAND (t, 0);
+	if (breaks (target) || continues (target) || returns (target))
+	  {
+	    *jump_target = *target;
+	    return true;
+	  }
+	if (TREE_CODE (*target) == LABEL_DECL && DECL_ARTIFICIAL (*target))
+	  return true;
+	if (flags & tf_error)
+	  error_at (loc, "%<goto%> is not a constant expression");
+	return false;
+      }
+
     case LABEL_EXPR:
       t = LABEL_EXPR_LABEL (t);
       if (DECL_ARTIFICIAL (t))
@@ -6781,6 +6856,69 @@ eval_check_shift_p (location_t loc, const constexpr_ctx *ctx,
   return false;
 }
 
+/* Rust rejects arithmetic overflow during constant evaluation for both signed
+   and unsigned types, unlike C where unsigned wraparound is well defined, so
+   TREE_OVERFLOW alone is not enough: GCC only sets it for signed operations.
+
+   Operations built in a constant context are left unfolded by
+   Backend::arithmetic_or_logical_expression, so that we still see the
+   operation and its operands here rather than an INTEGER_CST which would
+   carry neither a location nor, for unsigned types, any trace of the
+   overflow.
+
+   Returns true when the operation overflows, in which case the expression is
+   not a constant.  */
+
+static bool
+eval_check_overflow_p (location_t loc, const constexpr_ctx *ctx,
+		       enum tree_code code, tree type, tree lhs, tree rhs)
+{
+  if ((code != PLUS_EXPR && code != MINUS_EXPR && code != MULT_EXPR)
+      || TREE_CODE (lhs) != INTEGER_CST || TREE_CODE (rhs) != INTEGER_CST
+      || !INTEGRAL_TYPE_P (type)
+      || TYPE_PRECISION (TREE_TYPE (lhs)) != TYPE_PRECISION (type)
+      || TYPE_PRECISION (TREE_TYPE (rhs)) != TYPE_PRECISION (type))
+    return false;
+
+  /* Note we deliberately do not check TYPE_OVERFLOW_WRAPS here: it is set for
+     unsigned types because wrapping is defined in C, but Rust rejects it.  */
+  signop sgn = TYPE_SIGN (type);
+  wide_int lw = wi::to_wide (lhs);
+  wide_int rw = wi::to_wide (rhs);
+  wi::overflow_type ovf = wi::OVF_NONE;
+
+  switch (code)
+    {
+    case PLUS_EXPR:
+      wi::add (lw, rw, sgn, &ovf);
+      break;
+    case MINUS_EXPR:
+      wi::sub (lw, rw, sgn, &ovf);
+      break;
+    case MULT_EXPR:
+      wi::mul (lw, rw, sgn, &ovf);
+      break;
+    default:
+      gcc_unreachable ();
+    }
+
+  if (ovf == wi::OVF_NONE)
+    return false;
+
+  /* Unlike the shift checks above this is a hard error, not a permerror:
+     overflow in a constant is always rejected by Rust.  */
+  if (!ctx->quiet)
+    {
+      char *expr_str
+	= print_generic_expr_to_str (build2_loc (loc, code, type, lhs, rhs));
+      rust_error_at (loc, ErrorCode::E0080,
+		     "attempt to compute %qs, which would overflow", expr_str);
+      free (expr_str);
+    }
+
+  return true;
+}
+
 /* Helper function for cxx_eval_binary_expression.  Try to optimize
    original POINTER_PLUS_EXPR T, LHS p+ RHS, return NULL_TREE if the
    generic folding should be used.  */
@@ -6868,6 +7006,21 @@ maybe_fold_addr_pointer_plus (tree t)
   op1 = fold_convert (ptr_type_node, op1);
   tree r = fold_build2 (MEM_REF, TREE_TYPE (TREE_TYPE (op0)), op0, op1);
   return build1_loc (EXPR_LOCATION (t), ADDR_EXPR, TREE_TYPE (op0), r);
+}
+
+static tree
+maybe_fold_reference_address_to_pointer (tree t)
+{
+  if (!CONVERT_EXPR_P (t) || !POINTER_TYPE_P (TREE_TYPE (t)))
+    return t;
+
+  tree op = TREE_OPERAND (t, 0);
+  if (TREE_CODE (op) != ADDR_EXPR || !TYPE_REF_P (TREE_TYPE (op)))
+    return t;
+
+  return build_fold_addr_expr_with_type_loc (EXPR_LOCATION (t),
+					     TREE_OPERAND (op, 0),
+					     TREE_TYPE (t));
 }
 
 } // namespace Compile

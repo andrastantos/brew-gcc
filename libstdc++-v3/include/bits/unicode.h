@@ -97,7 +97,7 @@ namespace __unicode
   // read outside those bounds (incrementing or decrementing at the boundary
   // is erroneously idempotent).
   //
-  // On construction, the iterator attemps to decode a single code point from
+  // On construction, the iterator attempts to decode a single code point from
   // the input range and then encode it into an internal buffer in the output
   // format, e.g. if the input is UTF-8 and the output is UTF-16, it might read
   // three char8_t code units from the input and store two char16_t code units
@@ -170,7 +170,7 @@ namespace __unicode
       { return _M_curr(); }
 
       [[nodiscard]]
-      constexpr iter_difference_t<_Iter> 
+      constexpr iter_difference_t<_Iter>
       _M_units() const requires forward_iterator<_Iter>
       { return _M_to_increment; }
 
@@ -753,9 +753,9 @@ namespace __unicode
   template<typename _View>
     using _Utf32_view = _Utf_view<char32_t, _View>;
 
-inline namespace __v16_0_0
+inline namespace __v18_0_0
 {
-#define _GLIBCXX_GET_UNICODE_DATA 160000
+#define _GLIBCXX_GET_UNICODE_DATA 180000
 #include "unicode-data.h"
 #ifdef _GLIBCXX_GET_UNICODE_DATA
 # error "Invalid unicode data"
@@ -1118,7 +1118,7 @@ inline namespace __v16_0_0
       _Iterator _M_begin;
     };
 
-} // namespace __v16_0_0
+} // namespace __v18_0_0
 
   // Return the field width of a string.
   template<typename _CharT>

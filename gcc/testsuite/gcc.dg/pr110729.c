@@ -1,5 +1,5 @@
 /* { dg-do compile { target { ! { nvptx*-*-* visium-*-* } } } } */
-/* { dg-require-effective-target o_flag_in_section } */
+/* { dg-require-effective-target shf_link_order } */
 /* { dg-options "-ffunction-sections -fpatchable-function-entry=2" } */
 /* { dg-additional-options "-fno-pie" { target sparc*-*-* } } */
 

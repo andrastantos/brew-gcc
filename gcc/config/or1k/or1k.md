@@ -217,7 +217,7 @@
 (define_insn "<shift_op>si3"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
 	(SHIFT:SI (match_operand:SI 1 "register_operand"  "r,r")
-		  (match_operand:SI 2 "reg_or_u6_operand" "r,n")))]
+		  (match_operand:SI 2 "reg_or_u5_operand" "r,n")))]
   ""
   "@
    l.<shift_asm>\t%0, %1, %2
@@ -227,7 +227,7 @@
 (define_insn "rotrsi3"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
 	(rotatert:SI (match_operand:SI 1 "register_operand"  "r,r")
-		     (match_operand:SI 2 "ror_reg_or_u6_operand" "r,n")))]
+		     (match_operand:SI 2 "ror_reg_or_u5_operand" "r,n")))]
   "TARGET_ROR || TARGET_RORI"
   "@
    l.ror\t%0, %1, %2
@@ -519,7 +519,7 @@
 ;; avoids 'convert_mode_scalar' from trying to do subregging
 ;; which we don't have support for.
 ;; We require signed and unsigned extend instructions because
-;; signed comparisons require signed extention, but for SR_F
+;; signed comparisons require signed extension, but for SR_F
 ;; it doesn't matter.
 
 (define_expand "zero_extendbisi2_sr_f"
@@ -583,25 +583,26 @@
   [(const_int 0)]
 {
   rtx x;
-  rtx label = gen_rtx_LABEL_REF (VOIDmode, gen_label_rtx ());
+  rtx_code_label *label = gen_label_rtx ();
+  rtx label_ref = gen_rtx_LABEL_REF (VOIDmode, label);
 
   /* Generated a *cbranch pattern.  */
   if (rtx_equal_p (operands[0], operands[2]))
     {
       PUT_CODE (operands[3], (GET_CODE (operands[3]) == NE) ? EQ : NE);
-      x = gen_rtx_IF_THEN_ELSE (VOIDmode, operands[3], label, pc_rtx);
+      x = gen_rtx_IF_THEN_ELSE (VOIDmode, operands[3], label_ref, pc_rtx);
       emit_jump_insn (gen_rtx_SET (pc_rtx, x));
       emit_move_insn (operands[0], operands[1]);
     }
   else
     {
-      x = gen_rtx_IF_THEN_ELSE (VOIDmode, operands[3], label, pc_rtx);
+      x = gen_rtx_IF_THEN_ELSE (VOIDmode, operands[3], label_ref, pc_rtx);
       emit_move_insn (operands[0], operands[1]);
       emit_jump_insn (gen_rtx_SET (pc_rtx, x));
       emit_move_insn (operands[0], operands[2]);
     }
 
-  emit_label (XEXP (label, 0));
+  emit_label (label);
   DONE;
 })
 
@@ -616,7 +617,8 @@
 	    [(match_operand:SI 1 "reg_or_0_operand" "")
 	     (match_operand:SI 2 "reg_or_s16_operand" "")])
 	  (label_ref (match_operand 3 "" ""))
-	  (pc)))]
+	  (pc)))
+   (clobber (reg:BI SR_F_REGNUM))]
   ""
   "#"
   "&& 1"
@@ -753,7 +755,7 @@
   DONE;
 })
 
-;; This is a placeholder, during RA, in order to create the PIC regiter.
+;; This is a placeholder, during RA, in order to create the PIC register.
 ;; We do this so that we don't unconditionally mark the LR register as
 ;; clobbered.  It is replaced during prologue generation with the proper
 ;; set_got pattern below.  This works because the set_got_tmp insn is the
@@ -797,7 +799,7 @@
 ;; Atomic Operations
 ;; -------------------------------------------------------------------------
 
-;; Note that MULT stands in for the non-existant NAND rtx_code.
+;; Note that MULT stands in for the non-existent NAND rtx_code.
 (define_code_iterator FETCHOP [plus minus ior xor and mult])
 
 (define_code_attr fetchop_name

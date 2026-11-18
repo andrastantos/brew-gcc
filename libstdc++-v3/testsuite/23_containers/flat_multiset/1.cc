@@ -265,6 +265,106 @@ test09()
   VERIFY( std::ranges::equal(s, (int[]){2,2,4}) );
 }
 
+template<typename T>
+struct throwing_vector : std::vector<T>
+{
+  static inline bool throw_on_move = false;
+
+  throwing_vector() = default;
+  throwing_vector(const throwing_vector&) = default;
+  throwing_vector& operator=(const throwing_vector&) = default;
+
+  throwing_vector(throwing_vector&& other)
+  : std::vector<T>(std::move(other))
+  {
+    if (throw_on_move)
+      throw std::runtime_error("move ctor");
+  }
+
+  throwing_vector&
+  operator=(throwing_vector&& other)
+  {
+    static_cast<std::vector<T>&>(*this) = std::move(other);
+    if (throw_on_move)
+      throw std::runtime_error("move assign");
+    return *this;
+  }
+
+  using std::vector<int>::operator=;
+};
+
+void
+test10()
+{
+#if __cpp_exceptions
+  using flat_multiset = std::flat_multiset<int, std::less<int>, throwing_vector<int>>;
+
+  throwing_vector<int>::throw_on_move = true;
+
+  // Verify invariant preservation upon throwing move construction.
+  flat_multiset source = {1, 2};
+  try
+    {
+      flat_multiset target(std::move(source));
+      VERIFY( false );
+    }
+  catch (const std::runtime_error&)
+    {
+      VERIFY( source.empty() );
+    }
+
+  // Verify invariant preservation upon throwing move assignment.
+  source = {1, 2};
+  flat_multiset target = {3, 4};
+  try
+    {
+      target = std::move(source);
+      VERIFY( false );
+    }
+  catch (const std::runtime_error&)
+    {
+      VERIFY( source.empty() );
+      VERIFY( target.empty() );
+    }
+
+  // Verify invariant preservation upon throwing swap.
+  source = {1, 2};
+  target = {3, 4};
+  try
+    {
+      source.swap(target);
+      VERIFY( false );
+    }
+  catch (const std::runtime_error&)
+    {
+      VERIFY( source.empty() );
+      VERIFY( target.empty() );
+    }
+#endif
+}
+
+constexpr
+void
+test11()
+{
+  // Verify usability of flat_multiset::insert_range(sorted_equivalent_t, Rg&&).
+  std::flat_multiset<int> m = {2};
+  int s[] = {1, 3};
+  m.insert_range(std::sorted_equivalent, s);
+  VERIFY( std::ranges::equal(m, (int[]){1, 2, 3}) );
+}
+
+void
+test12()
+{
+  // Verify usability of flat_multiset::operator=(initializer_list).
+  throwing_vector<int>::throw_on_move = true;
+  std::flat_multiset<int, std::less<int>, throwing_vector<int>> s;
+  std::initializer_list<int> il = {2, 3, 1};
+  s = il;
+  VERIFY( std::ranges::equal(s, (int[]){1, 2, 3}) );
+}
+
 void
 test()
 {
@@ -278,6 +378,9 @@ test()
   test07();
   test08();
   test09();
+  test10();
+  test11();
+  test12();
 }
 
 constexpr
@@ -292,6 +395,9 @@ test_constexpr()
   test07();
   test08();
   test09();
+  // test10() is non-constexpr
+  test11();
+  // test12() is non-constexpr
   return true;
 }
 

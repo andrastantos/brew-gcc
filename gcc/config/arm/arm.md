@@ -72,6 +72,13 @@
 ;; Instruction classification types
 (include "types.md")
 
+;; Included for cortex-a53 and cortex-a57 to use sve_type to handle
+;; SVE instructions on AArch64.
+;; TODO: Decouple the cortex-a57 description into an aarch64-only
+;; "big core" description and use that as the base for big AArch64
+;; cores, unburdened by compatibility with arm.
+(include "../aarch64/aarch64-sched-types.md")
+
 ; IS_THUMB is set to 'yes' when we are generating Thumb code, and 'no' when
 ; generating ARM code.  This is used to control the length of some insn
 ; patterns that share the same RTL in both ARM and Thumb code.
@@ -314,7 +321,7 @@
 ;   that the instruction does not use or alter the condition codes.
 ;
 ; NOCOND means that the instruction does not use or alter the condition
-;   codes but can be converted into a conditionally exectuted instruction.
+;   codes but can be converted into a conditionally executed instruction.
 ;   Given that NOCOND is the default for most instructions if omitted,
 ;   the attribute predicable must be set to yes as well.
 
@@ -894,7 +901,7 @@
   "
   if (TARGET_32BIT && CONST_INT_P (operands[2]))
     {
-      arm_split_constant (PLUS, SImode, NULL_RTX,
+      arm_split_constant (PLUS, SImode, nullptr,
 	                  INTVAL (operands[2]), operands[0], operands[1],
 			  optimize && can_create_pseudo_p ());
       DONE;
@@ -1057,7 +1064,7 @@
    (set_attr "type" "alus_imm")]
 )
 
-;; We can handle more constants efficently if we can clobber either a scratch
+;; We can handle more constants efficiently if we can clobber either a scratch
 ;; or the other source operand.  We deliberately leave this late as in
 ;; high register pressure situations it's not worth forcing any reloads.
 (define_peephole2
@@ -1988,7 +1995,7 @@
 	    operands[1] = force_reg (SImode, operands[1]);
 	  else
 	    {
-	      arm_split_constant (MINUS, SImode, NULL_RTX,
+	      arm_split_constant (MINUS, SImode, nullptr,
 				  INTVAL (operands[1]), operands[0],
 				  operands[2],
 				  optimize && can_create_pseudo_p ());
@@ -2939,7 +2946,7 @@
 	    operands[2] = force_reg (SImode, operands[2]);
 	  else
 	    {
-	      arm_split_constant (AND, SImode, NULL_RTX,
+	      arm_split_constant (AND, SImode, nullptr,
 				  INTVAL (operands[2]), operands[0],
 				  operands[1],
 				  optimize && can_create_pseudo_p ());
@@ -3695,7 +3702,7 @@
 	    operands[2] = force_reg (SImode, operands[2]);
 	  else
 	    {
-	      arm_split_constant (IOR, SImode, NULL_RTX,
+	      arm_split_constant (IOR, SImode, nullptr,
 				  INTVAL (operands[2]), operands[0],
 				  operands[1],
 				  optimize && can_create_pseudo_p ());
@@ -3802,7 +3809,7 @@
 	    operands[2] = force_reg (SImode, operands[2]);
 	  else
 	    {
-	      arm_split_constant (XOR, SImode, NULL_RTX,
+	      arm_split_constant (XOR, SImode, nullptr,
 				  INTVAL (operands[2]), operands[0],
 				  operands[1],
 				  optimize && can_create_pseudo_p ());
@@ -6470,7 +6477,7 @@
 	     }
 	  else
 	     {
-		arm_split_constant (SET, SImode, NULL_RTX,
+		arm_split_constant (SET, SImode, nullptr,
 	                            INTVAL (operands[1]), operands[0], NULL_RTX,
 			            optimize && can_create_pseudo_p ());
 		DONE;
@@ -6558,7 +6565,7 @@
         || const_ok_for_arm (~INTVAL (operands[1]))))"
   [(clobber (const_int 0))]
   "
-  arm_split_constant (SET, SImode, NULL_RTX, 
+  arm_split_constant (SET, SImode, nullptr,
                       INTVAL (operands[1]), operands[0], NULL_RTX, 0);
   DONE;
   "
@@ -11661,7 +11668,7 @@
 )
 
 ;; Note - although unspec_volatile's USE all hard registers,
-;; USEs are ignored after relaod has completed.  Thus we need
+;; USEs are ignored after reload has completed.  Thus we need
 ;; to add an unspec of the link register to ensure that flow
 ;; does not think that it is unused by the sibcall branch that
 ;; will replace the standard function epilogue.
@@ -11690,7 +11697,7 @@
 	emit_move_insn (ra, operands[2]);
 	operands[2] = ra;
       }
-    /* This is a hack -- we may have crystalized the function type too
+    /* This is a hack -- we may have crystallized the function type too
        early.  */
     cfun->machine->func_type = 0;
   }"

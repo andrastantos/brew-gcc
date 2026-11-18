@@ -31,7 +31,7 @@
 #include "memmodel.h"
 #include "insn-codes.h"
 #include "optabs.h"
-#include "aarch64-sve-builtins.h"
+#include "aarch64-acle-builtins.h"
 #include "aarch64-sve-builtins-shapes.h"
 #include "aarch64-builtins.h"
 
@@ -48,7 +48,7 @@
    but this does not affect the prototype, which is always
    "svbool_t(svbool_t, svbool_t)".  */
 
-namespace aarch64_sve {
+namespace aarch64_acle {
 
 /* Return a representation of "const T *".  */
 static tree
@@ -112,6 +112,7 @@ apply_predication (function_instance &instance, tree return_type,
    f[01]   - a floating-point type with the same width as type suffix 0 or 1
    B       - bfloat16_t
    c       - a predicate-as-counter
+   d<elt>  - a double-width version of <elt>
    h<elt>  - a half-sized version of <elt>
    M       - mfloat8_t
    p       - a predicate (represented as TYPE_SUFFIX_b)
@@ -168,6 +169,13 @@ parse_element_type (const function_instance &instance, const char *&format)
 			       type_suffixes[suffix].element_bits / 4);
     }
 
+  if (ch == 'd')
+    {
+      type_suffix_index suffix = parse_element_type (instance, format);
+      return find_type_suffix (type_suffixes[suffix].tclass,
+			       type_suffixes[suffix].element_bits * 2);
+    }
+
   if (ch == 'h')
     {
       type_suffix_index suffix = parse_element_type (instance, format);
@@ -205,6 +213,10 @@ parse_element_type (const function_instance &instance, const char *&format)
    v<elt>  - a vector with the given element suffix
    D<elt>  - a 64 bit neon vector
    Q<elt>  - a 128 bit neon vector
+   D<elt>x<n>  - an n-tuple of 64 bit neon vectors
+   Q<elt>x<n>  - an n-tuple of 128 bit neon vectors
+   D<elt>xt    - a tuple of 64 bit neon vectors [*4]
+   Q<elt>xt    - a tuple of 128 bit neon vectors [*4]
 
    where <elt> has the format described above parse_element_type
 
@@ -212,6 +224,7 @@ parse_element_type (const function_instance &instance, const char *&format)
 	be a tuple, and if so, how many vectors it should contain.
    [*2] same as for [*1], but the tuple contains half as many vectors.
    [*3] same as for [*1], but the tuple contains twice as many vectors.
+   [*4] the vectors_per_tuple function indicates how many vectors are in the tuple.
 */
 static tree
 parse_type (const function_instance &instance, const char *&format)
@@ -277,6 +290,18 @@ parse_type (const function_instance &instance, const char *&format)
   if (ch == 's')
     {
       type_suffix_index suffix = parse_element_type (instance, format);
+
+      // HACK: remove once all NEON intrinsics have been ported to the
+      // pragma-based framework.
+      if (suffix == TYPE_SUFFIX_p8)
+	return aarch64_simd_types_trees[Poly8_t].eltype;
+      if (suffix == TYPE_SUFFIX_p16)
+	return aarch64_simd_types_trees[Poly16_t].eltype;
+      if (suffix == TYPE_SUFFIX_p64)
+	return aarch64_simd_types_trees[Poly64_t].eltype;
+      if (suffix == TYPE_SUFFIX_p128)
+	return aarch64_simd_types_trees[Poly128_t].eltype;
+
       return scalar_types[type_suffixes[suffix].vector_type];
     }
 
@@ -309,18 +334,28 @@ parse_type (const function_instance &instance, const char *&format)
       return acle_vector_types[0][type_suffixes[suffix].vector_type];
     }
 
-  if (ch == 'D')
+  if (ch == 'D' || ch == 'Q')
     {
       type_suffix_index suffix = parse_element_type (instance, format);
-      int neon_index = type_suffixes[suffix].neon64_type;
-      return aarch64_simd_types_trees[neon_index].itype;
-    }
-
-  if (ch == 'Q')
-    {
-      type_suffix_index suffix = parse_element_type (instance, format);
-      int neon_index = type_suffixes[suffix].neon128_type;
-      return aarch64_simd_types_trees[neon_index].itype;
+      aarch64_simd_type neon_index = ch == 'D'
+				       ? type_suffixes[suffix].neon64_type
+				       : type_suffixes[suffix].neon128_type;
+      unsigned int num_vectors = 1;
+      if (format[0] == 'x')
+	{
+	  int ch = format[1];
+	  format += 2;
+	  if (ch == 't')
+	    num_vectors = instance.vectors_per_tuple ();
+	  else
+	    {
+	      gcc_assert (IN_RANGE (ch, '1', '4'));
+	      num_vectors = ch - '0';
+	    }
+	}
+      return num_vectors == 1
+	       ? aarch64_simd_types_trees[neon_index].itype
+	       : aarch64_simd_tuple_types[neon_index][num_vectors - 2];
     }
 
   gcc_unreachable ();
@@ -530,10 +565,10 @@ build_vs_offset (function_builder &b, const char *signature,
    predicate.  FORCE_DIRECT_OVERLOADS is true if there is a one-to-one
    mapping between "short" and "full" names, and if standard overload
    resolution therefore isn't necessary.  */
-static void
+void
 build_all (function_builder &b, const char *signature,
 	   const function_group_info &group, mode_suffix_index mode_suffix_id,
-	   bool force_direct_overloads = false)
+	   bool force_direct_overloads)
 {
   for (unsigned int pi = 0; group.preds[pi] != NUM_PREDS; ++pi)
     for (unsigned int gi = 0; group.groups[gi] != NUM_GROUP_SUFFIXES; ++gi)
@@ -560,9 +595,10 @@ long_type_suffix (function_resolver &r, type_suffix_index type)
 
 /* Declare the function shape NAME, pointing it to an instance
    of class <NAME>_def.  */
-#define SHAPE(NAME) \
-  static CONSTEXPR const NAME##_def NAME##_obj; \
-  namespace shapes { const function_shape *const NAME = &NAME##_obj; }
+#define SHAPE(NAME)							\
+  static constexpr const NAME##_def NAME##_obj;				\
+  namespace shapes { const function_shape *const NAME = &NAME##_obj; }	\
+  extern int __require_trailing_semicolon ATTRIBUTE_UNUSED
 
 /* Base class for functions that are not overloaded.  */
 struct nonoverloaded_base : public function_shape
@@ -802,7 +838,7 @@ struct ext_base : public overloaded_base<0>
 /* Base class for inc_dec and inc_dec_pat.  */
 struct inc_dec_base : public overloaded_base<0>
 {
-  CONSTEXPR inc_dec_base (bool pat_p) : m_pat_p (pat_p) {}
+  constexpr inc_dec_base (bool pat_p) : m_pat_p (pat_p) {}
 
   /* Resolve based on the first argument only, which must be either a
      scalar or a vector.  If it's a scalar, it must be a 32-bit or
@@ -985,10 +1021,10 @@ struct luti_base : public overloaded_base<0>
 
 /* Specializations for 2-bit and 4-bit indices.  */
 using luti2_def = luti_base<2>;
-SHAPE (luti2)
+SHAPE (luti2);
 
 using luti4_def = luti_base<4>;
-SHAPE (luti4)
+SHAPE (luti4);
 
 
 /* sv<t0>x<g>_t svfoo_t0_g(uint64_t, svuint8_t, uint64_t)
@@ -1098,7 +1134,7 @@ struct mmla_def : public overloaded_base<0>
     return res;
   }
 };
-SHAPE (mmla)
+SHAPE (mmla);
 
 /* Base class for prefetch_gather_index and prefetch_gather_offset,
    which differ only in the units of the displacement.  */
@@ -1398,7 +1434,7 @@ struct adr_index_def : public adr_base
     build_all (b, "b,b,d", group, MODE_u64base_u64index);
   }
 };
-SHAPE (adr_index)
+SHAPE (adr_index);
 
 /* sv<m0>_t svfoo[_m0base]_[m1]offset(sv<m0>_t, sv<m1>_t).
 
@@ -1416,7 +1452,7 @@ struct adr_offset_def : public adr_base
     build_all (b, "b,b,d", group, MODE_u64base_u64offset);
   }
 };
-SHAPE (adr_offset)
+SHAPE (adr_offset);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0>_t)
 
@@ -1436,7 +1472,7 @@ struct binary_def : public overloaded_base<0>
     return r.resolve_uniform (2);
   }
 };
-SHAPE (binary)
+SHAPE (binary);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:int>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, <t0:int>_t).
@@ -1465,7 +1501,7 @@ struct binary_int_opt_n_def : public overloaded_base<0>
     return r.finish_opt_n_resolution (i + 1, i, type, TYPE_signed);
   }
 };
-SHAPE (binary_int_opt_n)
+SHAPE (binary_int_opt_n);
 
 /* Like binary_int_opt_n for single vectors.  For tuples:
 
@@ -1500,7 +1536,123 @@ struct binary_int_opt_single_n_def : public overloaded_base<0>
 	    : r.finish_opt_single_resolution (i + 1, i, type, TYPE_signed));
   }
 };
-SHAPE (binary_int_opt_single_n)
+SHAPE (binary_int_opt_single_n);
+
+/* sv<t0>x<g>_t svfoo[_t0_g](sv<t0>_t, sv<t0>_t)
+   sv<t0>x<g>_t svfoo[_n_t0_g](sv<t0>_t, <t0>_t).  */
+struct binary_to_pair_opt_n_def : public overloaded_base<0>
+{
+  bool explicit_group_suffix_p () const override { return false; }
+
+  void
+  build (function_builder &b, const function_group_info &group) const override
+  {
+    b.add_overloaded_functions (group, MODE_none);
+    build_all (b, "t0,v0,v0", group, MODE_none);
+    build_all (b, "t0,v0,s0", group, MODE_n);
+  }
+
+  tree
+  resolve (function_resolver &r) const override
+  {
+    unsigned int i, nargs;
+    type_suffix_index type;
+    if (!r.check_gp_argument (2, i, nargs)
+	|| (type = r.infer_vector_type (i)) == NUM_TYPE_SUFFIXES)
+      return error_mark_node;
+
+    return r.finish_opt_n_resolution (i + 1, i, type, r.SAME_TYPE_CLASS,
+				      r.SAME_SIZE, sve_type (type, 2));
+  }
+};
+SHAPE (binary_to_pair_opt_n);
+
+/* sv<t0>x<g>_t svfoo[_t0_g](sv<t0>x<g>_t, sv<t0>_t, sv<t0>_t)
+   sv<t0>x<g>_t svfoo[_n_t0_g](sv<t0>x<g>_t, sv<t0>_t, <t0>_t).  */
+struct ternary_to_pair_opt_n_def : public overloaded_base<0>
+{
+  bool explicit_group_suffix_p () const override { return false; }
+
+  void
+  build (function_builder &b, const function_group_info &group) const override
+  {
+    b.add_overloaded_functions (group, MODE_none);
+    build_all (b, "t0,t0,v0,v0", group, MODE_none);
+    build_all (b, "t0,t0,v0,s0", group, MODE_n);
+  }
+
+  tree
+  resolve (function_resolver &r) const override
+  {
+    unsigned int i, nargs;
+    sve_type type;
+    if (!r.check_gp_argument (3, i, nargs)
+	|| !(type = r.infer_sve_type (i)))
+      return error_mark_node;
+
+    if (type.num_vectors != 2)
+      {
+	r.report_incorrect_num_vectors (i, type, 2);
+	return error_mark_node;
+      }
+
+    if (!r.require_derived_vector_type (i + 1, i, type))
+      return error_mark_node;
+
+    return r.finish_opt_n_resolution (i + 2, i + 1, type.type,
+				      r.SAME_TYPE_CLASS, r.SAME_SIZE, type);
+  }
+};
+SHAPE (ternary_to_pair_opt_n);
+
+/* svuint8x2_t svaes<...>_lane[_u8_x2] (svuint8x2_t zdn, svuint8_t zm, uint64_t
+   index);
+   and
+   svuint8x4_t svaes<...>_lane[_u8_x4] (svuint8x4_t zdn, svuint8_t zm, uint64_t
+   index);
+   When index is in range[0-3]
+*/
+struct binary_aes_lane_def : public overloaded_base<0>
+{
+  bool explicit_group_suffix_p () const override { return false; }
+
+  void
+  build (function_builder &b, const function_group_info &group) const override
+  {
+    b.add_overloaded_functions (group, MODE_none);
+    build_all (b, "t0,t0,v0,su64", group, MODE_none);
+  }
+
+  tree
+  resolve (function_resolver &r) const override
+  {
+    if (!r.check_num_arguments (3))
+      return error_mark_node;
+
+    sve_type type = r.infer_sve_type (0);
+    if (!type)
+      return error_mark_node;
+
+    if (type.num_vectors != 2 && type.num_vectors != 4)
+      return error_mark_node;
+
+    if (!r.require_vector_type (1, VECTOR_TYPE_svuint8_t))
+      return error_mark_node;
+
+    if (!r.require_integer_immediate (2))
+      return error_mark_node;
+
+    return r.resolve_to (MODE_none, type);
+  }
+
+  bool
+  check (function_checker &c) const override
+  {
+    return c.require_immediate_lane_index (2, 0, 4);
+  }
+};
+SHAPE (binary_aes_lane);
+
 
 /* sv<t0>_t svfoo_<t0>(sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -1527,7 +1679,7 @@ struct binary_lane_def : public overloaded_base<0>
     return c.require_immediate_lane_index (2, 1);
   }
 };
-SHAPE (binary_lane)
+SHAPE (binary_lane);
 
 /* sv<t0>_t svfoo[_t0](sv<t0:half>_t, sv<t0:half>_t, uint64_t).
 
@@ -1566,7 +1718,7 @@ struct binary_long_lane_def : public overloaded_base<0>
     return c.require_immediate_lane_index (2, 1);
   }
 };
-SHAPE (binary_long_lane)
+SHAPE (binary_long_lane);
 
 /* sv<t0>_t svfoo[_t0](sv<t0:half>_t, sv<t0:half>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0:half>_t, <t0:half>_t).  */
@@ -1594,7 +1746,7 @@ struct binary_long_opt_n_def : public overloaded_base<0>
 				      r.SAME_SIZE, result_type);
   }
 };
-SHAPE (binary_long_opt_n)
+SHAPE (binary_long_opt_n);
 
 /* sv<t0>_t svfoo[_n_t0](sv<t0>_t, <t0>_t).
 
@@ -1622,7 +1774,7 @@ struct binary_n_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (binary_n)
+SHAPE (binary_n);
 
 /* sv<t0:half>_t svfoo[_t0](sv<t0>_t, sv<t0>_t)
    sv<t0:half>_t svfoo[_n_t0](sv<t0>_t, <t0>_t)
@@ -1645,7 +1797,7 @@ struct binary_narrowb_opt_n_def : public overloaded_base<0>
     return r.resolve_uniform_opt_n (2);
   }
 };
-SHAPE (binary_narrowb_opt_n)
+SHAPE (binary_narrowb_opt_n);
 
 /* sv<t0:half>_t svfoo[_t0](sv<t0:half>_t, sv<t0>_t, sv<t0>_t)
    sv<t0:half>_t svfoo[_n_t0](sv<t0:half>_t, sv<t0>_t, <t0>_t)
@@ -1675,7 +1827,7 @@ struct binary_narrowt_opt_n_def : public overloaded_base<0>
     return r.finish_opt_n_resolution (i + 2, i + 1, type);
   }
 };
-SHAPE (binary_narrowt_opt_n)
+SHAPE (binary_narrowt_opt_n);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, <t0>_t)
@@ -1704,7 +1856,7 @@ struct binary_opt_n_def : public overloaded_base<0>
     return r.resolve_uniform_opt_n (2);
   }
 };
-SHAPE (binary_opt_n)
+SHAPE (binary_opt_n);
 
 /* Like binary_opt_n for single vectors.  For tuples:
 
@@ -1739,7 +1891,7 @@ struct binary_opt_single_n_def : public overloaded_base<0>
 	    : r.finish_opt_single_resolution (i + 1, i, type));
   }
 };
-SHAPE (binary_opt_single_n)
+SHAPE (binary_opt_single_n);
 
 /* svbool_t svfoo(svbool_t, svbool_t).  */
 struct binary_pred_def : public nonoverloaded_base
@@ -1750,7 +1902,7 @@ struct binary_pred_def : public nonoverloaded_base
     build_all (b, "v0,v0,v0", group, MODE_none);
   }
 };
-SHAPE (binary_pred)
+SHAPE (binary_pred);
 
 /* sv<t0>_t svfoo[_<t0>](sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -1776,7 +1928,7 @@ struct binary_rotate_def : public overloaded_base<0>
     return c.require_immediate_either_or (2, 90, 270);
   }
 };
-SHAPE (binary_rotate)
+SHAPE (binary_rotate);
 
 /* sv<t0>_t svfoo_t0(<t0>_t, <t0>_t)
 
@@ -1790,7 +1942,7 @@ struct binary_scalar_def : public nonoverloaded_base
     build_all (b, "v0,s0,s0", group, MODE_none);
   }
 };
-SHAPE (binary_scalar)
+SHAPE (binary_scalar);
 
 /* sv<t0>x<g>_t svfoo[_single_t0_g](sv<t0>x<g>_t, sv<t0>_t).  */
 struct binary_single_def : public overloaded_base<0>
@@ -1817,7 +1969,7 @@ struct binary_single_def : public overloaded_base<0>
     return r.resolve_to (MODE_single, type);
   }
 };
-SHAPE (binary_single)
+SHAPE (binary_single);
 
 /* sv<t0:uint>_t svfoo[_t0](sv<t0>_t, sv<t0>_t).
 
@@ -1837,7 +1989,7 @@ struct binary_to_uint_def : public overloaded_base<0>
     return r.resolve_uniform (2);
   }
 };
-SHAPE (binary_to_uint)
+SHAPE (binary_to_uint);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:uint>_t)
 
@@ -1865,7 +2017,7 @@ struct binary_uint_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (binary_uint)
+SHAPE (binary_uint);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, <t0:uint>_t)
 
@@ -1893,7 +2045,7 @@ struct binary_uint_n_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (binary_uint_n)
+SHAPE (binary_uint_n);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:uint>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, <t0:uint>_t)
@@ -1922,7 +2074,7 @@ struct binary_uint_opt_n_def : public overloaded_base<0>
     return r.finish_opt_n_resolution (i + 1, i, type, TYPE_unsigned);
   }
 };
-SHAPE (binary_uint_opt_n)
+SHAPE (binary_uint_opt_n);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, uint64_t).
 
@@ -1950,7 +2102,7 @@ struct binary_uint64_n_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (binary_uint64_n)
+SHAPE (binary_uint64_n);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svuint64_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, uint64_t)
@@ -1979,7 +2131,7 @@ struct binary_uint64_opt_n_def : public overloaded_base<0>
     return r.finish_opt_n_resolution (i + 1, i, type, TYPE_unsigned, 64);
   }
 };
-SHAPE (binary_uint64_opt_n)
+SHAPE (binary_uint64_opt_n);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:half>_t).  */
 struct binary_wide_def : public overloaded_base<0>
@@ -2005,7 +2157,7 @@ struct binary_wide_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (binary_wide)
+SHAPE (binary_wide);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:half>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, <t0:half>_t).  */
@@ -2032,7 +2184,7 @@ struct binary_wide_opt_n_def : public overloaded_base<0>
 				      r.HALF_SIZE);
   }
 };
-SHAPE (binary_wide_opt_n)
+SHAPE (binary_wide_opt_n);
 
 /* void svfoo_t0[_t1]_g(uint64_t, svbool_t, svbool_t, sv<t1>x<g>_t,
 			sv<t1:int>x<g>_t)
@@ -2047,7 +2199,7 @@ struct binary_za_int_m_def : public binary_za_m_base<TYPE_signed>
     build_all (b, "_,su64,vp,vp,t1,ts1", group, MODE_none);
   }
 };
-SHAPE (binary_za_int_m)
+SHAPE (binary_za_int_m);
 
 /* void svfoo_t0[_t1]_g(uint64_t, svbool_t, svbool_t, sv<t1>x<g>_t,
 			sv<t1>x<g>_t)
@@ -2059,7 +2211,7 @@ struct binary_za_m_def : public binary_za_m_base<>
   build (function_builder &b, const function_group_info &group) const override
   {
     b.add_overloaded_functions (group, MODE_none);
-    /* Allow the overloaded form to be specified seperately, with just
+    /* Allow the overloaded form to be specified separately, with just
        a single suffix.  This is necessary for the 64-bit SME MOP intrinsics,
        which have some forms dependent on FEAT_SME_I16I64 and some forms
        dependent on FEAT_SME_F64F64.  The resolver needs to be defined
@@ -2068,7 +2220,7 @@ struct binary_za_m_def : public binary_za_m_base<>
       build_all (b, "_,su64,vp,vp,t1,t1", group, MODE_none);
   }
 };
-SHAPE (binary_za_m)
+SHAPE (binary_za_m);
 
 /* void svfoo_lane_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1>_t, uint64_t)
 
@@ -2078,7 +2230,7 @@ struct binary_za_slice_lane_def : public binary_za_slice_lane_base<>
 {
   constexpr binary_za_slice_lane_def () : binary_za_slice_lane_base<> (1) {}
 };
-SHAPE (binary_za_slice_lane)
+SHAPE (binary_za_slice_lane);
 
 /* void svfoo_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1:int>x<g>_t)
    void svfoo[_single]_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1:int>_t).
@@ -2095,7 +2247,7 @@ struct binary_za_slice_int_opt_single_def
     build_all (b, "_,su32,t1,vs1", group, MODE_single);
   }
 };
-SHAPE (binary_za_slice_int_opt_single)
+SHAPE (binary_za_slice_int_opt_single);
 
 /* void svfoo_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1>x<g>_t)
    void svfoo[_single]_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1>_t)
@@ -2112,7 +2264,7 @@ struct binary_za_slice_opt_single_def
     build_all (b, "_,su32,t1,v1", group, MODE_single);
   }
 };
-SHAPE (binary_za_slice_opt_single)
+SHAPE (binary_za_slice_opt_single);
 
 /* void svfoo_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1:uint>x<g>_t)
    void svfoo[_single]_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1:uint>_t)
@@ -2129,7 +2281,7 @@ struct binary_za_slice_uint_opt_single_def
     build_all (b, "_,su32,t1,vu1", group, MODE_single);
   }
 };
-SHAPE (binary_za_slice_uint_opt_single)
+SHAPE (binary_za_slice_uint_opt_single);
 
 /* void svfoo_t0[_t1]_g(uint64_t, svbool_t, svbool_t, sv<t1>x<g>_t,
 			sv<t1:uint>x<g>_t)
@@ -2144,7 +2296,7 @@ struct binary_za_uint_m_def : public binary_za_m_base<TYPE_unsigned>
     build_all (b, "_,su64,vp,vp,t1,tu1", group, MODE_none);
   }
 };
-SHAPE (binary_za_uint_m)
+SHAPE (binary_za_uint_m);
 
 /* sv<t0>x<g>_t svfoo[_t0_t1_g](sv<t0>x<g>_t, sv<t0>x<g>_t).  */
 struct binaryxn_def : public overloaded_base<0>
@@ -2173,7 +2325,7 @@ struct binaryxn_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (binaryxn)
+SHAPE (binaryxn);
 
 /* bool svfoo().  */
 struct bool_inherent_def : public nonoverloaded_base
@@ -2184,7 +2336,7 @@ struct bool_inherent_def : public nonoverloaded_base
     build_all (b, "sp", group, MODE_none);
   }
 };
-SHAPE (bool_inherent)
+SHAPE (bool_inherent);
 
 /* Either:
 
@@ -2223,7 +2375,7 @@ struct clamp_def : public overloaded_base<0>
     return r.resolve_to (mode, type);
   }
 };
-SHAPE (clamp)
+SHAPE (clamp);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0>_t)
    <t0>_t svfoo[_n_t0](<t0>_t, sv<t0>_t).  */
@@ -2263,7 +2415,7 @@ struct clast_def : public overloaded_base<0>
       }
   }
 };
-SHAPE (clast)
+SHAPE (clast);
 
 /* svbool_t svfoo[_t0](sv<t0>_t, sv<t0>_t).  */
 struct compare_def : public overloaded_base<0>
@@ -2281,7 +2433,7 @@ struct compare_def : public overloaded_base<0>
     return r.resolve_uniform (2);
   }
 };
-SHAPE (compare)
+SHAPE (compare);
 
 /* svbool_t svfoo[_t0](sv<t0>_t, sv<t0>_t)
    svbool_t svfoo[_n_t0](sv<t0>_t, <t0>_t)
@@ -2303,7 +2455,7 @@ struct compare_opt_n_def : public overloaded_base<0>
     return r.resolve_uniform_opt_n (2);
   }
 };
-SHAPE (compare_opt_n)
+SHAPE (compare_opt_n);
 
 /* svbool_t svfoo[_t0](const <t0>_t *, const <t0>_t *).  */
 struct compare_ptr_def : public overloaded_base<0>
@@ -2328,7 +2480,7 @@ struct compare_ptr_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (compare_ptr)
+SHAPE (compare_ptr);
 
 /* svboolx<g>_t svfoo_t0[_t1]_g(<t1>_t, <t1>_t)
 
@@ -2358,7 +2510,7 @@ struct compare_scalar_def : public overloaded_base<1>
 			 NUM_TYPE_SUFFIXES, r.group_suffix_id);
   }
 };
-SHAPE (compare_scalar)
+SHAPE (compare_scalar);
 
 /* svcount_t svfoo_t0[_t1](<t1>_t, <t1>_t, uint64_t)
 
@@ -2393,7 +2545,7 @@ struct compare_scalar_count_def : public overloaded_base<1>
     return c.require_immediate_either_or (2, 2, 4);
   }
 };
-SHAPE (compare_scalar_count)
+SHAPE (compare_scalar_count);
 
 /* svbool_t svfoo[_t0](sv<t0>_t, svint64_t)  (for signed t0)
    svbool_t svfoo[_n_t0](sv<t0>_t, int64_t)  (for signed t0)
@@ -2423,7 +2575,7 @@ struct compare_wide_opt_n_def : public overloaded_base<0>
     return r.finish_opt_n_resolution (i + 1, i, type, r.SAME_TYPE_CLASS, 64);
   }
 };
-SHAPE (compare_wide_opt_n)
+SHAPE (compare_wide_opt_n);
 
 /* uint64_t svfoo().  */
 struct count_inherent_def : public nonoverloaded_base
@@ -2434,7 +2586,7 @@ struct count_inherent_def : public nonoverloaded_base
     build_all (b, "su64", group, MODE_none);
   }
 };
-SHAPE (count_inherent)
+SHAPE (count_inherent);
 
 /* uint64_t svfoo(enum svpattern).  */
 struct count_pat_def : public nonoverloaded_base
@@ -2445,7 +2597,7 @@ struct count_pat_def : public nonoverloaded_base
     build_all (b, "su64,epattern", group, MODE_none);
   }
 };
-SHAPE (count_pat)
+SHAPE (count_pat);
 
 /* uint64_t svfoo(svbool_t).  */
 struct count_pred_def : public nonoverloaded_base
@@ -2456,7 +2608,7 @@ struct count_pred_def : public nonoverloaded_base
     build_all (b, "su64,vp", group, MODE_none);
   }
 };
-SHAPE (count_pred)
+SHAPE (count_pred);
 
 /* uint64_t svfoo_t0(sv<t0>_t, uint64_t)
 
@@ -2475,7 +2627,7 @@ struct count_pred_c_def : public nonoverloaded_base
     return c.require_immediate_either_or (1, 2, 4);
   }
 };
-SHAPE (count_pred_c)
+SHAPE (count_pred_c);
 
 /* uint64_t svfoo[_t0](sv<t0>_t).  */
 struct count_vector_def : public overloaded_base<0>
@@ -2493,7 +2645,7 @@ struct count_vector_def : public overloaded_base<0>
     return r.resolve_uniform (1);
   }
 };
-SHAPE (count_vector)
+SHAPE (count_vector);
 
 /* sv<t0>xN_t svfoo[_t0](sv<t0>_t, ..., sv<t0>_t)
 
@@ -2513,7 +2665,7 @@ struct create_def : public overloaded_base<0>
     return r.resolve_uniform (r.vectors_per_tuple ());
   }
 };
-SHAPE (create)
+SHAPE (create);
 
 /* void svfoo_lane_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1:int>_t, uint64_t)
 
@@ -2532,7 +2684,7 @@ struct dot_za_slice_int_lane_def
     build_all (b, "_,su32,t1,vs1,su64", group, MODE_none);
   }
 };
-SHAPE (dot_za_slice_int_lane)
+SHAPE (dot_za_slice_int_lane);
 
 /* void svfoo_lane_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1>_t, uint64_t)
 
@@ -2542,7 +2694,7 @@ struct dot_za_slice_lane_def : public binary_za_slice_lane_base<>
 {
   constexpr dot_za_slice_lane_def () : binary_za_slice_lane_base<> (0) {}
 };
-SHAPE (dot_za_slice_lane)
+SHAPE (dot_za_slice_lane);
 
 /* void svvdott_lane_za32[_mf8]_vg1x4_fpm (uint32_t slice, svmfloat8x2_t zn,
 					   svmfloat8_t zm, uint64_t imm_idx,
@@ -2579,7 +2731,7 @@ struct dot_half_za_slice_lane_def : public binary_za_slice_lane_base<>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (dot_half_za_slice_lane)
+SHAPE (dot_half_za_slice_lane);
 
 /* void svfoo_lane_t0[_t1]_g(uint32_t, sv<t1>x<g>_t, sv<t1:uint>_t, uint64_t)
 
@@ -2598,7 +2750,7 @@ struct dot_za_slice_uint_lane_def
     build_all (b, "_,su32,t1,vu1,su64", group, MODE_none);
   }
 };
-SHAPE (dot_za_slice_uint_lane)
+SHAPE (dot_za_slice_uint_lane);
 
 /* sv<t0>_t svfoo[_n]_t0(<t0>_t, ..., <t0>_t)
 
@@ -2621,7 +2773,7 @@ struct dupq_def : public overloaded_base<1>
     gcc_unreachable ();
   }
 };
-SHAPE (dupq)
+SHAPE (dupq);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -2636,7 +2788,7 @@ struct ext_def : public ext_base
     return c.require_immediate_range (2, 0, 256 / bytes - 1);
   }
 };
-SHAPE (ext)
+SHAPE (ext);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -2651,7 +2803,7 @@ struct extq_def : public ext_base
     return c.require_immediate_range (2, 0, 16 / bytes - 1);
   }
 };
-SHAPE (extq)
+SHAPE (extq);
 
 /* svboolx<g>_t svfoo_t0_g(sv<t0>_t, sv<t0>_t, uint32_t).  */
 struct extract_pred_def : public nonoverloaded_base
@@ -2669,7 +2821,7 @@ struct extract_pred_def : public nonoverloaded_base
     return c.require_immediate_range (1, 0, 4 / size - 1);
   }
 };
-SHAPE (extract_pred)
+SHAPE (extract_pred);
 
 /* <t0>_t svfoo[_t0](<t0>_t, sv<t0>_t).  */
 struct fold_left_def : public overloaded_base<0>
@@ -2694,7 +2846,7 @@ struct fold_left_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (fold_left)
+SHAPE (fold_left);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>xN_t, uint64_t)
 
@@ -2729,7 +2881,7 @@ struct get_def : public overloaded_base<0>
     return c.require_immediate_range (1, 0, nvectors - 1);
   }
 };
-SHAPE (get)
+SHAPE (get);
 
 /* <t0>xN_t svfoo[_t0](sv<t0>_t).  */
 struct get_neonq_def : public overloaded_base<0>
@@ -2746,7 +2898,7 @@ struct get_neonq_def : public overloaded_base<0>
     return r.resolve_unary ();
   }
 };
-SHAPE (get_neonq)
+SHAPE (get_neonq);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, <t0>xN_t).  */
 struct set_neonq_def : public overloaded_base<0>
@@ -2768,7 +2920,7 @@ struct set_neonq_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (set_neonq)
+SHAPE (set_neonq);
 
 /* sv<t0>_t svfoo[_t0](<t0>xN_t).  */
 struct dup_neonq_def : public overloaded_base<0>
@@ -2790,7 +2942,7 @@ struct dup_neonq_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (dup_neonq)
+SHAPE (dup_neonq);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, uint64_t)
    <t0>_t svfoo[_n_t0](<t0>_t, uint64_t)
@@ -2799,7 +2951,7 @@ SHAPE (dup_neonq)
    whose size is tied to the [bhwd] suffix of "svfoo".  */
 struct inc_dec_def : public inc_dec_base
 {
-  CONSTEXPR inc_dec_def () : inc_dec_base (false) {}
+  constexpr inc_dec_def () : inc_dec_base (false) {}
 
   void
   build (function_builder &b, const function_group_info &group) const override
@@ -2815,7 +2967,7 @@ struct inc_dec_def : public inc_dec_base
       build_all (b, "s0,s0,su64", group, MODE_n);
   }
 };
-SHAPE (inc_dec)
+SHAPE (inc_dec);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, enum svpattern, uint64_t)
    <t0>_t svfoo[_n_t0](<t0>_t, enum svpattern, uint64_t)
@@ -2824,7 +2976,7 @@ SHAPE (inc_dec)
    whose size is tied to the [bhwd] suffix of "svfoo".  */
 struct inc_dec_pat_def : public inc_dec_base
 {
-  CONSTEXPR inc_dec_pat_def () : inc_dec_base (true) {}
+  constexpr inc_dec_pat_def () : inc_dec_base (true) {}
 
   void
   build (function_builder &b, const function_group_info &group) const override
@@ -2840,7 +2992,7 @@ struct inc_dec_pat_def : public inc_dec_base
       build_all (b, "s0,s0,epattern,su64", group, MODE_n);
   }
 };
-SHAPE (inc_dec_pat)
+SHAPE (inc_dec_pat);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svbool_t).  */
 struct inc_dec_pred_def : public overloaded_base<0>
@@ -2865,7 +3017,7 @@ struct inc_dec_pred_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (inc_dec_pred)
+SHAPE (inc_dec_pred);
 
 /* <t0>_t svfoo[_n_t0]_t1(<t0>_t, svbool_t)
 
@@ -2892,7 +3044,7 @@ struct inc_dec_pred_scalar_def : public overloaded_base<2>
     return r.resolve_to (r.mode_suffix_id, type, r.type_suffix_ids[1]);
   }
 };
-SHAPE (inc_dec_pred_scalar)
+SHAPE (inc_dec_pred_scalar);
 
 /* sv<t0>[xN]_t svfoo_t0().  */
 struct inherent_def : public nonoverloaded_base
@@ -2903,7 +3055,7 @@ struct inherent_def : public nonoverloaded_base
     build_all (b, "t0", group, MODE_none);
   }
 };
-SHAPE (inherent)
+SHAPE (inherent);
 
 /* svbool_t svfoo[_b]().  */
 struct inherent_b_def : public overloaded_base<0>
@@ -2923,7 +3075,7 @@ struct inherent_b_def : public overloaded_base<0>
     gcc_unreachable ();
   }
 };
-SHAPE (inherent_b)
+SHAPE (inherent_b);
 
 /* void svfoo_t0().  */
 struct inherent_za_def : public nonoverloaded_base
@@ -2934,7 +3086,7 @@ struct inherent_za_def : public nonoverloaded_base
     build_all (b, "_", group, MODE_none);
   }
 };
-SHAPE (inherent_za)
+SHAPE (inherent_za);
 
 /* void svfoo_t0(uint64_t).  */
 struct inherent_za_slice_def : public nonoverloaded_base
@@ -2945,7 +3097,7 @@ struct inherent_za_slice_def : public nonoverloaded_base
     build_all (b, "_,su32", group, MODE_none);
   }
 };
-SHAPE (inherent_za_slice)
+SHAPE (inherent_za_slice);
 
 /* void svfoo_zt(uint64_t)
 
@@ -2964,7 +3116,7 @@ struct inherent_zt_def : public nonoverloaded_base
     return c.require_immediate_range (0, 0, 0);
   }
 };
-SHAPE (inherent_zt)
+SHAPE (inherent_zt);
 
 /* void svfoo_t0(uint64_t)
 
@@ -2983,7 +3135,7 @@ struct inherent_mask_za_def : public nonoverloaded_base
     return c.require_immediate_range (0, 0, 255);
   }
 };
-SHAPE (inherent_mask_za)
+SHAPE (inherent_mask_za);
 
 /* void svfoo_t0(uint32_t, const void *)
    void svfoo_vnum_t0(uint32_t, const void *, int64_t)
@@ -2998,7 +3150,7 @@ struct ldr_za_def : public nonoverloaded_base
     build_all (b, "_,su32,al,ss64", group, MODE_vnum);
   }
 };
-SHAPE (ldr_za)
+SHAPE (ldr_za);
 
 /* void svfoo_zt(uint64_t, const void *)
 
@@ -3017,7 +3169,7 @@ struct ldr_zt_def : public nonoverloaded_base
     return c.require_immediate_range (0, 0, 0);
   }
 };
-SHAPE (ldr_zt)
+SHAPE (ldr_zt);
 
 /* sv<t0>[xN]_t svfoo[_t0]_g(const <t0>_t *)
    sv<t0>[xN]_t svfoo_vnum[_t0]_g(const <t0>_t *, int64_t).  */
@@ -3032,7 +3184,7 @@ struct load_def : public load_contiguous_base
     build_all (b, "t0,al,ss64", group, MODE_vnum);
   }
 };
-SHAPE (load)
+SHAPE (load);
 
 /* sv<t0>_t svfoo_t0(const <X>_t *)
    sv<t0>_t svfoo_vnum_t0(const <X>_t *, int64_t)
@@ -3047,7 +3199,7 @@ struct load_ext_def : public nonoverloaded_base
     build_all (b, "t0,al,ss64", group, MODE_vnum);
   }
 };
-SHAPE (load_ext)
+SHAPE (load_ext);
 
 /* sv<t0>_t svfoo_[s32]index_t0(const <X>_t *, svint32_t)
    sv<t0>_t svfoo_[s64]index_t0(const <X>_t *, svint64_t)
@@ -3068,7 +3220,7 @@ struct load_ext_gather_index_def : public load_ext_gather_base
     build_vs_index (b, "t0,b,ss64", group);
   }
 };
-SHAPE (load_ext_gather_index)
+SHAPE (load_ext_gather_index);
 
 /* sv<t0>_t svfoo_[s64]index_t0(const <X>_t *, svint64_t)
    sv<t0>_t svfoo_[u64]index_t0(const <X>_t *, svuint64_t)
@@ -3088,7 +3240,7 @@ struct load_ext_gather_index_restricted_def : public load_ext_gather_base
     build_vs_index (b, "t0,b,ss64", group);
   }
 };
-SHAPE (load_ext_gather_index_restricted)
+SHAPE (load_ext_gather_index_restricted);
 
 /* sv<t0>_t svfoo_[s32]offset_t0(const <X>_t *, svint32_t)
    sv<t0>_t svfoo_[s64]offset_t0(const <X>_t *, svint64_t)
@@ -3113,7 +3265,7 @@ struct load_ext_gather_offset_def : public load_ext_gather_base
     build_vs_offset (b, "t0,b,ss64", group);
   }
 };
-SHAPE (load_ext_gather_offset)
+SHAPE (load_ext_gather_offset);
 
 /* sv<t0>_t svfoo_[s64]offset_t0(const <X>_t *, svint64_t)
    sv<t0>_t svfoo_[u32]offset_t0(const <X>_t *, svuint32_t)
@@ -3138,7 +3290,7 @@ struct load_ext_gather_offset_restricted_def : public load_ext_gather_base
     build_vs_offset (b, "t0,b,ss64", group);
   }
 };
-SHAPE (load_ext_gather_offset_restricted)
+SHAPE (load_ext_gather_offset_restricted);
 
 /* sv<t0>_t svfoo_[s32]index[_t0](const <t0>_t *, svint32_t)
    sv<t0>_t svfoo_[s64]index[_t0](const <t0>_t *, svint64_t)
@@ -3160,7 +3312,7 @@ struct load_gather_sv_def : public load_gather_sv_base
     build_sv_offset (b, "t0,al,d", group);
   }
 };
-SHAPE (load_gather_sv)
+SHAPE (load_gather_sv);
 
 /* sv<t0>_t svfoo_[u32]index[_t0](const <t0>_t *, svuint32_t)
    sv<t0>_t svfoo_[u64]index[_t0](const <t0>_t *, svuint64_t)
@@ -3182,7 +3334,7 @@ struct load_gather_sv_restricted_def : public load_gather_sv_base
     build_sv_uint_offset (b, "t0,al,d", group);
   }
 };
-SHAPE (load_gather_sv_restricted)
+SHAPE (load_gather_sv_restricted);
 
 /* sv<t0>_t svfoo[_u32base]_t0(svuint32_t)
    sv<t0>_t svfoo[_u64base]_t0(svuint64_t)
@@ -3213,7 +3365,7 @@ struct load_gather_vs_def : public overloaded_base<1>
     gcc_unreachable ();
   }
 };
-SHAPE (load_gather_vs)
+SHAPE (load_gather_vs);
 
 /* sv<t0>_t svfoo_[s64]index[_t0](const <t0>_t *, svint64_t)
    sv<t0>_t svfoo_[u64]index[_t0](const <t0>_t *, svuint64_t).  */
@@ -3227,7 +3379,7 @@ struct load_gather64_sv_index_def : public load_gather64_sv_base
     build_all (b, "t0,al,d", group, MODE_u64index);
   }
 };
-SHAPE (load_gather64_sv_index)
+SHAPE (load_gather64_sv_index);
 
 /* sv<t0>_t svfoo_[s64]offset[_t0](const <t0>_t *, svint64_t)
    sv<t0>_t svfoo_[u64]offset[_t0](const <t0>_t *, svuint64_t).  */
@@ -3241,7 +3393,7 @@ struct load_gather64_sv_offset_def : public load_gather64_sv_base
     build_all (b, "t0,al,d", group, MODE_u64offset);
   }
 };
-SHAPE (load_gather64_sv_offset)
+SHAPE (load_gather64_sv_offset);
 
 /* sv<t0>_t svfoo[_u64base]_index_t0(svuint64_t, int64_t).  */
 struct load_gather64_vs_index_def : public nonoverloaded_base
@@ -3260,7 +3412,7 @@ struct load_gather64_vs_index_def : public nonoverloaded_base
     gcc_unreachable ();
   }
 };
-SHAPE (load_gather64_vs_index)
+SHAPE (load_gather64_vs_index);
 
 /* sv<t0>_t svfoo[_u64base]_t0(svuint64_t)
 
@@ -3282,7 +3434,7 @@ struct load_gather64_vs_offset_def : public nonoverloaded_base
     gcc_unreachable ();
   }
 };
-SHAPE (load_gather64_vs_offset)
+SHAPE (load_gather64_vs_offset);
 
 /* sv<t0>_t svfoo[_t0](const <t0>_t *)
 
@@ -3296,7 +3448,7 @@ struct load_replicate_def : public load_contiguous_base
     build_all (b, "t0,al", group, MODE_none);
   }
 };
-SHAPE (load_replicate)
+SHAPE (load_replicate);
 
 /* void svfoo_t0(uint64_t, uint32_t, svbool_t, const void *)
    void svfoo_vnum_t0(uint64_t, uint32_t, svbool_t, const void *, int64_t)
@@ -3317,16 +3469,61 @@ struct load_za_def : public nonoverloaded_base
     return c.require_immediate_range (0, 0, c.num_za_tiles () - 1);
   }
 };
-SHAPE (load_za)
+SHAPE (load_za);
 
 using luti2_lane_zt_def = luti_lane_zt_base<2>;
-SHAPE (luti2_lane_zt)
+SHAPE (luti2_lane_zt);
 
 using luti4_lane_zt_def = luti_lane_zt_base<4>;
-SHAPE (luti4_lane_zt)
+SHAPE (luti4_lane_zt);
 
 using luti4_zt_def = luti_zt_base<4>;
-SHAPE (luti4_zt)
+SHAPE (luti4_zt);
+
+struct mop4_def : public overloaded_base<1>
+{
+  void build (function_builder &b,
+	      const function_group_info &group) const override
+  {
+    b.add_overloaded_functions (group, MODE_none);
+    build_all (b, "_,su64,v1,v2", group, MODE_1x1);
+    build_all (b, "_,su64,v1,u2", group, MODE_1x2);
+    build_all (b, "_,su64,u1,v2", group, MODE_2x1);
+    build_all (b, "_,su64,u1,u2", group, MODE_2x2);
+  }
+
+  tree resolve (function_resolver &r) const override
+  {
+    mode_suffix_index mode = MODE_1x1;
+    sve_type type1;
+    sve_type type2;
+
+    if (!r.check_num_arguments (3 + (r.fpm_mode == FPM_set))
+	|| !r.require_scalar_type (0, "uint64_t")
+	|| !r.require_integer_immediate (0)
+	|| !(type1 = r.infer_sve_type (1))
+	|| !(type2 = r.infer_sve_type (2)))
+      return error_mark_node;
+
+    if (type1.num_vectors == 1 && type2.num_vectors == 1)
+      mode = MODE_1x1;
+    else if (type1.num_vectors == 1 && type2.num_vectors == 2)
+      mode = MODE_1x2;
+    else if (type1.num_vectors == 2 && type2.num_vectors == 1)
+      mode = MODE_2x1;
+    else if (type1.num_vectors == 2 && type2.num_vectors == 2)
+      mode = MODE_2x2;
+
+    return r.resolve_to (mode, r.type_suffix_ids[0], type1.type, type2.type,
+			 GROUP_none);
+  }
+
+  bool check (function_checker &c) const override
+  {
+    return c.require_immediate_range (0, 0, c.num_za_tiles () - 1);
+  }
+};
+SHAPE (mop4);
 
 /* svbool_t svfoo(enum svpattern).  */
 struct pattern_pred_def : public nonoverloaded_base
@@ -3337,7 +3534,7 @@ struct pattern_pred_def : public nonoverloaded_base
     build_all (b, "vp,epattern", group, MODE_none);
   }
 };
-SHAPE (pattern_pred)
+SHAPE (pattern_pred);
 
 /* svbool_t svfoo[_t0](sv<t0>_t).  */
 struct pmov_from_vector_def : public overloaded_base<0>
@@ -3355,7 +3552,7 @@ struct pmov_from_vector_def : public overloaded_base<0>
     return r.resolve_uniform (1);
   }
 };
-SHAPE (pmov_from_vector)
+SHAPE (pmov_from_vector);
 
 /* svbool_t svfoo[_t0](sv<t0>_t, uint64_t)
 
@@ -3383,7 +3580,7 @@ struct pmov_from_vector_lane_def : public overloaded_base<0>
     return c.require_immediate_range (1, 0, bytes - 1);
   }
 };
-SHAPE (pmov_from_vector_lane)
+SHAPE (pmov_from_vector_lane);
 
 /* sv<t0>_t svfoo_t0(uint64_t)
 
@@ -3431,7 +3628,7 @@ struct pmov_to_vector_lane_def : public overloaded_base<0>
     return false;
   }
 };
-SHAPE (pmov_to_vector_lane)
+SHAPE (pmov_to_vector_lane);
 
 /* void svfoo(const void *, svprfop)
    void svfoo_vnum(const void *, int64_t, svprfop).  */
@@ -3444,7 +3641,7 @@ struct prefetch_def : public nonoverloaded_base
     build_all (b, "_,ap,ss64,eprfop", group, MODE_vnum);
   }
 };
-SHAPE (prefetch)
+SHAPE (prefetch);
 
 /* void svfoo_[s32]index(const void *, svint32_t, svprfop)
    void svfoo_[s64]index(const void *, svint64_t, svprfop)
@@ -3468,7 +3665,7 @@ struct prefetch_gather_index_def : public prefetch_gather_base
     build_vs_index (b, "_,b,ss64,eprfop", group);
   }
 };
-SHAPE (prefetch_gather_index)
+SHAPE (prefetch_gather_index);
 
 /* void svfoo_[s32]offset(const void *, svint32_t, svprfop)
    void svfoo_[s64]offset(const void *, svint64_t, svprfop)
@@ -3492,7 +3689,7 @@ struct prefetch_gather_offset_def : public prefetch_gather_base
     build_vs_offset (b, "_,b,ss64,eprfop", group);
   }
 };
-SHAPE (prefetch_gather_offset)
+SHAPE (prefetch_gather_offset);
 
 /* bool svfoo(svbool_t).  */
 struct ptest_def : public nonoverloaded_base
@@ -3503,7 +3700,7 @@ struct ptest_def : public nonoverloaded_base
     build_all (b, "sp,vp", group, MODE_none);
   }
 };
-SHAPE (ptest)
+SHAPE (ptest);
 
 /* svbool_t svfoo().  */
 struct rdffr_def : public nonoverloaded_base
@@ -3514,7 +3711,7 @@ struct rdffr_def : public nonoverloaded_base
     build_all (b, "vp", group, MODE_none);
   }
 };
-SHAPE (rdffr)
+SHAPE (rdffr);
 
 /* sv<t1>x<g>_t svfoo_t0_t1_g(uint64_t, uint32_t).  */
 struct read_za_def : public nonoverloaded_base
@@ -3531,7 +3728,7 @@ struct read_za_def : public nonoverloaded_base
     return c.require_immediate_range (0, 0, c.num_za_tiles () - 1);
   }
 };
-SHAPE (read_za)
+SHAPE (read_za);
 
 /* sv<t1>_t svfoo_t0[_t1](uint64_t, uint32_t)
 
@@ -3573,7 +3770,7 @@ struct read_za_m_def : public overloaded_base<1>
     return c.require_immediate_range (1, 0, c.num_za_tiles () - 1);
   }
 };
-SHAPE (read_za_m)
+SHAPE (read_za_m);
 
 /* sv<t1>x<g>_t svfoo_t0_t1_g(uint32_t).  */
 struct read_za_slice_def : public nonoverloaded_base
@@ -3584,7 +3781,7 @@ struct read_za_slice_def : public nonoverloaded_base
     build_all (b, "t1,su32", group, MODE_none);
   }
 };
-SHAPE (read_za_slice)
+SHAPE (read_za_slice);
 
 /* <t0>_t svfoo[_t0](sv<t0>_t).  */
 struct reduction_def : public overloaded_base<0>
@@ -3602,7 +3799,7 @@ struct reduction_def : public overloaded_base<0>
     return r.resolve_uniform (1);
   }
 };
-SHAPE (reduction)
+SHAPE (reduction);
 
 /* <t0>xN_t svfoo[_t0](sv<t0>_t).  */
 struct reduction_neonq_def : public overloaded_base<0>
@@ -3620,7 +3817,7 @@ struct reduction_neonq_def : public overloaded_base<0>
     return r.resolve_uniform (1);
   }
 };
-SHAPE (reduction_neonq)
+SHAPE (reduction_neonq);
 
 /* int64_t svfoo[_t0](sv<t0>_t)  (for signed t0)
    uint64_t svfoo[_t0](sv<t0>_t)  (for unsigned t0)
@@ -3643,7 +3840,7 @@ struct reduction_wide_def : public overloaded_base<0>
     return r.resolve_uniform (1);
   }
 };
-SHAPE (reduction_wide)
+SHAPE (reduction_wide);
 
 /* sv<t0>x<g>_t svfoo_t0[_t1_g](sv<t1>x<g>_t)
 
@@ -3671,7 +3868,7 @@ struct reinterpret_def : public overloaded_base<1>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (reinterpret)
+SHAPE (reinterpret);
 
 /* sv<t0>_t svfoo_t0(sv<t0>_t, sv<t0>_t, uint32_t).  */
 struct select_pred_def : public nonoverloaded_base
@@ -3682,7 +3879,7 @@ struct select_pred_def : public nonoverloaded_base
     build_all (b, "v0,v0,vp,su32", group, MODE_none);
   }
 };
-SHAPE (select_pred)
+SHAPE (select_pred);
 
 /* sv<t0>xN_t svfoo[_t0](sv<t0>xN_t, uint64_t, sv<t0>_t)
 
@@ -3718,7 +3915,7 @@ struct set_def : public overloaded_base<0>
     return c.require_immediate_range (1, 0, nvectors - 1);
   }
 };
-SHAPE (set)
+SHAPE (set);
 
 /* void svfoo().  */
 struct setffr_def : public nonoverloaded_base
@@ -3729,7 +3926,7 @@ struct setffr_def : public nonoverloaded_base
     build_all (b, "_", group, MODE_none);
   }
 };
-SHAPE (setffr)
+SHAPE (setffr);
 
 /* sv<t0>_t svfoo[_n_t0])(sv<t0>_t, uint64_t)
 
@@ -3757,7 +3954,7 @@ struct shift_left_imm_def : public overloaded_base<0>
     return c.require_immediate_range (1, 0, bits - 1);
   }
 };
-SHAPE (shift_left_imm)
+SHAPE (shift_left_imm);
 
 /* sv<t0>_t svfoo[_n_t0])(sv<t0:half>_t, uint64_t)
 
@@ -3772,7 +3969,7 @@ struct shift_left_imm_long_def : public binary_imm_long_base
     return c.require_immediate_range (1, 0, bits - 1);
   }
 };
-SHAPE (shift_left_imm_long)
+SHAPE (shift_left_imm_long);
 
 /* sv<t0:uint>_t svfoo[_n_t0])(sv<t0>_t, uint64_t)
 
@@ -3787,7 +3984,7 @@ struct shift_left_imm_to_uint_def : public shift_left_imm_def
     build_all (b, "vu0,v0,su64", group, MODE_n);
   }
 };
-SHAPE (shift_left_imm_to_uint)
+SHAPE (shift_left_imm_to_uint);
 
 /* sv<t0>_t svfoo[_n_t0])(sv<t0>_t, uint64_t)
 
@@ -3815,7 +4012,7 @@ struct shift_right_imm_def : public overloaded_base<0>
     return c.require_immediate_range (1, 1, bits);
   }
 };
-SHAPE (shift_right_imm)
+SHAPE (shift_right_imm);
 
 /* sv<t0:half>_t svfoo[_n_t0])(sv<t0>_t, uint64_t)
 
@@ -3823,7 +4020,7 @@ SHAPE (shift_right_imm)
    range [1, sizeof (<t0>_t) * 4].  */
 typedef shift_right_imm_narrow_wrapper<binary_imm_narrowb_base<>, 1>
   shift_right_imm_narrowb_def;
-SHAPE (shift_right_imm_narrowb)
+SHAPE (shift_right_imm_narrowb);
 
 /* sv<t0:half>_t svfoo[_n_t0])(sv<t0:half>_t, sv<t0>_t, uint64_t)
 
@@ -3831,7 +4028,7 @@ SHAPE (shift_right_imm_narrowb)
    range [1, sizeof (<t0>_t) * 4].  */
 typedef shift_right_imm_narrow_wrapper<binary_imm_narrowt_base<>, 2>
   shift_right_imm_narrowt_def;
-SHAPE (shift_right_imm_narrowt)
+SHAPE (shift_right_imm_narrowt);
 
 /* sv<t0:uint:half>_t svfoo[_n_t0])(sv<t0>_t, uint64_t)
 
@@ -3841,7 +4038,7 @@ typedef binary_imm_narrowb_base<TYPE_unsigned>
   binary_imm_narrowb_base_unsigned;
 typedef shift_right_imm_narrow_wrapper<binary_imm_narrowb_base_unsigned, 1>
   shift_right_imm_narrowb_to_uint_def;
-SHAPE (shift_right_imm_narrowb_to_uint)
+SHAPE (shift_right_imm_narrowb_to_uint);
 
 /* sv<t0:uint:half>_t svfoo[_n_t0])(sv<t0:uint:half>_t, sv<t0>_t, uint64_t)
 
@@ -3851,7 +4048,7 @@ typedef binary_imm_narrowt_base<TYPE_unsigned>
   binary_imm_narrowt_base_unsigned;
 typedef shift_right_imm_narrow_wrapper<binary_imm_narrowt_base_unsigned, 2>
   shift_right_imm_narrowt_to_uint_def;
-SHAPE (shift_right_imm_narrowt_to_uint)
+SHAPE (shift_right_imm_narrowt_to_uint);
 
 /* sv<t0>_t svfoo[_n_t0])(sv<t0>_t, uint64_t)
 
@@ -3887,7 +4084,7 @@ struct shift_right_imm_narrowxn_def : public overloaded_base<1>
     return c.require_immediate_range (1, 1, bits);
   }
 };
-SHAPE (shift_right_imm_narrowxn)
+SHAPE (shift_right_imm_narrowxn);
 
 /* void svfoo[_t0](<X>_t *, sv<t0>[xN]_t)
    void svfoo_vnum[_t0](<X>_t *, int64_t, sv<t0>[xN]_t)
@@ -3922,7 +4119,7 @@ struct store_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (store)
+SHAPE (store);
 
 /* void svfoo_[s32]index[_t0](<X>_t *, svint32_t, sv<t0>_t)
    void svfoo_[s64]index[_t0](<X>_t *, svint64_t, sv<t0>_t)
@@ -3944,7 +4141,7 @@ struct store_scatter_index_def : public store_scatter_base
     build_vs_index (b, "_,b,ss64,t0", group);
   }
 };
-SHAPE (store_scatter_index)
+SHAPE (store_scatter_index);
 
 /* void svfoo_[s64]index[_t0](<X>_t *, svint64_t, sv<t0>_t)
    void svfoo_[u64]index[_t0](<X>_t *, svuint64_t, sv<t0>_t)
@@ -3964,7 +4161,7 @@ struct store_scatter_index_restricted_def : public store_scatter_base
     build_vs_index (b, "_,b,ss64,t0", group);
   }
 };
-SHAPE (store_scatter_index_restricted)
+SHAPE (store_scatter_index_restricted);
 
 /* void svfoo_[s32]offset[_t0](<X>_t *, svint32_t, sv<t0>_t)
    void svfoo_[s64]offset[_t0](<X>_t *, svint64_t, sv<t0>_t)
@@ -3991,7 +4188,7 @@ struct store_scatter_offset_def : public store_scatter_base
     build_vs_offset (b, "_,b,ss64,t0", group);
   }
 };
-SHAPE (store_scatter_offset)
+SHAPE (store_scatter_offset);
 
 /* void svfoo_[s64]offset[_t0](<X>_t *, svint64_t, sv<t0>_t)
    void svfoo_[u32]offset[_t0](<X>_t *, svuint32_t, sv<t0>_t)
@@ -4017,7 +4214,7 @@ struct store_scatter_offset_restricted_def : public store_scatter_base
     build_vs_offset (b, "_,b,ss64,t0", group);
   }
 };
-SHAPE (store_scatter_offset_restricted)
+SHAPE (store_scatter_offset_restricted);
 
 /* void svfoo_[s64]index[_t0](<t0>_t *, svint64_t, sv<t0>_t)
    void svfoo_[u64]index[_t0](<t0>_t *, svuint64_t, sv<t0>_t)
@@ -4034,7 +4231,7 @@ struct store_scatter64_index_def : public store_scatter64_base
     build_all (b, "_,b,ss64,t0", group, MODE_u64base_index);
   }
 };
-SHAPE (store_scatter64_index)
+SHAPE (store_scatter64_index);
 
 /* void svfoo_[s64]offset[_t0](<t0>_t *, svint64_t, sv<t0>_t)
    void svfoo_[u64]offset[_t0](<t0>_t *, svuint64_t, sv<t0>_t)
@@ -4055,7 +4252,7 @@ struct store_scatter64_offset_def : public store_scatter64_base
     build_all (b, "_,b,ss64,t0", group, MODE_u64base_offset);
   }
 };
-SHAPE (store_scatter64_offset)
+SHAPE (store_scatter64_offset);
 
 /* void svfoo_t0(uint64_t, uint32_t, svbool_t, void *)
    void svfoo_vnum_t0(uint64_t, uint32_t, svbool_t, void *, int64_t)
@@ -4076,7 +4273,7 @@ struct store_za_def : public nonoverloaded_base
     return c.require_immediate_range (0, 0, c.num_za_tiles () - 1);
   }
 };
-SHAPE (store_za)
+SHAPE (store_za);
 
 /* void svfoo[_t0_g](<X>_t *, sv<t0>x<g>_t)
    void svfoo_vnum[_t0_g](<X>_t *, int64_t, sv<t0>x<g>_t)
@@ -4107,7 +4304,7 @@ struct storexn_def : public store_def
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (storexn)
+SHAPE (storexn);
 
 /* void svfoo_t0(uint32_t, void *)
    void svfoo_vnum_t0(uint32_t, void *, int64_t)
@@ -4122,7 +4319,7 @@ struct str_za_def : public nonoverloaded_base
     build_all (b, "_,su32,as,ss64", group, MODE_vnum);
   }
 };
-SHAPE (str_za)
+SHAPE (str_za);
 
 /* void svfoo_zt(uint64_t, void *)
 
@@ -4141,7 +4338,7 @@ struct str_zt_def : public nonoverloaded_base
     return c.require_immediate_range (0, 0, 0);
   }
 };
-SHAPE (str_zt)
+SHAPE (str_zt);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>xN_t, sv<t0:uint>_t).  */
 struct tbl_tuple_def : public overloaded_base<0>
@@ -4166,7 +4363,7 @@ struct tbl_tuple_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (tbl_tuple)
+SHAPE (tbl_tuple);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svbfloatt16_t, svbfloat16_t).  */
 struct ternary_bfloat_def
@@ -4179,7 +4376,7 @@ struct ternary_bfloat_def
     build_all (b, "v0,v0,vB,vB", group, MODE_none);
   }
 };
-SHAPE (ternary_bfloat)
+SHAPE (ternary_bfloat);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svmfloat8_t, svmfloat8_t).  */
 struct ternary_mfloat8_def
@@ -4208,21 +4405,21 @@ struct ternary_mfloat8_def
 			 NUM_TYPE_SUFFIXES, GROUP_none);
   }
 };
-SHAPE (ternary_mfloat8)
+SHAPE (ternary_mfloat8);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svbfloat16_t, svbfloat16_t, uint64_t)
 
    where the final argument is an integer constant expression in the range
    [0, 7].  */
 typedef ternary_bfloat_lane_base<1> ternary_bfloat_lane_def;
-SHAPE (ternary_bfloat_lane)
+SHAPE (ternary_bfloat_lane);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svbfloat16_t, svbfloat16_t, uint64_t)
 
    where the final argument is an integer constant expression in the range
    [0, 3].  */
 typedef ternary_bfloat_lane_base<2> ternary_bfloat_lanex2_def;
-SHAPE (ternary_bfloat_lanex2)
+SHAPE (ternary_bfloat_lanex2);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svmfloat8_t, svmfloat8_t, uint64_t)
 
@@ -4261,7 +4458,7 @@ struct ternary_mfloat8_lane_def
 			 NUM_TYPE_SUFFIXES, GROUP_none);
   }
 };
-SHAPE (ternary_mfloat8_lane)
+SHAPE (ternary_mfloat8_lane);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svmfloat8_t, svmfloat8_t, uint64_t)
 
@@ -4281,7 +4478,7 @@ struct ternary_mfloat8_lane_group_selection_def
     gcc_unreachable ();
   }
 };
-SHAPE (ternary_mfloat8_lane_group_selection)
+SHAPE (ternary_mfloat8_lane_group_selection);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svbfloatt16_t, svbfloat16_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, svbfloat16_t, bfloat16_t).  */
@@ -4296,7 +4493,7 @@ struct ternary_bfloat_opt_n_def
     build_all (b, "v0,v0,vB,sB", group, MODE_n);
   }
 };
-SHAPE (ternary_bfloat_opt_n)
+SHAPE (ternary_bfloat_opt_n);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svmfloatt8_t, svmfloat8_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, svmfloat8_t, bfloat8_t).  */
@@ -4333,7 +4530,7 @@ struct ternary_mfloat8_opt_n_def
 			 GROUP_none);
   }
 };
-SHAPE (ternary_mfloat8_opt_n)
+SHAPE (ternary_mfloat8_opt_n);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:int:quarter>_t, sv<t0:uint:quarter>_t,
 		       uint64_t)
@@ -4350,7 +4547,7 @@ struct ternary_intq_uintq_lane_def
     build_all (b, "v0,v0,vqs0,vqu0,su64", group, MODE_none);
   }
 };
-SHAPE (ternary_intq_uintq_lane)
+SHAPE (ternary_intq_uintq_lane);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:int:quarter>_t, sv<t0:uint:quarter>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, sv<t0:int:quarter>_t,
@@ -4367,7 +4564,7 @@ struct ternary_intq_uintq_opt_n_def
     build_all (b, "v0,v0,vqs0,squ0", group, MODE_n);
   }
 };
-SHAPE (ternary_intq_uintq_opt_n)
+SHAPE (ternary_intq_uintq_opt_n);
 
 /* svbool_t svfoo[_<t0>](sv<t0>_t, sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -4394,7 +4591,7 @@ struct ternary_lane_def : public overloaded_base<0>
     return c.require_immediate_lane_index (3, 2);
   }
 };
-SHAPE (ternary_lane)
+SHAPE (ternary_lane);
 
 /* svbool_t svfoo[_<t0>](sv<t0>_t, sv<t0>_t, sv<t0>_t, uint64_t, uint64_t)
 
@@ -4423,7 +4620,7 @@ struct ternary_lane_rotate_def : public overloaded_base<0>
 	    && c.require_immediate_one_of (4, 0, 90, 180, 270));
   }
 };
-SHAPE (ternary_lane_rotate)
+SHAPE (ternary_lane_rotate);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:half>_t, sv<t0:half>_t, uint64_t)
 
@@ -4445,7 +4642,7 @@ struct ternary_long_lane_def
     return c.require_immediate_lane_index (3, 2);
   }
 };
-SHAPE (ternary_long_lane)
+SHAPE (ternary_long_lane);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:half>_t, sv<t0:half>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, sv<t0:half>_t, <t0:half>_t)
@@ -4464,7 +4661,7 @@ struct ternary_long_opt_n_def
     build_all (b, "v0,v0,vh0,sh0", group, MODE_n);
   }
 };
-SHAPE (ternary_long_opt_n)
+SHAPE (ternary_long_opt_n);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0>_t, sv<t0>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, sv<t0>_t, <t0>_t)
@@ -4487,7 +4684,7 @@ struct ternary_opt_n_def : public overloaded_base<0>
     return r.resolve_uniform_opt_n (3);
   }
 };
-SHAPE (ternary_opt_n)
+SHAPE (ternary_opt_n);
 
 /* A choice between:
 
@@ -4531,7 +4728,7 @@ struct ternary_qq_or_011_lane_def : public ternary_qq_lane_base<>
     return r.resolve_to (r.mode_suffix_id, type0, type1);
   }
 };
-SHAPE (ternary_qq_or_011_lane)
+SHAPE (ternary_qq_or_011_lane);
 
 /* svbool_t svfoo[_<t0>](sv<t0>_t, sv<t0:quarter>_t, sv<t0:quarter>_t,
 			 uint64_t)
@@ -4572,7 +4769,7 @@ struct ternary_qq_lane_rotate_def : public overloaded_base<0>
 	    && c.require_immediate_one_of (4, 0, 90, 180, 270));
   }
 };
-SHAPE (ternary_qq_lane_rotate)
+SHAPE (ternary_qq_lane_rotate);
 
 /* A choice between:
 
@@ -4631,7 +4828,7 @@ struct ternary_qq_opt_n_or_011_def
     return r.resolve_to (r.mode_suffix_id, type0, type1);
   }
 };
-SHAPE (ternary_qq_opt_n_or_011)
+SHAPE (ternary_qq_opt_n_or_011);
 
 /* svbool_t svfoo[_<t0>](sv<t0>_t, sv<t0:quarter>_t, sv<t0:quarter>_t,
 			 uint64_t)
@@ -4670,7 +4867,7 @@ struct ternary_qq_rotate_def : public overloaded_base<0>
     return c.require_immediate_one_of (3, 0, 90, 180, 270);
   }
 };
-SHAPE (ternary_qq_rotate)
+SHAPE (ternary_qq_rotate);
 
 /* svbool_t svfoo[_<t0>](sv<t0>_t, sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -4697,7 +4894,7 @@ struct ternary_rotate_def : public overloaded_base<0>
     return c.require_immediate_one_of (3, 0, 90, 180, 270);
   }
 };
-SHAPE (ternary_rotate)
+SHAPE (ternary_rotate);
 
 /* sv<t0>_t svfoo[_n_t0])(sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -4712,7 +4909,7 @@ struct ternary_shift_left_imm_def : public ternary_shift_imm_base
     return c.require_immediate_range (2, 0, bits - 1);
   }
 };
-SHAPE (ternary_shift_left_imm)
+SHAPE (ternary_shift_left_imm);
 
 /* sv<t0>_t svfoo[_n_t0])(sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -4727,7 +4924,7 @@ struct ternary_shift_right_imm_def : public ternary_shift_imm_base
     return c.require_immediate_range (2, 1, bits);
   }
 };
-SHAPE (ternary_shift_right_imm)
+SHAPE (ternary_shift_right_imm);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0>_t, sv<t0:uint>_t).  */
 struct ternary_uint_def : public overloaded_base<0>
@@ -4753,7 +4950,7 @@ struct ternary_uint_def : public overloaded_base<0>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (ternary_uint)
+SHAPE (ternary_uint);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, svu<t0:uint:quarter>_t,
 		       sv<t0:int:quarter>_t).  */
@@ -4768,7 +4965,7 @@ struct ternary_uintq_intq_def
     build_all (b, "v0,v0,vqu0,vqs0", group, MODE_none);
   }
 };
-SHAPE (ternary_uintq_intq)
+SHAPE (ternary_uintq_intq);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:uint:quarter>_t, sv<t0:int:quarter>_t,
 		       uint64_t)
@@ -4785,7 +4982,7 @@ struct ternary_uintq_intq_lane_def
     build_all (b, "v0,v0,vqu0,vqs0,su64", group, MODE_none);
   }
 };
-SHAPE (ternary_uintq_intq_lane)
+SHAPE (ternary_uintq_intq_lane);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t, sv<t0:uint:quarter>_t, sv<t0:int:quarter>_t)
    sv<t0>_t svfoo[_n_t0](sv<t0>_t, sv<t0:uint:quarter>_t,
@@ -4802,7 +4999,46 @@ struct ternary_uintq_intq_opt_n_def
     build_all (b, "v0,v0,vqu0,sqs0", group, MODE_n);
   }
 };
-SHAPE (ternary_uintq_intq_opt_n)
+SHAPE (ternary_uintq_intq_opt_n);
+
+/* void svfoo_t0[_t1_t2](uint64_t, sv<t1>x2_t, sv<t2>_t, svuint8_t, uint64_t)
+   where the first argument is a ZA tile.
+   and the fifth argument is a control index (0-3)  */
+struct ternary_za_uint_dual_single_def : public overloaded_base<1>
+{
+  void
+  build (function_builder &b, const function_group_info &group) const override
+  {
+    b.add_overloaded_functions (group, MODE_none);
+    build_all (b, "_,su64,u1,v2,vu8,su64", group, MODE_none);
+  }
+
+  bool
+  check (function_checker &c) const override
+  {
+    return (c.require_immediate_range (0, 0, c.num_za_tiles () - 1)
+	    && c.require_immediate_range (4, 0, 3));
+  }
+
+  tree
+  resolve (function_resolver &r) const override
+  {
+    sve_type type1;
+    type_suffix_index type2;
+    if (!r.check_num_arguments (r.fpm_mode == FPM_set ? 6: 5)
+	|| !r.require_integer_immediate (0)
+	|| (type1 = r.infer_vector_or_tuple_type (1, 2)) == NUM_TYPE_SUFFIXES
+	|| (type2 = r.infer_vector_type (2)) == NUM_TYPE_SUFFIXES
+	|| !r.require_vector_type (3, VECTOR_TYPE_svuint8_t)
+	|| !r.require_integer_immediate (4)
+	|| (r.fpm_mode == FPM_set && !r.require_scalar_type (5, "uint64_t")))
+      return error_mark_node;
+
+    return r.resolve_to (r.mode_suffix_id, r.type_suffix_ids[0],
+			 type1.type, type2);
+  }
+};
+SHAPE (ternary_za_uint_dual_single);
 
 /* svbool_t svfoo[_<t0>](sv<t0>_t, sv<t0>_t, uint64_t)
 
@@ -4829,7 +5065,7 @@ struct tmad_def : public overloaded_base<0>
     return c.require_immediate_range (2, 0, 7);
   }
 };
-SHAPE (tmad)
+SHAPE (tmad);
 
 /* sv<t0>_t svfoo[_t0](sv<t0>_t)
 
@@ -4850,7 +5086,7 @@ struct unary_def : public overloaded_base<0>
     return r.resolve_unary ();
   }
 };
-SHAPE (unary)
+SHAPE (unary);
 
 /* sv<t0>_t svfoo_t0[_t1](sv<t1>_t)
 
@@ -4872,7 +5108,7 @@ struct unary_convert_def : public overloaded_base<1>
 			    r.type_suffix (0).element_bits);
   }
 };
-SHAPE (unary_convert)
+SHAPE (unary_convert);
 
 /* sv<t0>_t svfoo_t0[_t1](sv<t0>_t, sv<t1>_t)
 
@@ -4901,7 +5137,7 @@ struct unary_convert_narrowt_def : public overloaded_base<1>
 			    r.type_suffix (0).element_bits, true);
   }
 };
-SHAPE (unary_convert_narrowt)
+SHAPE (unary_convert_narrowt);
 
 /* sv<t0>_t svfoo_t0[_t1_g](sv<t0>_t, sv<t1>x<g_t, fpm_t)
 
@@ -4941,7 +5177,7 @@ struct unary_convertxn_narrowt_def : public overloaded_base<1>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (unary_convertxn_narrowt)
+SHAPE (unary_convertxn_narrowt);
 
 /* sv<t0>x<g0>_t svfoo_t0[_t1_g](sv<t1>x<g1>_t)
 
@@ -4973,7 +5209,7 @@ struct unary_convertxn_def : public unary_convert_def
     return r.resolve_conversion (r.mode_suffix_id, type);
   }
 };
-SHAPE (unary_convertxn)
+SHAPE (unary_convertxn);
 
 /* sv<t0>_t svfoo_t0[_t1_g](sv<t1>x<g1>_t)
 
@@ -5009,7 +5245,7 @@ struct unary_convertxn_narrow_def : public unary_convert_def
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (unary_convertxn_narrow)
+SHAPE (unary_convertxn_narrow);
 
 /* sv<t0>_t svfoo_<t0>(sv<t0>_t, uint64_t)
 
@@ -5036,7 +5272,7 @@ struct unary_lane_def : public overloaded_base<0>
     return c.require_immediate_lane_index (1, 0);
   }
 };
-SHAPE (unary_lane)
+SHAPE (unary_lane);
 
 /* sv<t0>_t svfoo[_t0](sv<t0:half>_t).  */
 struct unary_long_def : public overloaded_base<0>
@@ -5064,7 +5300,7 @@ struct unary_long_def : public overloaded_base<0>
     return r.report_no_such_form (type);
   }
 };
-SHAPE (unary_long)
+SHAPE (unary_long);
 
 /* sv<t0>_t svfoo[_n]_t0(<t0>_t).  */
 struct unary_n_def : public overloaded_base<1>
@@ -5084,23 +5320,23 @@ struct unary_n_def : public overloaded_base<1>
     gcc_unreachable ();
   }
 };
-SHAPE (unary_n)
+SHAPE (unary_n);
 
 /* sv<t0:half>_t svfoo[_t0](sv<t0>_t).  */
 typedef unary_narrowb_base<> unary_narrowb_def;
-SHAPE (unary_narrowb)
+SHAPE (unary_narrowb);
 
 /* sv<t0:half>_t svfoo[_t0](sv<t0:half>_t, sv<t0>_t).  */
 typedef unary_narrowt_base<> unary_narrowt_def;
-SHAPE (unary_narrowt)
+SHAPE (unary_narrowt);
 
 /* sv<t0:uint:half>_t svfoo[_t0](sv<t0>_t).  */
 typedef unary_narrowb_base<TYPE_unsigned> unary_narrowb_to_uint_def;
-SHAPE (unary_narrowb_to_uint)
+SHAPE (unary_narrowb_to_uint);
 
 /* sv<t0:uint:half>_t svfoo[_t0](sv<t0:uint:half>_t, sv<t0>_t).  */
 typedef unary_narrowt_base<TYPE_unsigned> unary_narrowt_to_uint_def;
-SHAPE (unary_narrowt_to_uint)
+SHAPE (unary_narrowt_to_uint);
 
 /* svbool_t svfoo(svbool_t).  */
 struct unary_pred_def : public nonoverloaded_base
@@ -5111,7 +5347,7 @@ struct unary_pred_def : public nonoverloaded_base
     build_all (b, "v0,v0", group, MODE_none);
   }
 };
-SHAPE (unary_pred)
+SHAPE (unary_pred);
 
 /* sv<t0:int>_t svfoo[_t0](sv<t0>_t)
 
@@ -5132,7 +5368,7 @@ struct unary_to_int_def : public overloaded_base<0>
     return r.resolve_unary (TYPE_signed);
   }
 };
-SHAPE (unary_to_int)
+SHAPE (unary_to_int);
 
 /* sv<t0:uint>_t svfoo[_t0](sv<t0>_t)
 
@@ -5153,7 +5389,7 @@ struct unary_to_uint_def : public overloaded_base<0>
     return r.resolve_unary (TYPE_unsigned);
   }
 };
-SHAPE (unary_to_uint)
+SHAPE (unary_to_uint);
 
 /* sv<t0>_t svfoo[_t0](sv<t0:uint>_t)
 
@@ -5189,7 +5425,7 @@ struct unary_uint_def : public overloaded_base<0>
     return r.report_no_such_form (type);
   }
 };
-SHAPE (unary_uint)
+SHAPE (unary_uint);
 
 /* sv<t0>_t svfoo[_<t0>](sv<t0:half>_t)
 
@@ -5230,7 +5466,7 @@ struct unary_widen_def : public overloaded_base<0>
     return r.report_no_such_form (type);
   }
 };
-SHAPE (unary_widen)
+SHAPE (unary_widen);
 
 /* void svfoo_t0[_t1](uint64_t, svbool_t, svbool_t, sv<t1>_t)
 
@@ -5264,7 +5500,7 @@ struct unary_za_m_def : public overloaded_base<1>
     return c.require_immediate_range (0, 0, c.num_za_tiles () - 1);
   }
 };
-SHAPE (unary_za_m)
+SHAPE (unary_za_m);
 
 /* void svfoo_t0[_t1]_g(uint32_t, sv<t1>x<g>_t).  */
 struct unary_za_slice_def : public overloaded_base<1>
@@ -5289,7 +5525,7 @@ struct unary_za_slice_def : public overloaded_base<1>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (unary_za_slice)
+SHAPE (unary_za_slice);
 
 /* sv<t0>x<g>_t svfoo[_t0_g](sv<t0>x<g>_t).  */
 struct unaryxn_def : public unary_def
@@ -5310,7 +5546,7 @@ struct unaryxn_def : public unary_def
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (unaryxn)
+SHAPE (unaryxn);
 
 /* void svfoo_t0[_t1_g](uint64_t, uint32_t, sv<t1>x<g>_t).  */
 struct write_za_def : public overloaded_base<1>
@@ -5341,7 +5577,7 @@ struct write_za_def : public overloaded_base<1>
     return c.require_immediate_range (0, 0, c.num_za_tiles () - 1);
   }
 };
-SHAPE (write_za)
+SHAPE (write_za);
 
 /* void svfoo_t0[_t1](uint64_t, uint32_t, svbool_t, sv<t1>_t)
 
@@ -5375,7 +5611,7 @@ struct write_za_m_def : public overloaded_base<1>
     return c.require_immediate_range (0, 0, c.num_za_tiles () - 1);
   }
 };
-SHAPE (write_za_m)
+SHAPE (write_za_m);
 
 /* void svfoo_t0[_t1_g](uint32_t, sv<t1>x<g>_t).  */
 struct write_za_slice_def : public overloaded_base<1>
@@ -5399,7 +5635,7 @@ struct write_za_slice_def : public overloaded_base<1>
     return r.resolve_to (r.mode_suffix_id, type);
   }
 };
-SHAPE (write_za_slice)
+SHAPE (write_za_slice);
 
 /* MOVT (vector to table)
    Variants are also available for:

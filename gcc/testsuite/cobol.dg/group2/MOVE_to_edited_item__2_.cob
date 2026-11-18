@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/MOVE_to_edited_item__2_.out" }
 
        IDENTIFICATION   DIVISION.

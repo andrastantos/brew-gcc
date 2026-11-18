@@ -247,7 +247,7 @@ run_poly_int_selftests (void)
 static void
 run_const_vector_selftests (void)
 {
-  /* We dont't need to do the redundant tests in different march && mabi.
+  /* We don't need to do the redundant tests in different march && mabi.
      Just pick up the march && mabi which fully support all RVV modes.  */
   riscv_selftest_arch_abi_setter rv ("rv64imafdcv", ABI_LP64D);
   rtl_dump_test t (SELFTEST_LOCATION, locate_file ("riscv/empty-func.rtl"));
@@ -268,8 +268,8 @@ run_const_vector_selftests (void)
 	      emit_move_insn (dest, dup);
 	      rtx_insn *insn = get_last_insn ();
 	      rtx src = SET_SRC (PATTERN (insn));
-	      /* 1. Should be vmv.v.i for in rang of -16 ~ 15.
-		 2. Should be vmv.v.x for exceed -16 ~ 15.  */
+	      /* 1.  Should be vmv.v.i for in range of -16 ~ 15.
+		 2.  Should be vmv.v.x for exceed -16 ~ 15.  */
 	      if (IN_RANGE (val, -16, 15))
 		ASSERT_TRUE (
 		  rtx_equal_p (XEXP (SET_SRC (PATTERN (insn)), 1), dup));
@@ -319,7 +319,7 @@ run_const_vector_selftests (void)
 static void
 run_broadcast_selftests (void)
 {
-  /* We dont't need to do the redundant tests in different march && mabi.
+  /* We don't need to do the redundant tests in different march && mabi.
      Just pick up the march && mabi which fully support all RVV modes.  */
   riscv_selftest_arch_abi_setter rv ("rv64imafdcv", ABI_LP64D);
   rtl_dump_test t (SELFTEST_LOCATION, locate_file ("riscv/empty-func.rtl"));
@@ -532,7 +532,7 @@ riscv_run_selftests (void)
     /* We can know POLY value = [4, 4] when BYTES_PER_RISCV_VECTOR
        is !is_constant () since we can use csrr vlenb and scalar shift
        instruction to compute such POLY value and store it into a scalar
-       register.  Wheras, we can't know [4, 4] on it is specified as
+       register.  Whereas, we can't know [4, 4] on it is specified as
        FIXED-VLMAX since BYTES_PER_RISCV_VECTOR = 16 for -march=rv64gcv
        and csrr vlenb is 16 which is totally unrelated to any
        compile-time unknown POLY value.

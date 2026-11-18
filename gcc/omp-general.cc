@@ -68,7 +68,7 @@ omp_is_allocatable_or_ptr (tree decl)
 
 /* Check whether this DECL belongs to a Fortran optional argument.
    With 'for_present_check' set to false, decls which are optional parameters
-   themselve are returned as tree - or a NULL_TREE otherwise. Those decls are
+   themselves are returned as tree - or a NULL_TREE otherwise. Those decls are
    always pointers.  With 'for_present_check' set to true, the decl for checking
    whether an argument is present is returned; for arguments with value
    attribute this is the hidden argument and of BOOLEAN_TYPE.  If the decl is
@@ -920,11 +920,12 @@ omp_extract_for_data (gomp_for *for_stmt, struct omp_for_data *fd,
 /* Build a call to GOMP_barrier.  */
 
 gimple *
-omp_build_barrier (tree lhs)
+omp_build_barrier (tree lhs, int kind)
 {
   tree fndecl = builtin_decl_explicit (lhs ? BUILT_IN_GOMP_BARRIER_CANCEL
 					   : BUILT_IN_GOMP_BARRIER);
-  gcall *g = gimple_build_call (fndecl, 0);
+  gcall *g = gimple_build_call (fndecl, 1,
+				build_int_cst (integer_type_node, kind));
   if (lhs)
     gimple_call_set_lhs (g, lhs);
   return g;
@@ -1562,7 +1563,7 @@ omp_check_for_duplicate_variant (location_t loc, tree base_decl, tree ctx)
 	  error_at (loc,
 		    "multiple definitions of variants with the same "
 		    "context selector violate the one-definition rule");
-	  inform (DECL_SOURCE_LOCATION (TREE_PURPOSE (attr)),
+	  inform (DECL_SOURCE_LOCATION (TREE_PURPOSE (TREE_VALUE (attr))),
 		  "previous variant declaration here");
 	  return false;
 	}
@@ -2282,7 +2283,9 @@ resolve_omp_target_device_matches (tree node)
 }
 
 /* Compare construct={simd} CLAUSES1 with CLAUSES2, return 0/-1/1/2 as
-   in omp_context_selector_set_compare.  If MATCH_P is true, additionally
+   in omp_context_selector_set_compare: 0 if equal, -1 if clause1 is a
+   strict subset of clause2, 1 if clause2 is a strict subset of clause1,
+   and 2 if neither is a subset of the other. If MATCH_P is true, additionally
    apply the special matching rules for the "simdlen" and "aligned" clauses
    used to determine whether the selector CLAUSES1 is part of matches
    the OpenMP context containing CLAUSES2.  */
@@ -2298,11 +2301,12 @@ omp_construct_simd_compare (tree clauses1, tree clauses2, bool match_p)
   int r = 0;
   struct declare_variant_simd_data {
     bool inbranch, notinbranch;
-    tree simdlen;
+    tree simdlen, simdlen_divisor, simdlen_type;
     auto_vec<tree,16> data_sharing;
     auto_vec<tree,16> aligned;
     declare_variant_simd_data ()
-      : inbranch(false), notinbranch(false), simdlen(NULL_TREE) {}
+      : inbranch(false), notinbranch(false), simdlen(NULL_TREE),
+	simdlen_divisor(NULL_TREE), simdlen_type(NULL_TREE) {}
   } data[2];
   unsigned int i;
   tree e0, e1;
@@ -2320,6 +2324,10 @@ omp_construct_simd_compare (tree clauses1, tree clauses2, bool match_p)
 	    continue;
 	  case OMP_CLAUSE_SIMDLEN:
 	    data[i].simdlen = OMP_CLAUSE_SIMDLEN_EXPR (c);
+	    data[i].simdlen_type = OMP_CLAUSE_SIMDLEN_TYPE (c);
+	    data[i].simdlen_divisor = OMP_CLAUSE_SIMDLEN_DIVISOR (c);
+	    if (!data[i].simdlen_divisor)
+	      data[i].simdlen_divisor = integer_one_node;
 	    continue;
 	  case OMP_CLAUSE_UNIFORM:
 	  case OMP_CLAUSE_LINEAR:
@@ -2344,6 +2352,13 @@ omp_construct_simd_compare (tree clauses1, tree clauses2, bool match_p)
     r |= data[0].inbranch ? 2 : 1;
   if (data[0].notinbranch != data[1].notinbranch)
     r |= data[0].notinbranch ? 2 : 1;
+  /* FIXME: In OpenMP is underspecified how scaled-modifier should affect the
+     context matching; cf. OpenMP specification Issue 5160.  We require here that
+     the type and divisor are identical.  */
+  if (data[0].simdlen_type != data[1].simdlen_type)
+    return 2;
+  if (!simple_cst_equal (data[0].simdlen_divisor, data[1].simdlen_divisor))
+    return 2;
   e0 = data[0].simdlen;
   e1 = data[1].simdlen;
   if (!simple_cst_equal (e0, e1))
@@ -3959,17 +3974,30 @@ omp_runtime_api_procname (const char *name)
   static const char *omp_runtime_apis[] =
     {
       /* This array has 3 sections.  First omp_* calls that don't
-	 have any suffixes.  */
+	 have any suffixes; this implies bind(C) either in the
+	 specification or implementation choice.  */
       "aligned_alloc",
       "aligned_calloc",
       "alloc",
       "calloc",
       "free",
+      "get_device_distances",
+      "get_device_num_teams",
+      "get_device_teams_thread_limit",
       "get_interop_int",
       "get_interop_ptr",
       "get_mapped_ptr",
       "get_num_interop_properties",
+      "get_num_teams_dim",
+      "get_num_threads_dim",
+      "get_supported_teams_dim",
+      "get_supported_threads_dim",
+      "get_team_num_dim",
+      "get_thread_limit_dim",
+      "get_thread_num_dim",
       "realloc",
+      "set_device_num_teams",
+      "set_device_teams_thread_limit",
       "target_alloc",
       "target_associate_ptr",
       "target_disassociate_ptr",
@@ -3997,6 +4025,7 @@ omp_runtime_api_procname (const char *name)
       "get_device_from_uid",
       "get_device_num",
       "get_dynamic",
+      "get_gprivate_limit",
       "get_initial_device",
       "get_interop_name",
       "get_interop_rc_desc",
@@ -4016,7 +4045,9 @@ omp_runtime_api_procname (const char *name)
       "get_partition_num_places",
       "get_place_num",
       "get_proc_bind",
+      "get_supported_active_league_dims",
       "get_supported_active_levels",
+      "get_supported_active_team_dims",
       "get_team_num",
       "get_teams_thread_limit",
       "get_thread_limit",
@@ -4042,6 +4073,7 @@ omp_runtime_api_procname (const char *name)
       NULL,
       /* And finally calls available as omp_*, omp_*_ and omp_*_8_; however,
 	 as DECL_NAME only omp_* and omp_*_8 appear.  */
+      "control_tool",
       "display_env",
       "get_ancestor_thread_num",
       "get_uid_from_device",
@@ -4058,7 +4090,8 @@ omp_runtime_api_procname (const char *name)
       "set_num_teams",
       "set_num_threads",
       "set_schedule",
-      "set_teams_thread_limit"
+      "set_teams_thread_limit",
+      "target_memset"
     };
 
   int mode = 0;
@@ -5150,4 +5183,99 @@ omp_merge_context_selectors (location_t loc, tree outer_ctx, tree inner_ctx,
 
   merged_ctx = nreverse (merged_ctx);
   return omp_check_context_selector (loc, merged_ctx, directive);
+}
+
+/* Remove duplicate and merge clauses mapping the same variable. This function
+   is called twice: FIRST in the C and C++ front-ends before any clause
+   expansion happens, then in the gimplifier before gathering groups. This is
+   because it is easier to process most clauses earlier but some duplicates
+   still get introduced during the early clause expansion in the front-ends. */
+
+tree
+omp_remove_duplicate_maps (tree clauses, bool first)
+{
+  if (clauses == NULL_TREE)
+    return NULL_TREE;
+
+  tree outlist = NULL_TREE;
+  tree *outlist_p = &outlist;
+  bool remove = false;
+  tree c1;
+  for (c1 = clauses; OMP_CLAUSE_CHAIN (c1) != NULL_TREE;
+       c1 = OMP_CLAUSE_CHAIN (c1))
+    {
+      if (OMP_CLAUSE_CODE (c1) != OMP_CLAUSE_MAP)
+	{
+	  *outlist_p = c1;
+	  outlist_p = &OMP_CLAUSE_CHAIN (*outlist_p);
+	  continue;
+	}
+
+      for (tree c2 = OMP_CLAUSE_CHAIN (c1); c2 != NULL_TREE;
+	   c2 = OMP_CLAUSE_CHAIN (c2))
+	{
+	  if (OMP_CLAUSE_CODE (c2) != OMP_CLAUSE_MAP)
+	    continue;
+
+	  bool maybe_dup_found
+	    = (OMP_CLAUSE_CODE (c1) == OMP_CLAUSE_CODE (c2)
+	       && ((/* In the current state, a map clause decl is not supposed
+		       to be NULL; but let's be defensive.  */
+		    OMP_CLAUSE_DECL (c1) == NULL_TREE
+		    && OMP_CLAUSE_DECL (c2) == NULL_TREE)
+		   || operand_equal_p (OMP_CLAUSE_DECL (c1),
+				       OMP_CLAUSE_DECL (c2)))
+	       && ((/* The clause size is generally not known right after
+		       parsing.  */
+		    OMP_CLAUSE_SIZE (c1) == NULL_TREE
+		    && OMP_CLAUSE_SIZE (c2) == NULL_TREE)
+		   || (OMP_CLAUSE_SIZE (c1) != NULL_TREE
+		       && OMP_CLAUSE_SIZE (c2) != NULL_TREE
+		       && operand_equal_p (OMP_CLAUSE_SIZE (c1),
+					   OMP_CLAUSE_SIZE (c2))))
+	       && ((OMP_CLAUSE_ITERATORS (c1) == NULL_TREE
+		    && OMP_CLAUSE_ITERATORS (c2) == NULL_TREE)
+		   || operand_equal_p (OMP_CLAUSE_ITERATORS (c1),
+				       OMP_CLAUSE_ITERATORS (c2))));
+	  if (maybe_dup_found)
+	    {
+	      if (first)
+		{
+		  if (OMP_CLAUSE_MAP_KIND (c1) == OMP_CLAUSE_MAP_KIND (c2))
+		    {
+		      remove = true;
+		      break;
+		    }
+		  else if ((OMP_CLAUSE_MAP_KIND (c1) & ~GOMP_MAP_TOFROM)
+			   == (OMP_CLAUSE_MAP_KIND (c2) & ~GOMP_MAP_TOFROM))
+		    {
+		      OMP_CLAUSE_SET_MAP_KIND (c2,
+					       (OMP_CLAUSE_MAP_KIND (c1)
+						| OMP_CLAUSE_MAP_KIND (c2)));
+		      remove = true;
+		      break;
+		    }
+		}
+	      /* When called from the gimplifier, remove duplicate map clauses
+		 with identical kind only when the bits above
+		 GOMP_MAP_FLAG_SPECIAL_2 are unset - as clauses with those flags
+		 set may need to be present multiple times.  */
+	      else if (OMP_CLAUSE_MAP_KIND (c1) == OMP_CLAUSE_MAP_KIND (c2)
+		       && (OMP_CLAUSE_MAP_KIND (c1) & ~0b11111) == 0)
+		{
+		  remove = true;
+		  break;
+		}
+	    }
+	}
+      if (remove)
+	remove = false;
+      else
+	{
+	  *outlist_p = c1;
+	  outlist_p = &OMP_CLAUSE_CHAIN (*outlist_p);
+	}
+    }
+  *outlist_p = c1;
+  return outlist;
 }

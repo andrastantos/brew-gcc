@@ -5,10 +5,12 @@
 
 #include <bits/simd_details.h>
 #include <bits/simd_flags.h>
+#include <complex>
 #include <stdfloat>
 
 namespace simd = std::simd;
 
+using std::complex;
 #ifdef __STDCPP_FLOAT16_T__
 using std::float16_t;
 #endif
@@ -16,6 +18,7 @@ using std::float32_t;
 using std::float64_t;
 
 using namespace std::simd;
+using std::__constexpr_wrapper_like;
 
 template <int = 0>
 void test()
@@ -28,6 +31,9 @@ void test()
     {
       using T = decltype(t);
       static_assert(__vectorizable<T>);
+      static_assert(__complex_like<complex<T>>);
+      static_assert(__complex_like<const complex<T>&>);
+      static_assert(__vectorizable<complex<T>>);
     }
 
   static_assert(!__vectorizable<const float>);
@@ -42,30 +48,40 @@ void test()
       static_assert(sizeof(__integer_from<N>) == N);
       static_assert(__vectorizable<__integer_from<N>>);
     }
+  template for (constexpr int N : {
+#ifdef __STDCPP_FLOAT16_T__
+				  2,
+#endif
+				  4, 8})
+    {
+      static_assert(std::floating_point<__float_from<N>>);
+      static_assert(sizeof(__float_from<N>) == N);
+      static_assert(__vectorizable<__float_from<N>>);
+    }
 
   static_assert(__div_ceil(5, 3) == 2);
 
   static_assert(sizeof(_Bitmask<3>) == 1);
   static_assert(sizeof(_Bitmask<30>) == 4);
 
-  static_assert(__scalar_abi_tag<_ScalarAbi<1>>);
-  static_assert(__scalar_abi_tag<_ScalarAbi<2>>);
-  static_assert(!__scalar_abi_tag<_Abi_t<1, 1>>);
+  static_assert(__scalar_abi_tag<_Abi_t<1, 1>>);
+  static_assert(__scalar_abi_tag<_Abi_t<2, 2>>);
+  static_assert(!__scalar_abi_tag<_Abi_t<2, 1>>);
 
-  static_assert(__abi_tag<_ScalarAbi<1>>);
-  static_assert(__abi_tag<_ScalarAbi<2>>);
+  static_assert(__abi_tag<_Abi_t<2, 1, _AbiVariant::_CxIleav>>);
+  static_assert(__abi_tag<_Abi_t<2, 1, _AbiVariant::_CxCtgus>>);
 
   using AN = decltype(__native_abi<float>());
   using A1 = decltype(__native_abi<float>()._S_resize<1>());
   static_assert(A1::_S_size == 1);
   static_assert(A1::_S_nreg == 1);
   static_assert(A1::_S_variant == AN::_S_variant);
-  static_assert(__scalar_abi_tag<A1> == __scalar_abi_tag<AN>);
   static_assert(std::is_same_v<decltype(__abi_rebind<float, AN::_S_size, A1>()), AN>);
   if constexpr (AN::_S_size >= 2) // the target has SIMD support for float
     {
       {
 	using A2 = decltype(__abi_rebind<float, 2, AN>());
+	static_assert(__scalar_abi_tag<A2> == __scalar_abi_tag<AN>);
 	static_assert(A2::_S_size == 2);
 	static_assert(A2::_S_nreg == 1);
 	static_assert(A2::_S_variant == AN::_S_variant);
@@ -74,7 +90,32 @@ void test()
       }
       using A4 = decltype(__abi_rebind<float, 4, AN>());
       static_assert(A4::_S_size == 4);
+
+      // at this point we unconditionally expect _CxIleav from __abi_rebind:
+      using AC2 = decltype(__abi_rebind<complex<float>, 2, AN>());
+      static_assert(AC2::_S_size == 2);
+      static_assert(AC2::_S_nreg == A4::_S_nreg);
+      static_assert(AC2::_S_variant != A4::_S_variant);
+      static_assert(__filter_abi_variant(AC2::_S_variant, _AbiVariant::_MaskVariants)
+		      == A4::_S_variant);
+      static_assert(__filter_abi_variant(AC2::_S_variant, _AbiVariant::_CxVariants)
+		      == _AbiVariant::_CxIleav);
+      static_assert(AC2::_S_is_cx_ileav);
+      static_assert(!AC2::_S_is_cx_ctgus);
     }
+
+#if __glibcxx_simd_complex
+  {
+    using ACx2 = _Abi_t<2, 2, _AbiVariant::_CxIleav>;
+    static_assert(__abi_tag<ACx2>);
+    static_assert(__scalar_abi_tag<ACx2>);
+    using AM4 = decltype(__abi_rebind<__float_from<2>, ACx2::_S_size * 2, ACx2>());
+    static_assert(__abi_tag<AM4>);
+    static_assert(__scalar_abi_tag<AM4>);
+    static_assert(AM4::_S_size == ACx2::_S_size * 2);
+    static_assert(!AM4::_S_is_cx_ileav);
+  }
+#endif
 
   static_assert(__streq_to_1("1"));
   static_assert(!__streq_to_1(""));
@@ -82,14 +123,14 @@ void test()
   static_assert(!__streq_to_1("0"));
   static_assert(!__streq_to_1("1 "));
 
-  static_assert(__static_sized_range<int[4]>);
-  static_assert(__static_sized_range<int[4], 4>);
-  static_assert(__static_sized_range<std::array<int, 4>, 4>);
-
   static_assert( __value_preserving_convertible_to<int, double>);
   static_assert(!__value_preserving_convertible_to<int, float>);
   static_assert( __value_preserving_convertible_to<float, double>);
   static_assert(!__value_preserving_convertible_to<double, float>);
+  static_assert( __value_preserving_convertible_to<float, complex<float>>);
+  static_assert( __value_preserving_convertible_to<float, complex<double>>);
+  static_assert( __value_preserving_convertible_to<double, complex<double>>);
+  static_assert(!__value_preserving_convertible_to<double, complex<float>>);
 
 #ifdef __STDCPP_FLOAT16_T__
   static_assert(__explicitly_convertible_to<float, float16_t>);
@@ -110,6 +151,9 @@ void test()
   static_assert(__broadcast_constructible<decltype(std::cw<0.f>), std::float16_t>);
 #endif
 
+  static_assert( __broadcast_constructible<complex<float>, complex<float>>);
+  static_assert( __broadcast_constructible<complex<float>, complex<double>>);
+  static_assert(!__broadcast_constructible<complex<double>, complex<float>>);
 
   static_assert(__higher_rank_than<long, int>);
   static_assert(__higher_rank_than<long long, long>);

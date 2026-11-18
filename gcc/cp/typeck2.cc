@@ -151,6 +151,101 @@ abstract_virtuals_error (tree decl, tree type, abstract_class_use use,
      be abstract.  */
   if (!CLASS_TYPE_P (type))
     return 0;
+
+  if (ANON_AGGR_TYPE_P (type))
+    {
+      /* [class.union.anon]/1: Each object of such an unnamed type shall be
+	 such an unnamed object.  */
+      auto_diagnostic_group d;
+      location_t aloc
+	= DECL_SOURCE_LOCATION (TYPE_MAIN_DECL (TYPE_MAIN_VARIANT (type)));
+      if (decl
+	  && VAR_P (decl)
+	  && DECL_NAME (decl) == NULL_TREE
+	  && ANON_UNION_TYPE_P (type))
+	/* Unnamed variables are ok, those are assumed to be the variable
+	   created for namespace scope anonymous union.  For temporaries
+	   even when in the end they create VAR_DECLs with NULL DECL_NAME,
+	   this function is called first with !decl and so invalid code
+	   can be diagnosed below at that point.  */;
+      else if (!(complain & tf_error))
+	return 1;
+      else if (ANON_UNION_TYPE_P (type))
+	{
+	  if (!decl)
+	    switch (use)
+	      {
+	      default:
+		error ("temporary object with anonymous union type %qT", type);
+		break;
+	      case ACU_CATCH:
+		error ("%<catch%> parameter with anonymous union type %qT",
+		       type);
+		break;
+	      case ACU_THROW:
+		error ("%<throw%> operand has anonymous union type %qT", type);
+		break;
+	      case ACU_ARRAY:
+		error ("object with array of anonymous union type %qT", type);
+		break;
+	      }
+	  else if (VAR_P (decl))
+	    error_at (location_of (decl),
+		      "declaration of variable %qD with anonymous union type "
+		      "%qT", decl, type);
+	  else if (TREE_CODE (decl) == PARM_DECL && DECL_NAME (decl))
+	    error_at (location_of (decl),
+		      "declaration of parameter %qD with anonymous union type "
+		      "%qT", decl, type);
+	  else if (TREE_CODE (decl) == PARM_DECL)
+	    error_at (location_of (decl),
+		      "declaration of a parameter with anonymous union type "
+		      "%qT", type);
+	  inform (aloc, "anonymous union declared here");
+	  if (decl)
+	    TREE_TYPE (decl) = error_mark_node;
+	  return 1;
+	}
+      else
+	{
+	  if (!decl)
+	    switch (use)
+	      {
+	      default:
+		error ("temporary object with anonymous struct type %qT",
+		       type);
+		break;
+	      case ACU_CATCH:
+		error ("%<catch%> parameter with anonymous struct type %qT",
+		       type);
+		break;
+	      case ACU_THROW:
+		error ("%<throw%> operand has anonymous struct type %qT",
+		       type);
+		break;
+	      case ACU_ARRAY:
+		error ("object with array of anonymous struct type %qT", type);
+		break;
+	      }
+	  else if (VAR_P (decl))
+	    error_at (location_of (decl),
+		      "declaration of variable %qD with anonymous struct type "
+		      "%qT", decl, type);
+	  else if (TREE_CODE (decl) == PARM_DECL && DECL_NAME (decl))
+	    error_at (location_of (decl),
+		      "declaration of parameter %qD with anonymous struct type "
+		      "%qT", decl, type);
+	  else if (TREE_CODE (decl) == PARM_DECL)
+	    error_at (location_of (decl),
+		      "declaration of a parameter with anonymous struct type "
+		      "%qT", type);
+	  inform (aloc, "anonymous struct declared here");
+	  if (decl)
+	    TREE_TYPE (decl) = error_mark_node;
+	  return 1;
+	}
+    }
+
   type = TYPE_MAIN_VARIANT (type);
 
 #if 0
@@ -361,7 +456,7 @@ cxx_incomplete_type_inform (const_tree type)
 		    else
 		      cand = TYPE_NAME (t);
 		  }
-		
+
 		if (!COMPLETE_TYPE_P (TREE_TYPE (cand)))
 		  continue;
 
@@ -576,7 +671,7 @@ build_disable_temp_cleanup (tree f)
 /* The recursive part of split_nonconstant_init.  DEST is an lvalue
    expression to which INIT should be assigned.  INIT is a CONSTRUCTOR.
    Return true if the whole of the value was initialized by the
-   generated statements.  */
+   generated statements or modifying DECL_INITIAL.  */
 
 static bool
 split_nonconstant_init_1 (tree dest, tree init, bool last,
@@ -845,6 +940,13 @@ split_nonconstant_init (tree dest, tree init)
       if (TREE_CODE (TREE_TYPE (dest)) != ARRAY_TYPE)
 	flags = make_tree_vector ();
 
+      /* We are about to call split_nonconstant_init_1 which might
+	 set DECL_INITIAL, so make sure we aren't overwriting an
+	 existing initializer.  Also, if we split out everything,
+	 we clear INIT so won't set DECL_INITIAL below.  Make
+	 sure it's null so that we're not forgetting to clear it.  */
+      gcc_assert (!(VAR_P (dest) && DECL_INITIAL (dest)));
+
       if (split_nonconstant_init_1 (dest, init, true, &flags))
 	init = NULL_TREE;
 
@@ -855,8 +957,16 @@ split_nonconstant_init (tree dest, tree init)
       code = pop_stmt_list (code);
       if (VAR_P (dest) && !is_local_temp (dest))
 	{
-	  DECL_INITIAL (dest) = init;
-	  TREE_READONLY (dest) = 0;
+	  /* If we are initializing an array, split_nonconstant_init_1
+	     might've delegated to build_vec_init in which case it always
+	     returns true so we clear INIT.  But if we're initializing
+	     a static array, build_vec_init can put constant initializers
+	     into DECL_INITIAL.  Clearing it would mean losing some of the
+	     initializers as in c++/126335.  */
+	  if (init)
+	    DECL_INITIAL (dest) = init;
+	  if (TREE_SIDE_EFFECTS (code))
+	    TREE_READONLY (dest) = 0;
 	}
       else if (init)
 	{
@@ -946,10 +1056,6 @@ store_init_value (tree decl, tree init, vec<tree, va_gc>** cleanups, int flags)
       value = digest_init_flags (type, init, flags, tf_warning_or_error);
     }
 
-  /* Look for braced array initializers for character arrays and
-     recursively convert them into STRING_CSTs.  */
-  value = braced_lists_to_strings (type, value);
-
   current_ref_temp_count = 0;
   value = extend_ref_init_temps (decl, value, cleanups);
 
@@ -966,9 +1072,12 @@ store_init_value (tree decl, tree init, vec<tree, va_gc>** cleanups, int flags)
 	  || (DECL_IN_AGGR_P (decl)
 	      && DECL_INITIALIZED_IN_CLASS_P (decl)))
 	{
-	  value = fold_non_dependent_expr (value, tf_warning_or_error,
-					   /*manifestly_const_eval=*/true,
-					   decl);
+	  /* As in massage_init_elt, do not fold a CONSTRUCTOR in a template
+	     it has already been folded c++/126811.  */
+	  if (!(processing_template_decl && TREE_CODE (value) == CONSTRUCTOR))
+	    value = fold_non_dependent_expr (value, tf_warning_or_error,
+					     /*manifestly_const_eval=*/true,
+					     decl);
 	  if (value == error_mark_node)
 	    ;
 	  /* Diagnose a non-constant initializer for constexpr variable or
@@ -1019,12 +1128,52 @@ store_init_value (tree decl, tree init, vec<tree, va_gc>** cleanups, int flags)
      that might fold away something that needs to be diagnosed at constexpr
      evaluation time.  */
   if (!current_function_decl
-      || !DECL_DECLARED_CONSTEXPR_P (current_function_decl)
+      || !maybe_constexpr_fn (current_function_decl)
       || TREE_STATIC (decl))
     value = cp_fully_fold_init (value);
 
   /* Handle aggregate NSDMI in non-constant initializers, too.  */
   value = replace_placeholders (value, decl);
+
+  /* Look for braced array initializers for character arrays and
+     recursively convert them into STRING_CSTs.  */
+  value = braced_lists_to_strings (type, value);
+
+  /* Detect stuff like 'info r = ^^int;' outside a manifestly
+     constant-evaluated context.  */
+  if (flag_reflection
+      && !processing_template_decl
+      && !DECL_DECLARED_CONSTEXPR_P (decl))
+    {
+      const bool mce_p
+	= (decl_maybe_constant_var_p (decl)
+	   || (TREE_STATIC (decl)
+	       && DECL_INITIALIZED_BY_CONSTANT_EXPRESSION_P (decl)));
+      bool bad = check_out_of_consteval_use (value, /*complain=*/false);
+      /* A non-constexpr variable at namespace scope with a constant
+	 initializer has constant initialization, so we check the folded
+	 value not to wrongly reject "int e = (^^int, 42);".  For non-static
+	 local variables, there is no such rule, so we check the unfolded
+	 initializer.  But we should also reject
+
+	   consteval auto fn () { return ^^int; }
+	   void g() { auto r = fn (); }
+
+	 so we may have to check both.  Note that the first call could
+	 have escalated and so we may find ourselves in an immediate
+	 context now.  */
+      if (!bad && !mce_p && value != init)
+	bad = check_out_of_consteval_use (init, /*complain=*/false);
+      if (bad)
+	{
+	  auto_diagnostic_group d;
+	  error_at (DECL_SOURCE_LOCATION (decl),
+		    "%qD is initialized with a consteval-only value but is "
+		    "not declared %<constexpr%>", decl);
+	  inform (DECL_SOURCE_LOCATION (decl), "add %<constexpr%>");
+	  value = error_mark_node;
+	}
+    }
 
   /* A COMPOUND_LITERAL_P CONSTRUCTOR is the syntactic form; by the time we get
      here it should have been digested into an actual value for the type.  */
@@ -1476,6 +1625,7 @@ digest_init_r (tree type, tree init, int nested, int flags,
 	  tree field = next_aggregate_field (TYPE_FIELDS (type));
 	  if (field && DECL_FIELD_IS_BASE (field))
 	    {
+	      auto_diagnostic_group d;
 	      if (warning_at (loc, 0, "initializing a base class of type %qT "
 			      "results in object slicing", TREE_TYPE (field)))
 		inform (loc, "remove %<{ }%> around initializer");

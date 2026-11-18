@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-pre-stats -fno-tree-cselim" } */
+/* { dg-options "-O2 -fdump-tree-pre-stats -fno-tree-cselim -fno-ssa-phiopt" } */
 
 typedef union {
   int i;

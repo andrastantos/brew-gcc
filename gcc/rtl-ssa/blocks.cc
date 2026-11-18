@@ -1,4 +1,4 @@
-// Implementation of basic-block-related functions for RTL SSA      -*- C++ -*-
+// Implementation of basic-block-related functions for RTL SSA.
 // Copyright (C) 2020-2026 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
@@ -941,7 +941,7 @@ function_info::add_artificial_accesses (build_info &bi, df_ref_flags flags)
   // Ensure that global registers and memory are live at the end of any
   // block that has no successors, such as the exit block and non-local gotos.
   // Global registers have to be singled out because they are not part of
-  // the DF artifical use list (they are instead treated as used within
+  // the DF artificial use list (they are instead treated as used within
   // every block).
   if (flags == 0 && EDGE_COUNT (cfg_bb->succs) == 0)
     {

@@ -22,7 +22,7 @@
 #include "rust-hir-pattern.h"
 #include "rust-hir-visitor.h"
 #include "rust-unused-collector.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
 
 namespace Rust {
 namespace Analysis {
@@ -33,7 +33,7 @@ public:
   void go (HIR::Crate &crate);
 
 private:
-  const Resolver2_0::NameResolutionContext &nr_context;
+  const Resolver2_0::FinalizedNameResolutionContext &nr_context;
   Analysis::Mappings &mappings;
   UnusedContext unused_context;
 
@@ -48,6 +48,13 @@ private:
   virtual void visit (HIR::Function &fct) override;
   virtual void visit (HIR::Module &mod) override;
   virtual void visit (HIR::LifetimeParam &lft) override;
+  virtual void visit (HIR::StructPatternFieldIdentPat &field) override;
+  virtual void visit (HIR::MatchExpr &expr) override;
+  virtual void visit (HIR::ExternBlock &block) override;
+  virtual void visit (HIR::LetStmt &stmt) override;
+  virtual void visit (HIR::BorrowExpr &expr) override;
+  virtual void visit (HIR::NegationExpr &expr) override;
+  virtual void visit (HIR::BreakExpr &expr) override;
   virtual void visit_loop_label (HIR::LoopLabel &label) override;
 };
 } // namespace Analysis

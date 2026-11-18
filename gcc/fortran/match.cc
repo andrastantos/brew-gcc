@@ -1980,6 +1980,155 @@ check_coarray_assoc (const char *name, gfc_association_list *assoc)
   return true;
 }
 
+/* Try to resolve an EXPR_FUNCTION operand so its return type is known.
+   Called during ASSOCIATE selector parsing, before type-bound operator
+   extension, when the operand is an unresolved generic constructor call
+   such as `scalar_1D_t(initializer, order=2, ...)`.  Errors are suppressed
+   since we are still in the parsing phase.  */
+
+static void
+resolve_assoc_operand (gfc_expr *e)
+{
+  if (!e || e->ts.type != BT_UNKNOWN || e->expr_type != EXPR_FUNCTION)
+    return;
+
+  /* First, try full expression resolution (works when argument types are
+     already known at parse time).  */
+  gfc_push_suppress_errors ();
+  gfc_resolve_expr (e);
+  gfc_pop_suppress_errors ();
+
+  if (e->ts.type != BT_UNKNOWN)
+    return;
+
+  /* Fallback for generic constructor interfaces such as
+       scalar_1D_t(initializer, order=2, cells=16, x_min=0D0, x_max=5D0)
+     where full argument resolution is not possible at parse time.
+     If the function name resolves to a generic interface that wraps a
+     derived type (a constructor interface), infer the return type as
+     that derived type.  */
+  if (!e->symtree || !e->symtree->n.sym)
+    return;
+
+  gfc_symbol *dt_sym = gfc_find_dt_in_generic (e->symtree->n.sym);
+  if (dt_sym && gfc_fl_struct (dt_sym->attr.flavor))
+    {
+      e->ts.type = BT_DERIVED;
+      e->ts.u.derived = dt_sym;
+    }
+}
+
+/* Infer the return type of a type-bound user-defined operator without
+   converting the expression node or triggering gfc_resolve_symbol on the
+   return type.  This is used during ASSOCIATE selector parsing to propagate
+   type information bottom-up through nested UDO expressions such as
+   (.div. (.grad. x)), so that the outer gfc_extend_expr can locate the
+   type-bound .div. once the type of (.grad. x) is known.
+
+   Calling gfc_extend_expr for this purpose would partially resolve the
+   return type's derived-type symbol (setting resolve_symbol_called before
+   resolve_typebound_procedures has run), which prevents the subsequent
+   outer gfc_extend_expr from properly resolving the type-bound operator
+   on the return type.  We avoid that by reading the return type directly
+   from the procedure's result variable without triggering resolution.  */
+
+static void
+infer_typebound_uop_type (gfc_expr *e)
+{
+  if (!e || e->expr_type != EXPR_OP || e->value.op.op != INTRINSIC_USER
+      || e->ts.type != BT_UNKNOWN)
+    return;
+
+  /* Find the operand and strip parentheses.  */
+  gfc_expr *operand = e->value.op.op1;
+  while (operand && operand->expr_type == EXPR_OP
+	 && operand->value.op.op == INTRINSIC_PARENTHESES)
+    operand = operand->value.op.op1;
+
+  if (!operand || operand->ts.type != BT_DERIVED || !operand->ts.u.derived)
+    return;
+
+  /* Look up the UDO binding in the derived type's namespace (and its
+     parent types, via the recursion in find_typebound_proc_uop).  This
+     does not call resolve_symbol, so it leaves resolve_symbol_called
+     untouched for all types involved.  */
+  bool ok = true;
+  gfc_symtree *tb_uop
+    = gfc_find_typebound_user_op (operand->ts.u.derived, &ok,
+				  e->value.op.uop->name, false, NULL);
+  if (!tb_uop || !tb_uop->n.tb)
+    return;
+
+  gfc_typebound_proc *tb = tb_uop->n.tb;
+  if (!tb->is_generic || !tb->u.generic)
+    return;
+
+  /* Take the first specific binding.  specific_st is set from module reading;
+     its n.tb is the gfc_typebound_proc for that specific binding (same as
+     what resolve_typebound_procedures later stores in g->specific).  Follow
+     the chain specific_st->n.tb->u.specific->n.sym to reach the actual
+     implementing function symbol, whose ts holds the return type.
+     This mirrors what build_compcall_for_operator does via
+     g->specific->u.specific->n.sym->ts after resolution.  */
+  gfc_tbp_generic *g = tb->u.generic;
+  if (!g->specific_st || !g->specific_st->n.tb)
+    return;
+
+  gfc_typebound_proc *specific_tb = g->specific_st->n.tb;
+  if (specific_tb->is_generic || !specific_tb->u.specific
+      || !specific_tb->u.specific->n.sym)
+    return;
+
+  gfc_symbol *proc = specific_tb->u.specific->n.sym;
+  if (proc->ts.type != BT_UNKNOWN)
+    e->ts = proc->ts;
+}
+
+/* Recursively propagate type information bottom-up through a nested UDO
+   expression tree so that when gfc_extend_expr is called on the outermost
+   operator during ASSOCIATE selector parsing, the inner operands already have
+   their types set and the type-bound lookup can succeed.  Uses
+   infer_typebound_uop_type rather than gfc_extend_expr to avoid triggering
+   resolve_symbol on the return types, which would prevent the outer
+   gfc_extend_expr from working correctly.  */
+
+static void
+extend_assoc_op (gfc_expr *e)
+{
+  if (!e || e->expr_type != EXPR_OP)
+    return;
+
+  /* Bottom-up: process children first.  */
+  extend_assoc_op (e->value.op.op1);
+  extend_assoc_op (e->value.op.op2);
+
+  /* Propagate the child's type upward through parentheses nodes.
+     gfc_extend_expr's matching_typebound_op checks ts.type BEFORE stripping
+     INTRINSIC_PARENTHESES wrappers, so an untyped parentheses node prevents
+     the outer operator from being found.  */
+  if (e->value.op.op == INTRINSIC_PARENTHESES
+      && e->ts.type == BT_UNKNOWN
+      && e->value.op.op1
+      && e->value.op.op1->ts.type != BT_UNKNOWN)
+    {
+      e->ts = e->value.op.op1->ts;
+      return;
+    }
+
+  /* Only handle unresolved user-defined operators.  */
+  if (e->value.op.op != INTRINSIC_USER || e->ts.type != BT_UNKNOWN)
+    return;
+
+  /* Try to infer the type of each operand if it is an unresolved constructor
+     call (EXPR_FUNCTION whose return type is still BT_UNKNOWN).  */
+  resolve_assoc_operand (e->value.op.op1);
+  resolve_assoc_operand (e->value.op.op2);
+
+  /* Infer this operator's return type from the type-bound procedure's result
+     variable, without calling gfc_resolve_symbol on the return type.  */
+  infer_typebound_uop_type (e);
+}
+
 match
 match_association_list (bool for_change_team = false)
 {
@@ -2142,11 +2291,51 @@ match_association_list (bool for_change_team = false)
 	    }
 	}
       else if (newAssoc->target->ts.type == BT_UNKNOWN
+	       && newAssoc->target->expr_type == EXPR_OP
+	       && newAssoc->target->value.op.op == INTRINSIC_USER)
+	{
+	  /* If the selector is an unresolved type-bound user-defined operator
+	     expression, try to extend it now so the associate name gets a usable
+	     type.  For nested operators such as
+	       (.div. (.grad. x))
+	     first propagate types bottom-up through the inner operands
+	     (extend_assoc_op).  For a direct operator applied to a constructor
+	     call such as
+	       (.div. vector_t(init_fn, n=8))
+	     additionally resolve the direct operands as constructor calls
+	     (resolve_assoc_operand).  Then call gfc_extend_expr on the
+	     outermost operator.  Only handle INTRINSIC_USER here; arithmetic
+	     operators are left to the normal resolution pass.  */
+	  gfc_expr *tmp = gfc_copy_expr (newAssoc->target);
+	  extend_assoc_op (tmp->value.op.op1);
+	  extend_assoc_op (tmp->value.op.op2);
+	  resolve_assoc_operand (tmp->value.op.op1);
+	  resolve_assoc_operand (tmp->value.op.op2);
+	  /* Suppress errors from gfc_extend_expr: during parsing the full
+	     resolution has not run yet, so gfc_resolve_expr(COMPCALL) may
+	     fail even when the type-bound operator was found and the node
+	     was correctly converted to EXPR_COMPCALL.  Accept the conversion
+	     in that case and let the normal resolution pass finish it.  */
+	  gfc_push_suppress_errors ();
+	  match ext_m = gfc_extend_expr (tmp);
+	  gfc_pop_suppress_errors ();
+	  if (ext_m == MATCH_YES
+	      || (tmp->expr_type == EXPR_COMPCALL
+		  && tmp->ts.type != BT_UNKNOWN))
+	    gfc_replace_expr (newAssoc->target, tmp);
+	  else
+	    gfc_free_expr (tmp);
+	}
+      else if (newAssoc->target->ts.type == BT_UNKNOWN
 	       && newAssoc->target->expr_type == EXPR_OP)
 	{
-	  /* This will work for sure if the operator is type bound to a use
-	     associated derived type.  */
-	  gfc_expr *tmp =gfc_copy_expr (newAssoc->target);
+	  /* The selector is an unresolved expression involving an overloaded
+	     intrinsic operator (e.g. a `+' bound via an explicit interface
+	     to a function returning CHARACTER).  Try to extend it now, the
+	     same way the type-bound user-defined operator case above does
+	     for INTRINSIC_USER, so the associate name gets a usable type
+	     before the body of the ASSOCIATE construct is parsed.  */
+	  gfc_expr *tmp = gfc_copy_expr (newAssoc->target);
 	  if (gfc_extend_expr (tmp) == MATCH_YES)
 	    gfc_replace_expr (newAssoc->target, tmp);
 	  else
@@ -2243,6 +2432,7 @@ match_derived_type_spec (gfc_typespec *ts)
   bool is_pdt_template = false;
 
   old_locus = gfc_current_locus;
+  type_param_spec_list = NULL;
 
   if (gfc_match ("%n", name) != MATCH_YES)
     {
@@ -2630,13 +2820,17 @@ cleanup:
 }
 
 
+/* Counter used to uniquify shadow-variable names created below.  */
+
+static int shadow_var_num = 0;
+
 /* Apply type-spec to iterator and create shadow variable if needed.  */
 
 static void
 apply_typespec_to_iterator (gfc_forall_iterator *iter, gfc_typespec *ts,
 			     locus *loc)
 {
-  char *name;
+  const char *name;
   gfc_expr *v;
   gfc_symtree *st;
 
@@ -2657,13 +2851,14 @@ apply_typespec_to_iterator (gfc_forall_iterator *iter, gfc_typespec *ts,
   else
     {
       /* Variable exists in outer scope - must create shadow to comply
-	 with F2018 19.4(6) scoping rules.  */
-      name = (char *) alloca (strlen (v->symtree->name) + 2);
-      strcpy (name, "_");
-      strcat (name, v->symtree->name);
+	 with F2018 19.4(6) scoping rules.  Number the shadow so sibling
+	 constructs do not share it.  */
+      name = gfc_get_string ("_%s_%d", v->symtree->name, shadow_var_num++);
       if (gfc_get_sym_tree (name, NULL, &st, false) != 0)
 	gfc_internal_error ("Failed to create shadow variable symtree for "
 			    "DO CONCURRENT type-spec at %L", loc);
+
+      iter->shadow_outer_sym = iter->var->symtree->n.sym;
 
       v = gfc_get_expr ();
       v->where = gfc_current_locus;
@@ -3771,19 +3966,22 @@ checks:
 	  goto cleanup;
 	}
 
-      /* Use the machinery for an initialization expression to reduce the
-	 stop-code to a constant.  */
-      gfc_reduce_init_expr (e);
-
-      /* Test for F2008 style STOP stop-code.  */
-      if (e->expr_type != EXPR_CONSTANT && f08)
+      /* If this is F2008, it could be an init expression.  */
+      if (f08)
 	{
-	  gfc_error ("STOP code at %L must be a scalar default CHARACTER or "
-		     "INTEGER constant expression", &e->where);
-	  goto cleanup;
+	  gfc_reduce_init_expr (e);
+	  if (e->expr_type != EXPR_CONSTANT)
+	    {
+	      gfc_error ("STOP code at %L must be a scalar constant "
+			 "expression", &e->where);
+	      goto cleanup;
+	    }
 	}
 
-      if (!(e->ts.type == BT_CHARACTER || e->ts.type == BT_INTEGER))
+      /* For types known at parse time, check immediately.  For BT_UNKNOWN
+	 (e.g. a forward-referenced contained function) defer to resolve.  */
+      if (e->ts.type != BT_UNKNOWN
+	  && !(e->ts.type == BT_CHARACTER || e->ts.type == BT_INTEGER))
 	{
 	  gfc_error ("STOP code at %L must be either INTEGER or CHARACTER type",
 		     &e->where);
@@ -5016,6 +5214,7 @@ gfc_match_allocate (void)
   gfc_alloc *head, *tail;
   gfc_expr *stat, *errmsg, *tmp, *source, *mold;
   gfc_typespec ts;
+  gfc_actual_arglist *ts_param_list = NULL;
   gfc_symbol *sym;
   gfc_ref *ref;
   match m;
@@ -5057,7 +5256,7 @@ gfc_match_allocate (void)
 
       if (gfc_match (" :: ") == MATCH_YES)
 	{
-	  if (!gfc_notify_std (GFC_STD_F2003, "typespec in ALLOCATE at %L",
+	  if (!gfc_notify_std (GFC_STD_F2003, "type-spec in ALLOCATE at %L",
 			       &old_locus))
 	    goto cleanup;
 
@@ -5083,11 +5282,24 @@ gfc_match_allocate (void)
 			 "%L cannot contain DEFERRED parameters", &old_locus);
 	      goto cleanup;
 	    }
+
+	  ts_param_list = gfc_copy_actual_arglist (type_param_spec_list);
+
 	}
       else
 	{
 	  ts.type = BT_UNKNOWN;
 	  gfc_current_locus = old_locus;
+	}
+
+      /* F2018:C937 (R927) type-spec shall not specify a type that has a
+	 coarray ultimate component.  Similar text in F2008:C640 (R626).  */
+      if (ts.type == BT_DERIVED
+	  && ts.u.derived->attr.coarray_comp)
+	{
+	  gfc_error ("Type-spec at %L has a coarray ultimate component",
+		     &old_locus);
+	  goto cleanup;
 	}
     }
 
@@ -5139,17 +5351,24 @@ gfc_match_allocate (void)
 	  goto cleanup;
 	}
 
-      if (tail->expr->ts.deferred
-	  || (tail->expr->symtree->n.sym->param_list
-	      && spec_list_type (tail->expr->symtree->n.sym->param_list)
+      bool deferrable = !(tail->expr->ts.type != BT_UNKNOWN
+			   && tail->expr->ts.type != BT_CHARACTER
+			   && !IS_PDT (tail->expr) && !IS_CLASS_PDT (tail->expr)
+			   && (gfc_expr_attr (tail->expr).allocatable
+			       || gfc_expr_attr (tail->expr).pointer));
+
+      if ((tail->expr->ts.deferred
+	   || (tail->expr->symtree->n.sym->param_list
+	       && spec_list_type (tail->expr->symtree->n.sym->param_list)
 				 == SPEC_DEFERRED))
+	  && deferrable)
 	{
 	  saw_deferred = true;
 	  deferred_locus = tail->expr->where;
 	}
       else if ((tail->expr->ts.type == BT_DERIVED
 		|| tail->expr->ts.type == BT_CLASS)
-	       && tail->expr->ref)
+	       && tail->expr->ref && deferrable)
 	{
 	  for (ref = tail->expr->ref; ref; ref = ref->next)
 	    if (ref->type == REF_COMPONENT
@@ -5213,7 +5432,7 @@ gfc_match_allocate (void)
 	  if (!gfc_type_compatible (&tail->expr->ts, &ts))
 	    {
 	      gfc_error ("Type of entity at %L is type incompatible with "
-			 "typespec", &tail->expr->where);
+			 "type-spec", &tail->expr->where);
 	      goto cleanup;
 	    }
 
@@ -5221,7 +5440,7 @@ gfc_match_allocate (void)
 	  if (ts.kind != tail->expr->ts.kind && !UNLIMITED_POLY (tail->expr))
 	    {
 	      gfc_error ("Kind type parameter for entity at %L differs from "
-			 "the kind type parameter of the typespec",
+			 "the kind type parameter of the type-spec",
 			 &tail->expr->where);
 	      goto cleanup;
 	    }
@@ -5239,6 +5458,23 @@ gfc_match_allocate (void)
 	{
 	  gfc_error ("Shape specification for allocatable scalar at %C");
 	  goto cleanup;
+	}
+
+      /* F2018(11.1.5.2): Track coarrays allocated in team blocks.  */
+      gfc_namespace *team_ns = get_current_team_context ();
+      bool codim = tail->expr->symtree->n.sym->attr.codimension
+		   || (tail->expr->symtree->n.sym->as
+		       && tail->expr->symtree->n.sym->as->corank);
+      for (gfc_ref *r = tail->expr->ref; r; r = r->next)
+	if (r->type == REF_COMPONENT && r->u.c.component)
+	  codim = r->u.c.component->attr.codimension
+		  || (r->u.c.component->as && r->u.c.component->as->corank);
+
+      if (flag_coarray == GFC_FCOARRAY_LIB && team_ns && codim)
+	{
+	  gfc_expr *e = gfc_copy_expr (tail->expr);
+	  vec<gfc_expr *> &allocated = team_allocated_coarrays.get_or_insert (team_ns);
+	  allocated.safe_push (e);
 	}
 
       if (gfc_match_char (',') != MATCH_YES)
@@ -5316,7 +5552,7 @@ alloc_opt_list:
 	  /* The next 2 conditionals check C631.  */
 	  if (ts.type != BT_UNKNOWN)
 	    {
-	      gfc_error ("SOURCE tag at %L conflicts with the typespec at %L",
+	      gfc_error ("SOURCE tag at %L conflicts with the type-spec at %L",
 			 &tmp->where, &old_locus);
 	      goto cleanup;
 	    }
@@ -5326,6 +5562,8 @@ alloc_opt_list:
 				  " with more than a single allocate object",
 				  &tmp->where))
 	    goto cleanup;
+
+
 
 	  source = tmp;
 	  tmp = NULL;
@@ -5376,6 +5614,17 @@ alloc_opt_list:
   if (gfc_match (" )%t") != MATCH_YES)
     goto syntax;
 
+  /* C949 (R930) The declared type of source-expr shall not have a
+     coarray ultimate component. */
+  if (source
+      && source->ts.type == BT_DERIVED
+      && source->ts.u.derived->attr.coarray_comp)
+    {
+      gfc_error ("Declared type of source expression at %L has a coarray "
+		 "ultimate component", &source->where);
+      goto cleanup;
+    }
+
   /* Check F08:C637.  */
   if (source && mold)
     {
@@ -5415,6 +5664,7 @@ alloc_opt_list:
     new_st.expr3 = mold;
   new_st.ext.alloc.list = head;
   new_st.ext.alloc.ts = ts;
+  new_st.ext.alloc.param_list = ts_param_list;
 
   if (type_param_spec_list)
     gfc_free_actual_arglist (type_param_spec_list);
@@ -5854,12 +6104,18 @@ gfc_match_call (void)
      target type.  */
   if (((sym->attr.flavor != FL_PROCEDURE
 	|| gfc_is_function_return_value (sym, gfc_current_ns))
-       && (sym->ts.type == BT_DERIVED || sym->ts.type == BT_CLASS))
-		||
-      (sym->assoc && sym->assoc->target
-       && gfc_resolve_expr (sym->assoc->target)
-       && (sym->assoc->target->ts.type == BT_DERIVED
-	   || sym->assoc->target->ts.type == BT_CLASS)))
+	&& (sym->ts.type == BT_DERIVED || sym->ts.type == BT_CLASS))
+      ||
+      /* Skip gfc_resolve_expr for ASSOCIATE names followed by '%'.
+	 resolving a contained-function selector before CONTAINS is
+	 parsed prematurely, marks it EXTERNAL, conflicting with its
+	 later INTERNAL declaration.  */
+	(sym->assoc && sym->assoc->target && gfc_peek_ascii_char () == '%')
+      ||
+	(sym->assoc && sym->assoc->target
+	 && gfc_resolve_expr (sym->assoc->target)
+	 && (sym->assoc->target->ts.type == BT_DERIVED
+	     || sym->assoc->target->ts.type == BT_CLASS)))
     return match_typebound_call (st);
 
   /* If it does not seem to be callable (include functions so that the
@@ -6339,10 +6595,18 @@ gfc_free_namelist (gfc_namelist *name)
 /* Free an OpenMP namelist structure.  */
 
 void
-gfc_free_omp_namelist (gfc_omp_namelist *name, bool free_ns,
-		       bool free_align_allocator,
-		       bool free_mem_traits_space, bool free_init)
+gfc_free_omp_namelist (gfc_omp_namelist *name, enum gfc_omp_list_type list)
 {
+  bool free_ns = (list == OMP_LIST_AFFINITY || list == OMP_LIST_DEPEND
+		  || list == OMP_LIST_MAP
+		  || list == OMP_LIST_TO || list == OMP_LIST_FROM);
+  bool free_align_allocator = (list == OMP_LIST_ALLOCATE);
+  bool free_mem_traits_space = (list == OMP_LIST_USES_ALLOCATORS);
+  bool free_init = (list == OMP_LIST_INIT);
+  bool free_mapper = (list == OMP_LIST_MAP
+		      || list == OMP_LIST_TO
+		      || list == OMP_LIST_FROM);
+
   gfc_omp_namelist *n;
   gfc_expr *last_allocator = NULL;
   char *last_init_interop = NULL;
@@ -6375,7 +6639,9 @@ gfc_free_omp_namelist (gfc_omp_namelist *name, bool free_ns,
 	      free (name->u2.init_interop);
 	    }
 	}
-      else if (name->u2.udr)
+      else if (free_mapper && name->u3.udm)
+	free (name->u3.udm);
+      else if (!free_mapper && name->u2.udr)
 	{
 	  if (name->u2.udr->combiner)
 	    gfc_free_statement (name->u2.udr->combiner);
@@ -8053,6 +8319,7 @@ gfc_match_class_is (void)
   c = gfc_get_case ();
   c->where = gfc_current_locus;
 
+  type_param_spec_list = NULL;
   m = match_derived_type_spec (&c->ts);
   if (m == MATCH_NO)
     goto syntax;
@@ -8061,6 +8328,9 @@ gfc_match_class_is (void)
 
   if (c->ts.type == BT_DERIVED)
     c->ts.type = BT_CLASS;
+
+  /* Distinguish CLASS IS cases to prevent collisions.  */
+  c->ts.u.derived->hash_value = gfc_hash_value (c->ts.u.derived);
 
   if (gfc_match_char (')') != MATCH_YES)
     goto syntax;

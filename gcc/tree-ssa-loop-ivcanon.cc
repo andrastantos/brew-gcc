@@ -65,7 +65,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-ssa-sccvn.h"
 #include "tree-vectorizer.h" /* For find_loop_location */
 #include "dbgcnt.h"
-#include "hierarchical_discriminator.h"
 
 /* Specifies types of loops that may be unrolled.  */
 
@@ -254,7 +253,7 @@ constant_after_peeling (tree op, gimple *stmt, class loop *loop)
 }
 
 /* Computes an estimated number of insns in LOOP.
-   EXIT (if non-NULL) is an exite edge that will be eliminated in all but last
+   EXIT (if non-NULL) is an exit edge that will be eliminated in all but last
    iteration of the loop.
    EDGE_TO_CANCEL (if non-NULL) is an non-exit edge eliminated in the last iteration
    of loop.
@@ -514,7 +513,7 @@ loop_edge_to_cancel (class loop *loop)
   FOR_EACH_VEC_ELT (exits, i, edge_to_cancel)
     {
        /* Find the other edge than the loop exit
-          leaving the conditoinal.  */
+          leaving the conditional.  */
        if (EDGE_COUNT (edge_to_cancel->src->succs) != 2)
          continue;
        if (EDGE_SUCC (edge_to_cancel->src, 0) == edge_to_cancel)
@@ -674,7 +673,7 @@ static bitmap peeled_loops;
    IRRED_INVALIDATED is used to bookkeep if information about
    irreducible regions may become invalid as a result
    of the transformation.
-   LOOP_CLOSED_SSA_INVALIDATED is used to bookkepp the case
+   LOOP_CLOSED_SSA_INVALIDATED is used to bookkeep the case
    when we need to go into loop closed SSA form.  */
 
 void
@@ -737,7 +736,7 @@ unloop_loops (vec<class loop *> &loops_to_unloop,
 /* Tries to unroll LOOP completely, i.e. NITER times.
    UL determines which loops we are allowed to unroll.
    EXIT is the exit of the loop that should be eliminated.
-   MAXITER specfy bound on number of iterations, -1 if it is
+   MAXITER specify bound on number of iterations, -1 if it is
    not known or too large for HOST_WIDE_INT.  The location
    LOCUS corresponding to the loop is used when emitting
    a summary of the unroll to the dump file.  */
@@ -871,7 +870,7 @@ try_unroll_loop_completely (class loop *loop,
 	      <= ninsns + (size.constant_iv != false))
 	    ;
 	  /* We unroll only inner loops, because we do not consider it
-	     profitable otheriwse.  We still can cancel loopback edge
+	     profitable otherwise.  We still can cancel loopback edge
 	     of not rolling loop; this is always a good idea.  */
 	  else if (ul == UL_NO_GROWTH)
 	    {
@@ -981,8 +980,7 @@ try_unroll_loop_completely (class loop *loop,
       if (!gimple_duplicate_loop_body_to_header_edge (
 	    loop, loop_preheader_edge (loop), n_unroll, wont_exit, exit,
 	    &edges_to_remove,
-	    DLTHE_FLAG_UPDATE_FREQ | DLTHE_FLAG_COMPLETTE_PEEL
-	    | DLTHE_RECORD_HIERARCHICAL_DISCRIMINATOR))
+	    DLTHE_FLAG_UPDATE_FREQ | DLTHE_FLAG_COMPLETTE_PEEL))
 	{
           free_original_copy_tables ();
 	  if (dump_file && (dump_flags & TDF_DETAILS))
@@ -1067,7 +1065,7 @@ adjust_loop_info_after_peeling (class loop *loop, int npeel, bool precise)
 	 iterations are special, it is not quite correct to
 	 assume that the remaining iterations will behave
 	 the same way.  However we do not have better info
-	 so update the esitmate, since it is likely better
+	 so update the estimate, since it is likely better
 	 than keeping it as it is.
 
 	 Remove it if it looks wrong.
@@ -1225,7 +1223,7 @@ try_peel_loop (class loop *loop,
   if (!gimple_duplicate_loop_body_to_header_edge (
 	loop, loop_preheader_edge (loop), npeel, wont_exit, exit,
 	&edges_to_remove,
-	DLTHE_FLAG_UPDATE_FREQ | DLTHE_RECORD_HIERARCHICAL_DISCRIMINATOR))
+	DLTHE_FLAG_UPDATE_FREQ))
     {
       free_original_copy_tables ();
       return false;
@@ -1528,7 +1526,7 @@ tree_unroll_loops_completely_1 (bool may_increase_size, bool unroll_outer,
 /* Unroll LOOPS completely if they iterate just few times.  Unless
    MAY_INCREASE_SIZE is true, perform the unrolling only if the
    size of the code does not increase.
-   cunrolli is true when passs is cunrolli.  */
+   cunrolli is true when pass is cunrolli.  */
 
 static unsigned int
 tree_unroll_loops_completely (bool may_increase_size, bool unroll_outer, bool cunrolli)

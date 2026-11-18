@@ -4,7 +4,7 @@
 
 AC_INIT(libssp, 1.0)
 AC_CONFIG_SRCDIR(ssp.c)
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_TARGET
 ACX_NONCANONICAL_TARGET
 
 AM_INIT_AUTOMAKE([no-dist])
@@ -27,11 +27,10 @@ GCC_NO_EXECUTABLES
 AM_ENABLE_MULTILIB(, ..)
 
 target_alias=${target_alias-$host_alias}
-AC_SUBST(target_alias)
 
 AC_CONFIG_HEADERS(config.h)
 
-AC_LANG_C
+AC_LANG([C])
 # The same as in boehm-gc and libstdc++. Have to borrow it from there.
 # We must force CC to /not/ be precious variables; otherwise
 # the wrong, non-multilib-adjusted value will be used in multilibs.
@@ -52,11 +51,11 @@ AC_PROG_CPP
 AC_MSG_CHECKING([whether -fstack-protector works])
 save_CFLAGS="$CFLAGS"
 CFLAGS="$CFLAGS -fstack-protector -Werror"
-AC_TRY_COMPILE([
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 void __attribute__((noinline)) bar (char *x)
 {
   __builtin_memset (x, 0, 64);
-}],[char buf[64]; bar (buf);],
+}]], [[char buf[64]; bar (buf);]])],
 [AC_MSG_RESULT(yes)],
 [AC_MSG_RESULT(no)])
 CFLAGS="$save_CFLAGS"
@@ -67,8 +66,8 @@ XCFLAGS="$XCFLAGS $CET_FLAGS"
 AC_SUBST(XCFLAGS)
 
 AC_MSG_CHECKING([whether hidden visibility is supported])
-AC_TRY_COMPILE([
-void __attribute__((visibility ("hidden"))) bar (void) {}],,
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+void __attribute__((visibility ("hidden"))) bar (void) {}]], [[]])],
 [ssp_hidden=yes],[ssp_hidden=no])
 AC_MSG_RESULT($ssp_hidden)
 if test x$ssp_hidden = xyes; then
@@ -94,7 +93,10 @@ FOO_1.0 {
   global: *foo*; bar; local: *;
 };
 EOF
-    AC_TRY_LINK([int foo;],[],[ssp_use_symver=gnu],[ssp_use_symver=no])
+    AC_LINK_IFELSE(
+      [AC_LANG_PROGRAM([[int foo;]], [[]])],
+      [ssp_use_symver=gnu],
+      [ssp_use_symver=no])
     if test x$ssp_use_symver = xno; then
       case "$target_os" in
         solaris2*)
@@ -106,7 +108,10 @@ FOO_1.0 {
   global: foo; local: *;
 };
 EOF
-          AC_TRY_LINK([int foo;],[],[ssp_use_symver=sun],[ssp_use_symver=no])
+          AC_LINK_IFELSE(
+            [AC_LANG_PROGRAM([[int foo;]], [[]])],
+            [ssp_use_symver=sun],
+            [ssp_use_symver=no])
 	  ;;
       esac
     fi
@@ -118,17 +123,10 @@ AM_CONDITIONAL(LIBSSP_USE_SYMVER, [test "x$ssp_use_symver" != xno])
 AM_CONDITIONAL(LIBSSP_USE_SYMVER_GNU, [test "x$ssp_use_symver" = xgnu])
 AM_CONDITIONAL(LIBSSP_USE_SYMVER_SUN, [test "x$ssp_use_symver" = xsun])
 
-AC_CHECK_HEADERS(alloca.h malloc.h paths.h syslog.h string.h unistd.h fcntl.h stdio.h limits.h)
+AC_CHECK_HEADERS(alloca.h malloc.h paths.h syslog.h unistd.h fcntl.h)
 
-if test x$gcc_no_link = xyes; then
-  # Presume the ISO C functions are available; add target-specific
-  # configuration here if required.
-  AC_DEFINE(HAVE_STRNCPY)
-  AC_DEFINE(HAVE_STRNCAT)
-else
-  AC_CHECK_FUNCS(memmove mempcpy strncpy strncat)
-fi
 AC_CHECK_DECLS([gets])
+AC_CHECK_FUNCS([mempcpy])
 
 AC_MSG_CHECKING([whether vsnprintf is usable])
 AC_RUN_IFELSE([AC_LANG_PROGRAM([
@@ -159,7 +157,7 @@ else
 fi
 AC_SUBST(ssp_have_usable_vsnprintf)
 
-AM_PROG_LIBTOOL
+LT_INIT
 ACX_LT_HOST_FLAGS
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)

@@ -119,8 +119,10 @@ BDESC_VERIFYS (IX86_BUILTIN__BDESC_MULTI_ARG_FIRST,
 	       IX86_BUILTIN__BDESC_ROUND_ARGS_LAST, 1);
 BDESC_VERIFYS (IX86_BUILTIN__BDESC_CET_FIRST,
 	       IX86_BUILTIN__BDESC_MULTI_ARG_LAST, 1);
-BDESC_VERIFYS (IX86_BUILTIN_MAX,
+BDESC_VERIFYS (IX86_BUILTIN__BDESC_ACE_FIRST,
 	       IX86_BUILTIN__BDESC_CET_LAST, 1);
+BDESC_VERIFYS (IX86_BUILTIN_MAX,
+	       IX86_BUILTIN__BDESC_ACE_LAST, 1);
 
 
 /* Table for the ix86 builtin non-function types.  */
@@ -157,7 +159,7 @@ ix86_get_builtin_type (enum ix86_builtin_type tcode)
     }
   else
     {
-      int quals;
+      cv_qualifier quals;
 
       index = tcode - IX86_BT_LAST_VECT - 1;
       if (tcode <= IX86_BT_LAST_PTR)
@@ -281,10 +283,11 @@ def_builtin (HOST_WIDE_INT mask, HOST_WIDE_INT mask2,
 	   && (mask == 0 || (mask & ix86_isa_flags) != 0))
 	  || ((mask & OPTION_MASK_ISA_MMX) != 0 && TARGET_MMX_WITH_SSE)
 	  /* "Unified" builtin used by either AVXVNNI/AVXIFMA/AES/
-	     AVXVNNIINT{8,16} intrinsics or AVX512VNNIVL/AVX512IFMAVL/VAESVL/
-	     AVX10.2 non-mask intrinsics should be defined whenever avxvnni/
-	     avxifma/aes/avxvnniint{8,16} or avx512vnni && avx512vl/avx512ifma
-	     && avx512vl/vaes && avx512vl/avx10.2 exist.  */
+	     AVXVNNIINT{8,16}/AMX-TILE intrinsics or AVX512VNNIVL/AVX512IFMAVL/
+	     VAESVL/AVX10.2/ACEv1 non-mask intrinsics should be defined
+	     whenever avxvnni/avxifma/aes/avxvnniint{8,16}/amx-tile or
+	     avx512vnni && avx512vl/avx512ifma && avx512vl/vaes && avx512vl/
+	     avx10.2/acev1 exist.  */
 	  || (mask2 == OPTION_MASK_ISA2_AVXVNNI)
 	  || (mask2 == OPTION_MASK_ISA2_AVXIFMA)
 	  || (mask2 == (OPTION_MASK_ISA2_AVXNECONVERT
@@ -292,6 +295,7 @@ def_builtin (HOST_WIDE_INT mask, HOST_WIDE_INT mask2,
 	  || ((mask2 & OPTION_MASK_ISA2_VAES) != 0)
 	  || ((mask2 & OPTION_MASK_ISA2_AVXVNNIINT8) != 0)
 	  || ((mask2 & OPTION_MASK_ISA2_AVXVNNIINT16) != 0)
+	  || ((mask2 & OPTION_MASK_ISA2_AMX_TILE) != 0)
 	  || (lang_hooks.builtin_function
 	      == lang_hooks.builtin_function_ext_scope))
 	{
@@ -1261,6 +1265,26 @@ ix86_init_mmx_sse_builtins (void)
 	       "__builtin_ia32_uwrmsr", VOID_FTYPE_UINT64_UINT64,
 	       IX86_BUILTIN_UWRMSR);
 
+  /* ACEv1.  */
+  def_builtin (OPTION_MASK_ISA_64BIT, OPTION_MASK_ISA2_ACEV1,
+	       "__builtin_ia32_bsr0init", VOID_FTYPE_VOID,
+	       IX86_BUILTIN_BSR0INIT);
+  def_builtin (OPTION_MASK_ISA_64BIT, OPTION_MASK_ISA2_ACEV1,
+	       "__builtin_ia32_bsr0movf", VOID_FTYPE_V16SI_V16SI,
+	       IX86_BUILTIN_BSR0MOVF);
+  def_builtin (OPTION_MASK_ISA_64BIT, OPTION_MASK_ISA2_ACEV1,
+	       "__builtin_ia32_bsr0movhinsert", VOID_FTYPE_V16SI,
+	       IX86_BUILTIN_BSR0MOVHINSERT);
+  def_builtin (OPTION_MASK_ISA_64BIT, OPTION_MASK_ISA2_ACEV1,
+	       "__builtin_ia32_bsr0movhextract", V16SI_FTYPE_VOID,
+	       IX86_BUILTIN_BSR0MOVHEXTRACT);
+  def_builtin (OPTION_MASK_ISA_64BIT, OPTION_MASK_ISA2_ACEV1,
+	       "__builtin_ia32_bsr0movlinsert", VOID_FTYPE_V16SI,
+	       IX86_BUILTIN_BSR0MOVLINSERT);
+  def_builtin (OPTION_MASK_ISA_64BIT, OPTION_MASK_ISA2_ACEV1,
+	       "__builtin_ia32_bsr0movlextract", V16SI_FTYPE_VOID,
+	       IX86_BUILTIN_BSR0MOVLEXTRACT);
+
   /* CLDEMOTE.  */
   def_builtin (0, OPTION_MASK_ISA2_CLDEMOTE, "__builtin_ia32_cldemote",
 	       VOID_FTYPE_PCVOID, IX86_BUILTIN_CLDEMOTE);
@@ -1292,6 +1316,22 @@ ix86_init_mmx_sse_builtins (void)
   BDESC_VERIFYS (IX86_BUILTIN__BDESC_CET_LAST,
 		 IX86_BUILTIN__BDESC_CET_FIRST,
 		 ARRAY_SIZE (bdesc_cet) - 1);
+
+
+  /* Add ACE inrinsics.  */
+  for (i = 0, d = bdesc_ace; i < ARRAY_SIZE (bdesc_ace);
+       i++, d++)
+    {
+      BDESC_VERIFY (d->code, IX86_BUILTIN__BDESC_ACE_FIRST, i);
+      if (d->name == 0)
+	continue;
+
+      ftype = (enum ix86_builtin_func_type) d->flag;
+      def_builtin (d->mask, d->mask2, d->name, ftype, d->code);
+    }
+  BDESC_VERIFYS (IX86_BUILTIN__BDESC_ACE_LAST,
+		 IX86_BUILTIN__BDESC_ACE_FIRST,
+		 ARRAY_SIZE (bdesc_ace) - 1);
 }
 
 #undef BDESC_VERIFY

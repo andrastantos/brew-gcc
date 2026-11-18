@@ -1507,6 +1507,7 @@ tsubst_compound_requirement (tree t, tree args, sat_info info)
 {
   tree t0 = TREE_OPERAND (t, 0);
   tree t1 = TREE_OPERAND (t, 1);
+  tree noex = TREE_OPERAND (t, 2);
   tree expr = tsubst_valid_expression_requirement (t0, args, info);
   if (expr == error_mark_node)
     return error_mark_node;
@@ -1516,8 +1517,17 @@ tsubst_compound_requirement (tree t, tree args, sat_info info)
   subst_info quiet (info.complain & ~tf_warning_or_error, info.in_decl);
 
   /* Check the noexcept condition.  */
-  bool noexcept_p = COMPOUND_REQ_NOEXCEPT_P (t);
-  if (noexcept_p && !processing_template_decl
+  noex = tsubst_expr (noex, args, info.complain, info.in_decl);
+  if (!instantiation_dependent_expression_p (noex))
+    {
+      noex = build_converted_constant_bool_expr (noex, info.complain);
+      noex = instantiate_non_dependent_expr (noex, info.complain);
+      noex = cxx_constant_value (noex, info.complain);
+    }
+  if (noex == error_mark_node)
+    return error_mark_node;
+  if (!processing_template_decl
+      && integer_nonzerop (noex)
       && !expr_noexcept_p (expr, quiet.complain))
     {
       if (info.diagnose_unsatisfaction_p ())
@@ -1573,8 +1583,7 @@ tsubst_compound_requirement (tree t, tree args, sat_info info)
     }
 
   if (processing_template_decl)
-    return finish_compound_requirement (EXPR_LOCATION (t),
-					expr, type, noexcept_p);
+    return finish_compound_requirement (EXPR_LOCATION (t), expr, type, noex);
   return boolean_true_node;
 }
 
@@ -1694,9 +1703,12 @@ tsubst_constraint_variables (tree t, tree args, subst_info info)
   /* Clear cp_unevaluated_operand across tsubst so that we get a proper chain
      of PARM_DECLs.  */
   int saved_unevaluated_operand = cp_unevaluated_operand;
+  int saved_unevaluated_typeid_cutoff = cp_unevaluated_typeid_cutoff;
   cp_unevaluated_operand = 0;
+  cp_unevaluated_typeid_cutoff = 0;
   tree vars = tsubst (t, args, info.complain, info.in_decl);
   cp_unevaluated_operand = saved_unevaluated_operand;
+  cp_unevaluated_typeid_cutoff = saved_unevaluated_typeid_cutoff;
   if (vars == error_mark_node)
     return error_mark_node;
   return declare_constraint_vars (t, vars);
@@ -1777,7 +1789,8 @@ tsubst_requires_expr (tree t, tree args, sat_info info)
 	result = tree_cons (NULL_TREE, req, result);
     }
   if (processing_template_decl && result != boolean_false_node)
-    result = finish_requires_expr (EXPR_LOCATION (t), parms, nreverse (result));
+    result = finish_requires_expr (REQUIRES_EXPR_LOCATION (t), parms,
+				   nreverse (result));
   return result;
 }
 
@@ -2178,7 +2191,7 @@ satisfaction_cache::get ()
       /* Prefer printing the instantiated mapping.  */
       tree atom = entry->inst_entry ? entry->inst_entry->atom : entry->atom;
       if (info.noisy ())
-	error_at (EXPR_LOCATION (ATOMIC_CONSTR_EXPR (atom)),
+	error_at (cp_expr_location (ATOMIC_CONSTR_EXPR (atom)),
 		  "satisfaction of atomic constraint %qE depends on itself",
 		  atom);
       return error_mark_node;
@@ -2224,7 +2237,7 @@ satisfaction_cache::save (tree result)
 	  if (entry->diagnose_instability)
 	    {
 	      auto_diagnostic_group d;
-	      error_at (EXPR_LOCATION (ATOMIC_CONSTR_EXPR (entry->atom)),
+	      error_at (cp_expr_location (ATOMIC_CONSTR_EXPR (entry->atom)),
 			"satisfaction value of atomic constraint %qE changed "
 			"from %qE to %qE", entry->atom, entry->result, result);
 	      inform (entry->location,
@@ -2540,7 +2553,10 @@ satisfy_atom (tree t, tree args, sat_info info)
   if (info.noisy ())
     {
       iloc_sentinel ils (EXPR_LOCATION (result));
-      result = cxx_constant_value (result);
+      if (require_constant_expression (result))
+	result = cxx_constant_value (result);
+      else
+	result = error_mark_node;
     }
   else
     {
@@ -2949,10 +2965,13 @@ tree
 finish_requires_expr (location_t loc, tree parms, tree reqs)
 {
   /* Build the node.  */
-  tree r = build_min (REQUIRES_EXPR, boolean_type_node, parms, reqs, NULL_TREE);
+  tree r = make_node (REQUIRES_EXPR);
+  TREE_TYPE (r) = boolean_type_node;
+  REQUIRES_EXPR_PARMS (r) = parms;
+  REQUIRES_EXPR_REQS (r) = reqs;
+  REQUIRES_EXPR_LOCATION (r) = loc;
   TREE_SIDE_EFFECTS (r) = false;
   TREE_CONSTANT (r) = true;
-  SET_EXPR_LOCATION (r, loc);
   return r;
 }
 
@@ -2980,14 +2999,17 @@ finish_type_requirement (location_t loc, tree type)
    its properties.  If TYPE is non-null, then it specifies either
    an implicit conversion or argument deduction constraint,
    depending on whether any placeholders occur in the type name.
-   NOEXCEPT_P is true iff the noexcept keyword was specified.  */
+   NOEX is boolean_true_node iff the noexcept keyword was specified
+   or expression if noexcept (expr) was specified.  */
 
 tree
-finish_compound_requirement (location_t loc, tree expr, tree type, bool noexcept_p)
+finish_compound_requirement (location_t loc, tree expr, tree type,
+			     tree noex)
 {
-  tree req = build_nt (COMPOUND_REQ, expr, type);
+  if (check_for_bare_parameter_packs (noex))
+    noex = error_mark_node;
+  tree req = build_nt (COMPOUND_REQ, expr, type, noex);
   SET_EXPR_LOCATION (req, loc);
-  COMPOUND_REQ_NOEXCEPT_P (req) = noexcept_p;
   return req;
 }
 

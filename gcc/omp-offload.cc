@@ -272,7 +272,10 @@ omp_discover_declare_target_tgt_fn_r (tree *tp, int *walk_subtrees, void *data)
   else if (TREE_CODE (*tp) == OMP_TARGET)
     {
       tree c = omp_find_clause (OMP_CLAUSES (*tp), OMP_CLAUSE_DEVICE);
-      if (c && OMP_CLAUSE_DEVICE_ANCESTOR (c))
+      tree c2 = omp_find_clause (OMP_CLAUSES (*tp), OMP_CLAUSE_DEVICE_TYPE);
+      if ((c && OMP_CLAUSE_DEVICE_ANCESTOR (c))
+	   || (c2 && (OMP_CLAUSE_DEVICE_TYPE_KIND (c2)
+		      == OMP_CLAUSE_DEVICE_TYPE_HOST)))
 	*walk_subtrees = 0;
     }
   return NULL_TREE;
@@ -286,7 +289,10 @@ omp_discover_declare_target_fn_r (tree *tp, int *walk_subtrees, void *data)
   if (TREE_CODE (*tp) == OMP_TARGET)
     {
       tree c = omp_find_clause (OMP_CLAUSES (*tp), OMP_CLAUSE_DEVICE);
-      if (!c || !OMP_CLAUSE_DEVICE_ANCESTOR (c))
+      tree c2 = omp_find_clause (OMP_CLAUSES (*tp), OMP_CLAUSE_DEVICE_TYPE);
+      if ((!c || !OMP_CLAUSE_DEVICE_ANCESTOR (c))
+	  && (!c2 || (OMP_CLAUSE_DEVICE_TYPE_KIND (c2)
+		      != OMP_CLAUSE_DEVICE_TYPE_HOST)))
 	walk_tree_without_duplicates (&OMP_TARGET_BODY (*tp),
 				      omp_discover_declare_target_tgt_fn_r,
 				      data);
@@ -388,6 +394,29 @@ omp_discover_implicit_declare_target (void)
 				      omp_discover_declare_target_fn_r,
 				      &worklist);
     }
+
+  if (omp_requires_mask
+      & (OMP_REQUIRES_SELF_MAPS | OMP_REQUIRES_UNIFIED_SHARED_MEMORY))
+    FOR_EACH_VARIABLE (vnode)
+      {
+	tree attr;
+	/* If 'self_maps' or 'unified_shared_memory' is enabled,
+	   remove 'enter/to' and add 'link'.
+	   Note that "declare target local" is preserved and not converted.  */
+	if ((attr = lookup_attribute ("omp declare target",
+				      DECL_ATTRIBUTES (vnode->decl)))
+	    && !value_member (get_identifier ("local"), TREE_VALUE (attr)))
+	  {
+	    DECL_ATTRIBUTES (vnode->decl)
+	      = remove_attribute ("omp declare target",
+				  DECL_ATTRIBUTES (vnode->decl));
+	    if (!lookup_attribute ("omp declare target link",
+				   DECL_ATTRIBUTES (vnode->decl)))
+	      DECL_ATTRIBUTES (vnode->decl)
+		= tree_cons (get_identifier ("omp declare target link"),
+			     NULL_TREE, DECL_ATTRIBUTES (vnode->decl));
+	  }
+      }
 
   lang_hooks.decls.omp_finish_decl_inits ();
 }
@@ -806,14 +835,14 @@ oacc_xform_tile (gcall *call)
   e_mask = 0;
 #endif
   if (!e_mask)
-    /* Not paritioning.  */
+    /* Not partitioning.  */
     span = integer_one_node;
   else if (!integer_zerop (tile_size))
     /* User explicitly specified size.  */
     span = tile_size;
   else
     {
-      /* Pick a size based on the paritioning of the element loop and
+      /* Pick a size based on the partitioning of the element loop and
 	 the number of loop nests.  */
       tree first_size = NULL_TREE;
       tree second_size = NULL_TREE;
@@ -1011,7 +1040,7 @@ oacc_validate_dims (tree fn, tree attrs, int *dims, int level, unsigned used)
 	   same wording and logic applies to num_workers and
 	   vector_length, however the worker- or vector- single
 	   execution doesn't have the same impact as gang-redundant
-	   execution.  (If the minimum gang-level partioning is not 1,
+	   execution.  (If the minimum gang-level partitioning is not 1,
 	   the target is probably too confusing.)  */
 	dims[ix] = (used & GOMP_DIM_MASK (ix)
 		    ? oacc_default_dims[ix] : oacc_min_dims[ix]);
@@ -1478,7 +1507,7 @@ oacc_loop_process (oacc_loop *loop, int fn_level)
 	      "gang reduction on an orphan loop");
 }
 
-/* Walk the OpenACC loop heirarchy checking and assigning the
+/* Walk the OpenACC loop hierarchy checking and assigning the
    programmer-specified partitionings.  OUTER_MASK is the partitioning
    this loop is contained within.  Return mask of partitioning
    encountered.  If any auto loops are discovered, set GOMP_DIM_MAX
@@ -1628,7 +1657,7 @@ oacc_loop_fixed_partitions (oacc_loop *loop, unsigned outer_mask)
   return mask_all;
 }
 
-/* Walk the OpenACC loop heirarchy to assign auto-partitioned loops.
+/* Walk the OpenACC loop hierarchy to assign auto-partitioned loops.
    OUTER_MASK is the partitioning this loop is contained within.
    OUTER_ASSIGN is true if an outer loop is being auto-partitioned.
    Return the cumulative partitioning used by this loop, siblings and
@@ -1749,7 +1778,7 @@ oacc_loop_auto_partitions (oacc_loop *loop, unsigned outer_mask,
   return inner_mask;
 }
 
-/* Walk the OpenACC loop heirarchy to check and assign partitioning
+/* Walk the OpenACC loop hierarchy to check and assign partitioning
    axes.  Return mask of partitioning.  */
 
 static unsigned
@@ -1891,26 +1920,31 @@ oacc_rewrite_var_decl (tree *tp, int *walk_subtrees, void *data)
       if (!new_decl)
 	return NULL;
 
-      int base_quals = TYPE_QUALS (TREE_TYPE (*new_decl));
+      auto base_quals = TYPE_QUALS (TREE_TYPE (*new_decl));
+      cv_qualifier base_cv;
+      addr_space_t base_as;
+      std::tie (base_cv, base_as) = base_quals.split ();
       tree field = TREE_OPERAND (*tp, 1);
 
       /* Adjust the type of the field.  */
-      int field_quals = TYPE_QUALS (TREE_TYPE (field));
+      auto field_quals = TYPE_QUALS (TREE_TYPE (field));
       if (TREE_CODE (field) == FIELD_DECL && field_quals != base_quals)
 	{
 	  tree *field_type = &TREE_TYPE (field);
 	  while (TREE_CODE (*field_type) == ARRAY_TYPE)
 	    field_type = &TREE_TYPE (*field_type);
-	  field_quals |= base_quals;
+	  field_quals |= base_cv;
+	  field_quals.set_as (base_as);
 	  *field_type = build_qualified_type (*field_type, field_quals);
 	}
 
       /* Adjust the type of the component ref itself.  */
       tree comp_type = TREE_TYPE (*tp);
-      int comp_quals = TYPE_QUALS (comp_type);
+      auto comp_quals = TYPE_QUALS (comp_type);
       if (TREE_CODE (*tp) == COMPONENT_REF && comp_quals != base_quals)
 	{
-	  comp_quals |= base_quals;
+	  comp_quals |= base_cv;
+	  comp_quals.set_as (base_as);
 	  TREE_TYPE (*tp)
 	    = build_qualified_type (comp_type, comp_quals);
 	}
@@ -2379,7 +2413,7 @@ execute_oacc_device_lower ()
 
        2. The address of the variable in the new address space can be taken,
 	  converted to the default (original) address space, and the result of
-	  that conversion subsituted in place of the original ADDR_EXPR node.
+	  that conversion substituted in place of the original ADDR_EXPR node.
 
      Which of these is done depends on the gimple statement being processed.
      At present atomic operations and inline asms use (1), and everything else

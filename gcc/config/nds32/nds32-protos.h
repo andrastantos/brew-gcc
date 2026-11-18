@@ -223,11 +223,11 @@ extern bool symbolic_reference_mentioned_p (rtx);
 
 extern int nds32_cond_move_p (rtx);
 
-/* Auxiliary functions to identify 16 bit addresing mode.  */
+/* Auxiliary functions to identify 16 bit addressing mode.  */
 
 extern enum nds32_16bit_address_type nds32_mem_format (rtx);
 
-/* Auxiliary functions to identify floating-point addresing mode.  */
+/* Auxiliary functions to identify floating-point addressing mode.  */
 
 extern bool nds32_float_mem_operand_p (rtx);
 
@@ -252,7 +252,7 @@ extern const char *nds32_output_cbranchsi4_greater_less_zero (rtx_insn *, rtx *)
 
 extern const char *nds32_output_unpkd8 (rtx, rtx, rtx, rtx, bool);
 
-extern const char *nds32_output_call (rtx, rtx *, rtx,
+extern const char *nds32_output_call (rtx_insn *, rtx *, rtx,
 				      const char *, const char *, bool);
 extern const char *nds32_output_tls_desc (rtx *);
 extern const char *nds32_output_tls_ie (rtx *);

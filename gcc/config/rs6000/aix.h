@@ -97,7 +97,7 @@
    and __GLOBAL_AIXD_{libname} and are exported from each shared library.
 
    collect2 will detect these symbols when they exist in shared libraries that
-   the current program is being linked against.  All such initiliser functions
+   the current program is being linked against.  All such initialiser functions
    will be called prior to the constructors of the current program, and
    finaliser functions called after destructors.
 
@@ -176,6 +176,10 @@
 
 #undef ASM_DEFAULT_SPEC
 #define ASM_DEFAULT_SPEC ""
+
+#ifdef HAVE_AIX_AS
+#define ASM_V_SPEC "%{v} %{w:-W}"
+#endif
 
 /* Tell the assembler to assume that all undefined names are external.
 

@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-nrv -w -Wno-psabi" } */
+/* { dg-options "-O2 -fno-tree-vectorize -fdump-tree-nrv -w -Wno-psabi" } */
 
 #define foobar(n) \
     typedef int v##n##si __attribute__ ((vector_size (4 * n))); \

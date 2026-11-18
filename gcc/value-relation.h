@@ -110,6 +110,9 @@ public:
   relation_kind query (edge e, tree ssa1, tree ssa2);
   virtual relation_kind query (basic_block, tree, tree) { return VREL_VARYING; }
 
+  // Remove relations for an SSA_NAME
+  virtual void clear (tree) { }
+
   virtual void dump (FILE *, basic_block) const { }
   virtual void dump (FILE *) const  { }
   void debug () const;
@@ -174,6 +177,8 @@ public:
   relation_kind partial_equiv (tree ssa1, tree ssa2, tree *base = NULL) const;
   relation_kind query (basic_block, tree, tree) override;
   relation_kind query (basic_block, const_bitmap, const_bitmap) override;
+
+  void clear (tree name) override;
   void dump (FILE *f, basic_block bb) const override;
   void dump (FILE *f) const override;
 
@@ -186,7 +191,13 @@ protected:
 private:
   bitmap m_equiv_set;	// Index by ssa-name. true if an equivalence exists.
   vec <equiv_chain *> m_equiv;	// Index by BB.  list of equivalences.
-  vec <bitmap> m_self_equiv;  // Index by ssa-name, self equivalency set.
+  class name_info
+  {
+  public:
+    bitmap m_self_equiv;	// Self equivalency set.
+    bitmap m_block_list;	// BB's name occurs in equivalencies.
+  };
+  vec <name_info> m_name_info;	// Index by ssa-name.
   vec <pe_slice> m_partial;  // Partial equivalencies.
 
   void limit_check (basic_block bb = NULL);
@@ -196,6 +207,10 @@ private:
   bitmap register_equiv (basic_block bb, unsigned v, equiv_chain *equiv_1);
   bitmap register_equiv (basic_block bb, equiv_chain *equiv_1,
 			 equiv_chain *equiv_2);
+
+  void register_equiv_block (unsigned v, unsigned bbi);
+  void register_equiv_block (const_bitmap equiv, basic_block bb);
+
   void register_initial_def (tree ssa);
   void add_equiv_to_block (basic_block bb, bitmap equiv);
 };
@@ -209,6 +224,33 @@ public:
   class relation_chain *m_head; // List of relations in block.
   int m_num_relations;		// Number of relations in block.
   relation_kind find_relation (const_bitmap b1, const_bitmap b2) const;
+  void clear (tree name);
+};
+
+
+// This class tracks what is known on one side of a frontier search.
+// It represents the relation that root has to each other name.
+// All relations are M_ROOT <REL> ssa_name (v).
+// The m_rhs flag indicates if this is the LHS or RHS of a relation search.
+// This is used to determine if the relation needs to be swapped in order
+// to perform a transitive operation:  TRANS (LHS op X , X op RHS).
+// m_visited is also used to efficiently clear the structure.
+// All relations default to VREL_VARYING.
+
+class frontier_data {
+public:
+  frontier_data (bitmap_obstack *obstack, bool rhs);
+  ~frontier_data () { m_known.release (); }
+
+  void clear_search ();
+  bool visited_p (unsigned v) const { return bitmap_bit_p (m_visited, v); }
+  relation_kind known_relation (unsigned v) const;
+  void set_known (unsigned v, relation_kind rel);
+
+  bitmap m_visited;
+  vec<relation_kind> m_known;
+  tree m_root;
+  bool m_rhs;		// True if rooted at the RHS of the query.
 };
 
 // A relation oracle maintains a set of relations between ssa_names using the
@@ -224,7 +266,7 @@ public:
 class dom_oracle : public equiv_oracle
 {
 public:
-  dom_oracle (bool do_trans_p = true);
+  dom_oracle ();
   ~dom_oracle ();
 
   bool record (basic_block bb, relation_kind k, tree op1, tree op2)
@@ -234,24 +276,67 @@ public:
   relation_kind query (basic_block bb, const_bitmap b1, const_bitmap b2)
     final override;
 
+  void clear (tree name) override;
+
   void dump (FILE *f, basic_block bb) const final override;
   void dump (FILE *f) const final override;
 protected:
   virtual relation_chain *next_relation (basic_block, relation_chain *,
 					 tree) const override;
-  bool m_do_trans_p;
   bitmap m_tmp, m_tmp2;
   bitmap m_relation_set;  // Index by ssa-name. True if a relation exists
   vec <relation_chain_head> m_relations;  // Index by BB, list of relations.
+  vec <bitmap> m_block_list;	// Index by ssa-name.  Blocks with relations.
   relation_kind find_relation_block (unsigned bb, const_bitmap b1,
 				     const_bitmap b2) const;
-  relation_kind find_relation_block (int bb, unsigned v1, unsigned v2,
+  relation_kind find_relation_block (int bb, tree ssa1, tree ssa2,
 				     relation_chain **obj = NULL) const;
-  relation_kind find_relation_dom (basic_block bb, unsigned v1, unsigned v2) const;
-  relation_chain *set_one_relation (basic_block bb, relation_kind k, tree op1,
-				    tree op2);
-  void register_transitives (basic_block, const class value_relation &);
+  relation_kind find_relation_dom (basic_block bb, tree ssa1, tree ssa2) const;
+  relation_chain *create_relation_in_bb (basic_block bb, relation_kind k,
+					 tree op1, tree op2);
+  relation_chain *search_and_merge_relation (basic_block bb, relation_kind k,
+					     tree op1, tree op2);
+  void record_relation_block (unsigned v, unsigned bbi);
+  relation_kind recomputed_relation (basic_block, tree, tree) const;
+  basic_block nearest_relations (tree name, basic_block bb);
+  relation_kind relation_search (basic_block, tree, const_bitmap, tree,
+				 const_bitmap);
+  void cache_relation (basic_block, relation_kind, tree, tree);
 
+  // NAME is related to the requested ssa name via REL in block BB
+  // nearest_relations () calls will fill this vector.
+  struct related {
+    relation_kind rel;
+    tree name;
+    basic_block bb;
+  };
+  vec<struct related> m_near;
+
+  frontier_data m_lhs_search;
+  frontier_data m_rhs_search;
+
+  // One element waiting to be expanded from the frontier.
+  // "implied root <REL> NAME" is the known relation, found in BB.
+  // RHS indicates if root is the LHS or RHS operand of the original request.
+  struct frontier_element {
+    relation_kind rel;
+    tree name;
+    basic_block bb;
+    bool rhs;
+  };
+
+  // Both LHS and RHS frontiers share a single worklist, so whichever side
+  // has work outstanding is processed.
+  // M_WL_IX is the next entry to expand; everything before it is done.
+  vec<struct frontier_element> m_worklist;
+  unsigned m_wl_ix;
+
+  void start_search (frontier_data &side, tree root, const_bitmap equiv,
+		     basic_block bb);
+  void add_to_frontier (frontier_data &side, tree name, relation_kind rel,
+			basic_block bb);
+  bool expand_frontier (frontier_element w, basic_block bb,
+			relation_kind &result);
 };
 
 // A path_oracle implements relations in a list.  The only sense of ordering
@@ -282,6 +367,9 @@ public:
   relation_kind query (basic_block, const_bitmap, const_bitmap) final override;
   void reset_path (relation_oracle *oracle = NULL);
   void set_root_oracle (relation_oracle *oracle) { m_root = oracle; }
+
+  void clear (tree name) override;
+
   void dump (FILE *, basic_block) const final override;
   void dump (FILE *) const final override;
 private:

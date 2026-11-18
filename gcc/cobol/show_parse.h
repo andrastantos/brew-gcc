@@ -211,7 +211,7 @@ extern bool cursor_at_sol;
 
 #define TRACE1_INDENT do{ \
   if(!cursor_at_sol){gg_fprintf(trace_handle , 0, "\n");} \
-  tree counter = gg_define_int(); \
+  tree counter = gg_define_variable(INT); \
   gg_assign(counter, integer_zero_node); \
   WHILE(counter, lt_op, trace_indent) \
     gg_fprintf(trace_handle , 0, " "); \
@@ -317,7 +317,7 @@ extern bool cursor_at_sol;
       gg_fprintf(trace_handle, 1, " (%s", gg_string_literal(cbl_field_type_str((b)->type))); \
       if( b->type != FldLiteralN && b->type != FldConditional ) \
         { \
-        cbl_field_t* B(b); \
+        const cbl_field_t* B(b); \
         if( !b->var_decl_node ) \
           { \
           gg_fprintf(trace_handle, 0, #b "->var_decl_node is NULL", NULL_TREE); \

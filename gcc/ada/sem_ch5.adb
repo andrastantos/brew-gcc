@@ -674,13 +674,13 @@ package body Sem_Ch5 is
       --  Error of assigning to limited type. We do however allow this in
       --  certain cases where the front end generates the assignments.
       --  Comes_From_Source test is needed to allow compiler-generated
-      --  constructor calls or streaming/put_image subprograms, which may
-      --  ignore privacy.
+      --  streaming/put_image subprograms, which may ignore privacy.
 
       elsif Is_Limited_Type (T1)
         and then not Assignment_OK (Lhs)
         and then not Assignment_OK (Original_Node (Lhs))
-        and then Comes_From_Source (N)
+        and then (Comes_From_Source (N)
+                   or else Is_Immutably_Limited_Type (T1))
       then
          --  CPP constructors can only be called in declarations
 
@@ -2735,15 +2735,25 @@ package body Sem_Ch5 is
          if Of_Present (N) then
             if Has_Aspect (Typ, Aspect_Iterable) then
                declare
-                  Elt : constant Entity_Id :=
+                  Elt     : constant Entity_Id :=
                           Get_Iterable_Type_Primitive (Typ, Name_Element);
+                  Cst_Ref : constant Entity_Id :=
+                          Get_Iterable_Type_Primitive
+                            (Typ, Name_Constant_Reference);
                begin
-                  if No (Elt) then
-                     Error_Msg_N
-                       ("missing Element primitive for iteration", N);
-                  else
+                  if Present (Elt) then
                      Set_Etype (Def_Id, Etype (Elt));
                      Check_Reverse_Iteration (Typ);
+
+                  elsif Present (Cst_Ref) then
+                     Set_Etype
+                       (Def_Id, Directly_Designated_Type (Etype (Cst_Ref)));
+                     Check_Reverse_Iteration (Typ);
+
+                  else
+                     Error_Msg_N
+                       ("missing Element or Constant_Reference primitive for "
+                          & "iteration", N);
                   end if;
                end;
 

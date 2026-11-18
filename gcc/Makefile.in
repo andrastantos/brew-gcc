@@ -162,9 +162,7 @@ PICFLAG = @PICFLAG@
 # The linker flag for the above.
 LD_PICFLAG = @LD_PICFLAG@
 
-# Flags to determine code coverage. When coverage is disabled, this will
-# contain the optimization flags, as you normally want code coverage
-# without optimization.
+# Flags to determine code coverage.
 COVERAGE_FLAGS = @coverage_flags@
 coverageexts = .{gcda,gcno}
 
@@ -237,11 +235,21 @@ INSNEMIT_SEQ_SRC = $(patsubst %, insn-emit-%.cc, $(INSNEMIT_SPLITS_SEQ))
 INSNEMIT_SEQ_TMP = $(patsubst %, tmp-emit-%.cc, $(INSNEMIT_SPLITS_SEQ))
 INSNEMIT_SEQ_O = $(patsubst %, insn-emit-%.o, $(INSNEMIT_SPLITS_SEQ))
 
-# Re-use the split number for insn-recog as well.
-INSNRECOG_SPLITS_SEQ = $(wordlist 1,$(NUM_INSNEMIT_SPLITS),$(one_to_9999))
+# The number of splits to be made for the insn-recog files.
+NUM_INSNRECOG_SPLITS = @DEFAULT_INSNRECOG_PARTITIONS@
+INSNRECOG_SPLITS_SEQ = $(wordlist 1,$(NUM_INSNRECOG_SPLITS),$(one_to_9999))
 INSNRECOG_SEQ_SRC = $(patsubst %, insn-recog-%.cc, $(INSNRECOG_SPLITS_SEQ))
 INSNRECOG_SEQ_TMP = $(patsubst %, tmp-recog-%.cc, $(INSNRECOG_SPLITS_SEQ))
 INSNRECOG_SEQ_O = $(patsubst %, insn-recog-%.o, $(INSNRECOG_SPLITS_SEQ))
+
+# The number of splits to be made for the insn-attrtab files.
+NUM_INSNATTRTAB_SPLITS = @DEFAULT_INSNATTRTAB_PARTITIONS@
+INSNATTRTAB_SPLITS_SEQ = $(wordlist 1,$(NUM_INSNATTRTAB_SPLITS),$(one_to_9999))
+INSNATTRTAB_SEQ_SRC = $(patsubst %, insn-attrtab-%.cc, \
+	$(INSNATTRTAB_SPLITS_SEQ))
+INSNATTRTAB_SEQ_TMP = $(patsubst %, tmp-attrtab-%.cc, \
+	$(INSNATTRTAB_SPLITS_SEQ))
+INSNATTRTAB_SEQ_O = $(patsubst %, insn-attrtab-%.o, $(INSNATTRTAB_SPLITS_SEQ))
 
 # These files are to have specific diagnostics suppressed, or are not to
 # be subject to -Werror:
@@ -264,6 +272,7 @@ CPPFLAGS = @CPPFLAGS@
 
 AWK = @AWK@
 CC = @CC@
+ADAC = @ADAC@
 CXX = @CXX@
 BISON = @BISON@
 BISONFLAGS =
@@ -691,6 +700,8 @@ plugin_resourcesdir = $(libsubdir)/plugin
 plugin_includedir = $(plugin_resourcesdir)/include
 # Directory in which plugin specific executables are installed
 plugin_bindir = $(libexecsubdir)/plugin
+# Directory where files for installed testing are installed
+testsuitedir = $(libsubdir)/testsuite
 # Used to produce a relative $(gcc_tooldir) in gcc.o
 ifeq ($(enable_as_accelerator),yes)
 unlibsubdir = ../../../../..
@@ -1175,8 +1186,8 @@ GDCFLAGS = @GDCFLAGS@
 # Libs needed (at present) just for jcf-dump.
 LDEXP_LIB = @LDEXP_LIB@
 
-ZSTD_INC = @ZSTD_CPPFLAGS@
-ZSTD_LIB = @ZSTD_LDFLAGS@ @ZSTD_LIB@
+ZSTD_INC = @ZSTD_CFLAGS@
+ZSTD_LIB = @ZSTD_LIBS@
 
 # Likewise, for use in the tools that must run on this machine
 # even if we are cross-building GCC.
@@ -1184,7 +1195,7 @@ BUILD_LIBS = $(BUILD_LIBIBERTY)
 
 BUILD_RTL = build/rtl.o build/read-rtl.o build/ggc-none.o \
 	    build/vec.o build/min-insn-modes.o build/gensupport.o \
-	    build/print-rtl.o build/hash-table.o build/sort.o
+	    build/print-rtl.o build/hash-table.o build/sort.o build/hwint.o
 BUILD_MD = build/read-md.o
 BUILD_ERRORS = build/errors.o
 
@@ -1329,7 +1340,7 @@ C_COMMON_OBJS = c-family/c-common.o c-family/c-cppbuiltin.o c-family/c-dump.o \
   c-family/c-semantics.o c-family/c-ada-spec.o \
   c-family/c-ubsan.o c-family/known-headers.o \
   c-family/c-attribs.o c-family/c-warn.o c-family/c-spellcheck.o \
-  c-family/c-type-mismatch.o
+  c-family/c-type-mismatch.o attr-handlers.o
 
 # Analyzer object files
 ANALYZER_OBJS = \
@@ -1337,6 +1348,7 @@ ANALYZER_OBJS = \
 	analyzer/ana-state-to-diagnostic-state.o \
 	analyzer/analysis-plan.o \
 	analyzer/analyzer.o \
+	analyzer/analyzer-diagnostic-extensions.o \
 	analyzer/analyzer-language.o \
 	analyzer/analyzer-logging.o \
 	analyzer/analyzer-pass.o \
@@ -1350,28 +1362,35 @@ ANALYZER_OBJS = \
 	analyzer/checker-event.o \
 	analyzer/checker-path.o \
 	analyzer/complexity.o \
+	analyzer/concrete-ranges.o \
 	analyzer/constraint-manager.o \
 	analyzer/diagnostic-manager.o \
 	analyzer/engine.o \
+	analyzer/exploded-path.o \
 	analyzer/feasible-graph.o \
 	analyzer/function-set.o \
 	analyzer/infinite-loop.o \
 	analyzer/infinite-recursion.o \
+	analyzer/initializers.o \
+	analyzer/integer.o \
+	analyzer/integer-with-unit.o \
 	analyzer/kf.o \
 	analyzer/kf-analyzer.o \
 	analyzer/kf-lang-cp.o \
 	analyzer/known-function-manager.o \
 	analyzer/ops.o \
 	analyzer/pending-diagnostic.o \
+	analyzer/poisoned-value-diagnostic.o \
 	analyzer/program-point.o \
 	analyzer/program-state.o \
-	analyzer/ranges.o \
 	analyzer/record-layout.o \
 	analyzer/region.o \
 	analyzer/region-model.o \
 	analyzer/region-model-asm.o \
 	analyzer/region-model-manager.o \
 	analyzer/region-model-reachability.o \
+	analyzer/setjmp-longjmp.o \
+	analyzer/shift-diagnostics.o \
 	analyzer/sm.o \
 	analyzer/sm-file.o \
 	analyzer/sm-fd.o \
@@ -1381,15 +1400,24 @@ ANALYZER_OBJS = \
 	analyzer/sm-signal.o \
 	analyzer/sm-taint.o \
 	analyzer/state-purge.o \
+	analyzer/state-transition.o \
 	analyzer/store.o \
+	analyzer/string-scan.o \
 	analyzer/supergraph.o \
 	analyzer/supergraph-fixup-locations.o \
 	analyzer/supergraph-simplify.o \
 	analyzer/supergraph-sorting.o \
 	analyzer/svalue.o \
-	analyzer/symbol.o \
+	analyzer/symbolic-bit-contents.o \
+	analyzer/symbolic-bit-vectors.o \
+	analyzer/symbolic-memory-ranges.o \
+	analyzer/symbolic-nodes.o \
+	analyzer/symbolic-pointers.o \
+	analyzer/symbolic-ranges.o \
+	analyzer/symbolic-scalars.o \
 	analyzer/trimmed-graph.o \
-	analyzer/varargs.o
+	analyzer/varargs.o \
+	analyzer/write-to-const-diagnostics.o \
 
 # Language-independent object files.
 # We put the *-match.o and insn-*.o files first so that a parallel make
@@ -1399,7 +1427,7 @@ OBJS = \
 	$(GIMPLE_MATCH_PD_SEQ_O) \
 	gimple-match-exports.o \
 	$(GENERIC_MATCH_PD_SEQ_O) \
-	insn-attrtab.o \
+	$(INSNATTRTAB_SEQ_O) \
 	insn-automata.o \
 	insn-dfatab.o \
 	$(INSNEMIT_SEQ_O) \
@@ -1538,7 +1566,6 @@ OBJS = \
 	gimple-ssa-isolate-paths.o \
 	gimple-ssa-nonnull-compare.o \
 	gimple-ssa-sccopy.o \
-	gimple-ssa-split-paths.o \
 	gimple-ssa-store-merging.o \
 	gimple-ssa-strength-reduction.o \
 	gimple-ssa-sprintf.o \
@@ -1566,7 +1593,6 @@ OBJS = \
 	hash-map-tests.o \
 	hash-set-tests.o \
 	hw-doloop.o \
-	hwint.o \
 	ifcvt.o \
 	ree.o \
 	inchash.o \
@@ -1845,7 +1871,6 @@ OBJS = \
 	tristate.o \
 	typed-splay-tree.o \
 	valtrack.o \
-	value-pointer-equiv.o \
 	value-query.o \
 	value-range.o \
 	value-range-pretty-print.o \
@@ -1864,6 +1889,7 @@ OBJS = \
 	wide-int.o \
 	wide-int-print.o \
 	attr-callback.o \
+	callback-info.o \
 	$(out_object_file) \
 	$(ANALYZER_OBJS) \
 	$(EXTRA_OBJS) \
@@ -1892,6 +1918,7 @@ OBJS-libcommon = \
 	diagnostics/lazy-paths.o \
 	diagnostics/logging.o \
 	diagnostics/macro-unwinding.o \
+	diagnostics/markup.o \
 	diagnostics/option-classifier.o \
 	diagnostics/paths.o \
 	diagnostics/paths-output.o \
@@ -1904,12 +1931,12 @@ OBJS-libcommon = \
 	diagnostics/diagnostics-selftests.o \
 	gcc-diagnostic-spec.o \
 	graphviz.o pex.o \
-	pretty-print.o intl.o \
-	json.o json-parsing.o json-diagnostic.o \
+	pretty-print.o pretty-print-token-buffer.o intl.o \
+	json.o json-parsing.o json-diagnostic.o json-pointer-parsing.o \
 	pub-sub.o \
 	xml.o \
 	sbitmap.o \
-	vec.o input.o hash-table.o ggc-none.o memory-block.o \
+	vec.o input.o hash-table.o ggc-none.o memory-block.o hwint.o \
 	selftest.o sort.o \
 	selftest-json.o \
 	text-art/box-drawing.o \
@@ -1980,10 +2007,12 @@ TREECHECKING = @TREECHECKING@
 FULL_DRIVER_NAME=$(target_noncanonical)-gcc-$(version)$(exeext)
 
 MOSTLYCLEANFILES = insn-flags.h insn-config.h insn-codes.h \
- insn-output.cc $(INSNRECOG_SEQ_SRC) insn-recog.h \
- $(INSNEMIT_SEQ_SRC) insn-extract.cc insn-peep.cc \
- insn-attr.h insn-attr-common.h insn-attrtab.cc insn-dfatab.cc \
- insn-latencytab.cc insn-opinit.cc insn-opinit.h insn-preds.cc insn-constants.h \
+ insn-output.cc insn-recog-*.cc insn-recog.h \
+ insn-emit-*.cc insn-extract.cc insn-peep.cc \
+ insn-attr.h insn-attr-common.h insn-attrtab-*.cc insn-attrtab.cc \
+ insn-dfatab.cc insn-latencytab.cc insn-opinit.cc \
+ insn-opinit.h insn-preds.cc \
+ insn-constants.h \
  tm-preds.h tm-constrs.h checksum-options $(GIMPLE_MATCH_PD_SEQ_SRC) \
  $(GENERIC_MATCH_PD_SEQ_SRC) gimple-match-auto.h generic-match-auto.h \
  tree-check.h min-insn-modes.cc insn-modes.cc insn-modes.h insn-modes-inline.h \
@@ -1994,7 +2023,7 @@ MOSTLYCLEANFILES = insn-flags.h insn-config.h insn-codes.h \
  $(SPECS) collect2$(exeext) gcc-ar$(exeext) gcc-nm$(exeext) \
  gcc-ranlib$(exeext) \
  genversion$(build_exeext) gcov$(exeext) gcov-dump$(exeext) \
- gcov-tool$(exeect) \
+ gcov-tool$(exeext) \
  gengtype$(exeext) *.[0-9][0-9].* *.[si] *-checksum.cc libbackend.a \
  libcommon-target.a libcommon.a libgcc.mk perf.data
 
@@ -2286,7 +2315,8 @@ start.encap: native xgcc$(exeext) cpp$(exeext) specs \
 rest.encap: lang.rest.encap
 # This is what is made with the host's compiler
 # whether making a cross compiler or not.
-native: config.status auto-host.h build-@POSUB@ $(LANGUAGES) \
+native: config.status auto-host.h testsuite/et-static.exp build-@POSUB@ \
+	$(LANGUAGES) \
 	$(EXTRA_PROGRAMS) $(COLLECT2) lto-wrapper$(exeext) \
 	gcc-ar$(exeext) gcc-nm$(exeext) gcc-ranlib$(exeext)
 
@@ -2758,7 +2788,7 @@ $(common_out_object_file): $(common_out_file)
 .PRECIOUS: insn-config.h insn-flags.h insn-codes.h insn-constants.h \
   $(INSNEMIT_SEQ_SRC) insn-recog.h $(INSNRECOG_SEQ_SRC) \
   insn-extract.cc insn-output.cc \
-  insn-peep.cc insn-attr.h insn-attr-common.h insn-attrtab.cc \
+  insn-peep.cc insn-attr.h insn-attr-common.h $(INSNATTRTAB_SEQ_SRC) \
   insn-dfatab.cc insn-latencytab.cc insn-preds.cc \
   $(GIMPLE_MATCH_PD_SEQ_SRC) $(GENERIC_MATCH_PD_SEQ_SRC) \
   gimple-match-auto.h generic-match-auto.h insn-target-def.h
@@ -2816,24 +2846,27 @@ $(simple_generated_c:insn-%.cc=s-%): s-%: build/gen%$(build_exeext)
 # genemit splits its output into different files and doesn't write to
 # stdout. (but rather to tmp-emit-01.cc..tmp-emit-10.cc)
 $(INSNEMIT_SEQ_SRC): s-tmp-emit; @true
-s-tmp-emit: build/genemit$(build_exeext) $(MD_DEPS) insn-conditions.md
+s-tmp-emit: build/genemit$(build_exeext) $(MD_DEPS) insn-conditions.md Makefile
 	$(RUN_GEN) build/genemit$(build_exeext) $(md_file) insn-conditions.md \
 	  $(addprefix -O,${INSNEMIT_SEQ_TMP})
-	$(foreach id, $(INSNEMIT_SPLITS_SEQ), \
-	  $(SHELL) $(srcdir)/../move-if-change tmp-emit-$(id).cc \
-	  insn-emit-$(id).cc;)
+	for id in $(INSNEMIT_SPLITS_SEQ); do \
+	  $(SHELL) $(srcdir)/../move-if-change tmp-emit-$$id.cc \
+	    insn-emit-$$id.cc || exit 1; \
+	done
 	$(STAMP) s-tmp-emit
 
 # Same for genrecog.
 $(INSNRECOG_SEQ_SRC): s-tmp-recog; @true
 insn-recog.h: s-tmp-recog; @true
-s-tmp-recog: build/genrecog$(build_exeext) $(MD_DEPS) insn-conditions.md
+s-tmp-recog: build/genrecog$(build_exeext) $(MD_DEPS) \
+  insn-conditions.md Makefile
 	$(RUN_GEN) build/genrecog$(build_exeext) $(md_file) insn-conditions.md \
 	  -Hinsn-recog.h \
 	  $(addprefix -O,${INSNRECOG_SEQ_TMP})
-	$(foreach id, $(INSNRECOG_SPLITS_SEQ), \
-	  $(SHELL) $(srcdir)/../move-if-change tmp-recog-$(id).cc \
-	  insn-recog-$(id).cc;)
+	for id in $(INSNRECOG_SPLITS_SEQ); do \
+	  $(SHELL) $(srcdir)/../move-if-change tmp-recog-$$id.cc \
+	    insn-recog-$$id.cc || exit 1; \
+	done
 	$(STAMP) s-tmp-recog
 
 # gencheck doesn't read the machine description, and the file produced
@@ -2845,13 +2878,19 @@ s-check : build/gencheck$(build_exeext)
 	$(SHELL) $(srcdir)/../move-if-change tmp-check.h tree-check.h
 	$(STAMP) s-check
 
-# genattrtab produces three files: tmp-{attrtab.cc,dfatab.cc,latencytab.cc}
-insn-attrtab.cc insn-dfatab.cc insn-latencytab.cc: s-attrtab ; @true
+# genattrtab splits the attribute functions like genemit and additionally
+# produces tmp-dfatab.cc and tmp-latencytab.cc.
+$(INSNATTRTAB_SEQ_SRC): s-attrtab ; @true
+insn-dfatab.cc insn-latencytab.cc: s-attrtab ; @true
 s-attrtab : $(MD_DEPS) build/genattrtab$(build_exeext) \
-  insn-conditions.md
+  insn-conditions.md Makefile
 	$(RUN_GEN) build/genattrtab$(build_exeext) $(md_file) insn-conditions.md \
-		-Atmp-attrtab.cc -Dtmp-dfatab.cc -Ltmp-latencytab.cc
-	$(SHELL) $(srcdir)/../move-if-change tmp-attrtab.cc    insn-attrtab.cc
+		$(addprefix -A,${INSNATTRTAB_SEQ_TMP}) \
+		-Dtmp-dfatab.cc -Ltmp-latencytab.cc
+	for id in $(INSNATTRTAB_SPLITS_SEQ); do \
+	  $(SHELL) $(srcdir)/../move-if-change tmp-attrtab-$$id.cc \
+	    insn-attrtab-$$id.cc || exit 1; \
+	done
 	$(SHELL) $(srcdir)/../move-if-change tmp-dfatab.cc     insn-dfatab.cc
 	$(SHELL) $(srcdir)/../move-if-change tmp-latencytab.cc insn-latencytab.cc
 	$(STAMP) s-attrtab
@@ -3052,7 +3091,7 @@ $(GENERIC_MATCH_PD_SEQ_SRC): s-generic-match generic-match-head.cc; @true
 generic-match-auto.h: s-generic-match; @true
 
 s-gimple-match: build/genmatch$(build_exeext) \
-	    $(srcdir)/match.pd cfn-operators.pd
+	    $(srcdir)/match.pd $(srcdir)/match-sat-alu.pd cfn-operators.pd
 	$(RUN_GEN) build/genmatch$(build_exeext) --gimple \
 	    --header=tmp-gimple-match-auto.h --include=gimple-match-auto.h \
 	    $(srcdir)/match.pd $(patsubst %, tmp-%, $(GIMPLE_MATCH_PD_SEQ_SRC))
@@ -3253,6 +3292,7 @@ build/vec.o : vec.cc $(BCONFIG_H) $(SYSTEM_H) $(CORETYPES_H) $(VEC_H)	\
 build/hash-table.o : hash-table.cc $(BCONFIG_H) $(SYSTEM_H)		\
   $(CORETYPES_H) $(HASH_TABLE_H) $(GGC_H) toplev.h $(DIAGNOSTIC_CORE_H)
 build/sort.o : sort.cc $(BCONFIG_H) $(SYSTEM_H)
+build/hwint.o : hwint.cc $(BCONFIG_H) $(SYSTEM_H) $(CORETYPES_H)
 build/inchash.o : inchash.cc $(BCONFIG_H) $(SYSTEM_H) $(CORETYPES_H)	\
   $(HASHTAB_H) inchash.h
 build/gencondmd.o : build/gencondmd.cc $(BCONFIG_H) $(SYSTEM_H)		\
@@ -3369,28 +3409,32 @@ build/gencfn-macros.o : gencfn-macros.cc $(BCONFIG_H) $(SYSTEM_H)	\
 # since they need to run on this machine
 # even if GCC is being compiled to run on some other machine.
 
+# We append to the genFOO variables so that target make fragments can
+# add programs to them (those includes have already been included).
+# Example: riscv/t-riscv
+
 # All these programs use the RTL reader ($(BUILD_RTL)).
-genprogrtl = attr attr-common attrtab automata codes conditions config emit \
+genprogrtl += attr attr-common attrtab automata codes conditions config emit \
 	     extract flags mddump opinit output peep preds recog target-def
 $(genprogrtl:%=build/gen%$(build_exeext)): $(BUILD_RTL)
 
 # All these programs use the MD reader ($(BUILD_MD)).
-genprogmd = $(genprogrtl) mddeps constants enums
+genprogmd += $(genprogrtl) mddeps constants enums
 $(genprogmd:%=build/gen%$(build_exeext)): $(BUILD_MD)
 
 # All these programs need to report errors.
-genprogerr = $(genprogmd) genrtl modes gtype hooks cfn-macros condmd
+genprogerr += $(genprogmd) genrtl modes gtype hooks cfn-macros condmd
 $(genprogerr:%=build/gen%$(build_exeext)): $(BUILD_ERRORS)
 
 # Remaining build programs.
-genprog = $(genprogerr) check checksum match
+genprog += $(genprogerr) check checksum match
 
 # These programs need libs over and above what they get from the above list.
 build/genautomata$(build_exeext) : BUILD_LIBS += -lm
 
 build/genrecog$(build_exeext) : build/hash-table.o build/inchash.o
 build/gencfn-macros$(build_exeext) : build/hash-table.o build/vec.o \
-  build/ggc-none.o build/sort.o
+  build/ggc-none.o build/sort.o build/hwint.o
 
 # For stage1 and when cross-compiling use the build libcpp which is
 # built with NLS disabled.  For stage2+ use the host library and
@@ -3405,7 +3449,7 @@ build/genmatch.o: BUILD_CPPFLAGS += -DGENMATCH_SELFTESTS
 endif
 
 build/genmatch$(build_exeext) : $(BUILD_CPPLIB) \
-  $(BUILD_ERRORS) build/vec.o build/hash-table.o build/sort.o
+  $(BUILD_ERRORS) build/vec.o build/hash-table.o build/sort.o build/hwint.o
 
 # These programs are not linked with the MD reader.
 build/gengtype$(build_exeext) : build/gengtype-lex.o build/gengtype-parse.o \
@@ -3898,7 +3942,7 @@ doc/%.pdf: %.texi
 doc/gccinstall.pdf: $(TEXI_GCCINSTALL_FILES)
 	$(TEXI2PDF) -I . -I $(abs_docdir) -I $(abs_docdir)/include -o $@ $<
 
-# List the directories or single hmtl files which are installed by
+# List the directories or single html files which are installed by
 # install-html. The lang.html file triggers language fragments to build
 # html documentation.
 HTMLS_INSTALL=$(build_htmldir)/cpp $(build_htmldir)/gcc \
@@ -4057,6 +4101,7 @@ clean: mostlyclean lang.clean
 	-rm -f libgcc_s*
 	-rm -f libunwind*
 	-rm -f config.h tconfig.h bconfig.h tm_p.h tm.h
+	-rm -f etlist
 	-rm -f options.cc options.h optionlist
 	-rm -f cs-*
 	-rm -f doc/*.dvi
@@ -4076,6 +4121,7 @@ distclean: clean lang.distclean
 	-rm -f TAGS */TAGS
 	-rm -f *.asm
 	-rm -f site.exp site.bak testsuite/site.exp testsuite/site.bak
+	-rm -f testsuite/et-static.exp
 	-rm -f testsuite/*.log testsuite/*.sum
 	-cd testsuite && rm -f x *.x *.x? *.exe *.rpo *.o *.s *.S *.cc
 	-cd testsuite && rm -f *.out *.gcov *$(coverageexts)
@@ -4103,7 +4149,7 @@ maintainer-clean:
 # broken is small.
 install: install-common $(INSTALL_HEADERS) \
     install-cpp install-man install-info install-@POSUB@ \
-    install-driver install-lto-wrapper install-gcc-ar
+    install-driver install-lto-wrapper install-gcc-ar install-testsuite
 
 ifeq ($(enable_plugin),yes)
 install: install-plugin
@@ -4173,7 +4219,9 @@ PLUGIN_HEADERS = $(TREE_H) $(CONFIG_H) $(SYSTEM_H) coretypes.h $(TM_H) \
   lcm.h cfgloopmanip.h file-prefix-map.h builtins.def $(INSN_ATTR_H) \
   pass-instances.def params.list $(srcdir)/../include/gomp-constants.h \
   $(EXPR_H) $(srcdir)/analyzer/*.h $(srcdir)/diagnostics/*.h \
-  $(srcdir)/text-art/*.h $(srcdir)/topics/*.h
+  $(srcdir)/text-art/*.h $(srcdir)/topics/*.h \
+  $(srcdir)/stdbackport/* \
+  $(srcdir)/stdbackport/gbits/*.h
 
 # generate the 'build fragment' b-header-vars
 s-header-vars: Makefile
@@ -4214,6 +4262,7 @@ install-plugin: installdirs lang.install-plugin s-header-vars install-gengtype
 	  | "$(srcdir)"/diagnostics/* \
 	  | "$(srcdir)"/text-art/* \
 	  | "$(srcdir)"/topics/* \
+	  | "$(srcdir)"/stdbackport/* \
 	  | "$(srcdir)"/config/* | "$(srcdir)"/common/config/* \
 	  | "$(srcdir)"/c-family/* | "$(srcdir)"/*.def ) \
 	    base=`echo "$$path" | sed -e "s|$$srcdirstrip/||"`;; \
@@ -4574,6 +4623,12 @@ install-gcc-ar: installdirs gcc-ar$(exeext) gcc-nm$(exeext) gcc-ranlib$(exeext)
 	  done; \
 	fi
 
+# Install files needed for installed testing.
+install-testsuite: testsuite/et-static.exp auto-host.h installdirs
+	$(mkinstalldirs) $(DESTDIR)$(testsuitedir)
+	$(INSTALL_DATA) testsuite/et-static.exp $(DESTDIR)$(testsuitedir)/et-static.exp
+	$(INSTALL_DATA) auto-host.h $(DESTDIR)$(testsuitedir)/auto-host.h
+
 # Cancel installation by deleting the installed files.
 uninstall: lang.uninstall
 	-rm -rf $(DESTDIR)$(libsubdir)
@@ -4600,7 +4655,7 @@ uninstall: lang.uninstall
 
 target_subdir = @target_subdir@
 
-site.exp: ./config.status Makefile
+site.exp: ./config.status Makefile testsuite/et-static.exp
 	@echo "Making a new config file..."
 	-@rm -f ./site.tmp
 	@$(STAMP) site.exp
@@ -4683,6 +4738,12 @@ site.exp: ./config.status Makefile
 		-e '1,/^## All variables above are.*##/ d' >> site.exp
 	-@rm -f ./site.tmp
 
+testsuite/et-static.exp: $(srcdir)/et-gather.awk $(srcdir)/gen-et-static.awk \
+	$(srcdir)/testsuite/lib/et-static.def Makefile auto-host.h
+	$(AWK) -f $(srcdir)/et-gather.awk  $(srcdir)/testsuite/lib/et-static.def > etlist
+	-test -d $(TESTSUITEDIR) || mkdir $(TESTSUITEDIR)
+	$(AWK) -f $(srcdir)/gen-et-static.awk -v etlist=etlist auto-host.h > $@
+
 CHECK_TARGETS = @check_languages@
 
 check: $(CHECK_TARGETS)
@@ -4736,8 +4797,25 @@ check_p_tool=$(firstword $(subst _, ,$*))
 check_p_count=$(check_$(check_p_tool)_parallelize)
 check_p_subno=$(word 2,$(subst _, ,$*))
 check_p_subdir=$(subst _,,$*)
+# Number of runtest instances to start.  An explicit GCC_TEST_PARALLEL_SLOTS
+# wins.  Otherwise start one per job token, but never fewer than
+# check_p_min_slots: the instances claim work in batches of ten tests, so a
+# batch that runs long is the tail of the whole target, and having more
+# instances than tokens lets the ones that are left pick up the slack.  Above
+# that floor the token count is the useful number, since 128 instances on a
+# machine given -j256 leave half of it idle.  GNU make 4.0 and later put the
+# level in MFLAGS.  A bare -j, and older make, do not, and there the floor
+# stands on its own.
+check_p_min_slots=128
+check_p_jobs=$(patsubst -j%,%,$(filter -j%,$(MFLAGS)))
+# max(check_p_jobs, check_p_min_slots).  A number is <= the floor exactly when
+# it appears among the first check_p_min_slots counting numbers.
+check_p_slots=$(strip $(if $(GCC_TEST_PARALLEL_SLOTS),$(GCC_TEST_PARALLEL_SLOTS),\
+	$(if $(check_p_jobs),$(if $(filter $(check_p_jobs),\
+		$(wordlist 1,$(check_p_min_slots),$(one_to_9999))),\
+		$(check_p_min_slots),$(check_p_jobs)),$(check_p_min_slots))))
 check_p_subdirs=$(wordlist 1,$(check_p_count),$(wordlist 1, \
-		$(if $(GCC_TEST_PARALLEL_SLOTS),$(GCC_TEST_PARALLEL_SLOTS),128), \
+		$(check_p_slots), \
 		$(one_to_9999)))
 
 # For parallelized check-% targets, this decides whether parallelization
@@ -4770,19 +4848,28 @@ $(lang_checks_parallelized): check-% : site.exp
 	    EXPECT=$(EXPECT) \
 	    check-parallel-$* \
 	    $(patsubst %,check-parallel-$*_%, $(check_p_subdirs)); \
-	  sums= ; logs= ; \
+	  sums= ; logs= ; lost= ; \
 	  for dir in $(TESTSUITEDIR)/$* \
 		     $(patsubst %,$(TESTSUITEDIR)/$*%,$(check_p_subdirs));\
 	  do \
 	    if [ -d $$dir ]; then \
-	      mv -f $$dir/$*.sum $$dir/$*.sum.sep; mv -f $$dir/$*.log $$dir/$*.log.sep; \
-	      sums="$$sums $$dir/$*.sum.sep"; logs="$$logs $$dir/$*.log.sep"; \
+	      if [ -f $$dir/$*.sum ]; then \
+		mv -f $$dir/$*.sum $$dir/$*.sum.sep; mv -f $$dir/$*.log $$dir/$*.log.sep; \
+		sums="$$sums $$dir/$*.sum.sep"; logs="$$logs $$dir/$*.log.sep"; \
+	      else \
+		lost="$$lost $$dir"; \
+	      fi; \
 	    fi; \
 	  done; \
+	  if [ -n "$$lost" ]; then \
+	    echo "warning: $*: these runtest instances produced no results:$$lost" >&2; \
+	  fi; \
 	  $(SHELL) $(srcdir)/../contrib/dg-extract-results.sh $$sums \
-	    > $(TESTSUITEDIR)/$*/$*.sum; \
+	    > $(TESTSUITEDIR)/$*/$*.sum.tmp || exit 1; \
 	  $(SHELL) $(srcdir)/../contrib/dg-extract-results.sh -L $$logs \
-	    > $(TESTSUITEDIR)/$*/$*.log; \
+	    > $(TESTSUITEDIR)/$*/$*.log.tmp || exit 1; \
+	  mv -f $(TESTSUITEDIR)/$*/$*.sum.tmp $(TESTSUITEDIR)/$*/$*.sum; \
+	  mv -f $(TESTSUITEDIR)/$*/$*.log.tmp $(TESTSUITEDIR)/$*/$*.log; \
 	  rm -rf $(TESTSUITEDIR)/$*-parallel || true; \
 	else \
 	  $(MAKE) TESTSUITEDIR="$(TESTSUITEDIR)" RUNTESTFLAGS="$(RUNTESTFLAGS)" \
@@ -4845,6 +4932,7 @@ TAGS: lang.tags
 	done;						\
 	$(ETAGS) -o TAGS.sub c-family/*.h c-family/*.cc \
 	      *.h *.cc \
+	      diagnostics/*.h diagnostics/*.cc text-art/*.h text-art/*.cc \
 	      ../include/*.h ../libiberty/*.c \
 	      ../libcpp/*.cc ../libcpp/include/*.h \
 	      --language=none --regex="/\(char\|unsigned int\|int\|bool\|void\|HOST_WIDE_INT\|enum [A-Za-z_0-9]+\) [*]?\([A-Za-z_0-9]+\)/\2/" common.opt	\

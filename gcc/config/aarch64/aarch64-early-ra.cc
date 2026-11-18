@@ -1520,7 +1520,15 @@ early_ra::get_allocno_subgroup (rtx reg)
       group->has_flexible_stride = ((flags & HAS_FLEXIBLE_STRIDE) != 0
 				    && (flags & HAS_FIXED_STRIDE) == 0);
 
-      group->fpr_size = (maybe_gt (fpr_bits, 128) ? FPR_Z
+      // SVE modes always occupy the full Z register, even for partial modes
+      // like VNx2SF whose mode size is only 64 bits.  Treating such modes
+      // as FPR_D would let partial_fpr_clobbers ignore the fact that
+      // V8-V15 are only partially callee-saved under AAPCS64 -- the high
+      // bits of the Z register are clobbered by calls.  Always classify
+      // SVE modes as FPR_Z so that V8-V15 are excluded as candidates for
+      // pseudos that are live across calls.
+      group->fpr_size = ((aarch64_sve_mode_p (GET_MODE (reg))
+			  || maybe_gt (fpr_bits, 128)) ? FPR_Z
 			 : maybe_gt (fpr_bits, 64) ? FPR_Q : FPR_D);
 
       entry = group;
@@ -3030,7 +3038,13 @@ early_ra::allocate_colors ()
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file, "  Allocating [v%d:v%d] to color %d\n",
 		 best, best + color->group->size - 1, color->id);
-      m_allocated_fprs |= ((1U << color->group->size) - 1) << best;
+      // Mark the COLOR's FPRs as allocated.  A full-width color can have
+      // size == 32, so shift a wide enough value: "1U << 32" is undefined,
+      // as is "1UL << 32" on hosts with 32-bit long.  unsigned long long is
+      // at least 64 bits everywhere.  best + size <= 32 (from the candidate
+      // search) keeps the result within the 32-bit mask.
+      gcc_assert (best + color->group->size <= 32);
+      m_allocated_fprs |= ((1ULL << color->group->size) - 1) << best;
     }
 }
 

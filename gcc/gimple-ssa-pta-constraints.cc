@@ -29,7 +29,6 @@
 #include "tree-pass.h"
 #include "ssa.h"
 #include "cgraph.h"
-#include "tree-pretty-print.h"
 #include "diagnostic-core.h"
 #include "fold-const.h"
 #include "stor-layout.h"
@@ -287,7 +286,7 @@ get_constraint_for_ssa_var (tree t, vec<ce_s> *results, bool address_p)
   cexpr.offset = 0;
 
   /* If we are not taking the address of the constraint expr, add all
-     sub-fiels of the variable as well.  */
+     sub-fields of the variable as well.  */
   if (!address_p
       && !vi->is_full_var)
     {
@@ -1464,9 +1463,9 @@ handle_call_arg (gcall *stmt, tree arg, vec<ce_s> *results, int flags,
     }
 }
 
-/* For non-IPA mode, generate constraints necessary for a call on the
-   RHS and collect return value constraint to RESULTS to be used later in
-   handle_lhs_call.
+/* For non-IPA mode or for a function with body not available.
+   Generate constraints necessary for a call on the RHS and collect return
+   value constraint to RESULTS to be used later in handle_lhs_call.
 
    IMPLICIT_EAF_FLAGS are added to each function argument.  If
    WRITES_GLOBAL_MEMORY is true function is assumed to possibly write to global
@@ -2010,12 +2009,12 @@ find_func_aliases_for_builtin_call (struct function *fn, gcall *t)
 	    {
 	      fi = lookup_vi_for_tree (fn->decl);
 	      rhs = get_function_part_constraint (fi, ~0);
-	      rhs.type = ADDRESSOF;
+	      rhs.type = SCALAR;
 	    }
 	  else
 	    {
 	      rhs.var = nonlocal_id;
-	      rhs.type = ADDRESSOF;
+	      rhs.type = SCALAR;
 	      rhs.offset = 0;
 	    }
 	  FOR_EACH_VEC_ELT (lhsc, i, lhsp)
@@ -2108,7 +2107,26 @@ find_func_aliases_for_call (struct function *fn, gcall *t)
       && find_func_aliases_for_builtin_call (fn, t))
     return;
 
+  if (gimple_call_internal_p (t, IFN_VA_ARG)
+      && gimple_call_lhs (t))
+    {
+      tree valist = gimple_call_arg (t, 0);
+      auto_vec<ce_s, 1> rhsc, lhsc;
+      get_constraint_for_rhs (valist, &rhsc);
+      do_deref (&rhsc);
+      get_constraint_for (gimple_call_lhs (t), &lhsc);
+      process_all_all_constraints (lhsc, rhsc);
+      /* va_list is used and clobbered.  */
+      make_constraint_to (get_call_use_vi (t)->id, valist);
+      make_constraint_to (get_call_clobber_vi (t)->id, valist);
+      return;
+    }
+
   if (gimple_call_internal_p (t, IFN_DEFERRED_INIT))
+    return;
+
+  /* .ASSUME produces a flag and has no observable side-effects.  */
+  if (gimple_call_internal_p (t, IFN_ASSUME))
     return;
 
   fi = get_fi_for_callee (t);
@@ -2135,7 +2153,9 @@ find_func_aliases_for_call (struct function *fn, gcall *t)
 	 such operator, then the effects for PTA (in particular
 	 the escaping of the pointer) can be ignored.  */
       else if (fndecl
+	       && flag_assume_sane_operators_new_delete
 	       && DECL_IS_OPERATOR_DELETE_P (fndecl)
+	       && DECL_IS_REPLACEABLE_OPERATOR (fndecl)
 	       && gimple_call_from_new_or_delete (t))
 	;
       else
@@ -2500,7 +2520,7 @@ find_func_clobbers (struct function *fn, gimple *origt)
 	}
     }
 
-  /* Account for uses in assigments and returns.  */
+  /* Account for uses in assignments and returns.  */
   if (gimple_assign_single_p (t)
       || (gimple_code (t) == GIMPLE_RETURN
 	  && gimple_return_retval (as_a <greturn *> (t)) != NULL_TREE))
@@ -3391,27 +3411,31 @@ create_variable_info_for_1 (tree decl, const char *name, bool add_id,
       if (POINTER_TYPE_P (decl_type)
 	  && (TYPE_RESTRICT (decl_type) || add_restrict))
 	vi->only_restrict_pointers = 1;
-      if (vi->only_restrict_pointers
-	  && !type_contains_placeholder_p (TREE_TYPE (decl_type))
-	  && handle_param
-	  && !bitmap_bit_p (handled_struct_type,
-			    TYPE_UID (TREE_TYPE (decl_type))))
+      if (handle_param
+	  && vi->only_restrict_pointers)
 	{
-	  varinfo_t rvi;
-	  tree heapvar = build_fake_var_decl (TREE_TYPE (decl_type));
-	  DECL_EXTERNAL (heapvar) = 1;
-	  if (var_can_have_subvars (heapvar))
-	    bitmap_set_bit (handled_struct_type,
-			    TYPE_UID (TREE_TYPE (decl_type)));
-	  rvi = create_variable_info_for_1 (heapvar, "PARM_NOALIAS", true,
-					    true, handled_struct_type);
-	  if (var_can_have_subvars (heapvar))
-	    bitmap_clear_bit (handled_struct_type,
-			      TYPE_UID (TREE_TYPE (decl_type)));
-	  rvi->is_restrict_var = 1;
-	  insert_vi_for_tree (heapvar, rvi);
-	  make_constraint_from (vi, rvi->id);
-	  make_param_constraints (rvi);
+	  if (!bitmap_bit_p (handled_struct_type,
+			     TYPE_UID (TREE_TYPE (decl_type)))
+	      && !type_contains_placeholder_p (TREE_TYPE (decl_type)))
+	    {
+	      varinfo_t rvi;
+	      tree heapvar = build_fake_var_decl (TREE_TYPE (decl_type));
+	      DECL_EXTERNAL (heapvar) = 1;
+	      if (var_can_have_subvars (heapvar))
+		bitmap_set_bit (handled_struct_type,
+				TYPE_UID (TREE_TYPE (decl_type)));
+	      rvi = create_variable_info_for_1 (heapvar, "PARM_NOALIAS", true,
+						true, handled_struct_type);
+	      if (var_can_have_subvars (heapvar))
+		bitmap_clear_bit (handled_struct_type,
+				  TYPE_UID (TREE_TYPE (decl_type)));
+	      rvi->is_restrict_var = 1;
+	      insert_vi_for_tree (heapvar, rvi);
+	      make_constraint_from (vi, rvi->id);
+	      make_param_constraints (rvi);
+	    }
+	  else
+	    make_constraint_from (vi, nonlocal_id);
 	}
       fieldstack.release ();
       return vi;
@@ -3451,26 +3475,30 @@ create_variable_info_for_1 (tree decl, const char *name, bool add_id,
       newvi->may_have_pointers = fo->may_have_pointers;
       newvi->only_restrict_pointers = fo->only_restrict_pointers;
       if (handle_param
-	  && newvi->only_restrict_pointers
-	  && !type_contains_placeholder_p (fo->restrict_pointed_type)
-	  && !bitmap_bit_p (handled_struct_type,
-			    TYPE_UID (fo->restrict_pointed_type)))
+	  && newvi->only_restrict_pointers)
 	{
-	  varinfo_t rvi;
-	  tree heapvar = build_fake_var_decl (fo->restrict_pointed_type);
-	  DECL_EXTERNAL (heapvar) = 1;
-	  if (var_can_have_subvars (heapvar))
-	    bitmap_set_bit (handled_struct_type,
-			    TYPE_UID (fo->restrict_pointed_type));
-	  rvi = create_variable_info_for_1 (heapvar, "PARM_NOALIAS", true,
-					    true, handled_struct_type);
-	  if (var_can_have_subvars (heapvar))
-	    bitmap_clear_bit (handled_struct_type,
-			      TYPE_UID (fo->restrict_pointed_type));
-	  rvi->is_restrict_var = 1;
-	  insert_vi_for_tree (heapvar, rvi);
-	  make_constraint_from (newvi, rvi->id);
-	  make_param_constraints (rvi);
+	  if (!bitmap_bit_p (handled_struct_type,
+			     TYPE_UID (fo->restrict_pointed_type))
+	      && !type_contains_placeholder_p (fo->restrict_pointed_type))
+	    {
+	      varinfo_t rvi;
+	      tree heapvar = build_fake_var_decl (fo->restrict_pointed_type);
+	      DECL_EXTERNAL (heapvar) = 1;
+	      if (var_can_have_subvars (heapvar))
+		bitmap_set_bit (handled_struct_type,
+				TYPE_UID (fo->restrict_pointed_type));
+	      rvi = create_variable_info_for_1 (heapvar, "PARM_NOALIAS", true,
+						true, handled_struct_type);
+	      if (var_can_have_subvars (heapvar))
+		bitmap_clear_bit (handled_struct_type,
+				  TYPE_UID (fo->restrict_pointed_type));
+	      rvi->is_restrict_var = 1;
+	      insert_vi_for_tree (heapvar, rvi);
+	      make_constraint_from (newvi, rvi->id);
+	      make_param_constraints (rvi);
+	    }
+	  else
+	    make_constraint_from (newvi, nonlocal_id);
 	}
       if (i + 1 < fieldstack.length ())
 	{
@@ -3487,7 +3515,7 @@ static unsigned int
 create_variable_info_for (tree decl, const char *name, bool add_id)
 {
   /* First see if we are dealing with an ifunc resolver call and
-     assiociate that with a call to the resolver function result.  */
+     associate that with a call to the resolver function result.  */
   cgraph_node *node;
   if (in_ipa_mode
       && TREE_CODE (decl) == FUNCTION_DECL
@@ -3856,7 +3884,7 @@ associate_varinfo_to_alias (struct cgraph_node *node, void *data)
   return false;
 }
 
-/* Compute whether node is refered to non-locally.  Worker for
+/* Compute whether node is referred to non-locally.  Worker for
    cgraph_for_symbol_thunks_and_aliases.  */
 static bool
 refered_from_nonlocal_fn (struct cgraph_node *node, void *data)

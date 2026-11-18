@@ -6,11 +6,8 @@ if test -n "${with_target_subdir}"; then
   AM_ENABLE_MULTILIB(, ..)
 fi
 
-# Do not delete or change the following two lines.  For why, see
-# http://gcc.gnu.org/ml/libstdc++/2003-07/msg00451.html
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_TARGET
 target_alias=${target_alias-$host_alias}
-AC_SUBST(target_alias)
 
 # Automake should never attempt to rebuild configure
 AM_MAINTAINER_MODE
@@ -26,13 +23,6 @@ GCC_WITH_TOOLEXECLIBDIR
 
 # Use system specific extensions
 AC_USE_SYSTEM_EXTENSIONS
-
-
-# Checks for header files.
-AC_HEADER_STDC
-AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS(limits.h stddef.h string.h strings.h stdlib.h \
-                 time.h sys/stat.h wchar.h)
 
 AC_ARG_ENABLE([werror],
   [AS_HELP_STRING([--disable-werror], [disable building with -Werror])])
@@ -107,7 +97,7 @@ AM_CONDITIONAL(TARGET_LIBRARY, test -n "$with_target_subdir")
 
 AC_CONFIG_FILES([libformat_parser/Makefile])
 
-AC_CONFIG_FILES(AC_FOREACH([DIR], [libproc_macro_internal], [DIR/Makefile ]),
+AC_CONFIG_FILES(m4_foreach_w([DIR], [libproc_macro_internal], [DIR/Makefile ]),
  [ cat > vpsed$$ << \_EOF
 s!`test -f '$<' || echo '$(srcdir)/'`!!
 _EOF

@@ -495,10 +495,7 @@ along with GCC; see the file COPYING3.  If not see
 /* SPARC_LONG_DOUBLE_TYPE_SIZE is defined per OS even though the
    SPARC ABI says that it is 128-bit wide.  LONG_DOUBLE_TYPE_SIZE
    get poisoned, so add SPARC_ prefix.  */
-/* #define SPARC_LONG_DOUBLE_TYPE_SIZE	128 */
-
-/* The widest floating-point format really supported by the hardware.  */
-#define WIDEST_HARDWARE_FP_SIZE 64
+#define SPARC_LONG_DOUBLE_TYPE_SIZE	128
 
 /* Width in bits of a pointer.  This is the size of ptr_mode.  */
 #define POINTER_SIZE (TARGET_PTR64 ? 64 : 32)
@@ -1222,7 +1219,8 @@ do {									\
 
 /* Given an rtx for the frame pointer,
    return an rtx for the address of the frame.  */
-#define FRAME_ADDR_RTX(frame) plus_constant (Pmode, frame, SPARC_STACK_BIAS)
+#define FRAME_ADDR_RTX(count, frame) \
+  plus_constant (Pmode, frame, SPARC_STACK_BIAS)
 
 /* The return address isn't on the stack, it is in a register, so we can't
    access it from the current frame pointer.  We can access it from the

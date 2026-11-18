@@ -1,7 +1,7 @@
 /* { dg-do run } */
 /* { dg-options "-O2 -mavx512cd" } */
 /* { dg-require-effective-target avx512cd } */
-/* { dg-skip-if "PR target/114150" { *-*-solaris2.* && { ! gas } } } */
+/* { dg-skip-if "PR target/114150" { solaris_as } } */
 
 #define HAVE_512
 #define AVX512CD

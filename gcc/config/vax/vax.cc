@@ -88,6 +88,10 @@ static HOST_WIDE_INT vax_starting_frame_offset (void);
 #undef TARGET_ASM_CAN_OUTPUT_MI_THUNK
 #define TARGET_ASM_CAN_OUTPUT_MI_THUNK default_can_output_mi_thunk_no_vcall
 
+/* The casel table is part of the instruction.  */
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P hook_bool_rtx_insn_false
+
 /* Enable compare elimination pass.  */
 #undef TARGET_FLAGS_REGNUM
 #define TARGET_FLAGS_REGNUM VAX_PSL_REGNUM
@@ -160,7 +164,7 @@ vax_option_override (void)
 }
 
 static void
-vax_add_reg_cfa_offset (rtx insn, int offset, rtx src)
+vax_add_reg_cfa_offset (rtx_insn *insn, int offset, rtx src)
 {
   rtx x;
 
@@ -185,7 +189,7 @@ vax_expand_prologue (void)
   int regno, offset;
   int mask = 0;
   HOST_WIDE_INT size;
-  rtx insn;
+  rtx_insn *insn;
 
   for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
     if (df_regs_ever_live_p (regno) && !call_used_or_fixed_reg_p (regno))
@@ -268,7 +272,7 @@ vax_init_libfuncs (void)
 /* This is like nonimmediate_operand with a restriction on the type of MEM.  */
 
 static void
-split_quadword_operands (rtx insn, enum rtx_code code, rtx * operands,
+split_quadword_operands (rtx_insn *insn, enum rtx_code code, rtx * operands,
 			 rtx * low, int n)
 {
   int i;
@@ -1246,7 +1250,7 @@ vax_maybe_split_dimode_move (rtx *operands)
 }
 
 const char *
-vax_output_int_move (rtx insn ATTRIBUTE_UNUSED, rtx *operands,
+vax_output_int_move (rtx_insn *insn ATTRIBUTE_UNUSED, rtx *operands,
 		     machine_mode mode)
 {
   rtx hi[3], lo[3];
@@ -2017,7 +2021,7 @@ vax_expand_addsub_di_operands (rtx * operands, enum rtx_code code)
     gcc_unreachable ();
 
   /* If this is addition (thus operands are commutative) and if there is one
-     addend that duplicates the desination, we want that addend to be the
+     addend that duplicates the destination, we want that addend to be the
      first addend.  */
   if (code == PLUS
       && rtx_equal_p (operands[0], operands[2])

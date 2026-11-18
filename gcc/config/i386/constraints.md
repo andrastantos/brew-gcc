@@ -98,6 +98,8 @@
 ;;  z	First SSE register.
 ;;  d	any EVEX encodable SSE register for AVX512DQ target or
 ;;	any SSE register for SSE4_1 target.
+;;  D	any EVEX encodable SSE register for AVX512DQ target or
+;;	any SSE register for SSE2 target.
 ;;  p	Integer register when TARGET_PARTIAL_REG_STALL is disabled
 ;;  a	Integer register when zero extensions with AND are disabled
 ;;  b	Any register that can be used as the GOT base when calling
@@ -120,6 +122,10 @@
 (define_register_constraint "Yd"
  "TARGET_AVX512DQ ? ALL_SSE_REGS : TARGET_SSE4_1 ? SSE_REGS : NO_REGS"
  "@internal Any EVEX encodable SSE register (@code{%xmm0-%xmm31}) for AVX512DQ target or any SSE register for SSE4_1 target.")
+
+(define_register_constraint "YD"
+ "TARGET_AVX512DQ ? ALL_SSE_REGS : TARGET_SSE2 ? SSE_REGS : NO_REGS"
+ "@internal Any EVEX encodable SSE register (@code{%xmm0-%xmm31}) for AVX512DQ target or any SSE register for SSE2 target.")
 
 (define_register_constraint "Yp"
  "TARGET_PARTIAL_REG_STALL ? NO_REGS : GENERAL_REGS"
@@ -390,12 +396,8 @@
 ;;  p  General address operand without GPR32.
 ;;  m  Memory operand without GPR32.
 ;;  M  Memory operand, with APX NDD check.
-;;  R  Integer register.  GENERAL_REGS.
 ;;  O  Offsettable memory operand, with APX NDD check.
 ;;  V  Non-offsetable memory operand without GPR32.
-
-;; Constraint that force to use EGPR, can only adopt to register class.
-(define_register_constraint  "jR" "GENERAL_REGS")
 
 (define_register_constraint  "jr"
  "TARGET_APX_EGPR ? GENERAL_GPR16 : GENERAL_REGS")

@@ -812,6 +812,19 @@
                     (const_string "neon_abs<q>")))]
 )
 
+;; Not handled by "<absneg_str><mode>2" due to the lack of a direct
+;; 64-bit vneg.
+(define_expand "negv2di2"
+  [(set (match_operand:V2DI 0 "s_register_operand")
+	(neg:V2DI (match_operand:V2DI 1 "s_register_operand")))]
+  "TARGET_NEON"
+  {
+    rtx zero = force_reg (V2DImode, CONST0_RTX (V2DImode));
+    emit_insn (gen_subv2di3 (operands[0], zero, operands[1]));
+    DONE;
+  }
+)
+
 (define_insn "neon_neg<mode>2"
   [(set (match_operand:VDQW 0 "s_register_operand" "=w")
 	(neg:VDQW (match_operand:VDQW 1 "s_register_operand" "w")))]
@@ -964,7 +977,7 @@
 ;; 64-bit shifts
 
 ;; This pattern loads a 32-bit shift count into a 64-bit NEON register,
-;; leaving the upper half uninitalized.  This is OK since the shift
+;; leaving the upper half uninitialized.  This is OK since the shift
 ;; instruction only looks at the low 8 bits anyway.  To avoid confusing
 ;; data flow analysis however, we pretend the full register is set
 ;; using an unspec.
@@ -981,7 +994,7 @@
 
 ;; Widening operations
 
-(define_expand "widen_ssum<v_double_width><mode>3"
+(define_expand "reduc_widen_ssum<v_double_width><mode>3"
   [(set (match_operand:<V_double_width> 0 "s_register_operand")
 	(plus:<V_double_width>
 	 (sign_extend:<V_double_width>
@@ -1040,7 +1053,7 @@
 }
   [(set_attr "type" "neon_add_widen")])
 
-(define_insn "widen_ssum<V_widen_l><mode>3"
+(define_insn "reduc_widen_ssum<V_widen_l><mode>3"
   [(set (match_operand:<V_widen> 0 "s_register_operand" "=w")
 	(plus:<V_widen>
 	 (sign_extend:<V_widen>
@@ -1051,7 +1064,7 @@
   [(set_attr "type" "neon_add_widen")]
 )
 
-(define_expand "widen_usum<v_double_width><mode>3"
+(define_expand "reduc_widen_usum<v_double_width><mode>3"
   [(set (match_operand:<V_double_width> 0 "s_register_operand")
 	(plus:<V_double_width>
 	 (zero_extend:<V_double_width>
@@ -1110,7 +1123,7 @@
 }
   [(set_attr "type" "neon_add_widen")])
 
-(define_insn "widen_usum<V_widen_l><mode>3"
+(define_insn "reduc_widen_usum<V_widen_l><mode>3"
   [(set (match_operand:<V_widen> 0 "s_register_operand" "=w")
 	(plus:<V_widen> (zero_extend:<V_widen>
 			  (match_operand:VW 1 "s_register_operand" "%w"))
@@ -2654,7 +2667,7 @@
   [(set_attr "type" "neon_arith_acc<q>")]
 )
 
-(define_expand "<sup>sadv16qi"
+(define_expand "<sup>sadv4siv16qi"
   [(use (match_operand:V4SI 0 "register_operand"))
    (unspec:V16QI [(use (match_operand:V16QI 1 "register_operand"))
                   (use (match_operand:V16QI 2 "register_operand"))] VABAL)
@@ -3526,48 +3539,138 @@ if (BYTES_BIG_ENDIAN)
    (set_attr "type" "multiple")]
 )
 
-(define_insn "neon_vdup_lane<mode>_internal"
-  [(set (match_operand:VDQW 0 "s_register_operand" "=w")
-  	(vec_duplicate:VDQW 
-          (vec_select:<V_elem>
-            (match_operand:<V_double_vector_mode> 1 "s_register_operand" "w")
-            (parallel [(match_operand:SI 2 "immediate_operand" "i")]))))]
+(define_insn_and_split "neon_vdup_lane<VDQW:mode>_internal"
+  [(set (match_operand:VDQW 0 "s_register_operand" "=w,w")
+	(vec_duplicate:VDQW
+	  (vec_select:<V_elem>
+	    (match_operand:<V_double_vector_mode> 1 "s_register_operand" "w,r")
+	    (parallel [(match_operand:SI 2 "immediate_operand" "i,i")]))))
+   (clobber (match_scratch:<V_elem> 3 "=X,r"))]
   "TARGET_NEON"
-{
-  if (BYTES_BIG_ENDIAN)
-    {
-      int elt = INTVAL (operands[2]);
+  {
+    if (REGNO (operands[1]) <= LAST_ARM_REGNUM)
+      return "#";
+    if (BYTES_BIG_ENDIAN)
+      {
+	int elt = INTVAL (operands[2]);
+	elt = GET_MODE_NUNITS (<V_double_vector_mode>mode) - 1 - elt;
+	operands[2] = GEN_INT (elt);
+      }
+    if (<Is_d_reg>)
+      return "vdup.<V_sz_elem>\t%P0, %P1[%c2]";
+    else
+      return "vdup.<V_sz_elem>\t%q0, %P1[%c2]";
+  }
+  "&& REGNO (operands[1]) <= LAST_ARM_REGNUM"
+  [(set (match_dup 0)
+	(vec_duplicate:VDQW (match_dup 3)))]
+  {
+    unsigned HOST_WIDE_INT elt = UINTVAL (operands[2]);
+    unsigned HOST_WIDE_INT size = GET_MODE_SIZE (<V_elem>mode);
+    int base_regno = REGNO (operands[1]);
+    int regno = (base_regno
+		 + subreg_regno_offset (base_regno, <V_double_vector_mode>mode,
+					elt * size, SImode));
+    if (BYTES_BIG_ENDIAN)
       elt = GET_MODE_NUNITS (<V_double_vector_mode>mode) - 1 - elt;
-      operands[2] = GEN_INT (elt);
-    }
-  if (<Is_d_reg>)
-    return "vdup.<V_sz_elem>\t%P0, %P1[%c2]";
-  else
-    return "vdup.<V_sz_elem>\t%q0, %P1[%c2]";
-}
-  [(set_attr "type" "neon_dup<q>")]
+    unsigned HOST_WIDE_INT offset = (elt * size) % GET_MODE_SIZE (SImode);
+    if (offset != 0)
+      {
+	gcc_assert (offset < 4);
+	rtx reg = gen_rtx_REG (SImode, regno);
+	rtx shift = gen_rtx_LSHIFTRT (SImode, reg,
+				      GEN_INT (offset * BITS_PER_UNIT));
+	emit_move_insn (gen_rtx_SUBREG (SImode, operands[3], 0),
+			shift);
+      }
+    else
+      operands[3] = gen_rtx_REG (<V_elem>mode, regno);
+  }
+  [(set_attr "length" "4,8")
+   (set_attr "type" "neon_dup<q>")]
 )
 
-(define_insn "neon_vdup_lane<mode>_internal"
- [(set (match_operand:VHFBF 0 "s_register_operand" "=w")
-   (vec_duplicate:VHFBF
-    (vec_select:<V_elem>
-     (match_operand:<V_double_vector_mode> 1 "s_register_operand" "w")
-     (parallel [(match_operand:SI 2 "immediate_operand" "i")]))))]
- "TARGET_NEON && (TARGET_FP16 || TARGET_BF16_SIMD)"
-{
-  if (BYTES_BIG_ENDIAN)
-    {
-      int elt = INTVAL (operands[2]);
+; There isn't an intrinsic for this, but the compiler can generate it
+; idomatically from other operations.
+(define_insn_and_split "neon_vdupq_lane<VQ2BF:mode>_internal"
+  [(set (match_operand:VQ2BF 0 "s_register_operand" "=w,w")
+	(vec_duplicate:VQ2BF
+	  (vec_select:<V_elem>
+	    (match_operand:VQ2BF 1 "s_register_operand" "w,r")
+	    (parallel [(match_operand:SI 2 "immediate_operand" "i,i")]))))
+   (clobber (match_scratch:<V_elem> 3 "=X,r"))]
+  "TARGET_NEON"
+  "#"
+  ""
+  [(parallel
+    [(set (match_dup 0)
+       (vec_duplicate:VQ2BF
+	 (vec_select:<V_elem> (match_dup 1) (parallel [(match_dup 2)]))))
+     (clobber (match_dup 3))])]
+  {
+    HOST_WIDE_INT elt = INTVAL (operands[2]);
+    if (elt >= GET_MODE_NUNITS (<MODE>mode) / 2)
+      {
+	elt -= GET_MODE_NUNITS (<MODE>mode) / 2;
+	operands[1] = simplify_gen_subreg (<V_HALF>mode, operands[1],
+					   <MODE>mode,
+					   GET_MODE_SIZE (<V_HALF>mode));
+	operands[2] = GEN_INT (elt);
+      }
+    else
+      operands[1] = gen_lowpart (<V_HALF>mode, operands[1]);
+  }
+  [(set_attr "type" "neon_dup<q>")
+   (set_attr "length" "4,8")]
+)
+
+(define_insn_and_split "neon_vdup_lane<VHFBF:mode>_internal"
+  [(set (match_operand:VHFBF 0 "s_register_operand" "=w,w")
+    (vec_duplicate:VHFBF
+     (vec_select:<V_elem>
+      (match_operand:<V_double_vector_mode> 1 "s_register_operand" "w,r")
+      (parallel [(match_operand:SI 2 "immediate_operand" "i,i")]))))
+   (clobber (match_scratch:<V_elem> 3 "=X,r"))]
+  "TARGET_NEON && (TARGET_FP16 || TARGET_BF16_SIMD)"
+  {
+    if (BYTES_BIG_ENDIAN)
+      {
+	int elt = INTVAL (operands[2]);
+	elt = GET_MODE_NUNITS (<V_double_vector_mode>mode) - 1 - elt;
+	operands[2] = GEN_INT (elt);
+      }
+    if (<Is_d_reg>)
+      return "vdup.<V_sz_elem>\t%P0, %P1[%c2]";
+    else
+      return "vdup.<V_sz_elem>\t%q0, %P1[%c2]";
+  }
+  "&& REGNO (operands[1]) <= LAST_ARM_REGNUM"
+  [(set (match_dup 0)
+	(vec_duplicate:VHFBF (match_dup 3)))]
+  {
+    unsigned HOST_WIDE_INT elt = UINTVAL (operands[2]);
+    unsigned HOST_WIDE_INT size = GET_MODE_SIZE (<V_elem>mode);
+    int base_regno = REGNO (operands[1]);
+    int regno = (base_regno
+		 + subreg_regno_offset (base_regno, <V_double_vector_mode>mode,
+					elt * size, SImode));
+    if (BYTES_BIG_ENDIAN)
       elt = GET_MODE_NUNITS (<V_double_vector_mode>mode) - 1 - elt;
-      operands[2] = GEN_INT (elt);
-    }
-  if (<Is_d_reg>)
-    return "vdup.<V_sz_elem>\t%P0, %P1[%c2]";
-  else
-    return "vdup.<V_sz_elem>\t%q0, %P1[%c2]";
-}
-  [(set_attr "type" "neon_dup<q>")]
+    unsigned HOST_WIDE_INT offset = (elt * size) % GET_MODE_SIZE (SImode);
+    if (offset != 0)
+      {
+	gcc_assert (offset < 4);
+	rtx reg = gen_rtx_REG (SImode, regno);
+	rtx shift = gen_rtx_LSHIFTRT (SImode, reg,
+				      GEN_INT (offset * BITS_PER_UNIT));
+	emit_move_insn (gen_rtx_SUBREG (SImode, operands[3], 0),
+			shift);
+      }
+    else
+      operands[3] = gen_rtx_REG (<V_elem>mode, regno);
+  }
+  [(set_attr "length" "4,8")
+   (set_attr "type" "neon_dup<q>")]
 )
 
 (define_expand "neon_vdup_lane<mode>"
@@ -4620,9 +4723,15 @@ if (BYTES_BIG_ENDIAN)
 			  VSHLL_N))]
   "TARGET_NEON"
 {
-  /* The boundaries are: 0 < imm <= size.  */
-  arm_const_bounds (operands[2], 0, neon_element_bits (<MODE>mode) + 1);
-  return "vshll.<sup>%#<V_sz_elem>\t%q0, %P1, %2";
+  /* The boundaries are: 0 <= imm <= size, but the upper and lower
+     bounds need specific handling.  */
+  HOST_WIDE_INT elt_size = neon_element_bits (<MODE>mode);
+  arm_const_bounds (operands[2], 0, elt_size + 1);
+  if (INTVAL (operands[2]) == 0)
+    return "vmovl.<sup><V_sz_elem>\t%q0, %P1";
+  else if (INTVAL (operands[2]) == elt_size)
+    return "vshll.i<V_sz_elem>\t%q0, %P1, %2";
+  return "vshll.<sup><V_sz_elem>\t%q0, %P1, %2";
 }
   [(set_attr "type" "neon_shift_imm_long")]
 )

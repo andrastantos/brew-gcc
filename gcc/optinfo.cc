@@ -18,6 +18,7 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define INCLUDE_STRING
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -125,7 +126,7 @@ optinfo::emit_for_opt_problem () const
     dump_context::get ().emit_item (*item, dump_kind);
 
   /* Re-emit to "non-immediate" destinations.  */
-  dump_context::get ().emit_optinfo (this);
+  dump_context::get ().emit_optinfo (*this);
 }
 
 /* Update the optinfo's kind based on DUMP_KIND.  */

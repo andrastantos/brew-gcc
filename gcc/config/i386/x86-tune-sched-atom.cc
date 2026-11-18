@@ -80,8 +80,7 @@ do_reorder_for_imul (rtx_insn **ready, int n_ready)
 
       FOR_EACH_DEP (insn, SD_LIST_FORW, sd_it, dep)
 	{
-	  rtx con;
-	  con = DEP_CON (dep);
+	  rtx_insn *con = DEP_CON (dep);
 	  if (!NONDEBUG_INSN_P (con))
 	    continue;
 	  insn1 = PATTERN (con);
@@ -156,8 +155,7 @@ swap_top_of_ready_list (rtx_insn **ready, int n_ready)
       /* Determine winner more precise.  */
       FOR_EACH_DEP (top, SD_LIST_RES_BACK, sd_it, dep)
 	{
-	  rtx pro;
-	  pro = DEP_PRO (dep);
+	  rtx_insn *pro = DEP_PRO (dep);
 	  if (!NONDEBUG_INSN_P (pro))
 	    continue;
 	  if (INSN_TICK (pro) > clock1)
@@ -165,8 +163,7 @@ swap_top_of_ready_list (rtx_insn **ready, int n_ready)
 	}
       FOR_EACH_DEP (next, SD_LIST_RES_BACK, sd_it, dep)
 	{
-	  rtx pro;
-	  pro = DEP_PRO (dep);
+	  rtx_insn *pro = DEP_PRO (dep);
 	  if (!NONDEBUG_INSN_P (pro))
 	    continue;
 	  if (INSN_TICK (pro) > clock2)
@@ -188,7 +185,7 @@ swap_top_of_ready_list (rtx_insn **ready, int n_ready)
   #undef INSN_TICK
 }
 
-/* Perform possible reodering of ready list for Atom/Silvermont only.
+/* Perform possible reordering of ready list for Atom/Silvermont only.
    Return issue rate.  */
 int
 ix86_atom_sched_reorder (FILE *dump, int sched_verbose, rtx_insn **ready,
@@ -203,7 +200,7 @@ ix86_atom_sched_reorder (FILE *dump, int sched_verbose, rtx_insn **ready,
   /* Set up issue rate.  */
   issue_rate = ix86_issue_rate ();
 
-  /* Do reodering for BONNELL/SILVERMONT only.  */
+  /* Do reordering for BONNELL/SILVERMONT only.  */
   if (!TARGET_CPU_P (BONNELL) && !TARGET_CPU_P (SILVERMONT)
       && !TARGET_CPU_P (INTEL))
     return issue_rate;
@@ -212,7 +209,7 @@ ix86_atom_sched_reorder (FILE *dump, int sched_verbose, rtx_insn **ready,
   if (n_ready <= 1)
     return issue_rate;
 
-  /* Do reodering for post-reload scheduler only.  */
+  /* Do reordering for post-reload scheduler only.  */
   if (!reload_completed)
     return issue_rate;
 

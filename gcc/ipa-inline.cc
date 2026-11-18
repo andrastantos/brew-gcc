@@ -293,11 +293,16 @@ report_inline_failed_reason (struct cgraph_edge *e)
 			   e->caller->lto_file_data->file_name,
 			   e->callee->ultimate_alias_target ()->lto_file_data->file_name);
 	}
-      if (e->inline_failed == CIF_TARGET_OPTION_MISMATCH)
-	if (dump_file)
-	  cl_target_option_print_diff
-	    (dump_file, 2, target_opts_for_fn (e->caller->decl),
-	     target_opts_for_fn (e->callee->ultimate_alias_target ()->decl));
+      if (e->inline_failed == CIF_TARGET_OPTION_MISMATCH
+	  && dump_file)
+	{
+	  struct cl_target_option *opt_caller
+	    = target_opts_for_fn (e->caller->decl);
+	  struct cl_target_option *opt_callee
+	    = target_opts_for_fn (e->callee->ultimate_alias_target ()->decl);
+	  if (opt_caller != NULL && opt_callee != NULL)
+	    cl_target_option_print_diff (dump_file, 2, opt_caller, opt_callee);
+	}
       if (e->inline_failed == CIF_OPTIMIZATION_MISMATCH)
 	if (dump_file)
 	  cl_optimization_print_diff
@@ -511,7 +516,7 @@ enum can_inline_edge_by_limits_flags
   /* Ignore size limits.  */
   CAN_INLINE_DISREGARD_LIMITS = 2,
   /* Force size limits (ignore always_inline).  This is used for
-     recrusive inlining where always_inline may lead to inline bombs
+     recursive inlining where always_inline may lead to inline bombs
      and technically it is non-sential anyway.  */
   CAN_INLINE_FORCE_LIMITS = 4,
   /* Report decision to dump file.  */
@@ -582,6 +587,7 @@ can_inline_edge_by_limits_p (struct cgraph_edge *e, int flags)
          we cannot inline in these cases for correctness reason.
 	 Not even for always_inline declared functions.  */
      else if (check_match (flag_wrapv)
+	      || check_match (flag_wrapv_pointer)
 	      || check_match (flag_trapv)
 	      || check_match (flag_pcc_struct_return)
 	      || check_maybe_down (optimize_debug)
@@ -725,7 +731,7 @@ can_early_inline_edge_p (struct cgraph_edge *e)
 	  || !lookup_attribute ("always_inline", DECL_ATTRIBUTES (callee->decl))))
     {
       /* If there are indirect calls, inlining may produce direct call.
-	 TODO: We may lift this restriction if we avoid errors on formely
+	 TODO: We may lift this restriction if we avoid errors on formerly
 	 indirect calls to always_inline functions.  Taking address
 	 of always_inline function is generally bad idea and should
 	 have been declared as undefined, but sadly we allow this.  */
@@ -3270,7 +3276,7 @@ early_inliner (function *fun)
 	     statements that don't have inline parameters computed.  */
 	  for (edge = node->callees; edge; edge = edge->next_callee)
 	    {
-	      /* We can enounter not-yet-analyzed function during
+	      /* We can encounter not-yet-analyzed function during
 		 early inlining on callgraphs with strongly
 		 connected components.  */
 	      ipa_call_summary *es = ipa_call_summaries->get_create (edge);

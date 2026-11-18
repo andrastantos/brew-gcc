@@ -40,6 +40,7 @@
 #define __glibcxx_want_constexpr_char_traits
 #define __glibcxx_want_constexpr_string_view
 #define __glibcxx_want_freestanding_string_view
+#define __glibcxx_want_hardened_basic_string_view
 #define __glibcxx_want_starts_ends_with
 #define __glibcxx_want_string_contains
 #define __glibcxx_want_string_subview
@@ -63,7 +64,7 @@
 #endif
 
 #if _GLIBCXX_HOSTED
-# include <iosfwd>
+# include <bits/iosfwd.h>
 # include <bits/ostream_insert.h>
 #endif
 
@@ -621,6 +622,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // type (see N3766).
 
 #if __cpp_lib_three_way_comparison
+  // _GLIBCXX_RESOLVE_LIB_DEFECTS
+  // 3950. std::basic_string_view comparison operators are overspecified
+
   template<typename _CharT, typename _Traits>
     [[nodiscard]]
     constexpr bool
@@ -633,7 +637,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     [[nodiscard]]
     constexpr auto
     operator<=>(basic_string_view<_CharT, _Traits> __x,
-		__type_identity_t<basic_string_view<_CharT, _Traits>> __y)
+		type_identity_t<basic_string_view<_CharT, _Traits>> __y)
     noexcept
     -> decltype(__detail::__char_traits_cmp_cat<_Traits>(0))
     { return __detail::__char_traits_cmp_cat<_Traits>(__x.compare(__y)); }

@@ -33,14 +33,13 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 
 #include "config.h"
+#include <stdlib.h>
+#include <string.h>
 #ifdef HAVE_ALLOCA_H
 # include <alloca.h>
 #endif
 #ifdef HAVE_MALLOC_H
 # include <malloc.h>
-#endif
-#ifdef HAVE_STRING_H
-# include <string.h>
 #endif
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
@@ -66,8 +65,9 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #ifdef HAVE_SYSLOG_H
 # include <syslog.h>
 #endif
+#include <stdint.h>
 
-void *__stack_chk_guard = 0;
+uintptr_t __stack_chk_guard = 0;
 
 static void __attribute__ ((constructor))
 __guard_setup (void)

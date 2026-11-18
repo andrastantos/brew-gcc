@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-require-effective-target R_flag_in_section } */
+/* { dg-require-effective-target gnu_retain } */
 /* { dg-final { scan-assembler-not ".text.*,\"axR\"" } } */
 /* { dg-final { scan-assembler-not ".bss.*,\"awR\"" } } */
 /* { dg-final { scan-assembler-not ".data.*,\"awR\"" } } */

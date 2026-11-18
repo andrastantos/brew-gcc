@@ -302,18 +302,7 @@ create_assumption_fn (location_t loc)
   DECL_EXTERNAL (decl) = 0;
   DECL_CONTEXT (decl) = NULL_TREE;
   DECL_INITIAL (decl) = make_node (BLOCK);
-  tree attributes = DECL_ATTRIBUTES (current_function_decl);
-  if (lookup_attribute ("noipa", attributes) == NULL)
-    {
-      attributes = tree_cons (get_identifier ("noipa"), NULL, attributes);
-      if (lookup_attribute ("noinline", attributes) == NULL)
-	attributes = tree_cons (get_identifier ("noinline"), NULL, attributes);
-      if (lookup_attribute ("noclone", attributes) == NULL)
-	attributes = tree_cons (get_identifier ("noclone"), NULL, attributes);
-      if (lookup_attribute ("no_icf", attributes) == NULL)
-	attributes = tree_cons (get_identifier ("no_icf"), NULL, attributes);
-    }
-  DECL_ATTRIBUTES (decl) = attributes;
+  DECL_ATTRIBUTES (decl) = DECL_ATTRIBUTES (current_function_decl);
   BLOCK_SUPERCONTEXT (DECL_INITIAL (decl)) = decl;
   DECL_FUNCTION_SPECIFIC_OPTIMIZATION (decl)
     = DECL_FUNCTION_SPECIFIC_OPTIMIZATION (current_function_decl);
@@ -402,7 +391,7 @@ find_assumption_locals_r (gimple_stmt_iterator *gsi_p, bool *,
   return NULL_TREE;
 }
 
-/* Create a new PARM_DECL that is indentical in all respect to DECL except that
+/* Create a new PARM_DECL that is identical in all respect to DECL except that
    DECL can be either a VAR_DECL, a PARM_DECL or RESULT_DECL.  The original
    DECL must come from ID->src_fn and the copy will be part of ID->dst_fn.  */
 
@@ -673,8 +662,11 @@ lower_assumption (gimple_stmt_iterator *gsi, struct lower_data *data)
     }
   DECL_ARGUMENTS (lad.id.dst_fn) = parms;
   TREE_TYPE (lad.id.dst_fn) = build_function_type (boolean_type_node, parmt);
+  /* The body function no longer has var. args, unset stdarg.  */
+  DECL_STRUCT_FUNCTION (lad.id.dst_fn)->stdarg = 0;
 
-  cgraph_node::add_new_function (lad.id.dst_fn, false);
+  cgraph_node *dst_node = cgraph_node::add_new_function (lad.id.dst_fn, false);
+  dst_node->assume_function = 1;
 
   for (unsigned i = 0; i < sz; ++i)
     {
@@ -1429,8 +1421,7 @@ lower_builtin_assume_aligned (gimple_stmt_iterator *gsi)
   /* For lowering we simply transfer alignment information to the
      result and leave the call otherwise unchanged, it will be elided
      at RTL expansion time.  */
-  ptr_info_def *pi = get_ptr_info (lhs);
-  set_ptr_info_alignment (pi, aligni, misaligni);
+  set_ssa_name_alignment (lhs, aligni, misaligni);
 }
 
 

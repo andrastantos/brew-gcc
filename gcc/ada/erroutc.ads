@@ -27,9 +27,10 @@
 --  reporting packages, including Errout and Prj.Err.
 
 with Table;
-with Errid; use Errid;
-with Osint; use Osint;
-with Types; use Types;
+with Errid;  use Errid;
+with Osint;  use Osint;
+with Rident; use Rident;
+with Types;  use Types;
 
 package Erroutc is
 
@@ -353,6 +354,9 @@ package Erroutc is
       Id : Diagnostic_Id := No_Diagnostic_Id;
       --  Unique error code for the given message
 
+      Restriction : Restriction_Id := Not_A_Restriction_Id;
+      --  Restriction related to the diagnostic
+
       Locations : Labeled_Span_Id := No_Labeled_Span;
       --  Identifier to the first location identified by the error message.
       --  These locations are marked with an underlying span line and
@@ -383,6 +387,13 @@ package Erroutc is
    --  The last entry on the list of error messages. Note: this is not the same
    --  as the physically last entry in the error message table, since messages
    --  are not always inserted in sequence.
+
+   procedure Insert_Error_Msg
+     (Msg : Error_Msg_Id; Prev_Msg : Error_Msg_Id; Next_Msg : Error_Msg_Id);
+   --  Insert Msg into the error message chain between Prev_Msg and Next_Msg.
+   --  Sets the Next and Prev pointers on Msg, updates the Next pointer of
+   --  Prev_Msg and the Prev pointer of Next_Msg, and adjusts First_Error_Msg
+   --  and Last_Error_Msg when Prev_Msg or Next_Msg is No_Error_Msg.
 
    procedure Next_Error_Msg (E : in out Error_Msg_Id);
    --  Update E to point to the next error message in the list of error
@@ -613,6 +624,15 @@ package Erroutc is
    --  Returns true if errors have been detected, or warnings that are treated
    --  as errors.
 
+   procedure dedit (Id : Edit_Id);
+   --  Debugging routine to dump an edit. Used by dfix.
+
+   procedure dfix (Id : Fix_Id);
+   --  Debugging routine to dump a fix. Used by dmsg.
+
+   procedure dloc (Id : Labeled_Span_Id);
+   --  Debugging routine to dump a location. Used by dmsg.
+
    procedure dmsg (Id : Error_Msg_Id);
    --  Debugging routine to dump an error message
 
@@ -726,9 +746,29 @@ package Erroutc is
    --  Tag used at the end of warning messages that were converted by
    --  pragma Warning_As_Error.
 
-   procedure Purge_Messages (From : Source_Ptr; To : Source_Ptr);
+   procedure Delete_Duplicate_Errors;
+   --  Delete dupleicate error messages from the list. This is
+   --  done after the fact to avoid problems with Change_Error_Text.
+
+   procedure Delete_Error_Msg (E : Error_Msg_Id);
+   --  Delete an error msg if not already deleted and adjust message count
+
+   procedure Delete_Error_Msgs_In_Range (From : Source_Ptr; To : Source_Ptr);
    --  All error messages whose location is in the range From .. To (not
-   --  including the end points) will be deleted from the error listing.
+   --  including the end points) will be marked as deleted in the error
+   --  listing.
+
+   procedure Delete_Error_And_Continuation_Msgs (E : Error_Msg_Id);
+   --  Delete E and all continuations following E and if E was a continuation
+   --  then all of the continuations before it and the non-continuation message
+   --  that it was attached to.
+
+   generic
+      with function Filter (E : Error_Msg_Id) return Boolean is <>;
+   procedure Filter_And_Delete_Errors;
+   pragma Inline (Filter_And_Delete_Errors);
+   --  Iterate over all of the errors in the error chain and mark all messages
+   --  as deleted if they match the Filter.
 
    function Same_Error (M1, M2 : Error_Msg_Id) return Boolean;
    --  See if two messages have the same text. Returns true if the text of the
@@ -852,6 +892,10 @@ package Erroutc is
    --  Called in response to a pragma Warnings (On) to record the source
    --  location from which warnings are to be turned back on.
 
+   function Warning_Is_Suppressed
+     (Loc : Source_Ptr; Msg : String_Ptr; Tag : String := "") return Boolean;
+   --  Returns true if warning is specifically suppresed by a pragma.
+
    function Warnings_Suppressed (Loc : Source_Ptr) return String_Id;
    --  Determines if given location is covered by a warnings off suppression
    --  range in the warnings table (or is suppressed by compilation option,
@@ -861,6 +905,11 @@ package Erroutc is
    --  are suppressed for the given location, then corresponding Reason
    --  parameter from the pragma is returned (or the null string if no Reason
    --  parameter was present).
+
+   function Warnings_Suppressed (Loc : Source_Ptr) return Boolean
+   is (Warnings_Suppressed (Loc) /= No_String);
+   --  Returns true if there is a reason for the warnings to be suppressed at
+   --  this location.
 
    function Warning_Specifically_Suppressed
      (Loc : Source_Ptr;
@@ -877,6 +926,14 @@ package Erroutc is
    --  branch of gnat2why, which does not know about tags in the calls but
    --  which uses the latest version of erroutc.
 
+   function To_String (Span : Source_Span) return String;
+
+   function To_String (Sptr : Source_Ptr) return String;
+   --  Convert the source pointer to a string of the form: "file:line:column"
+
+   function To_File_Name (Sptr : Source_Ptr) return String;
+   --  Converts the file name of the Sptr to a string.
+
    function Warning_Treated_As_Error (Msg : String) return Boolean;
    --  Returns True if the warning message Msg matches any of the strings
    --  given by Warning_As_Error pragmas, as stored in the Warnings_As_Errors
@@ -886,7 +943,13 @@ package Erroutc is
    --  Returns true if a Warning_As_Error pragma matches either the error text
    --  or the warning tag of the message.
 
+   procedure Write_All_Errors_In_Brief_Format;
+   --  Emit all error messages in the errors table using the brief format
+
    procedure Write_Error_Summary;
    --  Write error summary
+
+   procedure Write_Max_Errors;
+   --  Write message if max errors reached
 
 end Erroutc;

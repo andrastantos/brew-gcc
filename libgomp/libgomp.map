@@ -240,6 +240,35 @@ OMP_5.2 {
 	omp_in_explicit_task_;
 } OMP_5.1.1;
 
+OMP_6.0 {
+  global:
+	omp_control_tool;
+	omp_control_tool_;
+	omp_control_tool_8_;
+	omp_get_device_num_teams;
+	omp_get_device_teams_thread_limit;
+	omp_set_device_num_teams;
+	omp_set_device_teams_thread_limit;
+} OMP_5.2;
+
+OMP_6.1 {
+  global:
+	omp_get_device_distances;
+	omp_get_gprivate_limit;
+	omp_get_gprivate_limit_;
+	omp_get_num_teams_dim;
+	omp_get_num_threads_dim;
+	omp_get_supported_active_league_dims;
+	omp_get_supported_active_league_dims_;
+	omp_get_supported_active_team_dims;
+	omp_get_supported_active_team_dims_;
+	omp_get_supported_teams_dim;
+	omp_get_supported_threads_dim;
+	omp_get_team_num_dim;
+	omp_get_thread_limit_dim;
+	omp_get_thread_num_dim;
+} OMP_6.0;
+
 GOMP_1.0 {
   global:
 	GOMP_atomic_end;
@@ -459,6 +488,29 @@ GOMP_6.0.1 {
 	omp_target_memset_async;
 } GOMP_6.0;
 
+GOMP_6.0.2 {
+  global:
+	GOMP_has_masked_thread_num;
+	GOMP_has_masked_thread_num_with_end;
+	GOMP_masked_end;
+	GOMP_loop_static_worksharing;
+	GOMP_loop_static_worksharing_start;
+	GOMP_loop_static_worksharing_dispatch;
+	GOMP_loop_static_worksharing_end;
+	GOMP_distribute_static_worksharing;
+	GOMP_distribute_static_worksharing_start;
+	GOMP_distribute_static_worksharing_dispatch;
+	GOMP_distribute_static_worksharing_end;
+	GOMP_barrier_ext;
+	GOMP_barrier_cancel_ext;
+	GOMP_reduction_start;
+	GOMP_reduction_end;
+	GOMP_single_start_with_end;
+	GOMP_single_end;
+	GOMP_scope_start_with_end;
+	GOMP_scope_end;
+} GOMP_6.0.1;
+
 OACC_2.0 {
   global:
 	acc_get_num_devices;
@@ -644,6 +696,13 @@ GOACC_2.0.2 {
 	GOACC_enter_data;
 	GOACC_exit_data;
 } GOACC_2.0.1;
+
+GOACC_2.5 {
+  global:
+	GOACC_init;
+	GOACC_shutdown;
+	GOACC_set_device;
+} GOACC_2.0.2;
 
 GOMP_PLUGIN_1.0 {
   global:

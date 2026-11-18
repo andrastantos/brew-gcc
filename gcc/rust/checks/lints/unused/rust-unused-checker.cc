@@ -20,15 +20,17 @@
 #include "rust-hir-expr.h"
 #include "rust-hir-generic-param.h"
 #include "rust-hir-item.h"
+#include "rust-hir-pattern.h"
 
 #include "options.h"
 #include "rust-keyword-values.h"
+#include "rust-attribute-values.h"
+#include "rust-rib.h"
 
 namespace Rust {
 namespace Analysis {
 UnusedChecker::UnusedChecker ()
-  : nr_context (
-    Resolver2_0::ImmutableNameResolutionContext::get ().resolver ()),
+  : nr_context (Resolver2_0::FinalizedNameResolutionContext::get ()),
     mappings (Analysis::Mappings::get ()), unused_context (UnusedContext ())
 {}
 void
@@ -53,23 +55,15 @@ void
 UnusedChecker::visit (HIR::ConstantItem &item)
 {
   std::string var_name = item.get_identifier ().as_string ();
-  auto id = item.get_mappings ().get_hirid ();
-  if (!unused_context.is_variable_used (id) && var_name[0] != '_')
+  if (var_name == "_" && item.get_visibility ().is_public ())
     rust_warning_at (item.get_locus (), OPT_Wunused_variable,
-		     "unused variable %qs",
-		     item.get_identifier ().as_string ().c_str ());
+		     "visibility qualifier on a %<const _%> item is unused");
 }
 
 void
 UnusedChecker::visit (HIR::StaticItem &item)
 {
   std::string var_name = item.get_identifier ().as_string ();
-  auto id = item.get_mappings ().get_hirid ();
-  if (!unused_context.is_variable_used (id) && var_name[0] != '_')
-    rust_warning_at (item.get_locus (), OPT_Wunused_variable,
-		     "unused variable %qs",
-		     item.get_identifier ().as_string ().c_str ());
-
   if (!std::all_of (var_name.begin (), var_name.end (), [] (unsigned char c) {
 	return ISUPPER (c) || ISDIGIT (c) || c == '_';
       }))
@@ -105,18 +99,14 @@ UnusedChecker::visit (HIR::IdentifierPattern &pattern)
 		     "variable %qs should have a snake case name",
 		     var_name.c_str ());
 }
+
 void
-
 UnusedChecker::visit (HIR::AssignmentExpr &expr)
-
 {
   const auto &lhs = expr.get_lhs ();
   auto var_name = lhs.to_string ();
-  NodeId ast_node_id = lhs.get_mappings ().get_nodeid ();
-  NodeId def_id = nr_context.lookup (ast_node_id).value ();
-  HirId id = mappings.lookup_node_to_hir (def_id).value ();
-  if (unused_context.is_variable_assigned (id, lhs.get_mappings ().get_hirid ())
-      && var_name[0] != '_')
+  if (var_name[0] != '_'
+      && unused_context.is_assign_unused (lhs.get_mappings ().get_hirid ()))
     rust_warning_at (lhs.get_locus (), OPT_Wunused_variable,
 		     "unused assignment %qs", var_name.c_str ());
 }
@@ -153,6 +143,22 @@ UnusedChecker::visit (HIR::Function &fct)
     rust_warning_at (fct.get_locus (), OPT_Wunused_variable,
 		     "function %qs should have a snake case name",
 		     fct.get_function_name ().as_string ().c_str ());
+
+  // The no_mangle_generic_items lint: a generic function cannot be exported
+  // with a fixed symbol, so `#[no_mangle]`/`#[export_name]` has no effect.
+  if (fct.has_generics ())
+    for (auto &attr : fct.get_outer_attrs ())
+      {
+	auto name = attr.get_path ().as_string ();
+	if (name == "no_mangle" || name == "export_name")
+	  {
+	    rust_warning_at (fct.get_locus (), OPT_Wattributes,
+			     "generic functions must be mangled, %qs has no "
+			     "effect",
+			     name.c_str ());
+	    break;
+	  }
+      }
   walk (fct);
 }
 
@@ -177,6 +183,16 @@ UnusedChecker::visit (HIR::LifetimeParam &lft)
 }
 
 void
+UnusedChecker::visit (HIR::ExternBlock &block)
+{
+  if (!block.has_abi ())
+    rust_warning_at (block.get_locus (), OPT_Wunused_variable,
+		     "extern declarations without an explicit ABI are "
+		     "deprecated");
+  walk (block);
+}
+
+void
 UnusedChecker::visit_loop_label (HIR::LoopLabel &label)
 {
   auto lifetime = label.get_lifetime ();
@@ -185,6 +201,216 @@ UnusedChecker::visit_loop_label (HIR::LoopLabel &label)
   if (!unused_context.is_label_used (id) && var_name[0] != '_')
     rust_warning_at (lifetime.get_locus (), OPT_Wunused_variable,
 		     "unused label %qs", lifetime.to_string ().c_str ());
+}
+
+void
+UnusedChecker::visit (HIR::StructPatternFieldIdentPat &field)
+{
+  auto &pattern = field.get_pattern ();
+  if (pattern.get_pattern_type () == HIR::Pattern::PatternType::IDENTIFIER)
+    {
+      auto &ident = static_cast<HIR::IdentifierPattern &> (pattern);
+      if (!ident.has_subpattern ()
+	  && ident.get_identifier ().as_string ()
+	       == field.get_identifier ().as_string ())
+	rust_warning_at (field.get_locus (), OPT_Wunused_variable,
+			 "the %qs in this pattern is redundant",
+			 (field.get_identifier ().as_string () + ":").c_str ());
+    }
+  walk (field);
+}
+
+namespace {
+
+bool
+literal_int_value (const HIR::Literal &lit, bool minus, int64_t &out)
+{
+  if (lit.get_lit_type () != HIR::Literal::LitType::INT)
+    return false;
+
+  std::string digits = lit.as_string ();
+  digits.erase (std::remove (digits.begin (), digits.end (), '_'),
+		digits.end ());
+
+  char *end = nullptr;
+  long long value = std::strtoll (digits.c_str (), &end, 10);
+  if (end == digits.c_str () || *end != '\0')
+    return false;
+
+  out = minus ? -value : value;
+  return true;
+}
+
+bool
+range_bound_int (HIR::RangePatternBound &bound, int64_t &out)
+{
+  if (bound.get_bound_type ()
+      != HIR::RangePatternBound::RangePatternBoundType::LITERAL)
+    return false;
+
+  auto &lit = static_cast<HIR::RangePatternBoundLiteral &> (bound);
+  return literal_int_value (lit.get_literal (), lit.get_has_minus (), out);
+}
+
+} // namespace
+
+void
+UnusedChecker::visit (HIR::MatchExpr &expr)
+{
+  struct Range
+  {
+    int64_t lo;
+    int64_t hi;
+    bool inclusive;
+    location_t locus;
+  };
+  std::vector<Range> ranges;
+  std::vector<int64_t> starts;
+
+  for (auto &match_case : expr.get_match_cases ())
+    {
+      auto &pattern = match_case.get_arm ().get_pattern ();
+      if (!pattern)
+	continue;
+
+      if (pattern->get_pattern_type () == HIR::Pattern::PatternType::RANGE)
+	{
+	  auto &range = static_cast<HIR::RangePattern &> (*pattern);
+	  int64_t lo, hi;
+	  if (range_bound_int (range.get_lower_bound (), lo)
+	      && range_bound_int (range.get_upper_bound (), hi))
+	    {
+	      ranges.push_back (
+		{lo, hi, range.is_inclusive_range (), range.get_locus ()});
+	      starts.push_back (lo);
+	    }
+	}
+      else if (pattern->get_pattern_type ()
+	       == HIR::Pattern::PatternType::LITERAL)
+	{
+	  auto &lit = static_cast<HIR::LiteralPattern &> (*pattern);
+	  int64_t value;
+	  if (literal_int_value (lit.get_literal (), lit.get_has_minus (),
+				 value))
+	    starts.push_back (value);
+	}
+    }
+
+  // A value is covered if a range matches it or some arm starts exactly on it.
+  auto covered = [&] (int64_t value) {
+    if (std::find (starts.begin (), starts.end (), value) != starts.end ())
+      return true;
+    for (auto &range : ranges)
+      {
+	int64_t top = range.inclusive ? range.hi : range.hi - 1;
+	if (value >= range.lo && value <= top)
+	  return true;
+      }
+    return false;
+  };
+
+  // An exclusive range `lo..hi` leaves `hi` unmatched. If another arm picks up
+  // at `hi + 1`, that single value was almost certainly meant to be included.
+  for (auto &range : ranges)
+    {
+      if (range.inclusive)
+	continue;
+
+      int64_t missed = range.hi;
+      if (!covered (missed)
+	  && std::find (starts.begin (), starts.end (), missed + 1)
+	       != starts.end ())
+	rust_warning_at (range.locus, OPT_Wunused_variable,
+			 "multiple ranges are one apart");
+    }
+
+  walk (expr);
+}
+
+void
+UnusedChecker::visit (HIR::LetStmt &stmt)
+{
+  for (auto &attr : stmt.get_outer_attrs ())
+    if (attr.get_path ().as_string () == Values::Attributes::DOC)
+      {
+	rust_warning_at (stmt.get_locus (), OPT_Wunused_variable,
+			 "unused doc comment");
+	break;
+      }
+  if (stmt.has_init_expr ()
+      && stmt.get_init_expr ().get_expression_type ()
+	   == HIR::Expr::ExprType::Block)
+    {
+      auto &block = static_cast<HIR::BlockExpr &> (stmt.get_init_expr ());
+      if (block.get_statements ().empty () && block.has_expr ())
+	rust_warning_at (block.get_locus (), OPT_Wunused,
+			 "unnecessary braces around assigned value");
+    }
+  walk (stmt);
+}
+
+void
+UnusedChecker::visit (HIR::BorrowExpr &expr)
+{
+  // The static_mut_refs lint: taking a reference to a mutable static is
+  // discouraged as it can easily lead to undefined behaviour.
+  NodeId ast_node_id = expr.get_expr ().get_mappings ().get_nodeid ();
+  if (auto def
+      = nr_context.lookup (ast_node_id, Resolver2_0::Namespace::Values))
+    if (auto id = mappings.lookup_node_to_hir (*def))
+      if (auto item = mappings.hir.items.lookup (*id))
+	if (item.value ()->get_item_kind () == HIR::Item::ItemKind::Static)
+	  {
+	    auto &static_item = static_cast<HIR::StaticItem &> (*item.value ());
+	    if (static_item.is_mut ())
+	      rust_warning_at (expr.get_locus (), OPT_Wunused,
+			       "creating a reference to a mutable static");
+	  }
+  walk (expr);
+}
+
+namespace {
+// Probe whether an expression is itself an arithmetic negation, without
+// recursing (so it only inspects the node it is dispatched on). Used to detect
+// `- -x` for the double_negations lint, since gccrs builds with -fno-rtti and
+// HIR has no down-cast helper.
+class NegationProbe : public HIR::HIRFullVisitorBase
+{
+public:
+  bool is_negation = false;
+  using HIR::HIRFullVisitorBase::visit;
+  void visit (HIR::NegationExpr &expr) override
+  {
+    is_negation = expr.get_expr_type () == HIR::NegationExpr::ExprType::NEGATE;
+  }
+};
+} // namespace
+
+void
+UnusedChecker::visit (HIR::NegationExpr &expr)
+{
+  if (expr.get_expr_type () == HIR::NegationExpr::ExprType::NEGATE)
+    {
+      NegationProbe probe;
+      expr.get_expr ().accept_vis (probe);
+      if (probe.is_negation)
+	rust_warning_at (expr.get_locus (), OPT_Wunused,
+			 "use of a double negation");
+    }
+  walk (expr);
+}
+
+void
+UnusedChecker::visit (HIR::BreakExpr &expr)
+{
+  if (expr.has_label () && expr.has_break_expr ()
+      && expr.get_expr ().get_expression_type ()
+	   == HIR::Expr::ExprType::BaseLoop)
+    rust_warning_at (
+      expr.get_locus (), OPT_Wunused,
+      "this labeled %<break%> expression is easy to confuse with "
+      "an unlabeled %<break%> with a labeled value expression");
+  walk (expr);
 }
 
 } // namespace Analysis

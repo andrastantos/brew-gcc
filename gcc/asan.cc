@@ -34,7 +34,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tm_p.h"
 #include "ssa.h"
 #include "stringpool.h"
-#include "tree-ssanames.h"
 #include "optabs.h"
 #include "emit-rtl.h"
 #include "cgraph.h"
@@ -47,7 +46,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "varasm.h"
 #include "stor-layout.h"
 #include "tree-iterator.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "asan.h"
 #include "dojump.h"
@@ -319,11 +317,7 @@ set_asan_shadow_offset (const char *val)
   char *endp;
 
   errno = 0;
-#ifdef HAVE_LONG_LONG
   asan_shadow_offset_value = strtoull (val, &endp, 0);
-#else
-  asan_shadow_offset_value = strtoul (val, &endp, 0);
-#endif
   if (!(*val != '\0' && *endp == '\0' && errno == 0))
     return false;
 
@@ -2536,8 +2530,13 @@ report_error_func (bool is_store, bool recover_p, HOST_WIDE_INT size_in_bytes,
       *nargs = 2;
       return builtin_decl_implicit (report[recover_p][is_store][5]);
     }
-  *nargs = 1;
   int size_log2 = exact_log2 (size_in_bytes);
+  if (size_log2 == -1 || size_log2 >= 5)
+    {
+      *nargs = 2;
+      return builtin_decl_implicit (report[recover_p][is_store][5]);
+    }
+  *nargs = 1;
   return builtin_decl_implicit (report[recover_p][is_store][size_log2]);
 }
 
@@ -2696,7 +2695,7 @@ insert_if_then_before_iter (gcond *cond,
 }
 
 /* Build (base_addr >> ASAN_SHADOW_SHIFT) + asan_shadow_offset ().
-   If RETURN_ADDRESS is set to true, return memory location instread
+   If RETURN_ADDRESS is set to true, return memory location instead
    of a value in the shadow memory.  */
 
 static tree
@@ -3180,6 +3179,18 @@ maybe_instrument_call (gimple_stmt_iterator *iter)
 	    case BUILT_IN_UNREACHABLE:
 	    case BUILT_IN_UNREACHABLE_TRAP:
 	    case BUILT_IN_TRAP:
+	    case BUILT_IN_ASAN_REPORT_LOAD1:
+	    case BUILT_IN_ASAN_REPORT_LOAD2:
+	    case BUILT_IN_ASAN_REPORT_LOAD4:
+	    case BUILT_IN_ASAN_REPORT_LOAD8:
+	    case BUILT_IN_ASAN_REPORT_LOAD16:
+	    case BUILT_IN_ASAN_REPORT_LOAD_N:
+	    case BUILT_IN_ASAN_REPORT_STORE1:
+	    case BUILT_IN_ASAN_REPORT_STORE2:
+	    case BUILT_IN_ASAN_REPORT_STORE4:
+	    case BUILT_IN_ASAN_REPORT_STORE8:
+	    case BUILT_IN_ASAN_REPORT_STORE16:
+	    case BUILT_IN_ASAN_REPORT_STORE_N:
 	      /* Don't instrument these.  */
 	      return false;
 	    default:
@@ -3580,6 +3591,7 @@ initialize_sanitizer_builtins (void)
   if (builtin_decl_implicit_p (BUILT_IN_ASAN_INIT))
     return;
 
+  tree ptrmode_type = (*lang_hooks.types.type_for_mode) (ptr_mode, 0);
   tree BT_FN_VOID = build_function_type_list (void_type_node, NULL_TREE);
   tree BT_FN_VOID_PTR
     = build_function_type_list (void_type_node, ptr_type_node, NULL_TREE);
@@ -3593,7 +3605,7 @@ initialize_sanitizer_builtins (void)
 				ptr_type_node, ptr_type_node, NULL_TREE);
   tree BT_FN_VOID_PTR_PTRMODE
     = build_function_type_list (void_type_node, ptr_type_node,
-				pointer_sized_int_node, NULL_TREE);
+				ptrmode_type, NULL_TREE);
   tree BT_FN_VOID_INT
     = build_function_type_list (void_type_node, integer_type_node, NULL_TREE);
   tree BT_FN_SIZE_CONST_PTR_INT
@@ -3628,7 +3640,7 @@ initialize_sanitizer_builtins (void)
   tree BT_FN_VOID_PTR_UINT8_PTRMODE
     = build_function_type_list (void_type_node, ptr_type_node,
 				unsigned_char_type_node,
-				pointer_sized_int_node, NULL_TREE);
+				ptrmode_type, NULL_TREE);
 
   tree BT_FN_BOOL_VPTR_PTR_IX_INT_INT[5];
   tree BT_FN_IX_CONST_VPTR_INT[5];
@@ -4121,7 +4133,7 @@ asan_expand_check_ifn (gimple_stmt_iterator *iter, bool use_calls)
 	   {
 	     //asan instrumentation code goes here.
 	   }
-	 // falltrough instructions, starting with *ITER.  */
+	 // fallthrough instructions, starting with *ITER.  */
 
       g = gimple_build_cond (NE_EXPR,
 			    len,
@@ -4380,8 +4392,14 @@ asan_expand_poison_ifn (gimple_stmt_iterator *iter,
 	{
 	  tree fun = report_error_func (store_p, recover_p, tree_to_uhwi (size),
 					&nargs);
-	  call = gimple_build_call (fun, 1,
-				    build_fold_addr_expr (shadow_var));
+	  tree ptrmode_type
+	    = (nargs == 2 ? (*lang_hooks.types.type_for_mode) (ptr_mode, 0)
+	       : NULL_TREE);
+	  call = gimple_build_call (fun, nargs,
+				    build_fold_addr_expr (shadow_var),
+				    nargs == 2
+				    ? fold_convert (ptrmode_type, size)
+				    : NULL_TREE);
 	}
       gimple_set_location (call, gimple_location (use));
       gimple *call_to_insert = call;
@@ -4983,7 +5001,7 @@ hwasan_expand_check_ifn (gimple_stmt_iterator *iter, bool)
 	   {
 	     // hwasan instrumentation code goes here.
 	   }
-	 // falltrough instructions, starting with *ITER.  */
+	 // fallthrough instructions, starting with *ITER.  */
 
       g = gimple_build_cond (NE_EXPR,
 			    len,

@@ -130,9 +130,9 @@ find_basic_block (rtx_insn *insn, int search_limit)
 {
   /* Scan backwards to the previous BARRIER.  Then see if we can find a
      label that starts a basic block.  Return the basic block number.  */
-  for (insn = prev_nonnote_insn (insn);
+  for (insn = prev_nonnote_nondebug_insn (insn);
        insn && !BARRIER_P (insn) && search_limit != 0;
-       insn = prev_nonnote_insn (insn), --search_limit)
+       insn = prev_nonnote_nondebug_insn (insn), --search_limit)
     ;
 
   /* The closest BARRIER is too far away.  */
@@ -145,9 +145,9 @@ find_basic_block (rtx_insn *insn, int search_limit)
 
   /* See if any of the upcoming CODE_LABELs start a basic block.  If we reach
      anything other than a CODE_LABEL or note, we can't find this code.  */
-  for (insn = next_nonnote_insn (insn);
+  for (insn = next_nonnote_nondebug_insn (insn);
        insn && LABEL_P (insn);
-       insn = next_nonnote_insn (insn))
+       insn = next_nonnote_nondebug_insn (insn))
     if (BLOCK_FOR_INSN (insn))
       return BLOCK_FOR_INSN (insn)->index;
 
@@ -179,9 +179,9 @@ next_insn_no_annul (rtx_insn *insn)
 	}
 
       insn = NEXT_INSN (insn);
-      if (insn && NONJUMP_INSN_P (insn)
-	  && GET_CODE (PATTERN (insn)) == SEQUENCE)
-	insn = as_a <rtx_sequence *> (PATTERN (insn))->insn (0);
+      if (insn && NONJUMP_INSN_P (insn))
+	if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (PATTERN (insn)))
+	  insn = seq->insn (0);
     }
 
   return insn;
@@ -299,13 +299,14 @@ mark_referenced_resources (rtx x, struct resources *res,
 	     However, we may have moved some of the parameter loading insns
 	     into the delay slot of this CALL.  If so, the USE's for them
 	     don't count and should be skipped.  */
-	  rtx_insn *insn = PREV_INSN (as_a <rtx_insn *> (x));
+	  rtx_insn *call_insn = as_a <rtx_insn *> (x);
+	  rtx_insn *insn = PREV_INSN (call_insn);
 	  rtx_sequence *sequence = 0;
 	  int seq_size = 0;
 	  int i;
 
 	  /* If we are part of a delay slot sequence, point at the SEQUENCE.  */
-	  if (NEXT_INSN (insn) != x)
+	  if (NEXT_INSN (insn) != call_insn)
 	    {
 	      sequence = as_a <rtx_sequence *> (PATTERN (NEXT_INSN (insn)));
 	      seq_size = sequence->len ();
@@ -333,20 +334,20 @@ mark_referenced_resources (rtx x, struct resources *res,
 	     registers ensures that a register will not be considered dead
 	     just because it crosses a setjmp call.  A register should be
 	     considered dead only if the setjmp call returns nonzero.  */
-	  if (find_reg_note (x, REG_SETJMP, NULL))
+	  if (find_reg_note (call_insn, REG_SETJMP, NULL))
 	    SET_HARD_REG_SET (res->regs);
 
 	  {
 	    rtx link;
 
-	    for (link = CALL_INSN_FUNCTION_USAGE (x);
+	    for (link = CALL_INSN_FUNCTION_USAGE (call_insn);
 		 link;
 		 link = XEXP (link, 1))
 	      if (GET_CODE (XEXP (link, 0)) == USE)
 		{
 		  for (i = 1; i < seq_size; i++)
 		    {
-		      rtx slot_pat = PATTERN (sequence->element (i));
+		      rtx slot_pat = PATTERN (sequence->insn (i));
 		      if (GET_CODE (slot_pat) == SET
 			  && rtx_equal_p (SET_DEST (slot_pat),
 					  XEXP (XEXP (link, 0), 0)))
@@ -369,7 +370,7 @@ mark_referenced_resources (rtx x, struct resources *res,
       /* In addition to the usual references, also consider all outputs
 	 as referenced, to compensate for mark_set_resources treating
 	 them as killed.  This is similar to ZERO_EXTRACT / STRICT_LOW_PART
-	 handling, execpt that we got a partial incidence instead of a partial
+	 handling, except that we got a partial incidence instead of a partial
 	 width.  */
       mark_set_resources (x, res, 0,
 			  include_delayed_effects
@@ -510,7 +511,7 @@ mark_set_resources (rtx x, struct resources *res, int in_dest,
         mark_set_resources (control, res, 0, mark_type);
         for (i = seq->len () - 1; i >= 0; --i)
 	  {
-	    rtx elt = seq->element (i);
+	    rtx_insn *elt = seq->insn (i);
 	    if (!annul_p && INSN_FROM_TARGET_P (elt))
 	      mark_set_resources (elt, res, 0, mark_type);
 	  }
@@ -619,13 +620,15 @@ mark_set_resources (rtx x, struct resources *res, int in_dest,
 /* Return TRUE if INSN is a return, possibly with a filled delay slot.  */
 
 static bool
-return_insn_p (const_rtx insn)
+return_insn_p (const rtx_insn *insn)
 {
   if (JUMP_P (insn) && ANY_RETURN_P (PATTERN (insn)))
     return true;
 
-  if (NONJUMP_INSN_P (insn) && GET_CODE (PATTERN (insn)) == SEQUENCE)
-    return return_insn_p (XVECEXP (PATTERN (insn), 0, 0));
+  rtx_sequence *seq;
+  if (NONJUMP_INSN_P (insn)
+      && (seq = dyn_cast <rtx_sequence *> (PATTERN (insn))))
+    return return_insn_p (seq->insn (0));
 
   return false;
 }
@@ -765,12 +768,12 @@ mark_target_live_regs (rtx_insn *insns, rtx target_maybe_return, struct resource
 		    insns : BB_HEAD (BASIC_BLOCK_FOR_FN (cfun, b)));
       stop_insn = target;
 
-      if (NONJUMP_INSN_P (start_insn)
-	  && GET_CODE (PATTERN (start_insn)) == SEQUENCE)
-	start_insn = as_a <rtx_sequence *> (PATTERN (start_insn))->insn (0);
+      if (NONJUMP_INSN_P (start_insn))
+	if (auto *seq = dyn_cast <rtx_sequence *> (PATTERN (start_insn)))
+	  start_insn = seq->insn (0);
 
       if (NONJUMP_INSN_P (stop_insn)
-	  && GET_CODE (PATTERN (stop_insn)) == SEQUENCE)
+	  && is_a <rtx_sequence *> (PATTERN (stop_insn)))
 	stop_insn = next_insn (PREV_INSN (stop_insn));
 
       for (insn = start_insn; insn != stop_insn;
@@ -797,16 +800,16 @@ mark_target_live_regs (rtx_insn *insns, rtx target_maybe_return, struct resource
 	      && INSN_P (XEXP (PATTERN (insn), 0)))
 	    real_insn = as_a <rtx_insn *> (XEXP (PATTERN (insn), 0));
 
-	  if (CALL_P (real_insn))
+	  if (auto call = dyn_cast<rtx_call_insn *> (real_insn))
 	    {
 	      /* Values in call-clobbered registers survive a COND_EXEC CALL
-		 if that is not executed; this matters for resoure use because
+		 if that is not executed; this matters for resource use because
 		 they may be used by a complementarily (or more strictly)
 		 predicated instruction, or if the CALL is NORETURN.  */
-	      if (GET_CODE (PATTERN (real_insn)) != COND_EXEC)
+	      if (GET_CODE (PATTERN (call)) != COND_EXEC)
 		{
 		  HARD_REG_SET regs_invalidated_by_this_call
-		    = insn_callee_abi (real_insn).full_reg_clobbers ();
+		    = insn_callee_abi (call).full_reg_clobbers ();
 		  /* CALL clobbers all call-used regs that aren't fixed except
 		     sp, ap, and fp.  Do this before setting the result of the
 		     call live.  */

@@ -1,3 +1,79 @@
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Use AC_CANONICAL_TARGET instead of
+	AC_CANONICAL_SYSTEM.  Remove unneeded AC_SUBST(target_alias).
+
+2026-10-20  Siddhesh Poyarekar  <siddhesh@gotplt.org>
+
+	PR libgcc/109270
+	* ssp/ssp.h.in [_FORTIFY_SOURCE > 2]: Set __SSP_FORTIFY_LEVEL to
+	3 if compiler supports __builtin_dynamic_object_size.
+	[__SSP_FORTIFY_LEVEL > 2]: Use __builtin_dynamic_object_size.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for memmove, strncat, strncpy.
+	Unconditionally search for mempcpy.
+	* strncpy-chk.c: Drop HAVE_STRNCPY guard.
+	* memmove-chk.c: Drop HAVE_MEMMOVE guard.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* Makefile.in: Regenerate.
+	* aclocal.m4: Regenerate.
+	* acinclude.m4: New file.  Include ../config/mmap.m4.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+
+2026-10-10  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for string.h, stdio.h, or limits.h.
+	* gets-chk.c: Drop now-redundant ifdef guards.
+	* memcpy-chk.c: Ditto.
+	* memmove-chk.c: Ditto.
+	* mempcpy-chk.c: Ditto.
+	* memset-chk.c: Ditto.
+	* snprintf-chk.c: Ditto.
+	* sprintf-chk.c: Ditto.
+	* ssp.c: Ditto.
+	* stpcpy-chk.c: Ditto.
+	* strcat-chk.c: Ditto.
+	* strcpy-chk.c: Ditto.
+	* strncat-chk.c: Ditto.
+	* strncpy-chk.c: Ditto.
+	* vsnprintf-chk.c: Ditto.
+	* vsprintf-chk.c: Ditto.
+
+2026-07-03  WHR  <whr@rivoreo.one>
+	    Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR other/116547
+	* ssp.c: Include stdlib.h for alloca(3).
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_LANG_C with AC_LANG([C]).  Replace
+	AC_TRY_COMPILE with AC_COMPILE_IFELSE.  Replace AC_TRY_LINK with
+	AC_LINK_IFELSE.  Replace AM_PROG_LIBTOOL with LT_INIT.
+
+2026-05-05  H.J. Lu  <hjl.tools@gmail.com>
+
+	PR c/121911
+	* ssp.c: Include <stdint.h>.  Change __stack_chk_guard to
+	uintptr_t.
+
 2025-12-29  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
 
 	* configure: Regenerate.

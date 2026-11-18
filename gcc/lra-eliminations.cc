@@ -147,7 +147,17 @@ setup_can_eliminate (class lra_elim_table *ep, bool value)
   ep->can_eliminate = ep->prev_can_eliminate = value;
   if (! value
       && ep->from == FRAME_POINTER_REGNUM && ep->to == STACK_POINTER_REGNUM)
-    frame_pointer_needed = 1;
+    {
+      frame_pointer_needed = 1;
+      /* ira_setup_eliminable_regset marks the hard frame pointer live when
+	 it decides a frame pointer is needed.  When we make that decision
+	 here instead, we have to do the same, otherwise a target whose
+	 prologue keys the register save off df_regs_ever_live_p would
+	 clobber the caller's hard frame pointer without saving it.  */
+      int fp_reg_count = hard_regno_nregs (HARD_FRAME_POINTER_REGNUM, Pmode);
+      for (int i = 0; i < fp_reg_count; i++)
+	df_set_regs_ever_live (HARD_FRAME_POINTER_REGNUM + i, true);
+    }
   if (!frame_pointer_needed)
     REGNO_POINTER_ALIGN (HARD_FRAME_POINTER_REGNUM) = 0;
 }
@@ -801,7 +811,7 @@ mark_not_eliminable (rtx x, machine_mode mem_mode)
 	    curr_sp_change += offset;
 	}
       else if (REG_P (XEXP (x, 0))
-	       && REGNO (XEXP (x, 0)) >= FIRST_PSEUDO_REGISTER)
+	       && REGNO (XEXP (x, 0)) < FIRST_PSEUDO_REGISTER)
 	{
 	  /* If we modify the source of an elimination rule, disable
 	     it.  Do the same if it is the destination and not the
@@ -1132,6 +1142,7 @@ static int
 spill_pseudos (HARD_REG_SET set, int *spilled_pseudos)
 {
   int i, n;
+  unsigned int j;
   bitmap_head to_process;
   rtx_insn *insn;
 
@@ -1140,9 +1151,10 @@ spill_pseudos (HARD_REG_SET set, int *spilled_pseudos)
   if (lra_dump_file != NULL)
     {
       fprintf (lra_dump_file, "	   Spilling non-eliminable hard regs:");
-      for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-	if (TEST_HARD_REG_BIT (set, i))
-	  fprintf (lra_dump_file, " %d", i);
+      j = 0;
+      hard_reg_set_iterator hrsi;
+      EXECUTE_IF_SET_IN_HARD_REG_SET (set, 0, j, hrsi)
+	fprintf (lra_dump_file, " %d", j);
       fprintf (lra_dump_file, "\n");
     }
   bitmap_initialize (&to_process, &reg_obstack);
@@ -1327,7 +1339,7 @@ init_elim_table (void)
 
   /* Build the FROM and TO REG rtx's.  Note that code in gen_rtx_REG
      will cause, e.g., gen_rtx_REG (Pmode, STACK_POINTER_REGNUM) to
-     equal stack_pointer_rtx.  We depend on this. Threfore we switch
+     equal stack_pointer_rtx.  We depend on this. Therefore we switch
      off that we are in LRA temporarily.  */
   lra_in_progress = false;
   for (ep = reg_eliminate; ep < &reg_eliminate[NUM_ELIMINABLE_REGS]; ep++)

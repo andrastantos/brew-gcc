@@ -2,11 +2,16 @@
 /* { dg-options "-O2 -mcpu=neoverse-v2" } */
 /* { dg-final { check-function-bodies "**" "" } } */
 
+/* IRA moves constant moves between cmp and csel
+   and never recovers since they use the same register
+   #s. */
+
 /*
-** f1:
+** f1: { xfail *-*-* }
 **	...
 **	cmp	w[0-9]+, w[0-9]+
-**	csel	w[0-9]+, w[0-9]+, w[0-9]+, le
+**	csel	w[0-9]+, w[0-9]+, w[0-9]+, (le|gt)
+**	add	w[0-9]+, w[0-9]+, w[0-9]+
 **	ret
 */
 int f1 (int a, int b, int c)
@@ -18,10 +23,11 @@ int f1 (int a, int b, int c)
 }
 
 /*
-** f2:
+** f2: { xfail *-*-* }
 **	...
 **	cmp	x[0-9]+, x[0-9]+
-**	csel	x[0-9]+, x[0-9]+, x[0-9]+, le
+**	csel	x[0-9]+, x[0-9]+, x[0-9]+, (le|gt)
+**	add	x[0-9]+, x[0-9]+, x[0-9]+
 **	ret
 */
 long long f2 (long long a, long long b, long long c)

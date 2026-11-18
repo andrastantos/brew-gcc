@@ -37,7 +37,7 @@
 namespace std _GLIBCXX_VISIBILITY(default)
 {
 _GLIBCXX_BEGIN_NAMESPACE_VERSION
-template basic_string<char>::basic_string() noexcept;
+template basic_string<char>::basic_string();
 template bool basic_string<char>::starts_with(string_view) const noexcept;
 template bool basic_string<char>::starts_with(char) const noexcept;
 template bool basic_string<char>::starts_with(const char*) const noexcept;
@@ -46,7 +46,7 @@ template bool basic_string<char>::ends_with(char) const noexcept;
 template bool basic_string<char>::ends_with(const char*) const noexcept;
 
 #ifdef _GLIBCXX_USE_WCHAR_T
-template basic_string<wchar_t>::basic_string() noexcept;
+template basic_string<wchar_t>::basic_string();
 template bool basic_string<wchar_t>::starts_with(wstring_view) const noexcept;
 template bool basic_string<wchar_t>::starts_with(wchar_t) const noexcept;
 template bool basic_string<wchar_t>::starts_with(const wchar_t*) const noexcept;

@@ -132,6 +132,14 @@ mscalar-strict-align
 Target Save Alias(mstrict-align)
 Do not generate unaligned scalar memory accesses.
 
+mzilsd-word-align
+Target RejectNegative
+Allow Zilsd/Zclsd memory accesses to be 4-byte aligned.
+
+mzilsd-strict-align
+Target RejectNegative
+Force Zilsd/Zclsd memory accesses to be 8-byte aligned.
+
 mvector-strict-align
 Target Save Var(rvv_vector_strict_align) Init(1)
 Do not create element-misaligned vector memory accesses.
@@ -170,6 +178,12 @@ Omit the frame pointer in leaf functions.
 
 TargetVariable
 int riscv_isa_flags
+
+TargetVariable
+enum riscv_zilsd_align_type riscv_zilsd_align = RISCV_ZILSD_ALIGN_DEFAULT
+
+TargetVariable
+int riscv_zilsd_align_explicit = 0
 
 Mask(64BIT) Var(riscv_isa_flags)
 
@@ -423,3 +437,24 @@ Specifies whether the fence.tso instruction should be used.
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.
+
+Enum
+Name(arcv_mpy_option) Type(enum arcv_mpy_option_enum)
+Valid arguments to -mmpy_option=:
+
+EnumValue
+Enum(arcv_mpy_option) String(1c) Value(ARCV_MPY_OPTION_1C)
+
+EnumValue
+Enum(arcv_mpy_option) String(2c) Value(ARCV_MPY_OPTION_2C)
+
+EnumValue
+Enum(arcv_mpy_option) String(10c) Value(ARCV_MPY_OPTION_10C)
+
+mmpy-option=
+Target RejectNegative Joined Enum(arcv_mpy_option) Var(arcv_mpy_option) Init(ARCV_MPY_OPTION_2C)
+The type of MPY unit used by the RMX-100 core (to be used in combination with -mtune=arc-v-rmx-100-series) (default: 2c).
+
+munroll-only-small-loops
+Target Var(riscv_unroll_only_small_loops) Init(0) Save
+Enable conservative small loop unrolling.

@@ -46,7 +46,7 @@
    predication suffix stay the same.
 
    - The function_instance class describes contains all properties of each
-     individual function. Such these information will be used by
+     individual function.  Such these information will be used by
      function_builder, function_base, function_shape, gimple_folder,
      function_expander, etc.
 
@@ -110,6 +110,10 @@ static const unsigned int CP_WRITE_CSR = 1U << 5;
 #define RVV_REQUIRE_MIN_VLEN_64 (1 << 5)	/* Require TARGET_MIN_VLEN >= 64.  */
 #define RVV_REQUIRE_ELEN_FP_16 (1 << 6) /* Require FP ELEN >= 32.  */
 #define RVV_REQUIRE_ELEN_BF_16 (1 << 7) /* Require BF16.  */
+#define RVV_REQUIRE_ZVFOFP8MIN (1 << 8) /* Require ZVFOFP8MIN extension.  */
+#define RVV_REQUIRE_MIN_VLEN_128 (1 << 9) /* Require VLEN >= 128.  */
+#define RVV_REQUIRE_MIN_VLEN_256 (1 << 10) /* Require VLEN >= 256.  */
+#define RVV_REQUIRE_MIN_VLEN_512 (1 << 11) /* Require VLEN >= 512.  */
 
 /* Enumerates the required extensions.  */
 enum required_ext
@@ -129,6 +133,17 @@ enum required_ext
   ZVKSH_EXT,		/* Crypto vector Zvksh sub-ext */
   ZVFBFMIN_EXT,		/* Zvfbfmin extension */
   ZVFBFWMA_EXT,		/* Zvfbfwma extension */
+  ZVFOFP8MIN_EXT,	/* Zvfofp8min extension */
+  ZVABD_EXT,		/* Zvabd extension */
+  ZVQWDOTA8I_EXT,	/* Zvqwdota8i extension.  */
+  ZVQWDOTA16I_EXT,	/* Zvqwdota16i extension.  */
+  ZVFWDOTA16BF_EXT,	/* Zvfwdota16bf extension.  */
+  ZVFQWDOTA8F_EXT,	/* Zvfqwdota8f extension.  */
+  ZVQWBDOTA8I_EXT,	/* Zvqwbdota8i extension.  */
+  ZVQWBDOTA16I_EXT,	/* Zvqwbdota16i extension.  */
+  ZVFWBDOTA16BF_EXT,	/* Zvfwbdota16bf extension.  */
+  ZVFQWBDOTA8F_EXT,	/* Zvfqwbdota8f extension.  */
+  ZVFBDOTA32F_EXT,	/* Zvfbdota32f extension.  */
   XSFVQMACCQOQ_EXT,	/* XSFVQMACCQOQ extension */
   XSFVQMACCDOD_EXT,	/* XSFVQMACCDOD extension */
   XSFVFNRCLIPXFQF_EXT,	/* XSFVFNRCLIPXFQF extension */
@@ -137,6 +152,7 @@ enum required_ext
   XANDESVSINTLOAD_EXT,	/* XANDESVSINTLOAD extension */
   XANDESVPACKFPH_EXT,	/* XANDESVPACKFPH extension */
   XANDESVDOT_EXT,	/* XANDESVDOT extension */
+  XXTVARITH_EXT,	/* XXTVARITH extension */
   /* Please update required_ext_to_isa_name and required_extensions_specified
      when adding or removing enum values.  */
 };
@@ -159,6 +175,17 @@ enum rvv_builtin_partition
   RVV_PARTITION_ZVFBFWMA,
   RVV_PARTITION_ZVFHMIN,
   RVV_PARTITION_ZVFH,
+  RVV_PARTITION_ZVFOFP8MIN,
+  RVV_PARTITION_ZVABD,
+  RVV_PARTITION_ZVQWDOTA8I,
+  RVV_PARTITION_ZVQWDOTA16I,
+  RVV_PARTITION_ZVFWDOTA16BF,
+  RVV_PARTITION_ZVFQWDOTA8F,
+  RVV_PARTITION_ZVQWBDOTA8I,
+  RVV_PARTITION_ZVQWBDOTA16I,
+  RVV_PARTITION_ZVFWBDOTA16BF,
+  RVV_PARTITION_ZVFQWBDOTA8F,
+  RVV_PARTITION_ZVFBDOTA32F,
   RVV_PARTITION_XSFVQMACCQOQ,
   RVV_PARTITION_XSFVQMACCDOD,
   RVV_PARTITION_XSFVFNRCLIPXFQF,
@@ -167,6 +194,7 @@ enum rvv_builtin_partition
   RVV_PARTITION_XANDESVSINTLOAD,
   RVV_PARTITION_XANDESVPACKFPH,
   RVV_PARTITION_XANDESVDOT,
+  RVV_PARTITION_XXTVARITH,
   NUM_RVV_EXT_PARTITIONS
 };
 
@@ -211,6 +239,28 @@ static inline const char * required_ext_to_isa_name (enum required_ext required)
       return "zvfbfmin";
     case ZVFBFWMA_EXT:
       return "zvfbfwma";
+    case ZVFOFP8MIN_EXT:
+      return "zvfofp8min";
+    case ZVABD_EXT:
+      return "zvabd";
+    case ZVQWDOTA8I_EXT:
+      return "zvqwdota8i";
+    case ZVQWDOTA16I_EXT:
+      return "zvqwdota16i";
+    case ZVFWDOTA16BF_EXT:
+      return "zvfwdota16bf";
+    case ZVFQWDOTA8F_EXT:
+      return "zvfqwdota8f";
+    case ZVQWBDOTA8I_EXT:
+      return "zvqwbdota8i";
+    case ZVQWBDOTA16I_EXT:
+      return "zvqwbdota16i";
+    case ZVFWBDOTA16BF_EXT:
+      return "zvfwbdota16bf";
+    case ZVFQWBDOTA8F_EXT:
+      return "zvfqwbdota8f";
+    case ZVFBDOTA32F_EXT:
+      return "zvfbdota32f";
     case XSFVQMACCQOQ_EXT:
       return "xsfvqmaccqoq";
     case XSFVQMACCDOD_EXT:
@@ -227,6 +277,8 @@ static inline const char * required_ext_to_isa_name (enum required_ext required)
       return "xandesvpackfph";
     case XANDESVDOT_EXT:
       return "xandesvdot";
+    case XXTVARITH_EXT:
+      return "xxtvarith";
     default:
       gcc_unreachable ();
   }
@@ -266,6 +318,28 @@ static inline bool required_extensions_specified (enum required_ext required)
       return TARGET_ZVFBFMIN;
     case ZVFBFWMA_EXT:
       return TARGET_ZVFBFWMA;
+    case ZVFOFP8MIN_EXT:
+      return TARGET_ZVFOFP8MIN;
+    case ZVABD_EXT:
+      return TARGET_ZVABD;
+    case ZVQWDOTA8I_EXT:
+      return TARGET_ZVQWDOTA8I;
+    case ZVQWDOTA16I_EXT:
+      return TARGET_ZVQWDOTA16I;
+    case ZVFWDOTA16BF_EXT:
+      return TARGET_ZVFWDOTA16BF;
+    case ZVFQWDOTA8F_EXT:
+      return TARGET_ZVFQWDOTA8F;
+    case ZVQWBDOTA8I_EXT:
+      return TARGET_ZVQWBDOTA8I;
+    case ZVQWBDOTA16I_EXT:
+      return TARGET_ZVQWBDOTA16I;
+    case ZVFWBDOTA16BF_EXT:
+      return TARGET_ZVFWBDOTA16BF;
+    case ZVFQWBDOTA8F_EXT:
+      return TARGET_ZVFQWBDOTA8F;
+    case ZVFBDOTA32F_EXT:
+      return TARGET_ZVFBDOTA32F;
     case XSFVQMACCQOQ_EXT:
       return TARGET_XSFVQMACCQOQ;
     case XSFVQMACCDOD_EXT:
@@ -282,6 +356,8 @@ static inline bool required_extensions_specified (enum required_ext required)
       return TARGET_XANDESVPACKFPH;
     case XANDESVDOT_EXT:
       return TARGET_XANDESVDOT;
+    case XXTVARITH_EXT:
+      return TARGET_XXTVARITH;
     default:
       gcc_unreachable ();
   }
@@ -354,7 +430,7 @@ struct function_type_info
 /* RVV Builtin argument information.  */
 struct rvv_arg_type_info
 {
-  CONSTEXPR rvv_arg_type_info (rvv_base_type base_type_in)
+  constexpr rvv_arg_type_info (rvv_base_type base_type_in)
     : base_type (base_type_in)
   {}
   enum rvv_base_type base_type;
@@ -414,7 +490,7 @@ struct function_group_info
      The function supports every combination of the two.
      The list of predication is terminated by two NUM_PRED_TYPES,
      while the list of operand info is terminated by NUM_BASE_TYPES.
-     The list of these type suffix is lexicographically ordered based
+     The list of these type suffixes is lexicographically ordered based
      on the index value.  */
   const predication_type_index *preds;
   const rvv_op_info ops_infos;
@@ -638,6 +714,7 @@ public:
   bool require_immediate (unsigned int, HOST_WIDE_INT, HOST_WIDE_INT) const;
   bool require_immediate_range_or (unsigned int, HOST_WIDE_INT,
 				   HOST_WIDE_INT, HOST_WIDE_INT) const;
+  bool require_zvbdota_ci (unsigned int) const;
 
 private:
   bool require_immediate_range (unsigned int, HOST_WIDE_INT,
@@ -732,7 +809,7 @@ function_expander::add_output_operand (machine_mode mode, rtx target)
   create_output_operand (&m_ops[opno++], target, mode);
 }
 
-/* Since we may normalize vop/vop_tu/vop_m/vop_tumu.. into a single patter.
+/* Since we may normalize vop/vop_tu/vop_m/vop_tumu.. into a single pattern.
    We add a fake all true mask for the intrinsics that don't need a real mask.
  */
 inline void
@@ -860,7 +937,7 @@ function_base::has_merge_operand_p () const
   return true;
 }
 
-/* We choose to return false by default since most of the intrinsics does
+/* We choose to return false by default since most of the intrinsics do
    not have rounding mode operand.  */
 inline bool
 function_base::has_rounding_mode_operand_p () const
@@ -868,7 +945,7 @@ function_base::has_rounding_mode_operand_p () const
   return false;
 }
 
-/* We choose to return false by default since most of the intrinsics does
+/* We choose to return false by default since most of the intrinsics do
    not need frm operand.  */
 inline bool
 function_base::may_require_frm_p () const
@@ -876,7 +953,7 @@ function_base::may_require_frm_p () const
   return false;
 }
 
-/* We choose to return false by default since most of the intrinsics does
+/* We choose to return false by default since most of the intrinsics do
    not need vxrm operand.  */
 inline bool
 function_base::may_require_vxrm_p () const

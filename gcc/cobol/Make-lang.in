@@ -64,6 +64,7 @@ cobol1_OBJS =    \
  cobol/cdf.o        \
  cobol/cdf-copy.o   \
  cobol/cobol1.o     \
+ cobol/compare.o    \
  cobol/convert.o    \
  cobol/except.o     \
  cobol/genutil.o    \
@@ -71,7 +72,9 @@ cobol1_OBJS =    \
  cobol/genmath.o    \
  cobol/gengen.o     \
  cobol/lexio.o      \
+ cobol/move.o       \
  cobol/messages.o   \
+ cobol/picture.o    \
  cobol/parse.o      \
  cobol/scan.o       \
  cobol/structs.o    \
@@ -87,15 +90,12 @@ cobol1_OBJS =    \
 # libgcobol/valconv.cc that needs to be compiled into both libgcobol
 # and cobol1.  We copy those two source code files from libgcobol to
 # build/gcc/cobol to avoid the nightmare of one file appearing in more
-# than one place.  For simplicity, we make those compilations dependent
-# on all of the libgcobol/*.h files, which might lead to the occasional
-# unnecessary compilation.  The impact of that is negligible.
+# than one place.  For simplicity, we make those compilations
+# dependent on all of the libgcobol/*.h files, which might lead to the
+# occasional unnecessary compilation.
 #
-# Various #includes in the files copied from gcc/libgcobol need to be modified
-# so that the .h files can be found.
-
 cobol/charmaps.cc cobol/valconv.cc: cobol/%.cc: $(LIB_SOURCE)/%.cc
-	sed -e '/^#include/s,"\([^"]*[^g"].h\)","../../libgcobol/\1",' $^ > $@
+	cp $^ $@
 
 LIB_SOURCE_H=$(wildcard $(LIB_SOURCE)/*.h)
 
@@ -124,6 +124,8 @@ cobol_OBJS = \
 #
 CFLAGS-cobol/gcobolspec.o += $(DRIVER_DEFINES)
 
+CFLAGS-cobol/cobol1.o += -DLIBSUBDIR=\"$(libsubdir)\"
+
 #
 # This controls the build of the gcobol "driver"
 #
@@ -148,6 +150,7 @@ gcobol-cross$(exeext): gcobol$(exeext)
 # First, files needed for parsing:
 
 cobol/parse.cc: cobol/parse.y
+	$(BISON) --version | grep ^bison
 	$(BISON) -o $@ $(YFLAGS)				\
 		--defines=cobol/parse.h			\
 		--report-file=cobol/parser.out $<
@@ -156,16 +159,8 @@ cobol/cdf.cc: cobol/cdf.y
 	$(BISON) -o $@ $(YFLAGS)						\
 		--defines=cobol/cdf.h --report-file=cobol/cdf.out $<
 
-# See "Trailing context is getting confused with trailing optional patterns"
-# in Flex manual. We suppress those messages, as a convenience.
-FLEX_WARNING = warning, dangerous trailing context
-
 cobol/scan.cc: cobol/scan.l
-	$(FLEX) -o$@ $(LFLAGS) $< 2>$@~ || { cat $@~ >&1; exit 1; }
-	awk  '! /$(FLEX_WARNING)/ {print > "/dev/stderr"; nerr++}	\
-	     END {print "$(FLEX):", NR, "messages" > "/dev/stderr"}' $@~
-	@rm $@~
-
+	$(FLEX) -o$@ $(LFLAGS) $<
 
 # To establish prerequisites for parse.o, cdf.o, and scan.o,
 #   1. capture the "make -n" output
@@ -243,8 +238,16 @@ cobol/scan.o: cobol/scan.cc			\
 	cobol/cdf.cc				\
 	cobol/parse.cc
 
-# Update token names if the generator script is installed
-# (by a developer) and there's been a change. 
+# As opposed to other objects, gcobc is a shell script and therefore
+# is only installed. Although no build step is necessary, some tests
+# rely on gcobc being available from the build tree.
+gcobc$(exeext): $(srcdir)/cobol/gcobc
+	cp $< $@
+
+cobol: gcobc$(exeext)
+
+# Update token names if the generator script is installed (by a
+# developer) and there's been a change.
 $(srcdir)/cobol/token_names.h: cobol/parse.cc
 	@if [ -f $@.gen ]; then			\
 		$@.gen $(subst .cc,.h,$^)	\
@@ -364,7 +367,7 @@ cobol.mostlyclean:
 
 gcobol.clean:
 # This is intended for non-general use.  It is a last-ditch effort to flush
-# out all oject files and executable code for gcobol and libgcobol, causing 
+# out all object files and executable code for gcobol and libgcobol, causing 
 # a complete rebuild of all executable code.
 	rm -fr gcobol cobol1 cobol/*		\
 	../*/libgcobol/*
@@ -393,4 +396,7 @@ cobol.stagefeedback: stagefeedback-start
 selftest-cobol:
 
 lang_checks += check-cobol
+lang_checks_parallelized += check-cobol
+# For description see the check_$lang_parallelize comment in gcc/Makefile.in.
+check_cobol_parallelize = 10000
 

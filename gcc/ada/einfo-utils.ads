@@ -464,6 +464,7 @@ package Einfo.Utils is
    --    Initial_Condition
    --    Initializes
    --    Interrupt_Handler
+   --    Modifies
    --    No_Caching
    --    Part_Of
    --    Precondition
@@ -562,6 +563,12 @@ package Einfo.Utils is
    --  foreign convention, then we set Can_Use_Internal_Rep to False on E.
    --  Also, if the Etype of E is set and is an anonymous access type with
    --  no convention set, this anonymous type inherits the convention of E.
+
+   function Scope
+     (N : N_Entity_Id) return Node_Id  renames Scope_Raw;
+   procedure Set_Scope (N : N_Entity_Id; Val : Node_Id);
+   --  Same as Set_Scope_Raw, but set Declared_In_Package_Body if Val is a
+   --  package currently being analyzed
 
    ----------------------------------
    -- Debugging Output Subprograms --

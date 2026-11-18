@@ -195,8 +195,9 @@ DEF_SVE_FUNCTION (svstnt1w_scatter, store_scatter_index_restricted, d_integer, i
 DEF_SVE_FUNCTION (svstnt1w_scatter, store_scatter_offset_restricted, d_integer, implicit)
 #undef REQUIRED_EXTENSIONS
 
-#define REQUIRED_EXTENSIONS nonstreaming_sve (AARCH64_FL_SVE2 \
-					      | AARCH64_FL_SVE_AES)
+#define REQUIRED_EXTENSIONS streaming_compatible (AARCH64_FL_SVE2 \
+					    | AARCH64_FL_SVE_AES, \
+					    AARCH64_FL_SSVE_AES)
 DEF_SVE_FUNCTION (svaesd, binary, b_unsigned, none)
 DEF_SVE_FUNCTION (svaese, binary, b_unsigned, none)
 DEF_SVE_FUNCTION (svaesimc, unary, b_unsigned, none)
@@ -205,8 +206,19 @@ DEF_SVE_FUNCTION (svpmullb_pair, binary_opt_n, d_unsigned, none)
 DEF_SVE_FUNCTION (svpmullt_pair, binary_opt_n, d_unsigned, none)
 #undef REQUIRED_EXTENSIONS
 
-#define REQUIRED_EXTENSIONS nonstreaming_sve (AARCH64_FL_SVE2 \
-					      | AARCH64_FL_SVE_BITPERM)
+#define REQUIRED_EXTENSIONS streaming_compatible (AARCH64_FL_SVE_AES2, \
+					    AARCH64_FL_SSVE_AES)
+DEF_SVE_FUNCTION_GS (svaesd_lane, binary_aes_lane, b_unsigned, x24, none)
+DEF_SVE_FUNCTION_GS (svaese_lane, binary_aes_lane, b_unsigned, x24, none)
+DEF_SVE_FUNCTION_GS (svaesdimc_lane, binary_aes_lane, b_unsigned, x24, none)
+DEF_SVE_FUNCTION_GS (svaesemc_lane, binary_aes_lane, b_unsigned, x24, none)
+DEF_SVE_FUNCTION_GS (svpmull_pair, binary_to_pair_opt_n, d_unsigned, x2, none)
+DEF_SVE_FUNCTION_GS (svpmlal_pair, ternary_to_pair_opt_n, d_unsigned, x2, none)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS streaming_compatible (AARCH64_FL_SVE2 \
+						  | AARCH64_FL_SVE_BITPERM, \
+						  AARCH64_FL_SSVE_BITPERM)
 DEF_SVE_FUNCTION (svbdep, binary_opt_n, all_unsigned, none)
 DEF_SVE_FUNCTION (svbext, binary_opt_n, all_unsigned, none)
 DEF_SVE_FUNCTION (svbgrp, binary_opt_n, all_unsigned, none)
@@ -286,6 +298,12 @@ DEF_SVE_FUNCTION_GS (svwhilelt, compare_scalar, while_x, x2, none)
 DEF_SVE_FUNCTION (svwhilelt, compare_scalar_count, while_x_c, none)
 #undef REQUIRED_EXTENSIONS
 
+#define REQUIRED_EXTENSIONS sve_and_sme (AARCH64_FL_SVE2p3, AARCH64_FL_SME2p3)
+DEF_SVE_FUNCTION (svaddqp, binary, all_integer, none)
+DEF_SVE_FUNCTION (svaddsubp, binary, all_integer, none)
+DEF_SVE_FUNCTION (svsubp, binary, all_integer, mx)
+#undef REQUIRED_EXTENSIONS
+
 #define REQUIRED_EXTENSIONS nonstreaming_sve (AARCH64_FL_SVE2p1)
 DEF_SVE_FUNCTION (svld1q_gather, load_gather64_sv_offset, all_data, implicit)
 DEF_SVE_FUNCTION (svld1q_gather, load_gather64_sv_index, hsd_data, implicit)
@@ -297,6 +315,38 @@ DEF_SVE_FUNCTION (svst1dq, store, d_data, implicit)
 DEF_SVE_FUNCTION (svst1q_scatter, store_scatter64_offset, all_data, implicit)
 DEF_SVE_FUNCTION (svst1q_scatter, store_scatter64_index, hsd_data, implicit)
 DEF_SVE_FUNCTION (svst1wq, store, s_data, implicit)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS sve_and_sme (AARCH64_FL_SVE2p2, AARCH64_FL_SME2p2)
+DEF_SVE_FUNCTION (svcvtlt, unary_convert, cvt_long, z)
+DEF_SVE_FUNCTION (svcvtnt, unary_convert_narrowt, cvt_narrow, z)
+DEF_SVE_FUNCTION (svcvtnt, unary_convert_narrowt, cvt_bfloat, z)
+DEF_SVE_FUNCTION (svcvtxnt, unary_convert_narrowt, cvt_narrow_s, z)
+DEF_SVE_FUNCTION (svcompact, unary, bh_data, implicit)
+DEF_SVE_FUNCTION (svexpand, unary, all_data, implicit)
+DEF_SVE_FUNCTION (svfirstp, count_pred, all_pred, implicit)
+DEF_SVE_FUNCTION (svlastp, count_pred, all_pred, implicit)
+DEF_SVE_FUNCTION (svrint32x, unary, sd_float, mxz)
+DEF_SVE_FUNCTION (svrint32z, unary, sd_float, mxz)
+DEF_SVE_FUNCTION (svrint64x, unary, sd_float, mxz)
+DEF_SVE_FUNCTION (svrint64z, unary, sd_float, mxz)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS sve_and_sme (AARCH64_FL_SVE2p3, AARCH64_FL_SME2p3)
+DEF_SVE_FUNCTION (svdot, ternary_qq_opt_n_or_011, s_narrow_su, none)
+DEF_SVE_FUNCTION (svdot_lane, ternary_qq_or_011_lane, s_narrow_su, none)
+DEF_SVE_FUNCTION_GS (svcvtn, unary_convertxn, cvtzn, x2, none)
+DEF_SVE_FUNCTION (svcvtt, unary_convert, cvttb, none)
+DEF_SVE_FUNCTION (svcvtb, unary_convert, cvttb, none)
+DEF_SVE_FUNCTION_GS (svqrshrn, shift_right_imm_narrowxn,
+		     qrshr_x2_8, x2, none)
+DEF_SVE_FUNCTION_GS (svqrshrun, shift_right_imm_narrowxn,
+		     qrshrun_x2, x2, none)
+DEF_SVE_FUNCTION_GS (svqshrn, shift_right_imm_narrowxn,
+		     qshr_x2, x2, none)
+DEF_SVE_FUNCTION_GS (svqshrun, shift_right_imm_narrowxn,
+		     qshru_x2, x2, none)
+DEF_SVE_FUNCTION (svabal, ternary_long_opt_n, hsd_integer, none)
 #undef REQUIRED_EXTENSIONS
 
 #define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2)
@@ -434,6 +484,10 @@ DEF_SVE_FUNCTION_GS_FPM (svcvtl2, unary_convert, cvt_mf8, x2, none, set)
 DEF_SVE_FUNCTION_GS (svscale, binary_int_opt_single_n, all_float, x24, none)
 #undef REQUIRED_EXTENSIONS
 
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2p2)
+DEF_SVE_FUNCTION_GS (svmul, binary_opt_single_n, all_float, x24, none)
+#undef REQUIRED_EXTENSIONS
+
 #define REQUIRED_EXTENSIONS \
   nonstreaming_sve (AARCH64_FL_SVE2 | AARCH64_FL_F8F16MM)
 DEF_SVE_FUNCTION_GS_FPM (svmmla, mmla, h_float_mf8, none, none, set)
@@ -446,6 +500,16 @@ DEF_SVE_FUNCTION_GS_FPM (svmmla, mmla, s_float_mf8, none, none, set)
 
 #define REQUIRED_EXTENSIONS nonstreaming_sve (AARCH64_FL_SVE_F16F32MM)
 DEF_SVE_FUNCTION (svmmla, mmla, cvt_f32_f16, none)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS \
+  nonstreaming_sve (AARCH64_FL_SVE_B16MM)
+DEF_SVE_FUNCTION_GS (svmmla, mmla, h_bfloat, none, none)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS \
+  nonstreaming_sve (AARCH64_FL_SVE2p2 | AARCH64_FL_F16MM)
+DEF_SVE_FUNCTION_GS (svmmla, mmla, h_float, none, none)
 #undef REQUIRED_EXTENSIONS
 
 /*

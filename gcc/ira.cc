@@ -466,6 +466,7 @@ static void
 setup_class_hard_regs (void)
 {
   int cl, i, hard_regno, n;
+  unsigned int j;
   HARD_REG_SET processed_hard_reg_set;
 
   ira_assert (SHRT_MAX >= FIRST_PSEUDO_REGISTER);
@@ -497,9 +498,12 @@ setup_class_hard_regs (void)
 	    }
 	}
       ira_class_hard_regs_num[cl] = n;
-      for (n = 0, i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-	if (TEST_HARD_REG_BIT (temp_hard_regset, i))
-	  ira_non_ordered_class_hard_regs[cl][n++] = i;
+      n = 0;
+      j = 0;
+      hard_reg_set_iterator hrsi;
+      EXECUTE_IF_SET_IN_HARD_REG_SET (temp_hard_regset, 0, j, hrsi)
+	ira_non_ordered_class_hard_regs[cl][n++] = j;
+
       ira_assert (ira_class_hard_regs_num[cl] == n);
     }
 }
@@ -758,7 +762,7 @@ setup_stack_reg_pressure_class (void)
       {
 	cl = ira_pressure_classes[i];
 	temp_hard_regset2 = temp_hard_regset & reg_class_contents[cl];
-	size = hard_reg_set_size (temp_hard_regset2);
+	size = hard_reg_set_popcount (temp_hard_regset2);
 	if (best < size)
 	  {
 	    best = size;
@@ -3184,7 +3188,7 @@ validate_equiv_mem (rtx_insn *start, rtx reg, rtx memref)
       if (find_reg_note (insn, REG_DEAD, reg))
 	return ret;
 
-      if (CALL_P (insn))
+      if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	{
 	  /* We can combine a reg def from one insn into a reg use in
 	     another over a call if the memory is readonly or the call
@@ -3196,7 +3200,7 @@ validate_equiv_mem (rtx_insn *start, rtx reg, rtx memref)
 	     been changed and all hell breaks loose.  */
 	  ret = valid_combine;
 	  if (!MEM_READONLY_P (memref)
-	      && (!RTL_CONST_OR_PURE_CALL_P (insn)
+	      && (!RTL_CONST_OR_PURE_CALL_P (call)
 		  || equiv_init_varies_p (XEXP (memref, 0))))
 	    return valid_none;
 	}
@@ -3462,7 +3466,8 @@ memref_used_between_p (rtx memref, rtx_insn *start, rtx_insn *end)
 	return true;
 
       /* Nonconst functions may access memory.  */
-      if (CALL_P (insn) && (! RTL_CONST_CALL_P (insn)))
+      auto call = dyn_cast<rtx_call_insn *> (insn);
+      if (call && ! RTL_CONST_CALL_P (call))
 	return true;
     }
 
@@ -3605,15 +3610,19 @@ update_equiv_regs_prescan (void)
       if (NONDEBUG_INSN_P (insn))
 	{
 	  set_paradoxical_subreg (insn);
-	  if (CALL_P (insn))
-	    callee_abis.note_callee_abi (insn_callee_abi (insn));
+	  if (auto call = dyn_cast<rtx_call_insn *> (insn))
+	    callee_abis.note_callee_abi (insn_callee_abi (call));
 	}
 
   HARD_REG_SET extra_caller_saves = callee_abis.caller_save_regs (*crtl->abi);
+
+  hard_reg_set_iterator hrsi;
+  unsigned int regno = 0;
   if (!hard_reg_set_empty_p (extra_caller_saves))
-    for (unsigned int regno = 0; regno < FIRST_PSEUDO_REGISTER; ++regno)
-      if (TEST_HARD_REG_BIT (extra_caller_saves, regno))
+    {
+      EXECUTE_IF_SET_IN_HARD_REG_SET (extra_caller_saves, 0, regno, hrsi)
 	df_set_regs_ever_live (regno, true);
+    }
 }
 
 /* Find registers that are equivalent to a single value throughout the
@@ -3982,6 +3991,7 @@ combine_and_move_insns (void)
 	continue;
 
       rtx_insn *use_insn = 0;
+      bool multiple_insns = false;
       for (df_ref use = DF_REG_USE_CHAIN (regno);
 	   use;
 	   use = DF_REF_NEXT_REG (use))
@@ -3989,10 +3999,19 @@ combine_and_move_insns (void)
 	  {
 	    if (DEBUG_INSN_P (DF_REF_INSN (use)))
 	      continue;
-	    gcc_assert (!use_insn);
+	    if (use_insn && DF_REF_INSN (use) != use_insn)
+	      {
+		multiple_insns = true;
+		break;
+	      }
 	    use_insn = DF_REF_INSN (use);
 	  }
       gcc_assert (use_insn);
+
+      /* If a register is used by more than one insn, we cannot trivially move
+	 or delete the definition anymore.  */
+      if (multiple_insns)
+	continue;
 
       /* Don't substitute into jumps.  indirect_jump_optimize does
 	 this for anything we are prepared to handle.  */
@@ -4032,7 +4051,7 @@ combine_and_move_insns (void)
 	  /* Append the REG_DEAD notes from def_insn.  */
 	  for (rtx *p = &REG_NOTES (def_insn); (link = *p) != 0; )
 	    {
-	      if (REG_NOTE_KIND (XEXP (link, 0)) == REG_DEAD)
+	      if (REG_NOTE_KIND (link) == REG_DEAD)
 		{
 		  *p = XEXP (link, 1);
 		  XEXP (link, 1) = REG_NOTES (use_insn);
@@ -4387,9 +4406,9 @@ build_insn_chain (void)
   sbitmap *live_subregs = XCNEWVEC (sbitmap, max_regno);
   auto_bitmap live_subregs_used;
 
-  for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-    if (TEST_HARD_REG_BIT (eliminable_regset, i))
-      bitmap_set_bit (elim_regset, i);
+  hard_reg_set_iterator hrsi;
+  EXECUTE_IF_SET_IN_HARD_REG_SET (eliminable_regset, 0, i, hrsi)
+    bitmap_set_bit (elim_regset, i);
   FOR_EACH_BB_REVERSE_FN (bb, cfun)
     {
       bitmap_iterator bi;
@@ -5384,7 +5403,7 @@ struct sloc
 {
   rtx_insn *insn; /* Insn where the scratch was.  */
   int nop;  /* Number of the operand which was a scratch.  */
-  unsigned regno; /* regno gnerated instead of scratch */
+  unsigned regno; /* regno generated instead of scratch */
   int icode;  /* Original icode from which scratch was removed.  */
 };
 
@@ -5469,7 +5488,7 @@ ira_remove_insn_scratches (rtx_insn *insn, bool all_p, FILE *dump_file,
 	  insn_changed_p = true;
 	  *loc = reg = get_reg (*loc);
 	  ira_register_new_scratch_op (insn, i, INSN_CODE (insn));
-	  if (ira_dump_file != NULL)
+	  if (dump_file != NULL)
 	    fprintf (dump_file,
 		     "Removing SCRATCH to p%u in insn #%u (nop %d)\n",
 		     REGNO (reg), INSN_UID (insn), i);
@@ -5662,6 +5681,7 @@ ira (FILE *f)
   bool output_jump_reload_p = false;
 
   setup_hard_regno_nrefs ();
+  lra_reset_dependent_filters ();
   if (ira_use_lra_p)
     {
       /* First put potential jump output reloads on the output edges
@@ -5746,9 +5766,11 @@ ira (FILE *f)
   lra_simple_p
     = (ira_use_lra_p
        && (num_used_regs >= (1U << 26) / last_basic_block_for_fn (cfun)
-           /* max uid is a good evaluation of the number of insns as most
-              optimizations are done on tree-SSA level.  */
-           || ((uint64_t) get_max_uid ()
+	   /* get_max_insn_count is a good evaluation of the number of insns
+	      as most optimizations are done on tree-SSA level.  Unlike
+	      get_max_uid, it excludes debug insns, so the choice below does
+	      not depend on debug information.  */
+	   || ((uint64_t) get_max_insn_count ()
 	       > (uint64_t) param_ira_simple_lra_insn_threshold * 1000)));
 
   if (lra_simple_p)

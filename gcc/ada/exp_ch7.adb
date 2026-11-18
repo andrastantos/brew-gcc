@@ -46,6 +46,7 @@ with Freeze;         use Freeze;
 with GNAT_CUDA;      use GNAT_CUDA;
 with Inline;         use Inline;
 with Lib;            use Lib;
+with Mutably_Tagged; use Mutably_Tagged;
 with Nlists;         use Nlists;
 with Nmake;          use Nmake;
 with Opt;            use Opt;
@@ -499,11 +500,11 @@ package body Exp_Ch7 is
      (Loc    : Source_Ptr;
       Action : Node_Id;
       Par    : Node_Id) return Node_Id;
-   --  Action is a single statement or object declaration. Par is the proper
-   --  parent of the generated block. Create a transient block whose name is
-   --  the current scope and the only handled statement is Action. If Action
-   --  involves controlled objects or secondary stack usage, the corresponding
-   --  cleanup actions are performed at the end of the block.
+   --  Action is a single statement. Par is the proper parent of the generated
+   --  block. Create a transient block whose name is the current scope and the
+   --  only handled statement is Action. If Action involves controlled objects
+   --  or task objects or secondary stack usage, corresponding cleanup actions
+   --  are performed at the end of the block.
 
    procedure Store_Actions_In_Scope (AK : Scope_Action_Kind; L : List_Id);
    --  Shared processing for the Store_xxx_Actions_In_Scope routines: attach
@@ -1450,7 +1451,7 @@ package body Exp_Ch7 is
                New_Occurrence_Of
                  (RTE (RE_Expunge_Unactivated_Tasks), Loc),
              Parameter_Associations => New_List (
-               New_Occurrence_Of (Activation_Chain_Entity (N), Loc))));
+               Make_Identifier (Loc, Name_uChain))));
 
       --  Attempt to cancel an asynchronous entry call whenever the block which
       --  contains the abortable part is exited.
@@ -2430,6 +2431,14 @@ package body Exp_Ch7 is
             Strict       : Boolean := False)
          is
          begin
+            --  No need to process ignored ghost declarations as they will be
+            --  removed later and therefore do not need finalization
+            --  primitives.
+
+            if Is_Ignored_Ghost_Node (Decl) then
+               return;
+            end if;
+
             --  Library-level tagged type
 
             if Nkind (Decl) = N_Full_Type_Declaration then
@@ -4376,23 +4385,19 @@ package body Exp_Ch7 is
                =>
                   return Curr;
 
-               --  Statements
+               --  Statements and statement-like constructs
 
-               --  Statements and statement-like constructs act as a boundary
-               --  for a transient scope.
+               --  Expressions of compound statements are master constructs so
+               --  they act as a boundary for a transient scope.
 
                when N_Accept_Alternative
                   | N_Attribute_Definition_Clause
                   | N_Case_Statement
                   | N_Case_Statement_Alternative
-                  | N_Code_Statement
                   | N_Delay_Alternative
-                  | N_Delay_Until_Statement
-                  | N_Delay_Relative_Statement
                   | N_Discriminant_Association
                   | N_Elsif_Part
                   | N_Entry_Body_Formal_Part
-                  | N_Exit_Statement
                   | N_If_Statement
                   | N_Iteration_Scheme
                   | N_Terminate_Alternative
@@ -4400,7 +4405,23 @@ package body Exp_Ch7 is
                   pragma Assert (Present (Prev));
                   return Prev;
 
-               when N_Assignment_Statement =>
+               --  An exit statement only alters the control flow, so there
+               --  is no need to wait until after its completion to finalize
+               --  its expression (which is however not a master construct).
+
+               when N_Exit_Statement =>
+                  pragma Assert (Present (Prev));
+                  return Prev;
+
+               --  Expressions of simple statements are not master constructs
+               --  (except for a simple return), so only the statements act as
+               --  a boundary for a transient scope.
+
+               when N_Assignment_Statement
+                  | N_Code_Statement
+                  | N_Delay_Relative_Statement
+                  | N_Delay_Until_Statement
+               =>
                   return Curr;
 
                when N_Entry_Call_Statement
@@ -4606,7 +4627,7 @@ package body Exp_Ch7 is
                --  to the component. Signal the nearest suitable scope that it
                --  is safe to manage the secondary stack.
 
-               if Manage_Sec_Stack and then Within_Init_Proc then
+               if Manage_Sec_Stack and then Inside_Init_Proc then
                   Delegate_Sec_Stack_Management;
                end if;
 
@@ -5463,11 +5484,12 @@ package body Exp_Ch7 is
       --  subtype, its Finalize_Address primitive expects the address of
       --  an object with a dope vector (see Make_Finalize_Address_Stmts).
       --  This is achieved by setting Is_Constr_Array_Subt_With_Bounds,
-      --  but the address of the object is still that of its elements,
-      --  so we need to shift it back to skip the dope vector.
+      --  whose predicate also requires Has_Controlled_Component, so we
+      --  have to check for the controlled component here, too.
 
       if Is_Array_Type (Utyp)
         and then not Is_Constrained (First_Subtype (Utyp))
+        and then Has_Controlled_Component (Utyp)
       then
          Obj_Addr :=
            Shift_Address_For_Descriptor
@@ -5499,7 +5521,7 @@ package body Exp_Ch7 is
       if Is_Class_Wide_Type (Typ) then
          Utyp := Root_Type (Typ);
       else
-         Utyp := Typ;
+         Utyp := Get_Corresponding_Tagged_Type_If_Present (Typ);
       end if;
 
       Utyp := Underlying_Type (Base_Type (Utyp));
@@ -7883,7 +7905,7 @@ package body Exp_Ch7 is
          Ref  := Convert_Concurrent (Ref, Underlying_Type (Typ));
 
       else
-         Utyp := Typ;
+         Utyp := Get_Corresponding_Tagged_Type_If_Present (Typ);
          Atyp := Typ;
       end if;
 
@@ -8460,7 +8482,7 @@ package body Exp_Ch7 is
 
       else
          Is_Conc := False;
-         Utyp    := Typ;
+         Utyp    := Get_Corresponding_Tagged_Type_If_Present (Typ);
       end if;
 
       Utyp := Underlying_Type (Base_Type (Utyp));
@@ -8491,22 +8513,28 @@ package body Exp_Ch7 is
       --  [Deep_]Initialize primitive to call.
       --  If Typ is protected then no additional processing is needed either.
 
-      if No (Utyp)
-        or else Is_Protected_Type (Typ)
-      then
+      if No (Utyp) or else Is_Protected_Type (Typ) then
          return Empty;
       end if;
 
-      --  Select the appropriate version of initialize
+      --  Select the appropriate version of Initialize
 
       if Has_Controlled_Component (Utyp) then
          Proc := TSS (Utyp, TSS_Deep_Initialize);
-      elsif Is_Mutably_Tagged_Type (Utyp) then
-         Proc := Find_Controlled_Prim_Op (Etype (Utyp), Name_Initialize);
-         Check_Visibly_Controlled (Initialize_Case, Etype (Typ), Proc, Ref);
-      else
+
+      --  Derivations from [Limited_]Controlled
+
+      elsif Is_Controlled (Utyp) then
          Proc := Find_Controlled_Prim_Op (Utyp, Name_Initialize);
          Check_Visibly_Controlled (Initialize_Case, Typ, Proc, Ref);
+
+      --  Mutably tagged types without controlled parts in the root type
+
+      elsif Is_Mutably_Tagged_CW_Equivalent_Type (Typ) then
+         return Empty;
+
+      else
+         raise Program_Error;
       end if;
 
       --  If initialization procedure for an array of controlled objects is
@@ -8712,7 +8740,6 @@ package body Exp_Ch7 is
 
       --  Local variables
 
-      Decls    : constant List_Id   := New_List;
       Instrs   : constant List_Id   := New_List (Action);
       Trans_Id : constant Entity_Id := Current_Scope;
 
@@ -8811,11 +8838,48 @@ package body Exp_Ch7 is
       Block :=
         Make_Block_Statement (Loc,
           Identifier                 => New_Occurrence_Of (Trans_Id, Loc),
-          Declarations               => Decls,
+          Declarations               => New_List,
           Handled_Statement_Sequence =>
             Make_Handled_Sequence_Of_Statements (Loc, Statements => Instrs),
           Has_Created_Identifier     => True);
       Set_Parent (Block, Par);
+
+      --  If the transient scope contains a _Master entity, mark it as being
+      --  a task master since Build_Master_Entity could not do it.
+
+      Set_Is_Task_Master (Block, Has_Master_Entity (Trans_Id));
+
+      --  If the transient scope contains a _Chain entity, try to find its
+      --  declaration in the actions to be executed before the main action.
+      --  If found, generate a call to Activate_Tasks on the entity and, in
+      --  either case, set Is_Task_Allocation_Block to block the subsequent
+      --  generation of the same call by Build_Task_Activation_Call.
+
+      if Has_Activation_Chain_Entity (Trans_Id) then
+         declare
+            Before_Actions : List_Id
+              renames Scope_Stack.Table (Scope_Stack.Last).
+                        Actions_To_Be_Wrapped (Before);
+            Act : Node_Id;
+
+         begin
+            Act := First (Before_Actions);
+            while Present (Act) loop
+               if Nkind (Act) = N_Object_Declaration
+                 and then Chars (Defining_Identifier (Act)) = Name_uChain
+               then
+                  Append_To (Before_Actions,
+                    Make_Task_Activation_Call
+                      (Loc, Defining_Identifier (Act)));
+                  exit;
+               end if;
+
+               Next (Act);
+            end loop;
+
+            Set_Is_Task_Allocation_Block (Block);
+         end;
+      end if;
 
       --  Insert actions stuck in the transient scopes as well as all freezing
       --  nodes needed by those actions. Do not insert cleanup actions here,

@@ -91,6 +91,10 @@ ix86_issue_rate (void)
        is limits of the decoders.  */
     case PROCESSOR_ZNVER5:
     case PROCESSOR_ZNVER6:
+    case PROCESSOR_C86_4G_M4:
+    case PROCESSOR_C86_4G_M6:
+    case PROCESSOR_C86_4G_M7:
+    case PROCESSOR_C86_4G_M8:
       return 4;
 
     case PROCESSOR_ICELAKE_CLIENT:
@@ -271,7 +275,7 @@ exact_store_load_dependency (rtx_insn *store, rtx_insn *load)
    between INSN and DEP_INSN through a dependence of type DEP_TYPE, and strength
    DW.  It should return the new value.
 
-   On x86 CPUs this is most commonly used to model the fact that valus of
+   On x86 CPUs this is most commonly used to model the fact that values of
    registers used to compute address of memory operand  needs to be ready
    earlier than values of registers used in the actual operation.  */
 
@@ -440,6 +444,10 @@ ix86_adjust_cost (rtx_insn *insn, int dep_type, rtx_insn *dep_insn, int cost,
     case PROCESSOR_ZNVER4:
     case PROCESSOR_ZNVER5:
     case PROCESSOR_ZNVER6:
+    case PROCESSOR_C86_4G_M4:
+    case PROCESSOR_C86_4G_M6:
+    case PROCESSOR_C86_4G_M7:
+    case PROCESSOR_C86_4G_M8:
       /* Stack engine allows to execute push&pop instructions in parall.  */
       if ((insn_type == TYPE_PUSH || insn_type == TYPE_POP)
 	  && (dep_insn_type == TYPE_PUSH || dep_insn_type == TYPE_POP))

@@ -26,8 +26,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "rust-parse-utils.h"
 #include "rust-feature.h"
 #include "rust-feature-store.h"
+#include "rust-session-manager.h"
 
 #include "expected.h"
+#include "options.h"
 
 namespace Rust {
 
@@ -459,8 +461,8 @@ private:
   parse_const_item (AST::Visibility vis, AST::AttrVec outer_attrs);
   std::unique_ptr<AST::StaticItem> parse_static_item (AST::Visibility vis,
 						      AST::AttrVec outer_attrs);
-  std::unique_ptr<AST::Trait> parse_trait (AST::Visibility vis,
-					   AST::AttrVec outer_attrs);
+  std::unique_ptr<AST::VisItem> parse_trait (AST::Visibility vis,
+					     AST::AttrVec outer_attrs);
   std::unique_ptr<AST::TraitItemType>
   parse_trait_type (AST::AttrVec outer_attrs, AST::Visibility);
   std::unique_ptr<AST::ConstantItem>
@@ -895,12 +897,6 @@ public:
   // Get a reference to the list of errors encountered
   std::vector<Error> &get_errors () { return error_table; }
 
-  std::vector<std::pair<Feature::Name, Error>> &
-  get_potential_feature_gate_errors ()
-  {
-    return gating_errors;
-  }
-
   const ManagedTokenSource &get_token_source () const { return lexer; }
 
   const_TokenPtr peek_current_token () { return lexer.peek_token (0); }
@@ -912,7 +908,6 @@ private:
   // The error list.
   std::vector<Error> error_table;
 
-  std::vector<std::pair<Feature::Name, Error>> gating_errors;
   // The names of inline modules while parsing.
   std::vector<std::string> inline_module_stack;
 
@@ -948,6 +943,19 @@ std::string extract_module_path (const AST::AttrVec &inner_attrs,
  */
 bool is_match_compatible (const AST::MacroMatch &last_match,
 			  const AST::MacroMatch &current_match);
+
+namespace LiteralResolve {
+
+// Converts a raw string to a decimal number string.
+std::string evaluate_integer_literal (const_TokenPtr token);
+
+// Converts a raw float string to a decimal float number string.
+std::string evaluate_float_literal (const_TokenPtr token);
+
+// Evaluates the suffix of the raw string, if it exists, and returns coretype.
+PrimitiveCoreType resolve_literal_suffix (const_TokenPtr token);
+
+} // namespace LiteralResolve
 } // namespace Rust
 
 #endif // RUST_PARSE_H

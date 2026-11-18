@@ -23,13 +23,14 @@
 #include "rust-hir-type-check-type.h"
 #include "rust-hir-type-check-item.h"
 #include "rust-hir-trait-resolve.h"
+#include "rust-rib.h"
 #include "rust-substitution-mapper.h"
-#include "rust-hir-path-probe.h"
+#include "rust-hir-path-probe-expr.h"
+#include "rust-hir-path-probe-type.h"
 #include "rust-type-util.h"
 #include "rust-hir-type-bounds.h"
 #include "rust-hir-item.h"
-#include "rust-session-manager.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
 
 namespace Rust {
 namespace Resolver {
@@ -72,7 +73,7 @@ TypeCheckExpr::visit (HIR::QualifiedPathInExpression &expr)
     return;
 
   // inherit the bound
-  root->inherit_bounds ({specified_bound});
+  root->inherit_bound (specified_bound);
 
   // lookup the associated item from the specified bound
   HIR::PathExprSegment &item_seg = expr.get_segments ().at (0);
@@ -93,8 +94,6 @@ TypeCheckExpr::visit (HIR::QualifiedPathInExpression &expr)
     = lookup_associated_impl_block (specified_bound, root);
   if (associated_impl_trait != nullptr)
     {
-      associated_impl_trait->setup_associated_types (root, specified_bound);
-
       for (auto &i :
 	   associated_impl_trait->get_impl_block ()->get_impl_items ())
 	{
@@ -157,11 +156,11 @@ TypeCheckExpr::visit (HIR::QualifiedPathInExpression &expr)
   bool fully_resolved = expr.get_segments ().size () <= 1;
   if (fully_resolved)
     {
-      auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
-	Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
+      auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
 
       nr_ctx.map_usage (Resolver2_0::Usage (expr.get_mappings ().get_nodeid ()),
-			Resolver2_0::Definition (root_resolved_node_id));
+			Resolver2_0::Definition (root_resolved_node_id),
+			Resolver2_0::Namespace::Values);
       return;
     }
 
@@ -209,11 +208,28 @@ TypeCheckExpr::visit (HIR::PathInExpression &expr)
       else
 	{
 	  TyTy::BaseType *resolved = nullptr;
-	  context->lookup_type (*hir_id, &resolved);
+	  auto trait_item = mappings.hir.trait_items.lookup (*hir_id);
+	  if (trait_item.has_value ())
+	    {
+	      HIR::Trait *trait = mappings.lookup_trait_item_mapping (*hir_id);
+	      rust_assert (trait != nullptr);
 
-	  rust_assert (resolved);
+	      TraitReference *trait_ref = TraitResolver::Resolve (*trait);
+	      if (trait_ref->is_error ())
+		return;
 
-	  query_type (*hir_id, &infered);
+	      TraitItemReference *trait_item_ref = nullptr;
+	      bool ok = trait_ref->lookup_hir_trait_item (**trait_item,
+							  &trait_item_ref);
+	      rust_assert (ok);
+	      resolved = trait_item_ref->get_tyty ();
+	    }
+	  else if (!query_type (*hir_id, &resolved))
+	    return;
+
+	  if (resolved == nullptr
+	      || resolved->get_kind () == TyTy::TypeKind::ERROR)
+	    return;
 
 	  infered = SubstMapper::InferSubst (resolved, expr.get_locus ());
 	}
@@ -255,14 +271,14 @@ TypeCheckExpr::resolve_root_path (HIR::PathInExpression &expr, size_t *offset,
       bool is_root = *offset == 0;
       NodeId ast_node_id = seg.get_mappings ().get_nodeid ();
 
-      auto &nr_ctx
-	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
+      auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
 
       // lookup the reference_node_id
       NodeId ref_node_id;
-      if (auto res = nr_ctx.lookup (ast_node_id))
+      if (auto res = nr_ctx.lookup (ast_node_id, Resolver2_0::Namespace::Types,
+				    Resolver2_0::Namespace::Values))
 	{
-	  ref_node_id = *res;
+	  ref_node_id = res->id;
 	}
       else
 	{
@@ -292,9 +308,9 @@ TypeCheckExpr::resolve_root_path (HIR::PathInExpression &expr, size_t *offset,
 	}
       auto ref = hid.value ();
 
-      auto seg_is_module = mappings.lookup_module (ref).has_value ();
+      auto seg_is_module = mappings.hir.modules.lookup (ref).has_value ();
       auto seg_is_crate = mappings.is_local_hirid_crate (ref);
-      auto seg_is_pattern = mappings.lookup_hir_pattern (ref).has_value ();
+      auto seg_is_pattern = mappings.hir.patterns.lookup (ref).has_value ();
       auto seg_is_self = is_root && !have_more_segments
 			 && seg.get_segment ().to_string () == "self";
       if (seg_is_module || seg_is_crate)
@@ -401,29 +417,24 @@ TypeCheckExpr::resolve_segments (NodeId root_resolved_node_id,
 
   for (size_t i = offset; i < segments.size (); i++)
     {
+      bool last_seg = i == segments.size () - 1;
       HIR::PathExprSegment &seg = segments.at (i);
-      bool probe_impls = !receiver_is_generic;
 
-      // probe the path is done in two parts one where we search impls if no
-      // candidate is found then we search extensions from traits
-      auto candidates
-	= PathProbeType::Probe (prev_segment, seg.get_segment (), probe_impls,
-				false /*probe_bounds*/,
-				true /*ignore_mandatory_trait_items*/);
+      std::set<PathProbeCandidate> candidates;
+      if (last_seg)
+	candidates = PathProbeExpr::Probe (tyseg, seg.get_segment ());
+      else
+	{
+	  auto type_candidates
+	    = TypePathProbe::Probe (tyseg, seg.get_segment ());
+	  candidates = type_candidates.type_candidates;
+	}
+
       if (candidates.size () == 0)
 	{
-	  candidates
-	    = PathProbeType::Probe (prev_segment, seg.get_segment (), false,
-				    true /*probe_bounds*/,
-				    false /*ignore_mandatory_trait_items*/);
-
-	  if (candidates.size () == 0)
-	    {
-	      rust_error_at (
-		seg.get_locus (),
-		"failed to resolve path segment using an impl Probe");
-	      return;
-	    }
+	  rust_error_at (seg.get_locus (),
+			 "failed to resolve path segment using an impl Probe");
+	  return;
 	}
 
       if (candidates.size () > 1)
@@ -479,22 +490,13 @@ TypeCheckExpr::resolve_segments (NodeId root_resolved_node_id,
 
       if (associated_impl_block != nullptr && !receiver_is_dyn)
 	{
-	  // associated types
-	  HirId impl_block_id
-	    = associated_impl_block->get_mappings ().get_hirid ();
-
-	  AssociatedImplTrait *associated = nullptr;
-	  bool found_impl_trait
-	    = context->lookup_associated_trait_impl (impl_block_id,
-						     &associated);
-
+	  // unify the segments receiver against the impls self so
+	  // infer vars on either side get pinned
 	  auto mappings = TyTy::SubstitutionArgumentMappings::error ();
 	  TyTy::BaseType *impl_block_ty
 	    = TypeCheckItem::ResolveImplBlockSelfWithInference (
 	      *associated_impl_block, seg.get_locus (), &mappings);
 
-	  // we need to apply the arguments to the segment type so they get
-	  // unified properly
 	  if (!mappings.is_error ())
 	    tyseg = SubstMapperInternal::Resolve (tyseg, mappings);
 
@@ -502,24 +504,8 @@ TypeCheckExpr::resolve_segments (NodeId root_resolved_node_id,
 				     TyTy::TyWithLocation (prev_segment),
 				     TyTy::TyWithLocation (impl_block_ty),
 				     seg.get_locus ());
-	  bool ok = prev_segment->get_kind () != TyTy::TypeKind::ERROR;
-	  if (!ok)
+	  if (prev_segment->get_kind () == TyTy::TypeKind::ERROR)
 	    return;
-
-	  if (found_impl_trait)
-	    {
-	      // we need to setup with apropriate bounds
-	      HIR::TypePath &bound_path
-		= associated->get_impl_block ()->get_trait_ref ();
-	      const auto &trait_ref = *TraitResolver::Resolve (bound_path);
-	      rust_assert (!trait_ref.is_error ());
-
-	      const auto &predicate
-		= impl_block_ty->lookup_predicate (trait_ref.get_defid ());
-	      if (!predicate.is_error ())
-		associated->setup_associated_types (prev_segment, predicate,
-						    nullptr, false);
-	    }
 	}
 
       if (seg.has_generic_args ())
@@ -544,11 +530,11 @@ TypeCheckExpr::resolve_segments (NodeId root_resolved_node_id,
 
   rust_assert (resolved_node_id != UNKNOWN_NODEID);
 
-  auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
-    Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
+  auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
 
   nr_ctx.map_usage (Resolver2_0::Usage (expr_mappings.get_nodeid ()),
-		    Resolver2_0::Definition (resolved_node_id));
+		    Resolver2_0::Definition (resolved_node_id),
+		    Resolver2_0::Namespace::Values);
 
   infered = tyseg;
 }

@@ -743,7 +743,7 @@ will_delete_init_insn_p (rtx_insn *insn)
    so any pseudo reg that is spilled must go to the stack.
 
    Return value is TRUE if reload likely left dead insns in the
-   stream and a DCE pass should be run to elimiante them.  Else the
+   stream and a DCE pass should be run to eliminate them.  Else the
    return value is FALSE.  */
 
 bool
@@ -926,7 +926,7 @@ reload (rtx_insn *first, int global)
 	if (reg_renumber[i] < 0 && reg_equiv_memory_loc (i))
 	  {
 	    rtx x = eliminate_regs (reg_equiv_memory_loc (i), VOIDmode,
-				    NULL_RTX);
+				    nullptr);
 
 	    if (strict_memory_address_addr_space_p
 		  (GET_MODE (regno_reg_rtx[i]), XEXP (x, 0),
@@ -1179,9 +1179,9 @@ reload (rtx_insn *first, int global)
       {
 	rtx *pnote;
 
-	if (CALL_P (insn))
-	  replace_pseudos_in (& CALL_INSN_FUNCTION_USAGE (insn),
-			      VOIDmode, CALL_INSN_FUNCTION_USAGE (insn));
+	if (auto call = dyn_cast<rtx_call_insn *> (insn))
+	  replace_pseudos_in (& CALL_INSN_FUNCTION_USAGE (call),
+			      VOIDmode, CALL_INSN_FUNCTION_USAGE (call));
 
 	if ((GET_CODE (PATTERN (insn)) == USE
 	     /* We mark with QImode USEs introduced by reload itself.  */
@@ -1390,7 +1390,8 @@ maybe_fix_stack_asms (void)
 		  if (insn_extra_address_constraint (cn))
 		    cls = (int) reg_class_subunion[cls]
 		      [(int) base_reg_class (VOIDmode, ADDR_SPACE_GENERIC,
-					     ADDRESS, SCRATCH, chain->insn)];
+					     ADDRESS, SCRATCH, NULL_RTX,
+					     chain->insn)];
 		  else
 		    cls = (int) reg_class_subunion[cls]
 		      [reg_class_for_constraint (cn)];
@@ -1403,12 +1404,13 @@ maybe_fix_stack_asms (void)
 	 constraints, must be usable as reload registers.  So clear them
 	 out of the life information.  */
       allowed &= clobbered;
-      for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-	if (TEST_HARD_REG_BIT (allowed, i))
-	  {
-	    CLEAR_REGNO_REG_SET (&chain->live_throughout, i);
-	    CLEAR_REGNO_REG_SET (&chain->dead_or_set, i);
-	  }
+      hard_reg_set_iterator hrsi;
+      unsigned int j = 0;
+      EXECUTE_IF_SET_IN_HARD_REG_SET (allowed, 0, j, hrsi)
+	{
+	  CLEAR_REGNO_REG_SET (&chain->live_throughout, j);
+	  CLEAR_REGNO_REG_SET (&chain->dead_or_set, j);
+	}
     }
 
 #endif
@@ -2939,7 +2941,7 @@ eliminate_regs_1 (rtx x, machine_mode mem_mode, rtx insn,
 }
 
 rtx
-eliminate_regs (rtx x, machine_mode mem_mode, rtx insn)
+eliminate_regs (rtx x, machine_mode mem_mode, rtx_insn *insn)
 {
   if (reg_eliminate == NULL)
     {
@@ -3782,7 +3784,7 @@ set_initial_elim_offsets (void)
 /* Subroutine of set_initial_label_offsets called via for_each_eh_label.  */
 
 static void
-set_initial_eh_label_offset (rtx label)
+set_initial_eh_label_offset (rtx_code_label *label)
 {
   set_label_offsets (label, NULL, 1);
 }
@@ -3919,29 +3921,29 @@ update_eliminables (HARD_REG_SET *pset)
 static bool
 update_eliminables_and_spill (void)
 {
-  int i;
+  unsigned int i;
   bool did_spill = false;
   HARD_REG_SET to_spill;
   CLEAR_HARD_REG_SET (to_spill);
   update_eliminables (&to_spill);
   used_spill_regs &= ~to_spill;
 
-  for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-    if (TEST_HARD_REG_BIT (to_spill, i))
-      {
-	spill_hard_reg (i, 1);
-	did_spill = true;
+  hard_reg_set_iterator hrsi;
+  EXECUTE_IF_SET_IN_HARD_REG_SET (to_spill, 0, i, hrsi)
+    {
+      spill_hard_reg (i, 1);
+      did_spill = true;
 
-	/* Regardless of the state of spills, if we previously had
-	   a register that we thought we could eliminate, but now
-	   cannot eliminate, we must run another pass.
+      /* Regardless of the state of spills, if we previously had
+	 a register that we thought we could eliminate, but now
+	 cannot eliminate, we must run another pass.
 
-	   Consider pseudos which have an entry in reg_equiv_* which
-	   reference an eliminable register.  We must make another pass
-	   to update reg_equiv_* so that we do not substitute in the
-	   old value from when we thought the elimination could be
-	   performed.  */
-      }
+	 Consider pseudos which have an entry in reg_equiv_* which
+	 reference an eliminable register.  We must make another pass
+	 to update reg_equiv_* so that we do not substitute in the
+	 old value from when we thought the elimination could be
+	 performed.  */
+    }
   return did_spill;
 }
 
@@ -4493,7 +4495,7 @@ reload_as_needed (int live_known)
 	    XEXP (XEXP (PATTERN (insn), 0), 0)
 	      = eliminate_regs (XEXP (XEXP (PATTERN (insn), 0), 0),
 				GET_MODE (XEXP (PATTERN (insn), 0)),
-				NULL_RTX);
+				nullptr);
 
 	  /* If we need to do register elimination processing, do so.
 	     This might delete the insn, in which case we are done.  */
@@ -4773,16 +4775,16 @@ reload_as_needed (int live_known)
       /* Don't assume a reload reg is still good after a call insn
 	 if it is a call-used reg, or if it contains a value that will
          be partially clobbered by the call.  */
-      else if (CALL_P (insn))
+      else if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	{
 	  reg_reloaded_valid
-	    &= ~insn_callee_abi (insn).full_and_partial_reg_clobbers ();
+	    &= ~insn_callee_abi (call).full_and_partial_reg_clobbers ();
 
 	  /* If this is a call to a setjmp-type function, we must not
 	     reuse any reload reg contents across the call; that will
 	     just be clobbered by other uses of the register in later
 	     code, before the longjmp.  */
-	  if (find_reg_note (insn, REG_SETJMP, NULL_RTX))
+	  if (find_reg_note (call, REG_SETJMP, NULL_RTX))
 	    CLEAR_HARD_REG_SET (reg_reloaded_valid);
 	}
     }
@@ -8256,7 +8258,7 @@ emit_reload_insns (class insn_chain *chain)
 	}
 
       /* The following if-statement was #if 0'd in 1.34 (or before...).
-	 It's reenabled in 1.35 because supposedly nothing else
+	 It's re-enabled in 1.35 because supposedly nothing else
 	 deals with this problem.  */
 
       /* If a register gets output-reloaded from a non-spill register,
@@ -8720,13 +8722,14 @@ delete_output_reload (rtx_insn *insn, int j, int last_reload_reg,
 	}
     }
   n_occurrences = count_occurrences (PATTERN (insn), reg, 0);
-  if (CALL_P (insn) && CALL_INSN_FUNCTION_USAGE (insn))
-    n_occurrences += count_occurrences (CALL_INSN_FUNCTION_USAGE (insn),
+  auto call = dyn_cast<rtx_call_insn *> (insn);
+  if (call && CALL_INSN_FUNCTION_USAGE (call))
+    n_occurrences += count_occurrences (CALL_INSN_FUNCTION_USAGE (call),
 					reg, 0);
   if (substed)
     n_occurrences += count_occurrences (PATTERN (insn),
 					eliminate_regs (substed, VOIDmode,
-							NULL_RTX), 0);
+							nullptr), 0);
   for (rtx i1 = reg_equiv_alt_mem_list (REGNO (reg)); i1; i1 = XEXP (i1, 1))
     {
       gcc_assert (!rtx_equal_p (XEXP (i1, 0), substed));

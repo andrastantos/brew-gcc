@@ -399,9 +399,19 @@ Parser<ManagedTokenSource>::parse_item (bool called_from_statement)
       // if any of these (should be all possible VisItem prefixes), parse a
       // VisItem
       {
+	auto errors_before = error_table.size ();
 	auto vis_item = parse_vis_item (std::move (outer_attrs));
 	if (!vis_item)
-	  return Parse::Error::Item::make_malformed ();
+	  {
+	    // e.g. `pub` followed by something that isn't an item
+	    if (error_table.size () == errors_before)
+	      {
+		const_TokenPtr t = lexer.peek_token ();
+		add_error (Error (t->get_locus (), "expected item, found %qs",
+				  t->get_token_description ()));
+	      }
+	    return Parse::Error::Item::make_malformed ();
+	  }
 	return RType{std::move (vis_item)};
       }
     case SUPER:
@@ -2021,6 +2031,16 @@ Parser<ManagedTokenSource>::parse_generic_param (EndTokenPred is_end_token)
 	    if (default_expr.value ().get_kind ()
 		== AST::GenericArg::Kind::Either)
 	      default_expr = default_expr.value ().disambiguate_to_const ();
+	    else if (default_expr.value ().get_kind ()
+		     != AST::GenericArg::Kind::Const)
+	      {
+		Error error (
+		  default_expr.value ().get_locus (),
+		  "expressions must be enclosed in braces to be used as const "
+		  "generic arguments");
+		add_error (std::move (error));
+		default_expr = tl::nullopt;
+	      }
 	  }
 
 	param = std::unique_ptr<AST::ConstGenericParam> (
@@ -3871,14 +3891,16 @@ Parser<ManagedTokenSource>::parse_static_item (AST::Visibility vis,
 }
 
 // Parses a trait definition item, including unsafe ones.
+// also handles trait aliases
 template <typename ManagedTokenSource>
-std::unique_ptr<AST::Trait>
+std::unique_ptr<AST::VisItem>
 Parser<ManagedTokenSource>::parse_trait (AST::Visibility vis,
 					 AST::AttrVec outer_attrs)
 {
   location_t locus = lexer.peek_token ()->get_locus ();
   bool is_unsafe = false;
   bool is_auto_trait = false;
+  bool is_alias = false;
 
   if (lexer.peek_token ()->get_id () == UNSAFE)
     {
@@ -3908,8 +3930,23 @@ Parser<ManagedTokenSource>::parse_trait (AST::Visibility vis,
   // create placeholder type param bounds in case they don't exist
   std::vector<std::unique_ptr<AST::TypeParamBound>> type_param_bounds;
 
-  // parse type param bounds (if they exist)
-  if (lexer.peek_token ()->get_id () == COLON)
+  // this might be a trait alias
+  if (lexer.peek_token ()->get_id () == EQUAL)
+    {
+      lexer.skip_token ();
+
+      if (is_auto_trait)
+	rust_error_at (locus, "trait aliases cannot be %<auto%>");
+      if (is_unsafe)
+	rust_error_at (locus, "trait aliases cannot be %<unsafe%>");
+
+      type_param_bounds = parse_type_param_bounds (
+	[] (TokenId id) { return id == WHERE || id == SEMICOLON; });
+
+      is_alias = true;
+    }
+  // otherwise, parse type param bounds (if they exist)
+  else if (lexer.peek_token ()->get_id () == COLON)
     {
       lexer.skip_token ();
 
@@ -3920,6 +3957,20 @@ Parser<ManagedTokenSource>::parse_trait (AST::Visibility vis,
 
   // parse where clause (if it exists)
   AST::WhereClause where_clause = parse_where_clause ();
+
+  // if this was a trait alias, finish up
+  if (is_alias)
+    {
+      if (!skip_token (SEMICOLON))
+	return nullptr;
+
+      return std::make_unique<AST::TraitAlias> (std::move (ident),
+						std::move (generic_params),
+						std::move (where_clause),
+						std::move (type_param_bounds),
+						std::move (vis),
+						std::move (outer_attrs), locus);
+    }
 
   if (!skip_token (LEFT_CURLY))
     {
@@ -5237,7 +5288,8 @@ Parser<ManagedTokenSource>::parse_path_generic_args ()
 
       // ensure not binding being parsed as type accidently
       if (t->get_id () == IDENTIFIER
-	  && lexer.peek_token (1)->get_id () == EQUAL)
+	  && (lexer.peek_token (1)->get_id () == EQUAL
+	      || lexer.peek_token (1)->get_id () == COLON))
 	break;
 
       auto arg = parse_generic_arg ();
@@ -5314,11 +5366,20 @@ Parser<ManagedTokenSource>::parse_generic_args_binding ()
   lexer.skip_token ();
   Identifier ident{ident_tok};
 
-  if (!skip_token (EQUAL))
+  if (lexer.peek_token ()->get_id () == COLON)
     {
-      // skip after somewhere?
-      return AST::GenericArgsBinding::create_error ();
+      lexer.skip_token ();
+      auto bounds_locus = lexer.peek_token ()->get_locus ();
+      auto bounds = parse_type_param_bounds ();
+      auto type = std::unique_ptr<AST::Type> (
+	new AST::ImplTraitType (std::move (bounds), bounds_locus));
+      return AST::GenericArgsBinding (
+	std::move (ident), std::move (type), ident_tok->get_locus (),
+	AST::GenericArgsBinding::Kind::Constraint);
     }
+
+  if (!skip_token (EQUAL))
+    return AST::GenericArgsBinding::create_error ();
 
   // parse type (required)
   std::unique_ptr<AST::Type> type = parse_type ();
@@ -7182,6 +7243,14 @@ Parser<ManagedTokenSource>::parse_stmt_or_expr ()
 	  parse_let_stmt (std::move (outer_attrs)));
 	return ExprOrStmt (std::move (stmt));
       }
+    case CONST:
+      if (lexer.peek_token (1)->get_id () == LEFT_CURLY)
+	{
+	  // const block: parse as expression
+	  expr = parse_expr (std::move (outer_attrs), restrictions);
+	  break;
+	}
+      gcc_fallthrough ();
     case PUB:
     case MOD:
     case EXTERN_KW:
@@ -7190,7 +7259,6 @@ Parser<ManagedTokenSource>::parse_stmt_or_expr ()
     case TYPE:
     case STRUCT_KW:
     case ENUM_KW:
-    case CONST:
     case STATIC_KW:
     case AUTO:
     case TRAIT:

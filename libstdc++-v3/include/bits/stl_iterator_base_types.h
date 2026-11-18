@@ -66,7 +66,9 @@
 #include <bits/c++config.h>
 
 #if __cplusplus >= 201103L
-# include <type_traits>  // For __void_t, is_convertible
+# include <type_traits>  // For __void_t, is_convertible, __enable_if_t
+#else
+# include <ext/type_traits.h> // For __gnu_cxx::__enable_if
 #endif
 
 #if __cplusplus > 201703L && __cpp_concepts >= 201907L
@@ -122,7 +124,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  used in specializations and overloading.
    *
    *  In particular, there are no default implementations of requirements
-   *  such as @c operator++ and the like.  (How could there be?)
+   *  such as `operator++` and the like.  (How could there be?)
+   *
+   *  @deprecated Deprecated since C++17. The recommended alternative is to
+   *  simply define the typedefs directly in your iterator class.
   */
   template<typename _Category, typename _Tp, typename _Distance = ptrdiff_t,
            typename _Pointer = _Tp*, typename _Reference = _Tp&>
@@ -144,9 +149,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Traits class for iterators.
    *
    *  This class does nothing but define nested typedefs.  The general
-   *  version simply @a forwards the nested typedefs from the Iterator
-   *  argument.  Specialized versions for pointers and pointers-to-const
-   *  provide tighter, more correct semantics.
+   *  version simply declares aliases for the nested typedefs from the Iterator
+   *  argument.  Partial specializations for pointers define the typedefs
+   *  appropriately for the semantics of pointers.
   */
   template<typename _Iterator>
     struct iterator_traits;
@@ -230,6 +235,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     };
 #endif
 
+  /// @cond undocumented
   /**
    *  This function is not a part of the C++ standard but is syntactic
    *  sugar for internal library use only.
@@ -240,8 +246,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     typename iterator_traits<_Iter>::iterator_category
     __iterator_category(const _Iter&)
     { return typename iterator_traits<_Iter>::iterator_category(); }
-
-  ///@}
 
 #if __cplusplus >= 201103L
   template<typename _Iter>
@@ -263,6 +267,13 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _InIterator>
     concept __any_input_iterator
       = input_iterator<_InIterator> || __has_input_iter_cat<_InIterator>;
+
+  // Is a Cpp17ForwardIterator or satisfies std::forward_iterator or sized_sentinel_for
+  template<typename _InIterator>
+    concept __any_sizeable_iterator
+      = forward_iterator<_InIterator>
+	|| is_convertible_v<__iter_category_t<_InIterator>, forward_iterator_tag>
+	|| sized_sentinel_for<_InIterator, _InIterator>;
 #endif
 #endif
 
@@ -280,6 +291,29 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     struct __is_random_access_iter
     { enum { __value = __is_base_of(random_access_iterator_tag, _Cat) }; };
 #endif
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wc++14-extensions" // variable templates
+  template<typename _Iter, typename = void>
+    const bool __enable_for_each_segment = false;
+
+  template<typename _Iter>
+    const bool __enable_for_each_segment<_Iter,
+#if __cplusplus >= 201103L
+      __enable_if_t<_Iter::_S_enable_for_each_segment>
+#else
+      typename __gnu_cxx::__enable_if<_Iter::_S_enable_for_each_segment, void>::__type
+#endif
+      > = true;
+#pragma GCC diagnostic pop
+
+#if __cpp_lib_concepts
+  template<typename _Iter>
+    concept __segmented_iterator = __enable_for_each_segment<_Iter>;
+#endif
+
+  /// @endcond
+  /// @}
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace

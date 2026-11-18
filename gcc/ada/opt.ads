@@ -67,11 +67,6 @@ package Opt is
    --  case of some binder variables, Gnatbind.Scan_Bind_Arg may modify
    --  the default values.
 
-   Latest_Ada_Only : Boolean := False;
-   --  If True, the only value valid for Ada_Version is Ada_2012 or later.
-   --  Trying to specify other values will be ignored (in case of pragma
-   --  Ada_xxx) or generate an error (in case of -gnat83/95/xx switches).
-
    type Ada_Version_Type is
      (Ada_83, Ada_95, Ada_2005, Ada_2012, Ada_2022,
       Ada_With_Core_Extensions, Ada_With_All_Extensions);
@@ -850,15 +845,9 @@ package Opt is
    --  allowed to cause implicit packing instead of generating an error
    --  message. Set by use of pragma Implicit_Packing.
 
-   Init_Or_Norm_Scalars : Boolean := False;
-   --  GNAT, GNATBIND
-   --  Set True if a pragma Initialize_Scalars applies to the current unit.
-   --  Also set True if a pragma Restriction (Normalize_Scalars) applies.
-
    Initialize_Scalars : Boolean := False;
    --  GNAT
    --  Set True if a pragma Initialize_Scalars applies to the current unit.
-   --  Note that Init_Or_Norm_Scalars is also set to True if this is True.
 
    Initialize_Scalars_Mode1 : Character := 'I';
    Initialize_Scalars_Mode2 : Character := 'N';
@@ -1173,7 +1162,6 @@ package Opt is
    Normalize_Scalars : Boolean := False;
    --  GNAT, GNATBIND
    --  Set True if a pragma Normalize_Scalars applies to the current unit.
-   --  Note that Init_Or_Norm_Scalars is also set to True if this is True.
 
    Object_Directory_Present : Boolean := False;
    --  GNATMAKE
@@ -1731,6 +1719,10 @@ package Opt is
    --  Do no formatting (no title, no leading spaces, no empty lines) in
    --  auxiliary outputs (-e, -K, -l, -R).
 
+   function Init_Or_Norm_Scalars return Boolean
+   is (Initialize_Scalars or Normalize_Scalars);
+   --  A convenience shortcut for a common expression
+
    ----------------------------
    -- Configuration Settings --
    ----------------------------
@@ -2008,64 +2000,8 @@ package Opt is
    --  True during the analysis of a system unit, but GNAT_Mode_Config must
    --  not change once scanned and set.
 
-   --  Setting GNAT mode has the following effects on the language that is
-   --  accepted. Note that several of the following have the effect of changing
-   --  an error to a warning. But warnings are usually treated as fatal errors
-   --  in -gnatg mode, so to actually take advantage of such a change, it is
-   --  necessary to add an explicit pragma Warnings (Off) in the source and
-   --  this requires clear documentation of why this is necessary.
-
-   --    The identifier character set is set to 'n' (7-bit ASCII)
-
-   --    Pragma Extend_System is ignored
-
-   --    Warning_Mode is set to Treat_As_Error (-gnatwe)
-
-   --    Standard style checks are set (See Set_GNAT_Style_Check_Options)
-
-   --    Standard warnings are turned on (see Set_GNAT_Mode_Warnings)
-
-   --    The Ada version is set to Ada 2012
-
-   --    Task priorities are always allowed to be in the range Any_Priority
-
-   --    Overflow checks are suppressed, overflow checking set to strict mode
-
-   --    ALI files are always generated for predefined generic packages
-
-   --    Obsolescent feature warnings are suppressed
-
-   --    Recompilation of children of GNAT, System, Ada, Interfaces is allowed
-
-   --    The Scalar_Storage_Order attribute applies to generic types
-
-   --    Categorization errors are treated as warnings rather than errors
-
-   --    Statements in preelaborated units give warnings rather than errors
-
-   --    Private objects are allowed in preelaborated units
-
-   --    Non-static constants in preelaborated units give warnings not errors
-
-   --    The warning about component size being ignored is suppressed
-
-   --    The warning about size clauses being ignored is suppressed
-
-   --    Initializing limited types gives a warning rather than an error
-
-   --    Copying of limited objects is allowed
-
-   --    Returning objects of limited types is allowed
-
-   --    Non-static call in preelaborated unit give a warning, not an error
-
-   --    Warnings on possible elaboration errors are suppressed
-
-   --    Warnings about packing being ignored are suppressed
-
-   --    Warnings in internal units are not suppressed (they normally are)
-
-   --    The only special comment sequence allowed is --!
+   --  Details about the impact of this switch can be found in section
+   --  "GNAT Implementation Mode (the ``-gnatg`` switch)" in the GNAT RM.
 
    --------------------------
    -- Private Declarations --
@@ -2096,7 +2032,6 @@ private
       Fast_Math                      : Boolean;
       Initialize_Scalars             : Boolean;
       No_Component_Reordering        : Boolean;
-      Normalize_Scalars              : Boolean;
       Optimize_Alignment             : Character;
       Optimize_Alignment_Local       : Boolean;
       Persistent_BSS_Mode            : Boolean;

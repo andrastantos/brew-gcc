@@ -15,6 +15,6 @@ int16x8_t foo2(int16_t x)
   return v;
 }
 
-/* { dg-final { scan-assembler-times {\tdup\tv[0-9]+\.4h, w[0-9]+} 3 } } */
-/* { dg-final { scan-assembler {\tmovi\tv[0-9]+\.4h, 0x1} } } */
-/* { dg-final { scan-assembler-times {\tzip1\tv[0-9]+\.8h, v[0-9]+\.8h, v[0-9]+\.8h} 2 } } */
+/* { dg-final { scan-assembler-times {\tmov\tw1, 1} 1 } } */
+/* { dg-final { scan-assembler-times {\tdup\tv0+\.4s, w0} 2 } } */
+/* { dg-final { scan-assembler-times {\tbfi\tw0, w1, 16, 16} 2 } } */

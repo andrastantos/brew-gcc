@@ -1,3 +1,478 @@
+2026-11-12  Jason Merrill  <jason@redhat.com>
+
+	* c-opts.cc (c_common_post_options): Adjust comment.
+
+2026-11-11  Matt Turner  <mattst88@gmail.com>
+
+	PR c/125418
+	* c-attribs.cc (parse_tls_model): New function, split out of...
+	(handle_tls_model_attribute): ...here.  Use it.  Do not add the
+	attribute if its argument is not a string.
+	(weak_decl_tls_model): New function.
+	* c-common.h (parse_tls_model, weak_decl_tls_model): Declare.
+	* c-pragma.cc (apply_pragma_weak): Call weak_decl_tls_model after
+	declaring a symbol weak.
+
+2026-11-10  Arsen Arsenović  <aarsenovic@baylibre.com>
+
+	* c-ada-spec.cc (dump_ada_node): Update to use new qualifier set
+	APIs.
+	* c-common.cc (c_apply_type_quals_to_decl): Update to receive
+	cv_qualifier.
+	(complete_array_type): Use qualifier_set instead of 'int' for
+	sets of qualifiers.
+	(get_atomic_generic_size): Update to use new qualifier set APIs.
+	* c-common.h (c_apply_type_quals_to_decl): Update to receive
+	cv_qualifier.  Provide an overload that takes a qualifier_set as
+	convenience.
+	(c_build_qualified_type): Update to receive qualifier_set
+	instead of an int.
+	* c-format.cc (deref_n_times): Use TYPE_UNQUALIFIED instead of
+	constant zero.
+	* c-pretty-print.cc (pp_c_cv_qualifiers): Update to receive
+	cv_qualifier.
+	(pp_c_type_qualifier_list): Stop using 'int' for CV-qualifier
+	sets.
+	(c_pretty_printer::direct_abstract_declarator): Ditto.
+	* c-pretty-print.h (pp_c_cv_qualifiers): Update to receive
+	cv_qualifier.
+
+2026-11-07  Jakub Jelinek  <jakub@redhat.com>
+
+	PR middle-end/128111
+	* c-common.h (enum rid): Add RID_BUILTIN_CLMULG enumerator.
+	* c-common.cc (c_common_reswords): Add __builtin_clmulg entry.
+
+2026-10-27  Jørgen Kvalsvik  <j@lambda.is>
+
+	* c-pragma.cc (handle_pragma_suppress_coverage): Don't warn on
+	nested begin.
+	* c-pragma.h (suppress_coverage_begin): Change return type to
+	void.
+
+2026-10-26  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR c/128120
+	* c-attribs.cc (has_attribute): Fix ICE on
+	__builtin_has_attribute (var, pure).
+
+2026-10-16  Konstantinos Eleftheriou  <konstantinos.eleftheriou@vrull.eu>
+
+	* c-cppbuiltin.cc (c_cpp_builtins_optimize_pragma): Define or
+	undefine __UNSAFE_MATH_OPTIMIZATIONS__.
+
+2026-10-12  Josef Melcr  <josef.melcr@suse.com>
+
+	PR c/127464
+	* c-attribs.cc (handle_callback_only_attribute): Reject
+	unprototyped functions.
+
+2026-10-09  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127723
+	* c-omp.cc (c_omp_declare_simd_clauses_to_numbers): Add sorry
+	diagnostic for simdlen with scaled modifer, moved from
+	omp-simd-clone.cc to ensure it is always active.
+
+2026-10-07  Jason Merrill  <jason@redhat.com>
+
+	* c.opt.urls: Regenerate.
+
+2026-10-07  Jason Merrill  <jason@redhat.com>
+
+	P1811
+	PR c++/99000
+	* c.opt (fmodule-include-translate): New option.
+
+2026-10-03  Jakub Jelinek  <jakub@redhat.com>
+
+	P3950R1
+	PR c++/125830
+	* c-cppbuiltin.cc (c_cpp_builtins): Bump __cpp_impl_coroutine
+	from 201902L to 202606L.
+
+2026-10-01  Guillaume Gomez  <contact@guillaume-gomez.fr>
+
+	* c-attribs.cc: (decl_or_type_attrs, validate_attr_args)
+	(validate_attr_arg, handle_noinline_attribute)
+	(handle_always_inline_attribute, handle_leaf_attribute)
+	(handle_used_attribute, handle_retain_attribute)
+	(handle_const_attribute, handle_section_attribute)
+	(handle_weak_attribute, handle_alias_ifunc_attribute)
+	(handle_alias_attribute, handle_visibility_attribute)
+	(handle_fnspec_attribute, handle_returns_twice_attribute)
+	(handle_pure_attribute, ignore_attribute, handle_novops_attribute)
+	(handle_nothrow_attribute, handle_type_generic_attribute)
+	(handle_target_attribute): Move to `attr-handlers.cc`.
+
+2026-09-26  Tobias Burnus  <tburnus@baylibre.com>
+
+	* c-attribs.cc (c_common_gnu_attributes): Add "omp groupprivate".
+
+2026-09-24  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126848
+	* c-opts.cc (c_common_post_options): For -ftrivial-auto-var-init=zero
+	or -ftrivial-auto-var-init=pattern in C++26 or later mode set
+	AUTO_INIT_CXX26 bit in flag_auto_var_init.
+
+2026-09-24  Josef Melcr  <josef.melcr@suse.com>
+
+	* c-attribs.cc (handle_callback_only_attribute): Clean up old code.
+
+2026-09-22  Chung-Lin Tang  <cltang@baylibre.com>
+
+	* c-pragma.h (enum pragma_omp_clause): Add PRAGMA_OMP_CLAUSE_LOCAL.
+
+2026-09-18  Alfie Richards  <alfie.richards@arm.com>
+
+	* c-attribs.cc (handle_mode_attribute): Use parse_machine_mode.
+
+2026-09-10  Jakub Jelinek  <jakub@redhat.com>
+
+	P3726R2
+	PR c++/125845
+	* c-cppbuiltin.cc (c_cpp_builtins): For C++26 predefine
+	__cpp_trivial_union to 202603L.
+
+2026-09-03  Josef Melcr  <josef.melcr@suse.com>
+
+	* c-attribs.cc (handle_callback_only_attribute): Add early
+	return if the attribute is not used on a function.
+
+2026-09-03  Josef Melcr  <josef.melcr@suse.com>
+
+	* c-attribs.cc (handle_callback_only_attribute): Reject variadic
+	dispatching or callback functions.
+
+2026-08-27  Jakub Jelinek  <jakub@redhat.com>
+
+	* c.opt (Wsynth): Use 2 spaces instead of 1 between
+	sentences in the description.
+	(fallow-parameterless-variadic-functions): Likewise.
+
+2026-08-27  Sammy Al Hashemi  <sammy@salh.xyz>
+
+	* c-common.h (class temp_override): Move from cp-tree.h.
+	(type_identity_t): Likewise.
+	(make_temp_override): Likewise.
+	* c-warn.cc: Include opts.h.
+	(strict_aliasing_warning): Do not gate on flag_strict_aliasing.
+	Temporarily enable it around the alias set queries when
+	-Wstrict-aliasing was requested explicitly.
+
+2026-08-24  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/125822
+	* c-cppbuiltin.cc (c_cpp_builtins): Define __cpp_concepts to
+	202606L rather than 202002L for C++29.
+
+2026-08-12  Jørgen Kvalsvik  <j@lambda.is>
+
+	* c-attribs.cc (handle_suppress_coverage_attribute): New
+	function.
+	* c-pragma.cc (handle_pragma_suppress_coverage): New function.
+	(init_pragma): Register pragma GCC suppress_coverage.
+	* c-pragma.h (suppress_coverage_begin): New forward declaration.
+	(suppress_coverage_end): Ditto.
+
+2026-08-10  Josef Melcr  <josef.melcr@suse.com>
+
+	PR testsuite/126708
+	* c-attribs.cc (handle_callback_only_attribute): Use
+	positional_argument for bounds checking in callback_only
+	attribute handler, downgrade errors to warnings for
+	consistency.
+
+2026-08-06  Jakub Jelinek  <jakub@redhat.com>
+
+	* c-cppbuiltin.cc (c_cpp_builtins): Change
+	__cpp_named_character_escapes value from 202207L to 202606L.
+
+2026-08-06  Josef Melcr  <josef.melcr@suse.com>
+
+	* c-attribs.cc (get_nth_list_elem): Removed.
+	(handle_callback_only_attribute): Use chain_index instead of
+	get_nth_list_elem.
+
+2026-08-06  Josef Melcr  <josef.melcr@suse.com>
+
+	* c-attribs.cc (handle_callback_only_attribute): Moved from
+	attr-callback.cc.
+	(get_nth_list_elem): Likewise.
+
+2026-08-06  Jakub Jelinek  <jakub@redhat.com>
+	    Jason Merrill  <jason@redhat.com>
+
+	PR c++/125989
+	* c-cppbuiltin.cc (c_cpp_builtins): Predefine
+	__cpp_designated_initializers to 202606 instead of 201707 for
+	C++29.
+
+2026-07-25  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR middle-end/125507
+	* c-common.h (struct c_common_resword): Remove ENUM_BITFIELD.
+	* c-indentation.h (struct token_indent_info): Ditto.
+
+2026-07-20  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126309
+	* c-lex.cc: Implement CWG3020 - Missing specification for
+	__has_cpp_attribute(indeterminate).
+	(c_common_has_attribute): Handle __has_cpp_attribute (indeterminate).
+
+2026-07-15  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/120635
+	* c-lex.cc (c_common_has_attribute): For __clang__
+	namespace don't call canonicalize_attr_name and for
+	_Clang use clang instead.
+
+2026-07-14  Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/124948
+	* c-common.cc (sync_resolve_size): Return -1 for fetch ops
+	on _BitInt types with padding bits where the target requires
+	extension into the padding bits.
+	(atomic_bitint_fetch_using_cas_loop): Handle also __sync_*
+	fetch builtins.
+
+2026-07-13  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/120635
+	* c.opt (Winvalid-specialization): New option.
+	* c.opt.urls: Regenerate.
+	* c-lex.cc (c_common_has_attribute): Don't advertise
+	gnu::no_specializations attribute availability.
+
+2026-07-13  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/126066
+	* c-common.cc (verify_tree): Add a comment.
+
+2026-07-10  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/107187
+	* c-lex.cc (c_common_has_attribute): Don't advertise
+	__has_cpp_attribute (gnu::trivial_abi) in C++.
+
+2026-07-08  Martin Uecker  <uecker@tugraz.at>
+
+	* c-attribs.cc (handle_counted_by_attribute): Adapt.
+	* c-common.h (c_flexible_array_member_type_p): Remove.
+	* c-common.cc (c_flexible_array_member_type_p): Remove.
+
+2026-06-30  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/125837
+	* c.opt.urls: Regenerate.
+
+2026-06-30  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/125837
+	* c.opt (Wc++29-extensions): New option.
+	* c-cppbuiltin.cc (c_cpp_builtins): Change __cpp_pp_embed value for
+	C++29.
+
+2026-06-24  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* c-omp.cc (c_finish_omp_barrier): Pass GOMP_BARRIER_EXPLICIT to
+	GOMP_barrier_ext.
+
+2026-06-16  Jakub Jelinek  <jakub@redhat.com>
+
+	* c-common.h (enum cxx_dialect): Add cxx29.
+	* c-opts.cc (set_std_cxx29): New function.
+	(c_common_handle_option): Handle -std=c++2d, -std=c++29, -std=gnu++2d
+	and -std=gnu++29.
+	* c.opt (std=c++2d, std=c++29, std=gnu++2d, std=gnu++29): New.
+	(std=c++2c, std=c++26, std=gnu++2c, std=gnu++26): Move Undocumented
+	to the 2c cases, tweak description.
+
+2026-06-08  Zhou Qiankang  <wszqkzqk@qq.com>
+
+	PR c++/125642
+	* c-cppbuiltin.cc (c_cpp_builtins): Don't define __FRACT_FBIT__
+	in C++.
+
+2026-06-06  Martin Uecker  <uecker@tugraz.at>
+
+	PR c/125618
+	* c-common.cc (complete_array_type): Change back to using
+	build_range_type.
+
+2026-06-05  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/122731
+	* c-common.h (enum rid): Add RID_BUILTIN_BSWAPG and
+	RID_BUILTIN_BITREVERSEG.
+	* c-common.cc (c_common_reswords): Add __builtin_bswapg
+	and __builtin_bitreverseg.
+
+2026-06-04  Martin Uecker  <uecker@tugraz.at>
+
+	PR c/125072
+	* c-ubsan.cc (get_index_from_offset,get_index_from_pointer_addr_expr,
+	is_instrumentable_pointer_array_address): Return factor.
+	(ubsan_maybe_instrument_array_ref): Apply factor.
+
+2026-06-04  Martin Uecker  <uecker@tugraz.at>
+
+	* c-common.cc (complete_array_type): Use build_index_type.
+	* c-ubsan.cc (ubsan_instrument_bounds_pointer_address): Likewise.
+
+2026-06-02  Christopher Bazley  <chris.bazley@arm.com>
+
+	* c-attribs.cc (handle_optimize_attribute):
+	Save the global target options before modifying
+	them. If the function with the optimize attribute
+	already has a target option node then restore those
+	target options as the global options, so that they
+	are used as the basis for any new optimization and
+	target options attached to the function.
+
+2026-06-02  H.J. Lu  <hjl.tools@gmail.com>
+
+	PR c/121911
+	* c-common.cc (c_common_nodes_and_builtins): Don't declare stack
+	protection guard here.
+
+2026-06-01  Martin Uecker  <uecker@tugraz.at>
+
+	PR c/98539
+	* c-warn.cc (warn_parm_array_mismatch): Check number of size
+	expressions.
+
+2026-06-01  Mark Wielaard  <mark@klomp.org>
+
+	* c.opt.urls: Regenerate.
+
+2026-05-31  Daniel Barboza  <daniel.barboza@oss.qualcomm.com>
+
+	* c.opt: Removed Wstrict-overflow entry.
+
+2026-05-31  Daniel Barboza  <daniel.barboza@oss.qualcomm.com>
+
+	* c-common.cc (pointer_int_sum): Removed
+	fold_*_overflow_warnings uses.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* c-attribs.cc (append_access_attr): Fix typos.
+	(append_access_attr_idxs): Likewise.
+	(has_attribute): Likewise.
+	* c-common.cc (get_cpp_ttype_from_string_type): Likewise.
+	(cb_get_suggestion): Likewise.
+	(maybe_add_include_fixit): Likewise.
+	* c-common.h (convert_vector_to_array_for_subscript): Likewise.
+	* c-cppbuiltin.cc (builtin_define_type_max): Likewise.
+	* c-format.cc (check_format_info_main): Likewise.
+	(check_format_types): Likewise.
+	* c-omp.cc (c_omp_categorize_directive): Likewise.
+	* c-opts.cc (c_common_post_options): Likewise.
+	* c-ubsan.cc (ubsan_instrument_bounds): Likewise.
+
+2026-05-30  Jakub Jelinek  <jakub@redhat.com>
+
+	* c-attribs.cc (type_valid_for_vector_size): Use BITINT_TYPE_P macro.
+	* c-common.cc (c_common_get_narrower): For ENUMERAL_TYPE with
+	BITINT_TYPE as underlying type convert to the underlying type.
+	(c_common_signed_or_unsigned_type): Use BITINT_TYPE_P macro.
+	(sync_resolve_size): Likewise.
+	(atomic_bitint_fetch_using_cas_loop): Likewise.
+	(resolve_overloaded_builtin): Likewise.
+
+2026-05-23  Daniel Barboza  <daniel.barboza@oss.qualcomm.com>
+
+	* c-warn.cc (warn_for_sign_compare): Remove strict_overflow_p
+	argument from tree_expr_nonnegative_p call.
+
+2026-05-23  Daniel Barboza  <daniel.barboza@oss.qualcomm.com>
+
+	* c-ubsan.cc (ubsan_maybe_instrument_reference_or_call): Removed
+	strict_overflow_p flag.
+
+2026-05-23  Daniel Barboza  <daniel.barboza@oss.qualcomm.com>
+
+	* c-warn.cc (warn_logical_operator): Removed strict_overflow_p
+	variable.
+
+2026-05-22  Julian Brown  <julian@codesourcery.com>
+	    Tobias Burnus  <tburnus@baylibre.com>
+
+	* c-common.h (enum c_omp_region_type): Add C_ORT_UPDATE and
+	C_ORT_OMP_UPDATE codes.
+	* c-omp.cc (omp_basic_map_kind_name): New function.
+	(omp_instantiate_mapper): Add LOC parameter and 'target update'
+	support.
+	(c_omp_instantiate_mappers): Add 'target update' support.
+
+2026-05-22  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/119059
+	* c-cppbuiltin.cc (c_cpp_builtins): For C++26 predefine
+	__cpp_trivial_union to 202502L.
+
+2026-05-15  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/125081
+	* c.opt (Wconstant-logical-operand): New option.
+	* c.opt.urls: Regenerate.
+
+2026-05-14  Tobias Burnus  <tburnus@baylibre.com>
+
+	* c-omp.cc (omp_map_decayed_kind): Handle map modifiers
+	also for declare-mapper's map clauses.
+
+2026-05-11  Jason Merrill  <jason@redhat.com>
+
+	PR c++/124621
+	* c-common.cc (user_facing_original_type_p): Recurse.
+
+2026-05-04  H.J. Lu  <hjl.tools@gmail.com>
+
+	PR c/121911
+	* c-common.cc (c_common_nodes_and_builtins): If the
+	stack_protect_guard_symbol_p hook returns true, declare a global
+	symbol for stack protection guard.
+
+2026-04-29  Julian Brown  <julian@codesourcery.com>
+
+	* c-common.h (c_omp_region_type): Add C_ORT_EXIT_DATA,
+	C_ORT_OMP_EXIT_DATA.
+	(c_omp_instantiate_mappers): Add region type parameter.
+	* c-omp.cc (omp_split_map_kind, omp_join_map_kind,
+	omp_map_decayed_kind): New functions.
+	(omp_instantiate_mapper): Add ORT parameter.  Implement map kind decay
+	for instantiated mapper clauses.
+	(c_omp_instantiate_mappers): Add ORT parameter, pass to
+	omp_instantiate_mapper.
+
+2026-04-28  Jakub Jelinek  <jakub@redhat.com>
+
+	* c-common.cc (c_common_signed_or_unsigned_type): Use
+	build_bitint_type for TREE_CODE (type) == BITINT_TYPE whenever
+	flag_isoc2y even when precision is 1.
+	(c_common_get_alias_set): Don't special case BITINT_TYPE
+	with precision 1 for flag_isoc2y.
+	* c-lex.cc (interpret_integer): Use _BitInt(1) type for 0wb
+	if flag_isoc2y, rather than _BitInt(2).
+
+2026-04-22  Jakub Jelinek  <jakub@redhat.com>
+
+	* c-cppbuiltin.cc (c_cpp_builtins): Bump __cpp_impl_reflection value
+	from 202506L to 202603L.
+
+2026-04-22  Jakub Jelinek  <jakub@redhat.com>
+
+	PR sanitizer/124969
+	* c-ubsan.cc (get_index_from_pointer_addr_expr): For
+	VOID_TYPE_P (pointee_type) use size_one_node instead of
+	TYPE_SIZE_UNIT (pointee_type) as pointee_size.  Punt for
+	!COMPLETE_OR_VOID_TYPE_P (pointee_type).  Formatting fix.  Use
+	CONVERT_EXPR_P (x) instead of CONVERT_EXPR_CODE_P (TREE_CODE (x)).
+
 2026-04-07  Sandra Loosemore  <sloosemore@baylibre.com>
 
 	PR other/124784

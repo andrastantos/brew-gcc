@@ -209,7 +209,7 @@ action_record_hasher::equal (const action_record *entry,
 
 typedef hash_table<action_record_hasher> action_hash_type;
 
-static bool get_eh_region_and_lp_from_rtx (const_rtx, eh_region *,
+static bool get_eh_region_and_lp_from_rtx (const rtx_insn *, eh_region *,
 					   eh_landing_pad *);
 
 static void dw2_build_landing_pads (void);
@@ -1152,8 +1152,8 @@ sjlj_mark_call_sites (void)
 
       /* Don't separate a call from it's argument loads.  */
       before = insn;
-      if (CALL_P (insn))
-	before = find_first_parameter_load (insn, NULL);
+      if (auto call = dyn_cast<rtx_call_insn *> (insn))
+	before = find_first_parameter_load (call, NULL);
 
       start_sequence ();
       mem = adjust_address (crtl->eh.sjlj_fc, TYPE_MODE (integer_type_node),
@@ -1478,9 +1478,9 @@ sjlj_build_landing_pads (void)
 					TYPE_MODE (sjlj_fc_type_node),
 					TYPE_ALIGN (sjlj_fc_type_node));
       crtl->eh.sjlj_fc
-	= assign_stack_local (TYPE_MODE (sjlj_fc_type_node),
-			      int_size_in_bytes (sjlj_fc_type_node),
-			      align);
+	= assign_stack_local_1 (TYPE_MODE (sjlj_fc_type_node),
+				int_size_in_bytes (sjlj_fc_type_node),
+				align, ASLK_RECORD_PAD | ASLK_REDUCE_ALIGN);
 
       sjlj_mark_call_sites ();
       sjlj_emit_function_enter (dispatch_label);
@@ -1496,9 +1496,9 @@ sjlj_build_landing_pads (void)
 					TYPE_MODE (sjlj_fc_type_node),
 					TYPE_ALIGN (sjlj_fc_type_node));
       crtl->eh.sjlj_fc
-	= assign_stack_local (TYPE_MODE (sjlj_fc_type_node),
-			      int_size_in_bytes (sjlj_fc_type_node),
-			      align);
+	= assign_stack_local_1 (TYPE_MODE (sjlj_fc_type_node),
+				int_size_in_bytes (sjlj_fc_type_node),
+				align, ASLK_RECORD_PAD | ASLK_REDUCE_ALIGN);
 
       sjlj_mark_call_sites ();
       sjlj_emit_function_enter (NULL);
@@ -1679,7 +1679,7 @@ remove_unreachable_eh_regions (sbitmap r_reachable)
    Only used by reload hackery; should not be used by new code.  */
 
 void
-for_each_eh_label (void (*callback) (rtx))
+for_each_eh_label (void (*callback) (rtx_code_label *))
 {
   eh_landing_pad lp;
   int i;
@@ -1752,7 +1752,7 @@ make_reg_eh_region_note_nothrow_nononlocal (rtx_insn *insn)
    to the contrary.  */
 
 bool
-insn_could_throw_p (const_rtx insn)
+insn_could_throw_p (const rtx_insn *insn)
 {
   if (!flag_exceptions)
     return false;
@@ -1768,22 +1768,23 @@ insn_could_throw_p (const_rtx insn)
    to look for a note, or the note itself.  */
 
 void
-copy_reg_eh_region_note_forward (rtx note_or_insn, rtx_insn *first, rtx last)
+copy_reg_eh_region_note_forward (rtx note_or_insn, rtx_insn *first,
+				 rtx_insn *last)
 {
-  rtx_insn *insn;
   rtx note = note_or_insn;
 
-  if (INSN_P (note_or_insn))
+  if (rtx_insn *insn = dyn_cast <rtx_insn *> (note_or_insn))
     {
-      note = find_reg_note (note_or_insn, REG_EH_REGION, NULL_RTX);
+      if (!INSN_P (insn))
+	return;
+
+      note = find_reg_note (insn, REG_EH_REGION, NULL_RTX);
       if (note == NULL)
 	return;
     }
-  else if (is_a <rtx_insn *> (note_or_insn))
-    return;
   note = XEXP (note, 0);
 
-  for (insn = first; insn != last ; insn = NEXT_INSN (insn))
+  for (rtx_insn *insn = first; insn != last ; insn = NEXT_INSN (insn))
     if (!find_reg_note (insn, REG_EH_REGION, NULL_RTX)
         && insn_could_throw_p (insn))
       add_reg_note (insn, REG_EH_REGION, note);
@@ -1792,22 +1793,23 @@ copy_reg_eh_region_note_forward (rtx note_or_insn, rtx_insn *first, rtx last)
 /* Likewise, but iterate backward.  */
 
 void
-copy_reg_eh_region_note_backward (rtx note_or_insn, rtx_insn *last, rtx first)
+copy_reg_eh_region_note_backward (rtx note_or_insn, rtx_insn *last,
+				  rtx_insn *first)
 {
-  rtx_insn *insn;
   rtx note = note_or_insn;
 
-  if (INSN_P (note_or_insn))
+  if (rtx_insn *insn = dyn_cast <rtx_insn *> (note_or_insn))
     {
-      note = find_reg_note (note_or_insn, REG_EH_REGION, NULL_RTX);
+      if (!INSN_P (insn))
+	return;
+
+      note = find_reg_note (insn, REG_EH_REGION, NULL_RTX);
       if (note == NULL)
 	return;
     }
-  else if (is_a <rtx_insn *> (note_or_insn))
-    return;
   note = XEXP (note, 0);
 
-  for (insn = last; insn != first; insn = PREV_INSN (insn))
+  for (rtx_insn *insn = last; insn != first; insn = PREV_INSN (insn))
     if (insn_could_throw_p (insn))
       add_reg_note (insn, REG_EH_REGION, note);
 }
@@ -1817,55 +1819,45 @@ copy_reg_eh_region_note_backward (rtx note_or_insn, rtx_insn *last, rtx first)
    was marked NOTHROW.  */
 
 static bool
-get_eh_region_and_lp_from_rtx (const_rtx insn, eh_region *pr,
+get_eh_region_and_lp_from_rtx (const rtx_insn *insn, eh_region *pr,
 			       eh_landing_pad *plp)
 {
-  eh_landing_pad lp = NULL;
-  eh_region r = NULL;
-  bool ret = false;
   rtx note;
   int lp_nr;
 
+  *pr = nullptr;
+  *plp = nullptr;
   if (! INSN_P (insn))
-    goto egress;
+    return false;
 
-  if (NONJUMP_INSN_P (insn)
-      && GET_CODE (PATTERN (insn)) == SEQUENCE)
-    insn = XVECEXP (PATTERN (insn), 0, 0);
+  rtx_sequence *seq = dyn_cast<rtx_sequence *> (PATTERN (insn));
+  if (NONJUMP_INSN_P (insn) && seq)
+    insn = seq->insn (0);
 
   note = find_reg_note (insn, REG_EH_REGION, NULL_RTX);
   if (!note)
-    {
-      ret = !insn_could_throw_p (insn);
-      goto egress;
-    }
+    return !insn_could_throw_p (insn);
 
   lp_nr = INTVAL (XEXP (note, 0));
   if (lp_nr == 0 || lp_nr == INT_MIN)
-    {
-      ret = true;
-      goto egress;
-    }
+    return true;
 
   if (lp_nr < 0)
-    r = (*cfun->eh->region_array)[-lp_nr];
+    *pr = (*cfun->eh->region_array)[-lp_nr];
   else
     {
-      lp = (*cfun->eh->lp_array)[lp_nr];
-      r = lp->region;
+      *plp = (*cfun->eh->lp_array)[lp_nr];
+      *pr = (*plp)->region;
     }
 
- egress:
-  *plp = lp;
-  *pr = r;
-  return ret;
+  return false;
 }
 
 /* Return the landing pad to which INSN may go, or NULL if it does not
    have a reachable landing pad within this function.  */
 
 eh_landing_pad
-get_eh_landing_pad_from_rtx (const_rtx insn)
+get_eh_landing_pad_from_rtx (const rtx_insn *insn)
 {
   eh_landing_pad lp;
   eh_region r;
@@ -1878,7 +1870,7 @@ get_eh_landing_pad_from_rtx (const_rtx insn)
    have a reachable region within this function.  */
 
 eh_region
-get_eh_region_from_rtx (const_rtx insn)
+get_eh_region_from_rtx (const rtx_insn *insn)
 {
   eh_landing_pad lp;
   eh_region r;
@@ -1890,7 +1882,7 @@ get_eh_region_from_rtx (const_rtx insn)
 /* Return true if INSN throws and is caught by something in this function.  */
 
 bool
-can_throw_internal (const_rtx insn)
+can_throw_internal (const rtx_insn *insn)
 {
   return get_eh_landing_pad_from_rtx (insn) != NULL;
 }
@@ -1898,7 +1890,7 @@ can_throw_internal (const_rtx insn)
 /* Return true if INSN throws and escapes from the current function.  */
 
 bool
-can_throw_external (const_rtx insn)
+can_throw_external (const rtx_insn *insn)
 {
   eh_landing_pad lp;
   eh_region r;
@@ -1907,14 +1899,13 @@ can_throw_external (const_rtx insn)
   if (! INSN_P (insn))
     return false;
 
-  if (NONJUMP_INSN_P (insn)
-      && GET_CODE (PATTERN (insn)) == SEQUENCE)
+  rtx_sequence *seq = dyn_cast<rtx_sequence *> (PATTERN (insn));
+  if (NONJUMP_INSN_P (insn) && seq)
     {
-      rtx_sequence *seq = as_a <rtx_sequence *> (PATTERN (insn));
       int i, n = seq->len ();
 
       for (i = 0; i < n; i++)
-	if (can_throw_external (seq->element (i)))
+	if (can_throw_external (seq->insn (i)))
 	  return true;
 
       return false;
@@ -1943,7 +1934,7 @@ can_throw_external (const_rtx insn)
 /* Return true if INSN cannot throw at all.  */
 
 bool
-insn_nothrow_p (const_rtx insn)
+insn_nothrow_p (const rtx_insn *insn)
 {
   eh_landing_pad lp;
   eh_region r;
@@ -1951,14 +1942,13 @@ insn_nothrow_p (const_rtx insn)
   if (! INSN_P (insn))
     return true;
 
-  if (NONJUMP_INSN_P (insn)
-      && GET_CODE (PATTERN (insn)) == SEQUENCE)
+  rtx_sequence *seq = dyn_cast<rtx_sequence *> (PATTERN (insn));
+  if (NONJUMP_INSN_P (insn) && seq)
     {
-      rtx_sequence *seq = as_a <rtx_sequence *> (PATTERN (insn));
       int i, n = seq->len ();
 
       for (i = 0; i < n; i++)
-	if (!insn_nothrow_p (seq->element (i)))
+	if (!insn_nothrow_p (seq->insn (i)))
 	  return false;
 
       return true;
@@ -2013,7 +2003,8 @@ set_nothrow_function_flags (void)
       {
         crtl->nothrow = 0;
 
-	if (!CALL_P (insn) || !SIBLING_CALL_P (insn))
+	auto call = dyn_cast<rtx_call_insn *> (insn);
+	if (!call || !SIBLING_CALL_P (call))
 	  {
 	    crtl->all_throwers_are_sibcalls = 0;
 	    return 0;
@@ -2581,7 +2572,7 @@ maybe_add_nop_after_section_switch (void)
 static unsigned int
 convert_to_eh_region_ranges (void)
 {
-  rtx insn;
+  rtx_insn *insn;
   rtx_insn *iter;
   rtx_note *note;
   action_hash_type ar_hash (31);
@@ -2608,9 +2599,9 @@ convert_to_eh_region_ranges (void)
 	rtx_code_label *this_landing_pad;
 
 	insn = iter;
-	if (NONJUMP_INSN_P (insn)
-	    && GET_CODE (PATTERN (insn)) == SEQUENCE)
-	  insn = XVECEXP (PATTERN (insn), 0, 0);
+	rtx_sequence *seq = dyn_cast<rtx_sequence *> (PATTERN (insn));
+	if (NONJUMP_INSN_P (insn) && seq)
+	  insn = seq->insn (0);
 
 	nothrow = get_eh_region_and_lp_from_rtx (insn, &region, &lp);
 	if (nothrow)

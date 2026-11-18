@@ -22,6 +22,8 @@
 #include <testsuite_hooks.h>
 #include <testsuite_fs.h>
 
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 namespace fs = std::filesystem;
 using __gnu_test::compare_paths;
 
@@ -111,14 +113,14 @@ test03()
   fs::path foo = dir/"foo", bar = dir/"bar";
   fs::create_directory(foo);
   fs::create_directory(bar);
-#ifdef NO_SYMLINKS
+#if defined(NO_SYMLINKS) || defined(_GLIBCXX_FILESYSTEM_IS_WINDOWS)
 #if defined(__MINGW32__) || defined(__MINGW64__)
   const fs::path baz = dir/"foo\\\\..\\bar///";
 #else
   const fs::path baz = dir/"foo//../bar///";
 #endif
 #else
-  fs::create_symlink("../bar", foo/"baz");
+  fs::create_directory_symlink("../bar", foo/"baz");
   const fs::path baz = dir/"foo//./baz///";
 #endif
 

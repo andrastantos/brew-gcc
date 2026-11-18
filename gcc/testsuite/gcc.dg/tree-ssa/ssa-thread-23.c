@@ -1,19 +1,19 @@
-/* PR120003 */
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-cddce3-details" } */
+/* { dg-options "-O2 -fdump-tree-optimized" } */
 
-extern _Bool g(int);
+volatile unsigned sink;
 
-_Bool f()
+void
+f (int flag, unsigned n)
 {
-  _Bool retval = 0;
-  for(int i=0; i<1000000; ++i)
-    retval = retval || g(i);
-  return retval;
+  unsigned i = 0;
+  do
+    {
+      sink = i;
+      i += 1;
+    }
+  while (i != 128);
 }
 
-/* Jump threading after loop optimization should get the counting loop
-   separated from the loop until retval is true and CD-DCE elide it.
-   It's difficult to check for the fact that a true retval terminates
-   the loop so check CD-DCE eliminates one loop instead.  */
-/* { dg-final { scan-tree-dump "fix_loop_structure: removing loop" "cddce3" } } */
+/* We should not peel this loop.  */
+/* { dg-final { scan-tree-dump-times "sink" 1 "optimized" } } */

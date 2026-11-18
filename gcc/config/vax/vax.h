@@ -646,7 +646,7 @@ VAX operand formatting codes:
 #define PRINT_OPERAND_ADDRESS(FILE, ADDR)  \
   print_operand_address (FILE, ADDR)
 
-/* This is a blatent lie.  However, it's good enough, since we don't
+/* This is a blatant lie.  However, it's good enough, since we don't
    actually have any code whatsoever for which this isn't overridden
    by the proper FDE definition.  */
 #define INCOMING_RETURN_ADDR_RTX gen_rtx_REG (Pmode, PC_REGNUM)
@@ -654,4 +654,4 @@ VAX operand formatting codes:
 /* Upon failure to find the bit the FFS hardware instruction returns
    the position of the bit immediately following the field specified.  */
 #define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE)	\
-  ((VALUE) = GET_MODE_BITSIZE (MODE), 2)
+  ((VALUE) = GET_MODE_UNIT_BITSIZE (MODE), 2)

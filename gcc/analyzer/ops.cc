@@ -28,6 +28,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "cgraph.h"
 #include "text-art/dump.h"
 #include "text-art/tree-widget.h"
+#include "langhooks.h"
 
 #include "analyzer/ops.h"
 #include "analyzer/call-details.h"
@@ -38,6 +39,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "analyzer/call-summary.h"
 #include "analyzer/call-info.h"
 #include "analyzer/analysis-plan.h"
+#include "analyzer/callsite-expr.h"
+#include "analyzer/state-transition.h"
 
 #if ENABLE_ANALYZER
 
@@ -66,13 +69,32 @@ event_loc_info::event_loc_info (const program_point &point)
   m_depth = point.get_stack_depth ();
 }
 
+/* Make an event_loc_info suitable for a function_entry_event at POINT.
+   If STATE_TRANS is non-null, then try to extract the pertinent parameter
+   from it and use the location of that parameter, rather than that of the
+   function name.  */
+
+event_loc_info
+event_loc_info_for_function_entry (const program_point &point,
+				   const state_transition_at_call *state_trans)
+{
+  event_loc_info result (point);
+  if (state_trans)
+    {
+      callsite_expr expr = state_trans->get_callsite_expr ();
+      expr.maybe_get_param_location (point.get_fndecl (),
+				     &result.m_loc);
+    }
+  return result;
+}
+
 // struct operation_context
 
 void
 operation_context::dump () const
 {
   fprintf (stderr, "src enode: EN: %i\n", m_src_enode.m_index);
-  m_src_enode.dump (m_eg.get_ext_state ());
+  m_src_enode.dump ();
 
   fprintf (stderr, "superedge\n");
   pretty_printer pp;
@@ -189,6 +211,53 @@ private:
     bool m_terminate_path;
   } m_path_context;
 };
+
+// struct rewind_context
+
+void
+rewind_context::on_data_origin (tree dst_tree)
+{
+  gcc_assert (dst_tree);
+  const region_model &dst_enode_model = get_dst_region_model ();
+  const region *dst_reg_in_dst_enode
+    = dst_enode_model.get_lvalue (dst_tree, nullptr);
+  if (m_input.m_region_holding_value == dst_reg_in_dst_enode)
+    {
+      if (m_logger)
+	m_logger->log ("data origin, into %qE", dst_tree);
+      m_output.m_region_holding_value = nullptr;
+      add_state_transition
+	(std::make_unique<state_transition_origin> (dst_tree));
+    }
+}
+
+void
+rewind_context::on_data_flow (tree src_tree, tree dst_tree)
+{
+  gcc_assert (src_tree);
+  gcc_assert (dst_tree);
+  const region_model &dst_enode_model = get_dst_region_model ();
+  const region *dst_reg_in_dst_enode
+    = dst_enode_model.get_lvalue (dst_tree, nullptr);
+  if (m_input.m_region_holding_value == dst_reg_in_dst_enode)
+    {
+      if (m_logger)
+	m_logger->log ("rewinding from %qE to %qE", dst_tree, src_tree);
+      const region_model &src_enode_model = get_src_region_model ();
+      const region *src_reg_in_src_enode
+	= src_enode_model.get_lvalue (src_tree, nullptr);
+      m_output.m_region_holding_value = src_reg_in_src_enode;
+
+      if (TREE_CODE (src_tree) == RESULT_DECL)
+	add_state_transition (std::make_unique<state_transition_at_return> ());
+      else if (auto state_trans
+		 = state_transition::make (m_output.m_region_holding_value,
+					   src_tree,
+					   m_input.m_region_holding_value,
+					   dst_tree))
+	add_state_transition (std::move (state_trans));
+    }
+}
 
 // class gimple_stmt_op : public operation
 
@@ -663,7 +732,57 @@ gimple_stmt_op::add_any_events_for_eedge (const exploded_edge &eedge,
     }
 }
 
+// class gasm_op : public gimple_stmt_op
+
 // class gassign_op : public gimple_stmt_op
+
+bool
+gassign_op::try_to_rewind_data_flow (rewind_context &ctxt) const
+{
+  auto logger = ctxt.m_logger;
+  LOG_SCOPE (logger);
+  if (logger)
+    {
+      logger->start_log_line ();
+      pp_gimple_stmt_1 (logger->get_printer (), &get_stmt (), 0,
+			(dump_flags_t)0);
+      logger->end_log_line ();
+    }
+
+  const gassign &assign = get_gassign ();
+  tree lhs = gimple_assign_lhs (&assign);
+
+  if (!ctxt.could_be_affected_by_write_p (lhs))
+    return true;
+
+  tree rhs1 = gimple_assign_rhs1 (&assign);
+  enum tree_code op = gimple_assign_rhs_code (&assign);
+
+  switch (op)
+    {
+    default:
+      return false;
+
+    case NOP_EXPR:
+    case SSA_NAME:
+    case VAR_DECL:
+    case PARM_DECL:
+    case COMPONENT_REF:
+      ctxt.on_data_flow (rhs1, lhs);
+      break;
+
+    case INTEGER_CST:
+    case REAL_CST:
+      if (logger)
+	logger->log ("value comes from here");
+      ctxt.on_data_origin (lhs);
+      break;
+    }
+
+  return true;
+}
+
+// class predict_op : public gimple_stmt_op
 
 // class greturn_op : public gimple_stmt_op
 
@@ -734,6 +853,23 @@ greturn_op::add_any_events_for_eedge (const exploded_edge &,
   // No-op.
 }
 
+
+bool
+greturn_op::try_to_rewind_data_flow (rewind_context &ctxt) const
+{
+  auto logger = ctxt.m_logger;
+  LOG_SCOPE (logger);
+
+  if (get_retval ())
+    {
+      const region_model &src_enode_model = ctxt.get_src_region_model ();
+      tree fndecl = src_enode_model.get_current_function ()->decl;
+      ctxt.on_data_flow (get_retval (), DECL_RESULT (fndecl));
+    }
+
+  return true;
+}
+
 // class call_and_return_op : public gimple_stmt_op
 
 std::unique_ptr<operation>
@@ -774,7 +910,7 @@ void
 call_and_return_op::execute (operation_context &op_ctxt) const
 {
   /* Can we turn this into an interprocedural call, and execute within
-     the called fuction?  */
+     the called function?  */
   const program_state &old_state  = op_ctxt.get_initial_state ();
   program_state dst_state (old_state);
   op_region_model_context ctxt (op_ctxt, dst_state);
@@ -839,7 +975,7 @@ call_and_return_op::execute (operation_context &op_ctxt) const
 	    const program_point dst_point
 	      (callee_entry_snode, *dst_call_string);
 	    auto edge_info
-	      = std::make_unique<interprocedural_call> (get_gcall (),
+	      = std::make_unique<interprocedural_call> (*this,
 							*callee_fun);
 	    edge_info->update_state (&dst_state, nullptr, &ctxt);
 	    op_ctxt.add_outcome (dst_point, dst_state, false, nullptr,
@@ -1023,6 +1159,13 @@ replay_call_summaries (operation_context &op_ctxt,
     }
 }
 
+bool
+call_and_return_op::try_to_rewind_data_flow (rewind_context &ctxt) const
+{
+  LOG_SCOPE (ctxt.m_logger);
+  return true;
+}
+
 /* A concrete call_info subclass representing a replay of a call summary.  */
 
 class call_summary_edge_info : public call_info
@@ -1093,15 +1236,11 @@ replay_call_summary (operation_context &op_ctxt,
     {
       pretty_printer *pp = logger->get_printer ();
 
-      logger->start_log_line ();
       pp_string (pp, "callsite state: ");
-      old_state.dump_to_pp (ext_state, true, false, pp);
-      logger->end_log_line ();
+      old_state.dump_to_logger (*logger);
 
-      logger->start_log_line ();
       pp_string (pp, "summary end state: ");
-      summary_end_state.dump_to_pp (ext_state, true, false, pp);
-      logger->end_log_line ();
+      summary_end_state.dump_to_logger (*logger);
     }
 
   program_state new_state (old_state);
@@ -1134,7 +1273,7 @@ dump_op::execute (operation_context &op_ctxt) const
     case dump_kind::state:
       /* Handle the builtin "__analyzer_dump" by dumping state
 	 to stderr.  */
-      state.dump (op_ctxt.get_ext_state (), true);
+      state.dump ();
       break;
     case dump_kind::sarif:
       state.dump_sarif (op_ctxt.get_ext_state ());
@@ -1805,21 +1944,17 @@ public:
   {
     pp_printf (pp, "rejected_eh_dispatch");
   }
+  std::unique_ptr<json::object> to_json () const final override
+  {
+    return rejected_constraint::make_base_json ("rejected_eh_dispatch");
+  }
 };
 
 static bool
-exception_matches_type_p (tree exception_type,
-			  tree catch_type)
+exception_matches_type_p (tree handler_type, tree exception_type)
 {
-  if (catch_type == exception_type)
+  if (lang_hooks.exception_matches_type_p (handler_type, exception_type))
     return true;
-
-  /* TODO (PR analyzer/119697): we should also handle subclasses etc;
-     see the rules in https://en.cppreference.com/w/cpp/language/catch
-
-     It looks like we should be calling (or emulating)
-     can_convert_eh from the C++ FE, but that's specific to the C++ FE.  */
-
   return false;
 }
 
@@ -2289,7 +2424,7 @@ phis_for_edge_op::update_state (const program_state &src_state,
     }
 
  for (auto iter : svals_changing_meaning)
-   dst_model.get_constraints ()->purge_state_involving (iter);
+   dst_model.get_constraints ()->purge_state_involving (*iter);
 }
 
 bool
@@ -2317,7 +2452,7 @@ execute_for_feasibility (const exploded_edge &eedge,
     }
 
   for (auto iter : svals_changing_meaning)
-    model.get_constraints ()->purge_state_involving (iter);
+    model.get_constraints ()->purge_state_involving (*iter);
 
   {
     /* If we've entering an snode that we've already visited on this
@@ -2348,6 +2483,16 @@ phis_for_edge_op::add_any_events_for_eedge (const exploded_edge &,
 					    checker_path &) const
 {
   // No-op
+}
+
+bool
+phis_for_edge_op::try_to_rewind_data_flow (rewind_context &ctxt) const
+{
+  auto logger = ctxt.m_logger;
+  LOG_SCOPE (logger);
+  for (auto iter : m_pairs)
+    ctxt.on_data_flow (iter.m_src, iter.m_dst);
+  return true;
 }
 
 // class resx_op : public gimple_stmt_op

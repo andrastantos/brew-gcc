@@ -395,21 +395,112 @@ this pass's documentation for more details on this resolution process.
 
 **/
 
-/**
- * Intended for use by ForeverStack to store Nodes
- * Unlike ForeverStack, does not store a cursor reference
- * Intended to make path resolution in multiple namespaces simpler
- **/
-class ForeverStackStore
+enum class ResolutionMode
+{
+  Normal,
+  FromRoot,
+  FromExtern, // extern prelude
+};
+
+struct ResolutionPathSegment
+{
+  std::string name;
+  NodeId node_id;
+  location_t locus;
+
+  bool is_super_path_seg () const { return name.compare ("super") == 0; }
+  bool is_crate_path_seg () const { return name.compare ("crate") == 0; }
+  bool is_lower_self_seg () const { return name.compare ("self") == 0; }
+  bool is_big_self_seg () const { return name.compare ("Self") == 0; }
+};
+
+class ResolutionPath : public RawPath<ResolutionPathSegment>
 {
 public:
-  ForeverStackStore (NodeId crate_id) : root (Rib::Kind::Normal, crate_id)
+  template <typename T>
+  ResolutionPath (const RawPath<T> &path, NodeId node_id)
+    : RawPath ({}, path.has_opening_scope_resolution ()), node_id (node_id)
   {
-    rust_assert (root.is_root ());
-    rust_assert (root.is_leaf ());
+    segments.clear ();
+    segments.reserve (path.get_segments ().size ());
+    for (auto &outer_seg : path.get_segments ())
+      {
+	if (auto lang_item = unwrap_segment_get_lang_item (outer_seg))
+	  {
+	    rust_assert (!lang_prefix.has_value ());
+	    lang_prefix = std::make_pair (lang_item.value (),
+					  unwrap_segment_node_id (outer_seg));
+	    continue;
+	  }
+
+	auto &seg = unwrap_type_segment (outer_seg);
+
+	ResolutionPathSegment new_seg;
+	new_seg.name = seg.as_string ();
+	new_seg.node_id = unwrap_segment_node_id (outer_seg);
+	new_seg.locus = seg.get_locus ();
+	segments.push_back (std::move (new_seg));
+      }
+  }
+
+  ResolutionPath () : RawPath ({}, false), node_id (UNKNOWN_NODEID) {}
+
+  tl::optional<std::pair<LangItem::Kind, NodeId>> get_lang_prefix () const
+  {
+    return lang_prefix;
+  }
+
+  const std::vector<ResolutionPathSegment> &get_segments () const
+  {
+    return segments;
+  }
+
+  bool has_opening_scope_resolution () const
+  {
+    return opening_scope_resolution;
+  }
+
+  NodeId get_node_id () const { return node_id; }
+
+  std::string as_string () const
+  {
+    std::string ret;
+    auto it = segments.cbegin ();
+    if (lang_prefix)
+      ret = "#[lang]";
+    else
+      {
+	ret += it->name;
+	it++;
+      }
+
+    for (; it != segments.cend (); it++)
+      ret += "::" + it->name;
+    return ret;
   }
 
 private:
+  tl::optional<std::pair<LangItem::Kind, NodeId>> lang_prefix;
+  NodeId node_id;
+};
+
+/**
+ * Error enum for finding leaf definitions in the resolved_nodes map
+ */
+enum class LookupFinalizeError
+{
+  // Impossible - we did not find any definition corresponding to a Usage.
+  // This is an internal compiler error
+  NoDefinition,
+  // There was a loop in the map, such as an import resolving to another
+  // import which eventually resolved to the original import. Report the
+  // error and stop the pipeline
+  Loop,
+};
+
+class ForeverStackBase
+{
+public:
   /**
    * A link between two Nodes in our trie data structure. This class represents
    * the edges of the graph
@@ -435,198 +526,84 @@ private:
     }
   };
 
-public:
-  class Node;
-
-  struct DfsResult
-  {
-    Node &first;
-    std::string second;
-  };
-
-  struct ConstDfsResult
-  {
-    const Node &first;
-    std::string second;
-  };
-
-  /* Should we keep going upon seeing a Rib? */
-  enum class KeepGoing
-  {
-    Yes,
-    No,
-  };
-
   class Node
   {
-  private:
-    friend class ForeverStackStore::ForeverStackStore;
-
-    Node (Rib::Kind rib_kind, NodeId id, tl::optional<Node &> parent)
-      : value_rib (rib_kind), type_rib (rib_kind), label_rib (rib_kind),
-	macro_rib (rib_kind), id (id), parent (parent)
-    {}
-    Node (Rib::Kind rib_kind, NodeId id) : Node (rib_kind, id, tl::nullopt) {}
-    Node (Rib::Kind rib_kind, NodeId id, Node &parent)
-      : Node (rib_kind, id, tl::optional<Node &> (parent))
-    {}
-
   public:
-    Node (const Node &) = default;
-    Node (Node &&) = default;
-    Node &operator= (const Node &) = delete;
-    Node &operator= (Node &&) = default;
+    Node (Rib::Kind rib_kind, NodeId id)
+      : rib_values (rib_kind), rib_types (rib_kind), rib_labels (rib_kind),
+	rib_macros (rib_kind), id (id)
+    {}
+    Node (Rib::Kind rib_kind, NodeId id, Node &parent)
+      : rib_values (rib_kind), rib_types (rib_kind), rib_labels (rib_kind),
+	rib_macros (rib_kind), id (id), parent (parent)
+    {}
 
-    bool is_root () const;
-    bool is_leaf () const;
+    const Rib &rib (Namespace n) const
+    {
+      switch (n)
+	{
+	case Namespace::Values:
+	  return rib_values;
+	case Namespace::Types:
+	  return rib_types;
+	case Namespace::Labels:
+	  return rib_labels;
+	case Namespace::Macros:
+	  return rib_macros;
+	default:
+	  rust_unreachable ();
+	}
+    }
 
-    NodeId get_id () const;
+    Rib &rib (Namespace n)
+    {
+      return const_cast<Rib &> (const_cast<const Node *> (this)->rib (n));
+    }
 
-    Node &insert_child (NodeId id, tl::optional<Identifier> path,
-			Rib::Kind kind);
+    inline bool is_root () const;
+    inline bool is_prelude () const;
+    inline bool is_leaf () const;
 
-    tl::optional<Node &> get_child (const Identifier &path);
-    tl::optional<const Node &> get_child (const Identifier &path) const;
+    inline void insert_child (Link link, Node child);
 
-    tl::optional<Node &> get_parent ();
-    tl::optional<const Node &> get_parent () const;
+    // these are the "values" of the node - the data it keeps.
+    Rib rib_values;
+    Rib rib_types;
+    Rib rib_labels;
+    Rib rib_macros;
 
-    // finds the identifier, if any, used to link
-    // this node's parent to this node
-    tl::optional<const Identifier &> get_parent_path () const;
-
-    Rib &get_rib (Namespace ns);
-    const Rib &get_rib (Namespace ns) const;
-
-    tl::expected<NodeId, DuplicateNameError> insert (const Identifier &name,
-						     NodeId node, Namespace ns);
-    tl::expected<NodeId, DuplicateNameError>
-    insert_shadowable (const Identifier &name, NodeId node, Namespace ns);
-    tl::expected<NodeId, DuplicateNameError>
-    insert_globbed (const Identifier &name, NodeId node, Namespace ns);
-
-    void reverse_iter (std::function<KeepGoing (Node &)> lambda);
-    void reverse_iter (std::function<KeepGoing (const Node &)> lambda) const;
-
-    void child_iter (std::function<KeepGoing (
-		       NodeId, tl::optional<const Identifier &>, Node &)>
-		       lambda);
-    void child_iter (std::function<KeepGoing (
-		       NodeId, tl::optional<const Identifier &>, const Node &)>
-		       lambda) const;
-
-    Node &find_closest_module ();
-    const Node &find_closest_module () const;
-
-    tl::optional<Node &> dfs_node (NodeId to_find);
-    tl::optional<const Node &> dfs_node (NodeId to_find) const;
-
-  private:
-    // per-namespace ribs
-    Rib value_rib;
-    Rib type_rib;
-    Rib label_rib;
-    Rib macro_rib;
-    // all linked nodes
-    std::map<Link, Node, LinkCmp> children;
+    std::map<Link, Node, LinkCmp> children; // all the other nodes it links to
 
     NodeId id; // The node id of the Node's scope
 
     tl::optional<Node &> parent; // `None` only if the node is a root
   };
 
-  Node &get_root ();
-  const Node &get_root () const;
+  ForeverStackBase (Node &root, Node &lang_prelude, Node &extern_prelude)
+    : root (root), lang_prelude (lang_prelude), extern_prelude (extern_prelude)
+  {}
 
-  tl::optional<Node &> get_node (NodeId node_id);
-  tl::optional<const Node &> get_node (NodeId node_id) const;
+  /* The forever stack's actual nodes */
+  Node &root;
 
-private:
-  Node root;
+  /*
+   * A special prelude node used currently for resolving language builtins
+   * It has the root node as a parent, and acts as a "special case" for name
+   * resolution
+   */
+  Node &lang_prelude;
+
+  /*
+   * The extern prelude, used for resolving external crates
+   */
+  Node &extern_prelude;
 };
 
-enum class ResolutionMode
-{
-  Normal,
-  FromRoot,
-  FromExtern, // extern prelude
-};
-
-class ResolutionPath
-{
-public:
-  template <typename T>
-  ResolutionPath (const std::vector<T> &segments_in, NodeId node_id)
-    : node_id (node_id)
-  {
-    segments.clear ();
-    segments.reserve (segments_in.size ());
-    for (auto &outer_seg : segments_in)
-      {
-	if (auto lang_item = unwrap_segment_get_lang_item (outer_seg))
-	  {
-	    rust_assert (!lang_prefix.has_value ());
-	    lang_prefix = std::make_pair (lang_item.value (),
-					  unwrap_segment_node_id (outer_seg));
-	    continue;
-	  }
-
-	auto &seg = unwrap_type_segment (outer_seg);
-
-	Segment new_seg;
-	new_seg.name = seg.as_string ();
-	new_seg.node_id = unwrap_segment_node_id (outer_seg);
-	new_seg.locus = seg.get_locus ();
-	segments.push_back (std::move (new_seg));
-      }
-  }
-
-  ResolutionPath () : node_id (UNKNOWN_NODEID) {}
-
-  struct Segment
-  {
-    std::string name;
-    NodeId node_id;
-    location_t locus;
-
-    bool is_super_path_seg () const { return name.compare ("super") == 0; }
-    bool is_crate_path_seg () const { return name.compare ("crate") == 0; }
-    bool is_lower_self_seg () const { return name.compare ("self") == 0; }
-    bool is_big_self_seg () const { return name.compare ("Self") == 0; }
-  };
-
-  tl::optional<std::pair<LangItem::Kind, NodeId>> get_lang_prefix () const
-  {
-    return lang_prefix;
-  }
-
-  const std::vector<Segment> &get_segments () const { return segments; }
-
-  NodeId get_node_id () const { return node_id; }
-
-  std::string as_string () const
-  {
-    std::string ret;
-    if (lang_prefix)
-      ret = "#[lang]::";
-    for (auto &seg : segments)
-      ret += "::" + seg.name;
-    return ret;
-  }
-
-private:
-  tl::optional<std::pair<LangItem::Kind, NodeId>> lang_prefix;
-  std::vector<Segment> segments;
-  NodeId node_id;
-};
-
-template <Namespace N> class ForeverStack
+template <Namespace N> class ForeverStack : public ForeverStackBase
 {
 public:
-  ForeverStack ()
-    : root (Node (Rib (Rib::Kind::Normal), UNKNOWN_NODEID)),
-      lang_prelude (Node (Rib (Rib::Kind::Prelude), UNKNOWN_NODEID, root)),
-      extern_prelude (Node (Rib (Rib::Kind::Prelude), UNKNOWN_NODEID)),
+  ForeverStack (Node &root, Node &lang_prelude, Node &extern_prelude)
+    : ForeverStackBase (root, lang_prelude, extern_prelude),
       cursor_reference (root)
   {
     rust_assert (root.is_root ());
@@ -635,7 +612,11 @@ public:
     // TODO: Should we be using the forever stack root as the crate scope?
     // TODO: Is this how we should be getting the crate node id?
     auto &mappings = Analysis::Mappings::get ();
-    root.id = *mappings.crate_num_to_nodeid (mappings.get_current_crate ());
+    auto &crate_mappings = mappings.crate;
+    root.id = *crate_mappings.crate_num_to_nodeid (
+      crate_mappings.get_current_crate ());
+    extern_prelude.id = mappings.get_next_node_id ();
+    lang_prelude.id = mappings.get_next_node_id ();
   }
 
   /**
@@ -672,6 +653,8 @@ public:
 
   tl::expected<NodeId, DuplicateNameError> insert_variant (Identifier name,
 							   NodeId id);
+
+  void insert_crate_in_prelude (Identifier crate_name, NodeId crate_id);
 
   /**
    * Insert a new shadowable definition in the innermost `Rib` in this stack
@@ -749,23 +732,6 @@ public:
   tl::optional<Rib::Definition> get_from_prelude (NodeId prelude,
 						  const Identifier &name);
 
-  /**
-   * Resolve a path to its definition in the current `ForeverStack`
-   *
-   * // TODO: Add documentation for `segments`
-   *
-   * @return a valid option with the Definition if the path is present in the
-   *         current map, an empty one otherwise.
-   */
-  tl::optional<Rib::Definition> resolve_path (
-    const ResolutionPath &path, ResolutionMode mode,
-    std::function<void (Usage, Definition)> insert_segment_resolution,
-    std::vector<Error> &collect_errors);
-  tl::optional<Rib::Definition> resolve_path (
-    const ResolutionPath &path, ResolutionMode mode,
-    std::function<void (Usage, Definition)> insert_segment_resolution,
-    std::vector<Error> &collect_errors, NodeId starting_point_id);
-
   // FIXME: Documentation
   tl::optional<Rib &> to_rib (NodeId rib_id);
   tl::optional<const Rib &> to_rib (NodeId rib_id) const;
@@ -778,65 +744,7 @@ public:
    */
   bool is_module_descendant (NodeId parent, NodeId child) const;
 
-private:
-  /**
-   * A link between two Nodes in our trie data structure. This class represents
-   * the edges of the graph
-   */
-  class Link
-  {
-  public:
-    Link (NodeId id, tl::optional<Identifier> path) : id (id), path (path) {}
-
-    bool compare (const Link &other) const { return id < other.id; }
-
-    NodeId id;
-    tl::optional<Identifier> path;
-  };
-
-  /* Link comparison class, which we use in a Node's `children` map */
-  class LinkCmp
-  {
-  public:
-    bool operator() (const Link &lhs, const Link &rhs) const
-    {
-      return lhs.compare (rhs);
-    }
-  };
-
-  class Node
-  {
-  public:
-    Node (Rib rib, NodeId id) : rib (rib), id (id) {}
-    Node (Rib rib, NodeId id, Node &parent)
-      : rib (rib), id (id), parent (parent)
-    {}
-
-    bool is_root () const;
-    bool is_prelude () const;
-    bool is_leaf () const;
-
-    void insert_child (Link link, Node child);
-
-    Rib rib; // this is the "value" of the node - the data it keeps.
-    std::map<Link, Node, LinkCmp> children; // all the other nodes it links to
-
-    NodeId id; // The node id of the Node's scope
-
-    tl::optional<Node &> parent; // `None` only if the node is a root
-  };
-
-  /**
-   * Private overloads which allow specifying a starting point
-   */
-
   tl::optional<Rib::Definition> get (Node &start, const Identifier &name);
-
-  tl::optional<Rib::Definition> resolve_path (
-    const ResolutionPath &path, ResolutionMode mode,
-    std::function<void (Usage, Definition)> insert_segment_resolution,
-    std::vector<Error> &collect_errors,
-    std::reference_wrapper<Node> starting_point);
 
   /* Should we keep going upon seeing a Rib? */
   enum class KeepGoing
@@ -846,7 +754,7 @@ private:
   };
 
   /* Add a new Rib to the stack. This is an internal method */
-  void push_inner (Rib rib, Link link);
+  void push_inner (Rib::Kind rib, Link link);
 
   /* Reverse iterate on `Node`s from the cursor, in an outwards fashion */
   void reverse_iter (std::function<KeepGoing (Node &)> lambda);
@@ -859,21 +767,8 @@ private:
 
   Node &cursor ();
   const Node &cursor () const;
+
   void update_cursor (Node &new_cursor);
-
-  /* The forever stack's actual nodes */
-  Node root;
-  /*
-   * A special prelude node used currently for resolving language builtins
-   * It has the root node as a parent, and acts as a "special case" for name
-   * resolution
-   */
-  Node lang_prelude;
-
-  /*
-   * The extern prelude, used for resolving external crates
-   */
-  Node extern_prelude;
 
   std::reference_wrapper<Node> cursor_reference;
 
@@ -885,25 +780,16 @@ private:
   /* Helper types and functions for `resolve_path` */
 
   using SegIterator =
-    typename std::vector<ResolutionPath::Segment>::const_iterator;
+    typename std::vector<ResolutionPathSegment>::const_iterator;
 
   Node &find_closest_module (Node &starting_point);
 
-  tl::optional<SegIterator> find_starting_point (
-    const std::vector<ResolutionPath::Segment> &segments,
-    std::reference_wrapper<Node> &starting_point,
-    std::function<void (Usage, Definition)> insert_segment_resolution,
-    std::vector<Error> &collect_errors);
-
-  tl::optional<Node &> resolve_segments (
-    Node &starting_point, const std::vector<ResolutionPath::Segment> &segments,
-    SegIterator iterator,
-    std::function<void (Usage, Definition)> insert_segment_resolution,
-    std::vector<Error> &collect_errors);
-
-  tl::optional<Rib::Definition> resolve_final_segment (Node &final_node,
-						       std::string &seg_name,
-						       bool is_lower_self);
+  tl::optional<SegIterator>
+  find_starting_point (const RawPath<ResolutionPathSegment> &path,
+		       std::reference_wrapper<Node> &starting_point,
+		       std::function<void (Usage, Definition, Namespace)>
+			 insert_segment_resolution,
+		       std::vector<Error> &collect_errors);
 
   /* Helper functions for forward resolution (to_canonical_path, to_rib...) */
   struct DfsResult
@@ -930,20 +816,68 @@ private:
   tl::optional<const Node &> dfs_node (const Node &starting_point,
 				       NodeId to_find) const;
 
-public:
+  std::unordered_map<NodeId, Node &> dfs_cache;
+  tl::optional<Node &> check_cache (NodeId to_find);
+  void cache (NodeId found, Node &result);
+
   bool forward_declared (NodeId definition, NodeId usage)
   {
     if (peek ().kind != Rib::Kind::ForwardTypeParamBan)
       return false;
 
-    const auto &definition_rib = dfs_rib (cursor (), definition);
-
-    if (!definition_rib)
+    // Each type param has a ban rib keyed by its NodeId, and those ribs are
+    // siblings ordered by NodeId, i.e. by declaration order. A default may
+    // only use params declared before its own.
+    auto &current = cursor ();
+    if (definition == current.id)
+      return true;
+    if (!current.parent)
       return false;
 
-    return (definition_rib
-	    && definition_rib.value ().kind == Rib::Kind::ForwardTypeParamBan);
+    for (auto &child : current.parent.value ().children)
+      if (child.second.id == definition)
+	return definition > current.id
+	       && child.second.rib (N).kind == Rib::Kind::ForwardTypeParamBan;
+
+    return false;
   }
+
+  void map_usage (Usage usage, Definition definition)
+  {
+    resolved_nodes.emplace (usage, definition);
+
+    // auto inserted = resolved_nodes.emplace (usage, definition);
+
+    // is that valid?
+    // FIXME: Yikes
+    // rust_assert (inserted.first->first.id == definition.id);
+  }
+
+  tl::optional<NodeId> lookup (NodeId usage) const
+  {
+    auto it = resolved_nodes.find (Usage (usage));
+
+    if (it == resolved_nodes.end ())
+      return tl::nullopt;
+
+    return it->second.id;
+  }
+
+  tl::expected<Definition, LookupFinalizeError>
+  find_leaf_definition (const NodeId &key) const;
+
+  // Flattening is not needed for now but should be used later?
+#if 0
+  /**
+   * Look at NameResolutionContext::flatten - This is the inner working function
+   * which works on one specific namespace, while NameResolutionContext::flatten
+   * calls flatten for every namespace
+   */
+  void flatten ();
+#endif
+
+  /* Map of "usage" nodes which have been resolved to a "definition" node */
+  std::map<Usage, Definition> resolved_nodes;
 };
 
 } // namespace Resolver2_0

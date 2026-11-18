@@ -40,7 +40,7 @@ struct GTY(()) expr_eval_op
   /* Index of parameter operand in expression.  */
   unsigned index : 2;
   /* Operation code of expression.  */
-  ENUM_BITFIELD(tree_code) code : 16;
+  tree_code code : 16;
 };
 
 typedef vec<expr_eval_op, va_gc> *expr_eval_ops;
@@ -48,19 +48,24 @@ typedef vec<expr_eval_op, va_gc> *expr_eval_ops;
 struct GTY(()) condition
 {
   /* If agg_contents is set, this is the offset from which the used data was
-     loaded.  */
+     loaded, or -1 if unknown_offset is set.  */
   HOST_WIDE_INT offset;
   /* Type of the access reading the data (or the PARM_DECL SSA_NAME).  */
   tree type;
   tree val;
   int operand_num;
-  ENUM_BITFIELD(tree_code) code : 16;
+  tree_code code : 16;
   /* Set if the used data were loaded from an aggregate parameter or from
      data received by reference.  */
   unsigned agg_contents : 1;
   /* If agg_contents is set, this differentiates between loads from data
      passed by reference and by value.  */
   unsigned by_ref : 1;
+  /* If by_ref is set, this is set when we cannot prove that the value
+     pointed to is unmodified from the beginning of the function to use.  */
+  unsigned maybe_modified : 1;
+  /* If agg_contents is set, this is set when the offset is unknown.  */
+  unsigned unknown_offset : 1;
   /* A set of sequential operations on the parameter, which can be seen as
      a mathematical function on the parameter.  */
   expr_eval_ops param_ops;
@@ -252,6 +257,7 @@ public:
 				      ipa_fn_summary *,
 				      const vec<int> &,
 				      const vec<HOST_WIDE_INT> &,
+				      const vec<bool> &,
 				      clause_t, const ipa_predicate &);
 
   void stream_in (lto_input_block *);

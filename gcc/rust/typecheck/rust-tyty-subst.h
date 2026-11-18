@@ -170,17 +170,14 @@ private:
   BaseType *argument;
 };
 
-typedef std::function<void (const ParamType &, const SubstitutionArg &)>
-  ParamSubstCb;
 class SubstitutionArgumentMappings
 {
 public:
-  SubstitutionArgumentMappings (std::vector<SubstitutionArg> mappings,
-				std::map<std::string, BaseType *> binding_args,
-				RegionParamList regions, location_t locus,
-				ParamSubstCb param_subst_cb = nullptr,
-				bool trait_item_flag = false,
-				bool error_flag = false);
+  SubstitutionArgumentMappings (
+    std::vector<SubstitutionArg> mappings,
+    std::map<std::string, BaseType *> binding_args, RegionParamList regions,
+    location_t locus, bool trait_item_flag = false, bool error_flag = false,
+    std::map<std::string, BaseType *> constraint_args = {});
 
   SubstitutionArgumentMappings (const SubstitutionArgumentMappings &other);
   SubstitutionArgumentMappings &
@@ -233,23 +230,21 @@ public:
 
   const std::map<std::string, BaseType *> &get_binding_args () const;
 
+  const std::map<std::string, BaseType *> &get_constraint_args () const;
+
   const RegionParamList &get_regions () const;
   RegionParamList &get_mut_regions ();
 
   std::string as_string () const;
-
-  void on_param_subst (const ParamType &p, const SubstitutionArg &a) const;
-
-  ParamSubstCb get_subst_cb () const;
 
   bool trait_item_mode () const;
 
 private:
   std::vector<SubstitutionArg> mappings;
   std::map<std::string, BaseType *> binding_args;
+  std::map<std::string, BaseType *> constraint_args;
   RegionParamList regions;
   location_t locus;
-  ParamSubstCb param_subst_cb;
   bool trait_item_flag;
   bool error_flag;
 };
@@ -273,6 +268,11 @@ public:
   // base class because this class represents the fn<X: Foo, Y: Bar>. The only
   // construct which supports associated types
   virtual size_t get_num_associated_bindings () const;
+
+  // Number of substitution params inherited from an outer scope (e.g. trait
+  // params inherited by a GAT). These are not supplied by the user when writing
+  // angle-bracket args and are skipped during arity checking.
+  virtual size_t get_outer_param_count () const { return 0; }
 
   // this is overridden in TypeBoundPredicate
   virtual TypeBoundPredicateItem
@@ -314,6 +314,9 @@ public:
   SubstitutionArgumentMappings
   get_mappings_from_generic_args (HIR::GenericArgs &args,
 				  const std::vector<Region> &regions);
+
+  static BaseType *resolve_const_argument (HIR::Expr &expr,
+					   BaseType *specified_type);
 
   // Recursive substitutions
   // Foo <A,B> { a:A, b: B}; Bar <X,Y,Z>{a:X, b: Foo<Y,Z>}
@@ -397,10 +400,6 @@ public:
   // This function will inject implicit inference variables for the type
   // parameters X and Y
   BaseType *infer_substitions (location_t locus);
-
-  // this clears any possible projections from higher ranked trait bounds which
-  // could be hanging around from a previous resolution
-  void prepare_higher_ranked_bounds ();
 
   // FIXME
   // this is bad name for this, i think it should be something like

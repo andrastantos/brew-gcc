@@ -161,7 +161,6 @@ cgraph_edge::clone (cgraph_node *n, gcall *call_stmt, unsigned stmt_uid,
   new_edge->speculative = speculative;
   new_edge->callback = callback;
   new_edge->has_callback = has_callback;
-  new_edge->callback_id = callback_id;
   new_edge->in_polymorphic_cdtor = in_polymorphic_cdtor;
 
   /* Update IPA profile.  Local profiles need no updating in original.  */
@@ -453,6 +452,7 @@ cgraph_node::create_clone (tree new_decl, profile_count prof_count,
   new_node->tp_first_run = tp_first_run;
   new_node->tm_clone = tm_clone;
   new_node->icf_merged = icf_merged;
+  new_node->assume_function = assume_function;
   new_node->thunk = thunk;
   new_node->unit_id = unit_id;
   new_node->merged_comdat = merged_comdat;

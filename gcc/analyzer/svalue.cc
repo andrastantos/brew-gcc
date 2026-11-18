@@ -30,49 +30,58 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "text-art/dump.h"
 
+#include "diagnostics/markup.h"
+
 #include "analyzer/analyzer-logging.h"
 #include "analyzer/call-string.h"
 #include "analyzer/program-point.h"
 #include "analyzer/store.h"
 #include "analyzer/svalue.h"
 #include "analyzer/region-model.h"
+#include "analyzer/liveness-context.h"
 
 #if ENABLE_ANALYZER
 
 namespace ana {
 
-static int cmp_csts_and_types (const_tree cst1, const_tree cst2);
-
 /* class svalue and its various subclasses.  */
 
 /* class svalue.  */
 
-/* Dump a tree-like representation of this svalue and its constituent symbols
-   to stderr, using global_dc's colorization and theming options.
-
-   For example:
-   . (gdb) call index_sval->dump()
-   . (27): ‘int’: initial_svalue
-   . ╰─ m_reg: (26): ‘int’: decl_region(‘x_10(D)’)
-   .    ╰─ parent: (9): frame_region(‘test_bitmask_2’, index: 0, depth: 1)
-   .       ╰─ parent: (1): stack region
-   .          ╰─ parent: (0): root region
-  */
-
 DEBUG_FUNCTION void
 svalue::dump () const
 {
-  text_art::dump (*this);
+  symbolic::dump_node_tree_to_stderr<svalue> (*this);
 }
 
-/* Dump a representation of this svalue to stderr.  */
-
-DEBUG_FUNCTION void
-svalue::dump (bool simple) const
+void
+svalue::print_dump_widget_label (pretty_printer *pp) const
 {
-  tree_dump_pretty_printer pp (stderr);
-  dump_to_pp (&pp, simple);
-  pp_newline (&pp);
+  if (get_type ())
+    pp_printf (pp, "%qT: ", get_type ());
+
+  start_any_dump_color (pp);
+  print_svalue_for_dump_widget_label (pp);
+  end_any_dump_color (pp);
+}
+
+void
+svalue::add_dump_widget_children (text_art::tree_widget &w,
+				  symbolic::node_dump_state &nds) const
+{
+  /* It's overkill to print the value_range for constants.  */
+  if (get_kind () == SK_CONSTANT)
+    return;
+
+  value_range out;
+  if (maybe_get_value_range (out))
+    {
+      pretty_printer pp;
+      pp_printf (&pp, "value_range: {");
+      out.print (&pp);
+      pp_string (&pp, "}");
+      w.add_child (text_art::tree_widget::make (nds, &pp));
+    }
 }
 
 /* Generate a textual representation of this svalue for debugging purposes.  */
@@ -86,14 +95,13 @@ svalue::get_desc (bool simple) const
   return label_text::take (xstrdup (pp_formatted_text (&pp)));
 }
 
-/* Return a new json::string describing the svalue.  */
-
-std::unique_ptr<json::value>
-svalue::to_json () const
+std::unique_ptr<json::object>
+svalue::make_json_obj (const char *type_name) const
 {
-  label_text desc = get_desc (true);
-  auto sval_js = std::make_unique<json::string> (desc.get ());
-  return sval_js;
+  auto obj = value_node::make_json_obj (type_name);
+  if (m_type)
+    obj->set ("type", tree_to_json (m_type));
+  return obj;
 }
 
 /* Class for optionally adding open/close paren pairs within
@@ -192,6 +200,13 @@ svalue::maybe_print_for_user (pretty_printer *pp,
 	  }
       }
       break;
+    case SK_BIT_VECTOR:
+      {
+	const auto *sval = (const svalue_from_bit_vector *)this;
+	auto &bv = sval->get_bit_vector ();
+	return bv.maybe_print_for_user (pp, model, outer_sval);
+      }
+      break;
     }
 
   if (tree expr = model.get_representative_tree (this))
@@ -204,35 +219,71 @@ svalue::maybe_print_for_user (pretty_printer *pp,
   return false;
 }
 
-/* Use DWI to create a text_art::widget describing this svalue in
-   a tree-like form, using PREFIX as a prefix (e.g. for field names).
-   We do this via two vfuncs:
-   (a) print_dump_widget_label, to populate the text of a tree_widget, and
-   (b) add_dump_widget_children, to add children to the tree_widget.  */
-
-std::unique_ptr<text_art::tree_widget>
-svalue::make_dump_widget (const text_art::dump_widget_info &dwi,
-			  const char *prefix) const
+iter_result
+svalue::for_each_svalue (iter_result (*cb) (const svalue &sval,
+				      void *user_data),
+			 void *user_data) const
 {
-  pretty_printer pp;
-  pp_format_decoder (&pp) = default_tree_printer;
-  pp_show_color (&pp) = true;
+  return cb (*this, user_data);
+}
 
-  if (prefix)
-    pp_printf (&pp, "%s: ", prefix);
+/* Return true iff this svalue has a concrete size.
+   If OUT is non-null, and returning true, then also write
+   the size to *OUT.  */
 
-  pp_printf (&pp, "(%i): ", get_id ());
-  if (get_type ())
-    pp_printf (&pp, "%qT: ", get_type ());
+bool
+svalue::
+has_concrete_size_p (concrete_bit_size *out,
+		     symbolic::scalar_manager<concrete_bit_size> &bit_mgr) const
+{
+  if (!get_type ())
+    {
+      if (tree cst = maybe_get_constant ())
+	if (TREE_CODE (cst) == RAW_DATA_CST)
+	  {
+	    concrete_byte_size byte_length (RAW_DATA_LENGTH (cst));
+	    if (out)
+	      *out = bits_from_bytes (byte_length);
+	    return true;
+	  }
+      if (get_kind () == SK_POINTER)
+	{
+	  if (out)
+	    *out = concrete_bit_size
+		     (convert_from_integer_cst (TYPE_SIZE (ptr_type_node)));
+	  return true;
+	}
+      if (auto *init_sval = dyn_cast_initial_svalue ())
+	if (auto *sym_bit_size
+	    = init_sval->get_region ()->maybe_get_bit_size (bit_mgr))
+	  {
+	    concrete_bit_size conc_bit_size;
+	    if (concrete_from_symbolic (*sym_bit_size, &conc_bit_size))
+	      {
+		if (out)
+		  *out = conc_bit_size;
+		return true;
+	      }
+	  }
+      return false;
+    }
 
-  print_dump_widget_label (&pp);
+  tree type = get_type ();
+  if (INTEGRAL_TYPE_P (type))
+    {
+      if (out)
+	*out = concrete_bit_size (TYPE_PRECISION (type));
+      return true;
+    }
 
-  std::unique_ptr<text_art::tree_widget> w
-    (text_art::tree_widget::make (dwi, &pp));
-
-  add_dump_widget_children (*w, dwi);
-
-  return w;
+  tree type_size = TYPE_SIZE (type);
+  if (!type_size)
+    return false;
+  if (TREE_CODE (type_size) != INTEGER_CST)
+    return false;
+  if (out)
+    *out = concrete_bit_size (convert_from_integer_cst (type_size));
+  return true;
 }
 
 /* If this svalue is a constant_svalue, return the underlying tree constant.
@@ -248,14 +299,15 @@ svalue::maybe_get_constant () const
     return NULL_TREE;
 }
 
-/* If this svalue is a region_svalue, return the region it points to.
+/* If this svalue is a pointer_svalue, return a pointer to its
+   symbolic::pointer.
    Otherwise return nullptr.  */
 
-const region *
-svalue::maybe_get_region () const
+const symbolic::pointer *
+svalue::maybe_get_symbolic_pointer () const
 {
-  if (const region_svalue *region_sval = dyn_cast_region_svalue ())
-    return region_sval->get_pointee ();
+  if (const pointer_svalue *ptr_sval = dyn_cast_pointer_svalue ())
+    return &ptr_sval->get_symbolic_pointer ();
   else
     return nullptr;
 }
@@ -296,6 +348,9 @@ svalue::can_merge_p (const svalue *other,
 		     region_model_manager *mgr,
 		     model_merger *merger) const
 {
+  if (this == other)
+    return this;
+
   if (!(get_type () && other->get_type ()))
     return nullptr;
 
@@ -329,7 +384,7 @@ svalue::can_merge_p (const svalue *other,
 	return nullptr;
     }
 
-  /* Reject merging svalues that have non-purgable sm-state,
+  /* Reject merging svalues that have non-purgeable sm-state,
      to avoid falsely reporting memory leaks by merging them
      with something else.  */
   if (!merger->mergeable_svalue_p (this))
@@ -337,14 +392,44 @@ svalue::can_merge_p (const svalue *other,
   if (!merger->mergeable_svalue_p (other))
     return nullptr;
 
-  /* Reject attempts to merge pointers that point to different base regions,
-     except for the case where both are string literals.  */
-  if (auto this_region = maybe_get_region ())
-    if (auto other_region = other->maybe_get_region ())
-      if (this_region != other_region
-	  && (this_region->get_kind () != RK_STRING
-	      || other_region->get_kind () != RK_STRING))
-	return nullptr;
+  /* Handle merger of symbolic pointers.  */
+  if (auto *sym_ptr_this = maybe_get_symbolic_pointer ())
+    if (auto *sym_ptr_other = other->maybe_get_symbolic_pointer ())
+      {
+	auto &this_region = sym_ptr_this->get_base_region ();
+	auto &other_region = sym_ptr_other->get_base_region ();
+	/* Same base region?  Consider merger of offsets.  */
+	if (&this_region == &other_region)
+	  {
+	    const svalue *this_offset_sval
+	      = mgr->get_svalue_from_scalar<concrete_byte_offset>
+		 (ptrdiff_type_node, sym_ptr_this->get_byte_offset ());
+	    const svalue *other_offset_sval
+	      = mgr->get_svalue_from_scalar<concrete_byte_offset>
+		  (ptrdiff_type_node, sym_ptr_other->get_byte_offset ());
+	    if (auto *merged_offset
+		  = this_offset_sval->can_merge_p (other_offset_sval,
+						   mgr,
+						   merger))
+	      {
+		auto &byte_mgr
+		  = mgr->get_node_manager ().get_scalars ().get_bytes ();
+		auto &merged_byte_offset
+		  = byte_mgr.get_scalar_from_svalue (*merged_offset);
+		symbolic::pointer merged_ptr (this_region,
+					      merged_byte_offset);
+		return mgr->get_ptr_svalue (get_type (), merged_ptr);
+	      }
+	    else
+	      return nullptr;
+	  }
+
+	/* Reject merger where the base regions are different,
+	   except where both are strings.  */
+	if (this_region.get_kind () != RK_STRING
+	      || other_region.get_kind () != RK_STRING)
+	    return nullptr;
+      }
 
   /* Widening.  */
   /* Merge: (new_cst, existing_cst) -> widen (existing, new).  */
@@ -417,33 +502,6 @@ svalue::can_merge_p (const svalue *other,
   return mgr->get_or_create_unknown_svalue (get_type ());
 }
 
-/* Determine if this svalue is either within LIVE_SVALUES, or is implicitly
-   live with respect to LIVE_SVALUES and MODEL.
-   LIVE_SVALUES can be nullptr, in which case determine if this svalue is
-   intrinsically live.  */
-
-bool
-svalue::live_p (const svalue_set *live_svalues,
-		const region_model *model) const
-{
-  /* Determine if SVAL is explicitly live.  */
-  if (live_svalues)
-    if (const_cast<svalue_set *> (live_svalues)->contains (this))
-      return true;
-
-  /* Otherwise, determine if SVAL is implicitly live due to being made of
-     other live svalues.  */
-  return implicitly_live_p (live_svalues, model);
-}
-
-/* Base implementation of svalue::implicitly_live_p.  */
-
-bool
-svalue::implicitly_live_p (const svalue_set *, const region_model *) const
-{
-  return false;
-}
-
 /* Comparator for imposing a deterministic order on constants that are
    of the same type.  */
 
@@ -505,10 +563,18 @@ cmp_csts_same_type (const_tree cst1, const_tree cst2)
     }
 }
 
+int
+cmp_types (const_tree a, const_tree b)
+{
+  int t1 = a ? TYPE_UID (a) : -1;
+  int t2 = b ? TYPE_UID (b) : -1;
+  return t1 - t2;
+}
+
 /* Comparator for imposing a deterministic order on constants that might
    not be of the same type.  */
 
-static int
+int
 cmp_csts_and_types (const_tree cst1, const_tree cst2)
 {
   int t1 = TYPE_UID (TREE_TYPE (cst1));
@@ -523,220 +589,7 @@ cmp_csts_and_types (const_tree cst1, const_tree cst2)
 int
 svalue::cmp_ptr (const svalue *sval1, const svalue *sval2)
 {
-  if (sval1 == sval2)
-    return 0;
-  if (int cmp_kind = sval1->get_kind () - sval2->get_kind ())
-    return cmp_kind;
-  int t1 = sval1->get_type () ? TYPE_UID (sval1->get_type ()) : -1;
-  int t2 = sval2->get_type () ? TYPE_UID (sval2->get_type ()) : -1;
-  if (int cmp_type = t1 - t2)
-    return cmp_type;
-  switch (sval1->get_kind ())
-    {
-    default:
-      gcc_unreachable ();
-    case SK_REGION:
-      {
-	const region_svalue *region_sval1 = (const region_svalue *)sval1;
-	const region_svalue *region_sval2 = (const region_svalue *)sval2;
-	return region::cmp_ids (region_sval1->get_pointee (),
-				region_sval2->get_pointee ());
-      }
-      break;
-    case SK_CONSTANT:
-      {
-	const constant_svalue *constant_sval1 = (const constant_svalue *)sval1;
-	const constant_svalue *constant_sval2 = (const constant_svalue *)sval2;
-	const_tree cst1 = constant_sval1->get_constant ();
-	const_tree cst2 = constant_sval2->get_constant ();
-	/* The svalues have the same type, but the underlying trees
-	   might not (for the case where both svalues are typeless).  */
-	return cmp_csts_and_types (cst1, cst2);
-      }
-      break;
-    case SK_UNKNOWN:
-      {
-	gcc_assert (sval1 == sval2);
-	return 0;
-      }
-      break;
-    case SK_POISONED:
-      {
-	const poisoned_svalue *poisoned_sval1 = (const poisoned_svalue *)sval1;
-	const poisoned_svalue *poisoned_sval2 = (const poisoned_svalue *)sval2;
-	return (static_cast<int> (poisoned_sval1->get_poison_kind ())
-		- static_cast<int> (poisoned_sval2->get_poison_kind ()));
-      }
-      break;
-    case SK_SETJMP:
-      {
-	const setjmp_svalue *setjmp_sval1 = (const setjmp_svalue *)sval1;
-	const setjmp_svalue *setjmp_sval2 = (const setjmp_svalue *)sval2;
-	const setjmp_record &rec1 = setjmp_sval1->get_setjmp_record ();
-	const setjmp_record &rec2 = setjmp_sval2->get_setjmp_record ();
-	return setjmp_record::cmp (rec1, rec2);
-      }
-      break;
-    case SK_INITIAL:
-      {
-	const initial_svalue *initial_sval1 = (const initial_svalue *)sval1;
-	const initial_svalue *initial_sval2 = (const initial_svalue *)sval2;
-	return region::cmp_ids (initial_sval1->get_region (),
-				initial_sval2->get_region ());
-      }
-      break;
-    case SK_UNARYOP:
-      {
-	const unaryop_svalue *unaryop_sval1 = (const unaryop_svalue *)sval1;
-	const unaryop_svalue *unaryop_sval2 = (const unaryop_svalue *)sval2;
-	if (int op_cmp = unaryop_sval1->get_op () - unaryop_sval2->get_op ())
-	  return op_cmp;
-	return svalue::cmp_ptr (unaryop_sval1->get_arg (),
-				unaryop_sval2->get_arg ());
-      }
-      break;
-    case SK_BINOP:
-      {
-	const binop_svalue *binop_sval1 = (const binop_svalue *)sval1;
-	const binop_svalue *binop_sval2 = (const binop_svalue *)sval2;
-	if (int op_cmp = binop_sval1->get_op () - binop_sval2->get_op ())
-	  return op_cmp;
-	if (int arg0_cmp = svalue::cmp_ptr (binop_sval1->get_arg0 (),
-					    binop_sval2->get_arg0 ()))
-	  return arg0_cmp;
-	return svalue::cmp_ptr (binop_sval1->get_arg1 (),
-				binop_sval2->get_arg1 ());
-      }
-      break;
-    case SK_SUB:
-      {
-	const sub_svalue *sub_sval1 = (const sub_svalue *)sval1;
-	const sub_svalue *sub_sval2 = (const sub_svalue *)sval2;
-	if (int parent_cmp = svalue::cmp_ptr (sub_sval1->get_parent (),
-					      sub_sval2->get_parent ()))
-	  return parent_cmp;
-	return region::cmp_ids (sub_sval1->get_subregion (),
-				sub_sval2->get_subregion ());
-      }
-      break;
-    case SK_REPEATED:
-      {
-	const repeated_svalue *repeated_sval1 = (const repeated_svalue *)sval1;
-	const repeated_svalue *repeated_sval2 = (const repeated_svalue *)sval2;
-	return svalue::cmp_ptr (repeated_sval1->get_inner_svalue (),
-				repeated_sval2->get_inner_svalue ());
-      }
-      break;
-    case SK_BITS_WITHIN:
-      {
-	const bits_within_svalue *bits_within_sval1
-	  = (const bits_within_svalue *)sval1;
-	const bits_within_svalue *bits_within_sval2
-	  = (const bits_within_svalue *)sval2;
-	if (int cmp = bit_range::cmp (bits_within_sval1->get_bits (),
-				       bits_within_sval2->get_bits ()))
-	  return cmp;
-	return svalue::cmp_ptr (bits_within_sval1->get_inner_svalue (),
-				bits_within_sval2->get_inner_svalue ());
-      }
-      break;
-    case SK_UNMERGEABLE:
-      {
-	const unmergeable_svalue *unmergeable_sval1
-	  = (const unmergeable_svalue *)sval1;
-	const unmergeable_svalue *unmergeable_sval2
-	  = (const unmergeable_svalue *)sval2;
-	return svalue::cmp_ptr (unmergeable_sval1->get_arg (),
-				unmergeable_sval2->get_arg ());
-      }
-      break;
-    case SK_PLACEHOLDER:
-      {
-	const placeholder_svalue *placeholder_sval1
-	  = (const placeholder_svalue *)sval1;
-	const placeholder_svalue *placeholder_sval2
-	  = (const placeholder_svalue *)sval2;
-	return strcmp (placeholder_sval1->get_name (),
-		       placeholder_sval2->get_name ());
-      }
-      break;
-    case SK_WIDENING:
-      {
-	const widening_svalue *widening_sval1 = (const widening_svalue *)sval1;
-	const widening_svalue *widening_sval2 = (const widening_svalue *)sval2;
-	if (int index_cmp = (widening_sval1->get_snode ()->m_id
-			     - widening_sval2->get_snode ()->m_id))
-	  return index_cmp;
-	if (int base_cmp = svalue::cmp_ptr (widening_sval1->get_base_svalue (),
-					    widening_sval2->get_base_svalue ()))
-	  return base_cmp;
-	return svalue::cmp_ptr (widening_sval1->get_iter_svalue (),
-				widening_sval2->get_iter_svalue ());
-      }
-      break;
-    case SK_COMPOUND:
-      {
-	const compound_svalue *compound_sval1 = (const compound_svalue *)sval1;
-	const compound_svalue *compound_sval2 = (const compound_svalue *)sval2;
-	return binding_map::cmp (compound_sval1->get_map (),
-				 compound_sval2->get_map ());
-      }
-      break;
-    case SK_CONJURED:
-      {
-	const conjured_svalue *conjured_sval1 = (const conjured_svalue *)sval1;
-	const conjured_svalue *conjured_sval2 = (const conjured_svalue *)sval2;
-	if (int stmt_cmp = (conjured_sval1->get_stmt ()->uid
-			    - conjured_sval2->get_stmt ()->uid))
-	  return stmt_cmp;
-	return region::cmp_ids (conjured_sval1->get_id_region (),
-				conjured_sval2->get_id_region ());
-      }
-      break;
-    case SK_ASM_OUTPUT:
-      {
-	const asm_output_svalue *asm_output_sval1
-	  = (const asm_output_svalue *)sval1;
-	const asm_output_svalue *asm_output_sval2
-	  = (const asm_output_svalue *)sval2;
-	if (int asm_string_cmp = strcmp (asm_output_sval1->get_asm_string (),
-					 asm_output_sval2->get_asm_string ()))
-	  return asm_string_cmp;
-	if (int output_idx_cmp = ((int)asm_output_sval1->get_output_idx ()
-				  - (int)asm_output_sval2->get_output_idx ()))
-	  return output_idx_cmp;
-	if (int cmp = ((int)asm_output_sval1->get_num_inputs ()
-		       - (int)asm_output_sval2->get_num_inputs ()))
-	  return cmp;
-	for (unsigned i = 0; i < asm_output_sval1->get_num_inputs (); i++)
-	  if (int input_cmp
-	      = svalue::cmp_ptr (asm_output_sval1->get_input (i),
-				 asm_output_sval2->get_input (i)))
-	    return input_cmp;
-	return 0;
-      }
-      break;
-    case SK_CONST_FN_RESULT:
-      {
-	const const_fn_result_svalue *const_fn_result_sval1
-	  = (const const_fn_result_svalue *)sval1;
-	const const_fn_result_svalue *const_fn_result_sval2
-	  = (const const_fn_result_svalue *)sval2;
-	int d1 = DECL_UID (const_fn_result_sval1->get_fndecl ());
-	int d2 = DECL_UID (const_fn_result_sval2->get_fndecl ());
-	if (int cmp_fndecl = d1 - d2)
-	  return cmp_fndecl;
-	if (int cmp = ((int)const_fn_result_sval1->get_num_inputs ()
-		       - (int)const_fn_result_sval2->get_num_inputs ()))
-	  return cmp;
-	for (unsigned i = 0; i < const_fn_result_sval1->get_num_inputs (); i++)
-	  if (int input_cmp
-	      = svalue::cmp_ptr (const_fn_result_sval1->get_input (i),
-				 const_fn_result_sval2->get_input (i)))
-	    return input_cmp;
-	return 0;
-      }
-    }
+  return cmp (*sval1, *sval2);
 }
 
 /* Comparator for use by vec<const svalue *>::qsort.  */
@@ -747,75 +600,6 @@ svalue::cmp_ptr_ptr (const void *p1, const void *p2)
   const svalue *sval1 = *(const svalue * const *)p1;
   const svalue *sval2 = *(const svalue * const *)p2;
   return cmp_ptr (sval1, sval2);
-}
-
-/* Subclass of visitor for use in implementing svalue::involves_p.  */
-
-class involvement_visitor : public visitor
-{
-public:
-  involvement_visitor (const svalue *needle)
-  : m_needle (needle), m_found (false) {}
-
-  void visit_initial_svalue (const initial_svalue *candidate) final override
-  {
-    if (candidate == m_needle)
-      m_found = true;
-  }
-
-  void visit_conjured_svalue (const conjured_svalue *candidate) final override
-  {
-    if (candidate == m_needle)
-      m_found = true;
-  }
-
-  void visit_widening_svalue (const widening_svalue *candidate) final override
-  {
-    if (candidate == m_needle)
-      m_found = true;
-  }
-
-  bool found_p () const { return m_found; }
-
-private:
-  const svalue *m_needle;
-  bool m_found;
-};
-
-/* Return true iff this svalue is defined in terms of OTHER.  */
-
-bool
-svalue::involves_p (const svalue *other) const
-{
-  /* Currently only implemented for these kinds.  */
-  gcc_assert (other->get_kind () == SK_INITIAL
-	      || other->get_kind () == SK_CONJURED
-	      || other->get_kind () == SK_WIDENING);
-
-  involvement_visitor v (other);
-  accept (&v);
-  return v.found_p ();
-}
-
-/* Extract SUBRANGE from this value, of type TYPE.  */
-
-const svalue *
-svalue::extract_bit_range (tree type,
-			   const bit_range &subrange,
-			   region_model_manager *mgr) const
-{
-  return mgr->get_or_create_bits_within (type, subrange, this);
-}
-
-/* Base implementation of svalue::maybe_fold_bits_within vfunc.  */
-
-const svalue *
-svalue::maybe_fold_bits_within (tree,
-				const bit_range &,
-				region_model_manager *) const
-{
-  /* By default, don't fold.  */
-  return nullptr;
 }
 
 /* Base implementation of svalue::all_zeroes_p.
@@ -841,11 +625,10 @@ svalue::maybe_get_deref_base_region () const
 	default:
 	  return nullptr;
 
-	case SK_REGION:
+	case SK_POINTER:
 	  {
-	    const region_svalue *region_sval
-	      = as_a <const region_svalue *> (iter);
-	    return region_sval->get_pointee ()->get_base_region ();
+	    auto *ptr_sval = as_a<const pointer_svalue *> (iter);
+	    return &ptr_sval->get_base_region ();
 	  }
 
 	case SK_BINOP:
@@ -875,11 +658,52 @@ svalue::maybe_get_deref_base_region () const
 tree
 svalue::maybe_get_type_from_typeinfo () const
 {
-  if (const region *reg = maybe_get_region ())
-    if (const decl_region *decl_reg = reg->dyn_cast_decl_region ())
-      return TREE_TYPE (DECL_NAME (decl_reg->get_decl ()));
+  if (auto *sym_ptr = maybe_get_symbolic_pointer ())
+    if (sym_ptr->get_byte_offset ().is_zero_p ())
+      {
+	auto &base_reg = sym_ptr->get_base_region ();
+	if (const decl_region *decl_reg = base_reg.dyn_cast_decl_region ())
+	  return TREE_TYPE (DECL_NAME (decl_reg->get_decl ()));
+      }
 
   return NULL_TREE;
+}
+
+/* Base implementation of svalue::conjured_p.  */
+
+bool
+svalue::conjured_p () const
+{
+  return false;
+}
+
+/* Return true if this svalue is the initial value of a region,
+   or derived directly from such a value (e.g. by casting or cropping).  */
+
+bool
+svalue::derived_from_initial_value_p () const
+{
+  switch (get_kind ())
+    {
+    default:
+      return false;
+
+    case SK_INITIAL:
+      return true;
+
+    case SK_UNARYOP:
+      {
+	const unaryop_svalue &unaryop = *as_a<const unaryop_svalue *> (this);
+	return unaryop.get_arg ()->derived_from_initial_value_p ();
+      }
+
+    case SK_BIT_VECTOR:
+      {
+	const svalue_from_bit_vector &from_bv
+	  = *as_a<const svalue_from_bit_vector *> (this);
+	return from_bv.get_bit_vector ().derived_from_initial_value_p ();
+      }
+    }
 }
 
 /* Return true if we can get a value_range for TYPE (which could be
@@ -890,9 +714,11 @@ type_can_have_value_range_p (tree type)
 {
   if (!type)
     return false;
-  if (!irange::supports_p (type))
-    return false;
-  return true;
+  if (irange::supports_p (type))
+    return true;
+  if (frange::supports_p (type))
+    return true;
+  return false;
 }
 
 /* Base implementation of svalue::maybe_get_value_range_1 vfunc.
@@ -910,125 +736,144 @@ svalue::maybe_get_value_range_1 (value_range &out) const
   return true;
 }
 
-/* class region_svalue : public svalue.  */
+/* class pointer_svalue : public svalue.  */
 
-/* Implementation of svalue::dump_to_pp vfunc for region_svalue.  */
+bool
+pointer_svalue::key_t::operator< (const key_t &other) const
+{
+  if (int c = cmp_types (m_type, other.m_type))
+    return c < 0;
+  if (int c = m_ptr.cmp (other.m_ptr))
+    return c < 0;
+  return false;
+}
+
+complexity
+pointer_svalue::key_t::get_complexity () const
+{
+  return complexity::from_pair (m_ptr.get_base_region (),
+				m_ptr.get_byte_offset ());
+}
+
+/* Implementation of svalue::dump_to_pp vfunc for pointer_svalue.  */
 
 void
-region_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
+pointer_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
 {
   if (simple)
     {
       pp_string (pp, "&");
-      m_reg->dump_to_pp (pp, simple);
+      get_base_region ().dump_to_pp (pp, simple);
+
+      auto &byte_offset = get_byte_offset ();
+      if (!byte_offset.is_zero_p ())
+	{
+	  pp_string (pp, " +(bytes) ");
+	  byte_offset.dump_to_pp (pp);
+	}
     }
   else
     {
-      pp_string (pp, "region_svalue(");
-      if (get_type ())
-	{
-	  print_quoted_type (pp, get_type ());
-	  pp_string (pp, ", ");
-	}
-      m_reg->dump_to_pp (pp, simple);
-      pp_string (pp, ")");
+      pp_printf (pp, "POINTER_SVALUE(reg: (%i), offset: (%i))",
+		 get_base_region ().get_id (),
+		 get_byte_offset ().get_id ());
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
-   region_svalue.  */
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
+   pointer_svalue.  */
 
 void
-region_svalue::print_dump_widget_label (pretty_printer *pp) const
+pointer_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
-  pp_printf (pp, "region_svalue: %qs", "&");
+  pp_string (pp, "pointer_svalue:");
 }
 
 /* Implementation of svalue::add_dump_widget_children vfunc for
-   region_svalue.  */
+   pointer_svalue.  */
 
 void
-region_svalue::
+pointer_svalue::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
-  w.add_child (m_reg->make_dump_widget (dwi));
+  svalue::add_dump_widget_children (w, nds);
+  w.add_child (m_ptr.make_dump_widget (nds));
 }
-
-/* Implementation of svalue::accept vfunc for region_svalue.  */
 
 void
-region_svalue::accept (visitor *v) const
+pointer_svalue::accept_node_visitor (symbolic::node_visitor &v) const
 {
-  m_reg->accept (v);
-  v->visit_region_svalue (this);
+  if (v.visit_svalue (*this))
+    m_ptr.accept_node_visitor (v);
 }
 
-/* Implementation of svalue::implicitly_live_p vfunc for region_svalue.  */
+std::unique_ptr<json::object>
+pointer_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("pointer_svalue");
+  obj->set ("ptr", m_ptr.to_json ());
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+pointer_svalue::make_markup_node (symbolic::markup_context &markup_ctxt) const
+{
+  if (get_byte_offset ().is_zero_p ())
+    {
+      auto markup = std::make_unique<diagnostics::markup::compound_node> ();
+      markup->add_child ("&");
+      // TODO: parens?
+      markup->add_child (get_base_region ().make_markup_node (markup_ctxt));
+      return markup;
+    }
+  return diagnostics::markup::make_text_node ("pointer_svalue");
+}
+
+/* Implementation of svalue::accept vfunc for pointer_svalue.  */
+
+void
+pointer_svalue::accept (visitor *v) const
+{
+  m_ptr.get_base_region ().accept (v);
+  v->visit_pointer_svalue (this);
+}
+
+/* Implementation of svalue::implicitly_live_p vfunc for pointer_svalue.  */
 
 bool
-region_svalue::implicitly_live_p (const svalue_set *,
-				  const region_model *model) const
+pointer_svalue::
+implicitly_live_p (symbolic::liveness_context &liveness_ctxt) const
 {
   /* Pointers into clusters that have escaped should be treated as live.  */
-  const region *base_reg = get_pointee ()->get_base_region ();
-  const store *store = model->get_store ();
-  if (const binding_cluster *c = store->get_cluster (base_reg))
+  const region &base_reg = get_base_region ();
+  const store *store = liveness_ctxt.get_model ()->get_store ();
+  if (const binding_cluster *c = store->get_cluster (&base_reg))
     if (c->escaped_p ())
-	return true;
+      return true;
+
+  /* Any known-live pointer to BASE_REG in LIVENESS_CTXT allows us to
+     treat all pointers to BASE_REG as live, so that different
+     (X*)ptr and (Y*)ptr are effectively the same from
+     a liveness perspective.  */
+  if (liveness_ctxt.known_live_ptr_to_base_region_p (base_reg))
+    return true;
 
   return false;
 }
 
-/* Evaluate the condition LHS OP RHS.
-   Subroutine of region_model::eval_condition for when we have a pair of
-   pointers.  */
-
-tristate
-region_svalue::eval_condition (const region_svalue *lhs,
-			       enum tree_code op,
-			       const region_svalue *rhs)
-{
-  /* See if they point to the same region.  */
-  const region *lhs_reg = lhs->get_pointee ();
-  const region *rhs_reg = rhs->get_pointee ();
-  bool ptr_equality = lhs_reg == rhs_reg;
-  switch (op)
-    {
-    default:
-      gcc_unreachable ();
-
-    case EQ_EXPR:
-      if (ptr_equality)
-	return tristate::TS_TRUE;
-      else
-	return tristate::TS_FALSE;
-      break;
-
-    case NE_EXPR:
-      if (ptr_equality)
-	return tristate::TS_FALSE;
-      else
-	return tristate::TS_TRUE;
-      break;
-
-    case GE_EXPR:
-    case LE_EXPR:
-      if (ptr_equality)
-	return tristate::TS_TRUE;
-      break;
-
-    case GT_EXPR:
-    case LT_EXPR:
-      if (ptr_equality)
-	return tristate::TS_FALSE;
-      break;
-    }
-
-  return tristate::TS_UNKNOWN;
-}
-
 /* class constant_svalue : public svalue.  */
+
+bool
+constant_svalue::key_t::operator< (const key_t &other) const
+{
+  if (int c = cmp_types (m_type, other.m_type))
+    return c < 0;
+  if (int c = cmp_types (TREE_TYPE (m_cst), TREE_TYPE (other.m_cst)))
+    return c < 0;
+  gcc_assert (TREE_CODE (m_cst) == TREE_CODE (other.m_cst));
+  return cmp_csts_same_type (m_cst, other.m_cst) < 0;
+}
 
 /* Implementation of svalue::dump_to_pp vfunc for constant_svalue.  */
 
@@ -1055,24 +900,36 @@ constant_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    constant_svalue.  */
 
 void
-constant_svalue::print_dump_widget_label (pretty_printer *pp) const
+constant_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "constant_svalue (%qE)", m_cst_expr);
 }
 
-/* Implementation of svalue::add_dump_widget_children vfunc for
-   constant_svalue.  */
-
 void
-constant_svalue::
-add_dump_widget_children (text_art::tree_widget &,
-			  const text_art::dump_widget_info &) const
+constant_svalue::accept_node_visitor (symbolic::node_visitor &v) const
 {
-  /* No children.  */
+  v.visit_svalue (*this);
+}
+
+std::unique_ptr<json::object>
+constant_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("constant_svalue");
+  obj->set ("constant", tree_to_json (m_cst_expr));
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+constant_svalue::make_markup_node (symbolic::markup_context &) const
+{
+  pretty_printer pp;
+  pp_format_decoder (&pp) = default_tree_printer;
+  pp_printf (&pp, "%E", m_cst_expr);
+  return std::make_unique<diagnostics::markup::text> (pp_formatted_text (&pp));
 }
 
 /* Implementation of svalue::accept vfunc for constant_svalue.  */
@@ -1087,8 +944,7 @@ constant_svalue::accept (visitor *v) const
    Constants are implicitly live.  */
 
 bool
-constant_svalue::implicitly_live_p (const svalue_set *,
-				    const region_model *) const
+constant_svalue::implicitly_live_p (symbolic::liveness_context &) const
 {
   return true;
 }
@@ -1151,42 +1007,6 @@ constant_svalue::eval_condition (const constant_svalue *lhs,
   return tristate::TS_UNKNOWN;
 }
 
-/* Implementation of svalue::maybe_fold_bits_within vfunc
-   for constant_svalue.  */
-
-const svalue *
-constant_svalue::maybe_fold_bits_within (tree type,
-					 const bit_range &bits,
-					 region_model_manager *mgr) const
-{
-  /* Bits within an all-zero value are also all zero.  */
-  if (zerop (m_cst_expr))
-    {
-      if (type)
-	return mgr->get_or_create_cast (type, this);
-      else
-	return this;
-    }
-
-  /* Handle the case of extracting a single bit. */
-  if (bits.m_size_in_bits == 1
-      && TREE_CODE (m_cst_expr) == INTEGER_CST
-      && type
-      && INTEGRAL_TYPE_P (type)
-      && tree_fits_uhwi_p (m_cst_expr))
-    {
-      unsigned HOST_WIDE_INT bit = bits.m_start_bit_offset.to_uhwi ();
-      unsigned HOST_WIDE_INT mask = (1 << bit);
-      unsigned HOST_WIDE_INT val_as_hwi = tree_to_uhwi (m_cst_expr);
-      unsigned HOST_WIDE_INT masked_val = val_as_hwi & mask;
-      int result = masked_val ? 1 : 0;
-      return mgr->get_or_create_int_cst (type, result);
-    }
-
-  /* Otherwise, don't fold.  */
-  return nullptr;
-}
-
 /* Implementation of svalue::all_zeroes_p for constant_svalue.  */
 
 bool
@@ -1234,24 +1054,31 @@ unknown_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    unknown_svalue.  */
 
 void
-unknown_svalue::print_dump_widget_label (pretty_printer *pp) const
+unknown_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "unknown_svalue");
 }
 
-/* Implementation of svalue::add_dump_widget_children vfunc for
-   unknown_svalue.  */
-
 void
-unknown_svalue::
-add_dump_widget_children (text_art::tree_widget &,
-			  const text_art::dump_widget_info &) const
+unknown_svalue::accept_node_visitor (symbolic::node_visitor &v) const
 {
-  /* No children.  */
+  v.visit_svalue (*this);
+}
+
+std::unique_ptr<json::object>
+unknown_svalue::to_json () const
+{
+  return svalue::make_json_obj ("unknown_svalue");
+}
+
+std::unique_ptr<diagnostics::markup::node>
+unknown_svalue::make_markup_node (symbolic::markup_context &) const
+{
+  return diagnostics::markup::make_text_node ("unknown");
 }
 
 /* Implementation of svalue::accept vfunc for unknown_svalue.  */
@@ -1260,18 +1087,6 @@ void
 unknown_svalue::accept (visitor *v) const
 {
   v->visit_unknown_svalue (this);
-}
-
-/* Implementation of svalue::maybe_fold_bits_within vfunc
-   for unknown_svalue.  */
-
-const svalue *
-unknown_svalue::maybe_fold_bits_within (tree type,
-					const bit_range &,
-					region_model_manager *mgr) const
-{
-  /* Bits within an unknown_svalue are themselves unknown.  */
-  return mgr->get_or_create_unknown_svalue (type);
 }
 
 bool
@@ -1323,24 +1138,33 @@ poisoned_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    poisoned_svalue.  */
 
 void
-poisoned_svalue::print_dump_widget_label (pretty_printer *pp) const
+poisoned_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "poisoned_svalue(%s)", poison_kind_to_str (m_kind));
 }
 
-/* Implementation of svalue::add_dump_widget_children vfunc for
-   poisoned_svalue.  */
-
 void
-poisoned_svalue::
-add_dump_widget_children (text_art::tree_widget &,
-			  const text_art::dump_widget_info &) const
+poisoned_svalue::accept_node_visitor (symbolic::node_visitor &v) const
 {
-  /* No children.  */
+  v.visit_svalue (*this);
+}
+
+std::unique_ptr<json::object>
+poisoned_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("poisoned_svalue");
+  obj->set_string ("kind", poison_kind_to_str (m_kind));
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+poisoned_svalue::make_markup_node (symbolic::markup_context &) const
+{
+  return diagnostics::markup::make_text_node ("poisoned_svalue");
 }
 
 /* Implementation of svalue::accept vfunc for poisoned_svalue.  */
@@ -1351,24 +1175,23 @@ poisoned_svalue::accept (visitor *v) const
   v->visit_poisoned_svalue (this);
 }
 
-/* Implementation of svalue::maybe_fold_bits_within vfunc
-   for poisoned_svalue.  */
-
-const svalue *
-poisoned_svalue::maybe_fold_bits_within (tree type,
-					 const bit_range &,
-					 region_model_manager *mgr) const
-{
-  /* Bits within a poisoned value are also poisoned.  */
-  return mgr->get_or_create_poisoned_svalue (m_kind, type);
-}
-
-/* class setjmp_svalue's implementation is in engine.cc, so that it can use
-   the declaration of exploded_node.  */
+/* class setjmp_svalue's implementation is in setjmp-longjmp.cc.  */
 
 /* class initial_svalue : public svalue.  */
 
 /* Implementation of svalue::dump_to_pp vfunc for initial_svalue.  */
+
+initial_svalue::initial_svalue (symbolic::node::id_t id, tree type, const region *reg)
+: svalue (complexity (reg), id, type), m_reg (reg)
+{
+  gcc_assert (m_reg != nullptr);
+
+  /* Must be a base region.  */
+  gcc_assert (m_reg->base_region_p ());
+
+  /* TODO(once we have a m_node_mgr):
+     assert that m_reg->region_has_meaningful_size_p (m_node_mgr) ???  */
+}
 
 void
 initial_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
@@ -1392,11 +1215,11 @@ initial_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    initial_svalue.  */
 
 void
-initial_svalue::print_dump_widget_label (pretty_printer *pp) const
+initial_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "initial_svalue");
 }
@@ -1407,9 +1230,32 @@ initial_svalue::print_dump_widget_label (pretty_printer *pp) const
 void
 initial_svalue::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
-  w.add_child (m_reg->make_dump_widget (dwi, "m_reg"));
+  svalue::add_dump_widget_children (w, nds);
+  w.add_child (m_reg->make_dump_widget (nds, "m_reg"));
+}
+
+void
+initial_svalue::accept_node_visitor (symbolic::node_visitor &v) const
+{
+  if (v.visit_svalue (*this))
+    m_reg->accept_node_visitor (v);
+}
+
+std::unique_ptr<json::object>
+initial_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("initial_svalue");
+  obj->set ("reg", m_reg->to_json ());
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+initial_svalue::make_markup_node (symbolic::markup_context &markup_ctxt) const
+{
+  // TODO: show 'initial_value()' ?
+  return m_reg->make_markup_node (markup_ctxt);
 }
 
 /* Implementation of svalue::accept vfunc for initial_svalue.  */
@@ -1424,8 +1270,8 @@ initial_svalue::accept (visitor *v) const
 /* Implementation of svalue::implicitly_live_p vfunc for initial_svalue.  */
 
 bool
-initial_svalue::implicitly_live_p (const svalue_set *,
-				   const region_model *model) const
+initial_svalue::
+implicitly_live_p (symbolic::liveness_context &liveness_ctxt) const
 {
   /* This svalue may be implicitly live if the region still implicitly
      has its initial value and is reachable.  */
@@ -1433,6 +1279,7 @@ initial_svalue::implicitly_live_p (const svalue_set *,
   /* It must be a region that exists; we don't want to consider
      INIT_VAL(R) as still being implicitly reachable if R is in
      a popped stack frame.  */
+  auto *model = liveness_ctxt.get_model ();
   if (model->region_exists_p (m_reg))
     {
       const svalue *reg_sval = model->get_store_value (m_reg, nullptr);
@@ -1470,6 +1317,18 @@ initial_svalue::initial_value_of_param_p () const
 
 /* class unaryop_svalue : public svalue.  */
 
+bool
+unaryop_svalue::key_t::operator< (const key_t &other) const
+{
+  if (int c = (int)m_op - (int)other.m_op)
+    return c < 0;
+  if (int c = cmp_types (m_type, other.m_type))
+    return c < 0;
+  if (int c = symbolic::node::cmp_ids (m_arg, other.m_arg))
+    return c < 0;
+  return false;
+}
+
 /* Implementation of svalue::dump_to_pp vfunc for unaryop_svalue.  */
 
 void
@@ -1504,11 +1363,11 @@ unaryop_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    unaryop_svalue.  */
 
 void
-unaryop_svalue::print_dump_widget_label (pretty_printer *pp) const
+unaryop_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp,
 	     "unaryop_svalue(%s)",
@@ -1521,9 +1380,32 @@ unaryop_svalue::print_dump_widget_label (pretty_printer *pp) const
 void
 unaryop_svalue::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
-  w.add_child (m_arg->make_dump_widget (dwi));
+  svalue::add_dump_widget_children (w, nds);
+  w.add_child (m_arg->make_dump_widget (nds));
+}
+
+void
+unaryop_svalue::accept_node_visitor (symbolic::node_visitor &v) const
+{
+  if (v.visit_svalue (*this))
+    m_arg->accept_node_visitor (v);
+}
+
+std::unique_ptr<json::object>
+unaryop_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("unaryop_svalue");
+  obj->set ("arg", m_arg->to_json ());
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+unaryop_svalue::make_markup_node (symbolic::markup_context &markup_ctxt) const
+{
+  gcc_assert (m_op == NOP_EXPR); // FIXME!!!
+  return m_arg->make_markup_node (markup_ctxt);
 }
 
 /* Implementation of svalue::accept vfunc for unaryop_svalue.  */
@@ -1538,38 +1420,10 @@ unaryop_svalue::accept (visitor *v) const
 /* Implementation of svalue::implicitly_live_p vfunc for unaryop_svalue.  */
 
 bool
-unaryop_svalue::implicitly_live_p (const svalue_set *live_svalues,
-				   const region_model *model) const
+unaryop_svalue::
+implicitly_live_p (symbolic::liveness_context &liveness_ctxt) const
 {
-  return get_arg ()->live_p (live_svalues, model);
-}
-
-/* Implementation of svalue::maybe_fold_bits_within vfunc
-   for unaryop_svalue.  */
-
-const svalue *
-unaryop_svalue::maybe_fold_bits_within (tree type,
-					const bit_range &,
-					region_model_manager *mgr) const
-{
-  switch (m_op)
-    {
-    default:
-      break;
-    case NOP_EXPR:
-      /* A cast of zero is zero.  */
-      if (tree cst = m_arg->maybe_get_constant ())
-	if (zerop (cst))
-	  {
-	    if (type)
-	      return mgr->get_or_create_cast (type, this);
-	    else
-	      return this;
-	  }
-      break;
-    }
-  /* Otherwise, don't fold.  */
-  return nullptr;
+  return liveness_ctxt.node_live_p (*get_arg ());
 }
 
 /* Implementation of svalue::maybe_get_value_range_1 for unaryop_svalue.  */
@@ -1592,7 +1446,7 @@ unaryop_svalue::maybe_get_value_range_1 (value_range &out) const
 	     a VARYING of the unknown value as the 2nd operand.  */
 	  value_range varying (type);
 	  varying.set_varying (type);
-	  out.set_type (type);
+	  out.set_range_class (type);
 	  if (handler.fold_range (out, type, arg_vr, varying))
 	    return true;
 	}
@@ -1601,6 +1455,20 @@ unaryop_svalue::maybe_get_value_range_1 (value_range &out) const
 }
 
 /* class binop_svalue : public svalue.  */
+
+bool
+binop_svalue::key_t::operator< (const key_t &other) const
+{
+  if (int c = (int)m_op - (int)other.m_op)
+    return c < 0;
+  if (int c = cmp_types (m_type, other.m_type))
+    return c < 0;
+  if (int c = symbolic::node::cmp_ids (m_arg0, other.m_arg0))
+    return c < 0;
+  if (int c = symbolic::node::cmp_ids (m_arg1, other.m_arg1))
+    return c < 0;
+  return false;
+}
 
 /* Return whether OP be printed as an infix operator.  */
 
@@ -1656,11 +1524,11 @@ binop_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    binop_svalue.  */
 
 void
-binop_svalue::print_dump_widget_label (pretty_printer *pp) const
+binop_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp,
 	     "binop_svalue(%s: %qs)",
@@ -1674,10 +1542,40 @@ binop_svalue::print_dump_widget_label (pretty_printer *pp) const
 void
 binop_svalue::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
-  w.add_child (m_arg0->make_dump_widget (dwi));
-  w.add_child (m_arg1->make_dump_widget (dwi));
+  svalue::add_dump_widget_children (w, nds);
+  w.add_child (m_arg0->make_dump_widget (nds));
+  w.add_child (m_arg1->make_dump_widget (nds));
+}
+
+void
+binop_svalue::accept_node_visitor (symbolic::node_visitor &v) const
+{
+  if (v.visit_svalue (*this))
+    {
+      m_arg0->accept_node_visitor (v);
+      m_arg1->accept_node_visitor (v);
+    }
+}
+
+std::unique_ptr<json::object>
+binop_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("binop_svalue");
+  obj->set ("arg0", m_arg0->to_json ());
+  obj->set ("arg1", m_arg1->to_json ());
+  // FIXME: op?
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+binop_svalue::make_markup_node (symbolic::markup_context &markup_ctxt) const
+{
+  return std::make_unique<diagnostics::markup::code::infix_binary_op>
+    (m_arg0->make_markup_node (markup_ctxt),
+     op_symbol_code (m_op),
+     m_arg1->make_markup_node (markup_ctxt));
 }
 
 /* Implementation of svalue::accept vfunc for binop_svalue.  */
@@ -1693,27 +1591,11 @@ binop_svalue::accept (visitor *v) const
 /* Implementation of svalue::implicitly_live_p vfunc for binop_svalue.  */
 
 bool
-binop_svalue::implicitly_live_p (const svalue_set *live_svalues,
-				 const region_model *model) const
+binop_svalue::
+implicitly_live_p (symbolic::liveness_context &liveness_ctxt) const
 {
-  return (get_arg0 ()->live_p (live_svalues, model)
-	  && get_arg1 ()->live_p (live_svalues, model));
-}
-
-/* class sub_svalue : public svalue.  */
-
-/* sub_svalue'c ctor.  */
-
-sub_svalue::sub_svalue (symbol::id_t id,
-			tree type, const svalue *parent_svalue,
-			const region *subregion)
-: svalue (complexity::from_pair (parent_svalue->get_complexity (),
-				 subregion->get_complexity ()),
-	  id,
-	  type),
-  m_parent_svalue (parent_svalue), m_subregion (subregion)
-{
-  gcc_assert (parent_svalue->can_have_associated_state_p ());
+  return (liveness_ctxt.node_live_p (*get_arg0 ())
+	  && liveness_ctxt.node_live_p (*get_arg1 ()));
 }
 
 /* Implementation of svalue::maybe_get_value_range_1 for binop_svalue.  */
@@ -1738,9 +1620,10 @@ binop_svalue::maybe_get_value_range_1 (value_range &out) const
     if (m_arg1->maybe_get_value_range (rhs))
       {
 	range_op_handler handler (m_op);
-	if (handler)
+	if (handler
+	    && handler.operand_check_p (type, lhs.type (), rhs.type ()))
 	  {
-	    out.set_type (type);
+	    out.set_range_class (type);
 	    if (handler.fold_range (out, get_type (), lhs, rhs))
 	      return true;
 	  }
@@ -1748,325 +1631,185 @@ binop_svalue::maybe_get_value_range_1 (value_range &out) const
   return false;
 }
 
-/* Implementation of svalue::dump_to_pp vfunc for sub_svalue.  */
+/* class svalue_from_bit_vector : public svalue.  */
+
+bool
+svalue_from_bit_vector::key_t::operator< (const key_t &other) const
+{
+  if (int c = cmp_types (m_type, other.m_type))
+    return c < 0;
+  if (int c = symbolic::node::cmp_ids (m_bv, other.m_bv))
+    return c < 0;
+  return false;
+}
+
+/* svalue_from_bit_vector'c ctor.  */
+
+svalue_from_bit_vector::
+svalue_from_bit_vector (symbolic::node::id_t id,
+			tree type,
+			const symbolic::bit_vector &bv)
+: svalue (/* Reuse the complexity of BV rather than adding one to it for now,
+	     to stay closer to pre-symbolic::node behavior.  */
+	  bv.get_complexity (),
+	  id, type),
+  m_bv (bv)
+{
+  if (CHECKING_P)
+    {
+      /* TODO: should we assert that the type's size matches that
+	 of the bit_vector?  */
+
+      // No nesting:
+      gcc_assert (!m_bv.dyn_cast_bit_vector_from_svalue ());
+
+      // All-zeros/all-ones of integral type should have been folded to constant
+      if (auto *tristate_bv = m_bv.dyn_cast_tristate_bit_vector ())
+	if (type && INTEGRAL_TYPE_P (type))
+	  gcc_assert (tristate_bv->get_bit_value () == tristate::unknown ());
+    }
+}
+
+/* Implementation of svalue::dump_to_pp vfunc for svalue_from_bit_vector.  */
 
 void
-sub_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
+svalue_from_bit_vector::dump_to_pp (pretty_printer *pp, bool simple) const
 {
   if (simple)
     {
-      pp_string (pp, "SUB(");
-      m_parent_svalue->dump_to_pp (pp, simple);
-      pp_string (pp, ", ");
-      m_subregion->dump_to_pp (pp, simple);
+      pp_string (pp, "SVALUE_FROM_BIT_VECTOR(");
+      if (get_type ())
+	{
+	  print_quoted_type (pp, get_type ());
+	  pp_string (pp, ", ");
+	}
+      pp_printf (pp, "bit_vector: (%i)", m_bv.get_id ());
       pp_character (pp, ')');
     }
   else
     {
-      pp_string (pp, "sub_svalue (");
-      pp_string (pp, ", ");
-      m_parent_svalue->dump_to_pp (pp, simple);
-      pp_string (pp, ", ");
-      m_subregion->dump_to_pp (pp, simple);
+      pp_string (pp, "svalue_from_bit_vector (");
+      if (get_type ())
+	{
+	  print_quoted_type (pp, get_type ());
+	  pp_string (pp, ", ");
+	}
+      pp_printf (pp, "bits: (%i)", m_bv.get_id ());
       pp_character (pp, ')');
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
-   sub_svalue.  */
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
+   svalue_from_bit_vector.  */
 
 void
-sub_svalue::print_dump_widget_label (pretty_printer *pp) const
+svalue_from_bit_vector::
+print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
-  pp_printf (pp, "sub_svalue");
+  pp_string (pp, "svalue_from_bit_vector");
 }
 
 /* Implementation of svalue::add_dump_widget_children vfunc for
-   sub_svalue.  */
+   svalue_from_bit_vector.  */
 
 void
-sub_svalue::
+svalue_from_bit_vector::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
-  w.add_child (m_parent_svalue->make_dump_widget (dwi, "m_parent_svalue"));
-  w.add_child (m_subregion->make_dump_widget (dwi, "m_subregion"));
+  svalue::add_dump_widget_children (w, nds);
+  w.add_child (m_bv.make_dump_widget (nds, "m_bv"));
 }
-
-/* Implementation of svalue::accept vfunc for sub_svalue.  */
 
 void
-sub_svalue::accept (visitor *v) const
+svalue_from_bit_vector::accept_node_visitor (symbolic::node_visitor &v) const
 {
-  m_parent_svalue->accept (v);
-  m_subregion->accept (v);
-  v->visit_sub_svalue (this);
+  if (v.visit_svalue (*this))
+    m_bv.accept_node_visitor (v);
 }
 
-/* Implementation of svalue::implicitly_live_p vfunc for sub_svalue.  */
+std::unique_ptr<json::object>
+svalue_from_bit_vector::to_json () const
+{
+  auto obj = svalue::make_json_obj ("svalue_from_bit_vector");
+  obj->set ("bit_vector", m_bv.to_json ());
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+svalue_from_bit_vector::
+make_markup_node (symbolic::markup_context &markup_ctxt) const
+{
+  return m_bv.make_markup_node (markup_ctxt);
+}
+
+/* Implementation of svalue::accept vfunc for svalue_from_bit_vector.  */
+
+void
+svalue_from_bit_vector::accept (visitor *v) const
+{
+  // FIXME:
+  // m_bv.accept_node_visitor (v);
+
+  v->visit_svalue_from_bit_vector (this);
+}
+
+/* Implementation of svalue::implicitly_live_p vfunc for svalue_from_bit_vector.  */
 
 bool
-sub_svalue::implicitly_live_p (const svalue_set *live_svalues,
-			       const region_model *model) const
+svalue_from_bit_vector::
+implicitly_live_p (symbolic::liveness_context &liveness_ctxt) const
 {
-  return get_parent ()->live_p (live_svalues, model);
+  return liveness_ctxt.node_live_p (m_bv);
 }
 
-/* class repeated_svalue : public svalue.  */
-
-/* repeated_svalue'c ctor.  */
-
-repeated_svalue::repeated_svalue (symbol::id_t id,
-				  tree type,
-				  const svalue *outer_size,
-				  const svalue *inner_svalue)
-: svalue (complexity::from_pair (outer_size, inner_svalue), id, type),
-  m_outer_size (outer_size),
-  m_inner_svalue (inner_svalue)
-{
-  gcc_assert (outer_size->can_have_associated_state_p ());
-  gcc_assert (inner_svalue->can_have_associated_state_p ());
-}
-
-/* Implementation of svalue::dump_to_pp vfunc for repeated_svalue.  */
-
-void
-repeated_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
-{
-  if (simple)
-    {
-      pp_string (pp, "REPEATED(");
-      if (get_type ())
-	{
-	  print_quoted_type (pp, get_type ());
-	  pp_string (pp, ", ");
-	}
-      pp_string (pp, "outer_size: ");
-      m_outer_size->dump_to_pp (pp, simple);
-      pp_string (pp, ", inner_val: ");
-      m_inner_svalue->dump_to_pp (pp, simple);
-      pp_character (pp, ')');
-    }
-  else
-    {
-      pp_string (pp, "repeated_svalue (");
-      if (get_type ())
-	{
-	  print_quoted_type (pp, get_type ());
-	  pp_string (pp, ", ");
-	}
-      pp_string (pp, "outer_size: ");
-      m_outer_size->dump_to_pp (pp, simple);
-      pp_string (pp, ", inner_val: ");
-      m_inner_svalue->dump_to_pp (pp, simple);
-      pp_character (pp, ')');
-    }
-}
-
-/* Implementation of svalue::print_dump_widget_label vfunc for
-   repeated_svalue.  */
-
-void
-repeated_svalue::print_dump_widget_label (pretty_printer *pp) const
-{
-  pp_printf (pp, "repeated_svalue");
-}
-
-/* Implementation of svalue::add_dump_widget_children vfunc for
-   repeated_svalue.  */
-
-void
-repeated_svalue::
-add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
-{
-  w.add_child (m_outer_size->make_dump_widget (dwi, "m_outer_size"));
-  w.add_child (m_inner_svalue->make_dump_widget (dwi, "m_inner_svalue"));
-}
-
-/* Implementation of svalue::accept vfunc for repeated_svalue.  */
-
-void
-repeated_svalue::accept (visitor *v) const
-{
-  m_inner_svalue->accept (v);
-  v->visit_repeated_svalue (this);
-}
-
-/* Implementation of svalue::all_zeroes_p for repeated_svalue.  */
+/* Implementation of svalue::all_zeroes_p for constant_svalue.  */
 
 bool
-repeated_svalue::all_zeroes_p () const
+svalue_from_bit_vector::all_zeroes_p () const
 {
-  return m_inner_svalue->all_zeroes_p ();
+  if (auto *ts = m_bv.dyn_cast_tristate_bit_vector ())
+    return ts->get_bit_value ().is_false ();
+  return false;
 }
-
-/* Implementation of svalue::maybe_fold_bits_within vfunc
-   for repeated_svalue.  */
-
-const svalue *
-repeated_svalue::maybe_fold_bits_within (tree type,
-					 const bit_range &bits,
-					 region_model_manager *mgr) const
-{
-  const svalue *innermost_sval = m_inner_svalue;
-  /* Fold
-       BITS_WITHIN (range, REPEATED_SVALUE (ZERO))
-     to:
-       REPEATED_SVALUE (ZERO).  */
-  if (all_zeroes_p ())
-    {
-      byte_range bytes (0,0);
-      if (bits.as_byte_range (&bytes))
-	{
-	  const svalue *byte_size
-	    = mgr->get_or_create_int_cst (size_type_node,
-					  bytes.m_size_in_bytes.to_uhwi ());
-	  return mgr->get_or_create_repeated_svalue (type, byte_size,
-						     innermost_sval);
-	}
-    }
-
-  /* Fold:
-       BITS_WITHIN (range, REPEATED_SVALUE (INNERMOST_SVALUE))
-     to:
-       BITS_WITHIN (range - offset, INNERMOST_SVALUE)
-     if range is fully within one instance of INNERMOST_SVALUE.  */
-  if (tree innermost_type = innermost_sval->get_type ())
-    {
-      bit_size_t element_bit_size;
-      if (int_size_in_bits (innermost_type, &element_bit_size)
-	  && element_bit_size > 0)
-	{
-	  HOST_WIDE_INT start_idx
-	    = (bits.get_start_bit_offset ()
-	       / element_bit_size).to_shwi ();
-	  HOST_WIDE_INT last_idx
-	    = (bits.get_last_bit_offset ()
-	       / element_bit_size).to_shwi ();
-	  if (start_idx == last_idx)
-	    {
-	      bit_offset_t start_of_element
-		= start_idx * element_bit_size;
-	      bit_range range_within_element
-		(bits.m_start_bit_offset - start_of_element,
-		 bits.m_size_in_bits);
-	      return mgr->get_or_create_bits_within (type,
-						     range_within_element,
-						     innermost_sval);
-	    }
-	}
-    }
-
-  return nullptr;
-}
-
-/* class bits_within_svalue : public svalue.  */
-
-/* bits_within_svalue'c ctor.  */
-
-bits_within_svalue::bits_within_svalue (symbol::id_t id,
-					tree type,
-					const bit_range &bits,
-					const svalue *inner_svalue)
-: svalue (complexity (inner_svalue), id, type),
-  m_bits (bits),
-  m_inner_svalue (inner_svalue)
-{
-  gcc_assert (inner_svalue->can_have_associated_state_p ());
-}
-
-/* Implementation of svalue::dump_to_pp vfunc for bits_within_svalue.  */
-
-void
-bits_within_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
-{
-  if (simple)
-    {
-      pp_string (pp, "BITS_WITHIN(");
-      if (get_type ())
-	{
-	  print_quoted_type (pp, get_type ());
-	  pp_string (pp, ", ");
-	}
-      m_bits.dump_to_pp (pp);
-      pp_string (pp, ", inner_val: ");
-      m_inner_svalue->dump_to_pp (pp, simple);
-      pp_character (pp, ')');
-    }
-  else
-    {
-      pp_string (pp, "bits_within_svalue (");
-      if (get_type ())
-	{
-	  print_quoted_type (pp, get_type ());
-	  pp_string (pp, ", ");
-	}
-      m_bits.dump_to_pp (pp);
-      pp_string (pp, ", inner_val: ");
-      m_inner_svalue->dump_to_pp (pp, simple);
-      pp_character (pp, ')');
-    }
-}
-
-/* Implementation of svalue::print_dump_widget_label vfunc for
-   bits_within_svalue.  */
-
-void
-bits_within_svalue::print_dump_widget_label (pretty_printer *pp) const
-{
-  pp_printf (pp, "bits_within_svalue: ");
-  m_bits.dump_to_pp (pp);
-}
-
-/* Implementation of svalue::add_dump_widget_children vfunc for
-   bits_within_svalue.  */
-
-void
-bits_within_svalue::
-add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
-{
-  w.add_child (m_inner_svalue->make_dump_widget (dwi, "m_inner_svalue"));
-}
-
-/* Implementation of svalue::maybe_fold_bits_within vfunc
-   for bits_within_svalue.  */
-
-const svalue *
-bits_within_svalue::maybe_fold_bits_within (tree type,
-					    const bit_range &bits,
-					    region_model_manager *mgr) const
-{
-  /* Fold:
-       BITS_WITHIN (range1, BITS_WITHIN (range2, VAL))
-     to:
-       BITS_WITHIN (range1 in range 2, VAL).  */
-  bit_range offset_bits (m_bits.get_start_bit_offset ()
-			 + bits.m_start_bit_offset,
-			 bits.m_size_in_bits);
-  return mgr->get_or_create_bits_within (type, offset_bits, m_inner_svalue);
-}
-
-/* Implementation of svalue::accept vfunc for bits_within_svalue.  */
-
-void
-bits_within_svalue::accept (visitor *v) const
-{
-  m_inner_svalue->accept (v);
-  v->visit_bits_within_svalue (this);
-}
-
-/* Implementation of svalue::implicitly_live_p vfunc for bits_within_svalue.  */
 
 bool
-bits_within_svalue::implicitly_live_p (const svalue_set *live_svalues,
-				       const region_model *model) const
+svalue_from_bit_vector::maybe_get_value_range_1 (value_range &out) const
 {
-  return m_inner_svalue->live_p (live_svalues, model);
+  tree type = get_type ();
+  if (!type_can_have_value_range_p (type))
+    return false;
+
+  out.set_varying (type);
+
+  irange_bitmask bm;
+  if (m_bv.maybe_get_irange_bitmask (&bm))
+    out.update_bitmask (bm);
+
+  return true;
+}
+
+bool
+svalue_from_bit_vector::conjured_p () const
+{
+  return m_bv.conjured_p ();
 }
 
 /* class widening_svalue : public svalue.  */
+
+bool
+widening_svalue::key_t::operator< (const key_t &other) const
+{
+  if (int c = cmp_types (m_type, other.m_type))
+    return c < 0;
+  if (int c = m_snode->m_id - other.m_snode->m_id)
+    return c < 0;
+  if (int c = symbolic::node::cmp_ids (m_base_sval, other.m_base_sval))
+    return c < 0;
+  if (int c = symbolic::node::cmp_ids (m_iter_sval, other.m_iter_sval))
+    return c < 0;
+  return false;
+}
 
 /* Implementation of svalue::dump_to_pp vfunc for widening_svalue.  */
 
@@ -2098,11 +1841,11 @@ widening_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    widening_svalue.  */
 
 void
-widening_svalue::print_dump_widget_label (pretty_printer *pp) const
+widening_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "widening_svalue at ");
   m_snode->print (pp);
@@ -2114,10 +1857,36 @@ widening_svalue::print_dump_widget_label (pretty_printer *pp) const
 void
 widening_svalue::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
-  w.add_child (m_base_sval->make_dump_widget (dwi, "m_base_sval"));
-  w.add_child (m_iter_sval->make_dump_widget (dwi, "m_iter_sval"));
+  svalue::add_dump_widget_children (w, nds);
+  w.add_child (m_base_sval->make_dump_widget (nds, "m_base_sval"));
+  w.add_child (m_iter_sval->make_dump_widget (nds, "m_iter_sval"));
+}
+
+void
+widening_svalue::accept_node_visitor (symbolic::node_visitor &v) const
+{
+  if (v.visit_svalue (*this))
+    {
+      m_base_sval->accept_node_visitor (v);
+      m_iter_sval->accept_node_visitor (v);
+    }
+}
+
+std::unique_ptr<json::object>
+widening_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("widening_svalue");
+  obj->set ("base_sval", m_base_sval->to_json ());
+  obj->set ("iter_sval", m_iter_sval->to_json ());
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+widening_svalue::make_markup_node (symbolic::markup_context &) const
+{
+  return diagnostics::markup::make_text_node ("widening_svalue");
 }
 
 /* Implementation of svalue::accept vfunc for widening_svalue.  */
@@ -2181,7 +1950,7 @@ widening_svalue::eval_condition_without_cm (enum tree_code op,
 	case LT_EXPR:
 	  {
 	    /* [BASE, +INF) OP RHS:
-	       This is either true or false at +ve ininity,
+	       This is either true or false at +ve infinity,
 	       It can be true for points X where X OP RHS, so we have either
 	       "false", or "unknown".  */
 	    tree base_op_rhs = fold_binary (op, boolean_type_node,
@@ -2258,24 +2027,33 @@ placeholder_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     pp_printf (pp, "placeholder_svalue (%qs)", m_name);
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    placeholder_svalue.  */
 
 void
-placeholder_svalue::print_dump_widget_label (pretty_printer *pp) const
+placeholder_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "placeholder_svalue: %qs", m_name);
 }
 
-/* Implementation of svalue::add_dump_widget_children vfunc for
-   placeholder_svalue.  */
-
 void
-placeholder_svalue::
-add_dump_widget_children (text_art::tree_widget &,
-			  const text_art::dump_widget_info &) const
+placeholder_svalue::accept_node_visitor (symbolic::node_visitor &v) const
 {
-  /* No children.  */
+  v.visit_svalue (*this);
+}
+
+std::unique_ptr<json::object>
+placeholder_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("placeholder_svalue");
+  obj->set_string ("name", m_name);
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+placeholder_svalue::make_markup_node (symbolic::markup_context &) const
+{
+  return diagnostics::markup::make_text_node (m_name);
 }
 
 /* Implementation of svalue::accept vfunc for placeholder_svalue.  */
@@ -2307,11 +2085,11 @@ unmergeable_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    unmergeable_svalue.  */
 
 void
-unmergeable_svalue::print_dump_widget_label (pretty_printer *pp) const
+unmergeable_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "unmergeable_svalue");
 }
@@ -2322,9 +2100,35 @@ unmergeable_svalue::print_dump_widget_label (pretty_printer *pp) const
 void
 unmergeable_svalue::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
-  w.add_child (m_arg->make_dump_widget (dwi));
+  svalue::add_dump_widget_children (w, nds);
+  w.add_child (m_arg->make_dump_widget (nds));
+}
+
+void
+unmergeable_svalue::accept_node_visitor (symbolic::node_visitor &v) const
+{
+  if (v.visit_svalue (*this))
+    m_arg->accept_node_visitor (v);
+}
+
+std::unique_ptr<json::object>
+unmergeable_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("unmergeable_svalue");
+  obj->set ("arg", m_arg->to_json ());
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+unmergeable_svalue::
+make_markup_node (symbolic::markup_context &markup_ctxt) const
+{
+  if (markup_ctxt.m_user_facing)
+    return m_arg->make_markup_node (markup_ctxt);
+  else
+    return diagnostics::markup::make_text_node ("unmergeable_svalue");
 }
 
 /* Implementation of svalue::accept vfunc for unmergeable_svalue.  */
@@ -2339,259 +2143,30 @@ unmergeable_svalue::accept (visitor *v) const
 /* Implementation of svalue::implicitly_live_p vfunc for unmergeable_svalue.  */
 
 bool
-unmergeable_svalue::implicitly_live_p (const svalue_set *live_svalues,
-				       const region_model *model) const
+unmergeable_svalue::
+implicitly_live_p (symbolic::liveness_context &liveness_ctxt) const
 {
-  return get_arg ()->live_p (live_svalues, model);
-}
-
-/* class compound_svalue : public svalue.  */
-
-compound_svalue::compound_svalue (symbol::id_t id,
-				  tree type,
-				  const binding_map &map)
-: svalue (calc_complexity (map), id, type), m_map (map)
-{
-#if CHECKING_P
-  for (auto iter : *this)
-    {
-      /* All keys within the underlying binding_map are required to be concrete,
-	 not symbolic.  */
-      const binding_key *key = iter.m_key;
-      gcc_assert (key->concrete_p ());
-
-      /* We don't nest compound svalues.  */
-      const svalue *sval = iter.m_sval;
-      gcc_assert (sval->get_kind () != SK_COMPOUND);
-    }
-#endif
-}
-
-/* Implementation of svalue::dump_to_pp vfunc for compound_svalue.  */
-
-void
-compound_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
-{
-  if (simple)
-    {
-      pp_string (pp, "COMPOUND(");
-      if (get_type ())
-	{
-	  print_quoted_type (pp, get_type ());
-	  pp_string (pp, ", ");
-	}
-      pp_character (pp, '{');
-      m_map.dump_to_pp (pp, simple, false);
-      pp_string (pp, "})");
-    }
-  else
-    {
-      pp_string (pp, "compound_svalue (");
-      if (get_type ())
-	{
-	  print_quoted_type (pp, get_type ());
-	  pp_string (pp, ", ");
-	}
-      pp_character (pp, '{');
-      m_map.dump_to_pp (pp, simple, false);
-      pp_string (pp, "})");
-    }
-}
-
-/* Implementation of svalue::print_dump_widget_label vfunc for
-   compound_svalue.  */
-
-void
-compound_svalue::print_dump_widget_label (pretty_printer *pp) const
-{
-  pp_printf (pp, "compound_svalue");
-}
-
-/* Implementation of svalue::add_dump_widget_children vfunc for
-   compound_svalue.  */
-
-void
-compound_svalue::
-add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
-{
-  m_map.add_to_tree_widget (w, dwi);
-}
-
-/* Implementation of svalue::accept vfunc for compound_svalue.  */
-
-void
-compound_svalue::accept (visitor *v) const
-{
-  for (auto iter : m_map)
-    {
-      //iter.first.accept (v);
-      iter.m_sval->accept (v);
-    }
-  v->visit_compound_svalue (this);
-}
-
-/* Calculate what the complexity of a compound_svalue instance for MAP
-   will be, based on the svalues bound within MAP.  */
-
-complexity
-compound_svalue::calc_complexity (const binding_map &map)
-{
-  unsigned num_child_nodes = 0;
-  unsigned max_child_depth = 0;
-  for (auto iter : map)
-    {
-      const complexity &sval_c = iter.m_sval->get_complexity ();
-      num_child_nodes += sval_c.m_num_nodes;
-      max_child_depth = MAX (max_child_depth, sval_c.m_max_depth);
-    }
-  return complexity (num_child_nodes + 1, max_child_depth + 1);
-}
-
-/* Implementation of svalue::maybe_fold_bits_within vfunc
-   for compound_svalue.  */
-
-const svalue *
-compound_svalue::maybe_fold_bits_within (tree type,
-					 const bit_range &bits,
-					 region_model_manager *mgr) const
-{
-  binding_map result_map (*mgr->get_store_manager ());
-  for (auto iter : m_map)
-    {
-      const binding_key *key = iter.m_key;
-      if (const concrete_binding *conc_key
-	  = key->dyn_cast_concrete_binding ())
-	{
-	  /* Ignore concrete bindings outside BITS.  */
-	  if (!conc_key->get_bit_range ().intersects_p (bits))
-	    continue;
-
-	  const svalue *sval = iter.m_sval;
-	  /* Get the position of conc_key relative to BITS.  */
-	  bit_range result_location (conc_key->get_start_bit_offset ()
-				     - bits.get_start_bit_offset (),
-				     conc_key->get_size_in_bits ());
-	  /* If conc_key starts after BITS, trim off leading bits
-	     from the svalue and adjust binding location.  */
-	  if (result_location.m_start_bit_offset < 0)
-	    {
-	      bit_size_t leading_bits_to_drop
-		= -result_location.m_start_bit_offset;
-	      result_location = bit_range
-		(0, result_location.m_size_in_bits - leading_bits_to_drop);
-	      bit_range bits_within_sval (leading_bits_to_drop,
-					  result_location.m_size_in_bits);
-	      /* Trim off leading bits from iter_sval.  */
-	      sval = mgr->get_or_create_bits_within (NULL_TREE,
-						     bits_within_sval,
-						     sval);
-	    }
-	  /* If conc_key finishes after BITS, trim off trailing bits
-	     from the svalue and adjust binding location.  */
-	  if (conc_key->get_next_bit_offset ()
-	      > bits.get_next_bit_offset ())
-	    {
-	      bit_size_t trailing_bits_to_drop
-		= (conc_key->get_next_bit_offset ()
-		   - bits.get_next_bit_offset ());
-	      result_location = bit_range
-		(result_location.m_start_bit_offset,
-		 result_location.m_size_in_bits - trailing_bits_to_drop);
-	      bit_range bits_within_sval (0,
-					  result_location.m_size_in_bits);
-	      /* Trim off leading bits from iter_sval.  */
-	      sval = mgr->get_or_create_bits_within (NULL_TREE,
-						     bits_within_sval,
-						     sval);
-	    }
-	  const concrete_binding *offset_conc_key
-	    = mgr->get_store_manager ()->get_concrete_binding
-		(result_location);
-	  result_map.put (offset_conc_key, sval);
-	}
-      else
-	/* If we have any symbolic keys we can't get it as bits.  */
-	return nullptr;
-    }
-  return mgr->get_or_create_compound_svalue (type, result_map);
-}
-
-/* class conjured_svalue : public svalue.  */
-
-/* Implementation of svalue::dump_to_pp vfunc for conjured_svalue.  */
-
-void
-conjured_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
-{
-  if (simple)
-    {
-      pp_string (pp, "CONJURED(");
-      pp_gimple_stmt_1 (pp, m_stmt, 0, (dump_flags_t)0);
-      pp_string (pp, ", ");
-      m_id_reg->dump_to_pp (pp, simple);
-      pp_character (pp, ')');
-    }
-  else
-    {
-      pp_string (pp, "conjured_svalue (");
-      if (get_type ())
-	{
-	  print_quoted_type (pp, get_type ());
-	  pp_string (pp, ", ");
-	}
-      pp_gimple_stmt_1 (pp, m_stmt, 0, (dump_flags_t)0);
-      pp_string (pp, ", ");
-      m_id_reg->dump_to_pp (pp, simple);
-      pp_character (pp, ')');
-    }
-}
-
-/* Implementation of svalue::print_dump_widget_label vfunc for
-   conjured_svalue.  */
-
-void
-conjured_svalue::print_dump_widget_label (pretty_printer *pp) const
-{
-  pp_printf (pp, "conjured_svalue (");
-  pp_gimple_stmt_1 (pp, m_stmt, 0, (dump_flags_t)0);
-  if (m_idx != 0)
-    pp_printf (pp, ", %i", m_idx);
-  pp_character (pp, ')');
-}
-
-/* Implementation of svalue::add_dump_widget_children vfunc for
-   conjured_svalue.  */
-
-void
-conjured_svalue::
-add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
-{
-  w.add_child (m_id_reg->make_dump_widget (dwi));
-}
-
-/* Implementation of svalue::accept vfunc for conjured_svalue.  */
-
-void
-conjured_svalue::accept (visitor *v) const
-{
-  m_id_reg->accept (v);
-  v->visit_conjured_svalue (this);
-}
-
-/* Return true iff this conjured_svalue is for the LHS of the
-   stmt that conjured it.  */
-
-bool
-conjured_svalue::lhs_value_p () const
-{
-  if (tree decl = m_id_reg->maybe_get_decl ())
-    return decl == gimple_get_lhs (m_stmt);
-  return false;
+  return liveness_ctxt.node_live_p (*get_arg ());
 }
 
 /* class asm_output_svalue : public svalue.  */
+
+bool
+asm_output_svalue::key_t::operator< (const key_t &other) const
+{
+  if (int c = cmp_types (m_type, other.m_type))
+    return c < 0;
+  if (int c = strcmp (m_asm_string, other.m_asm_string))
+    return c < 0;
+  if (int c = (int)m_output_idx - (int)other.m_output_idx)
+    return c < 0;
+  if (int c = (int)m_num_inputs - (int)other.m_num_inputs)
+    return c < 0;
+  for (unsigned i = 0; i < m_num_inputs; i++)
+    if (int c = symbolic::node::cmp_ids (m_input_arr[i], other.m_input_arr[i]))
+      return c < 0;
+  return false;
+}
 
 /* Implementation of svalue::dump_to_pp vfunc for asm_output_svalue.  */
 
@@ -2626,11 +2201,11 @@ asm_output_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    asm_output_svalue.  */
 
 void
-asm_output_svalue::print_dump_widget_label (pretty_printer *pp) const
+asm_output_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "asm_output_svalue(%qs, %%%i)",
 	     get_asm_string (),
@@ -2643,15 +2218,44 @@ asm_output_svalue::print_dump_widget_label (pretty_printer *pp) const
 void
 asm_output_svalue::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
+  svalue::add_dump_widget_children (w, nds);
   for (unsigned i = 0; i < m_num_inputs; i++)
     {
       pretty_printer pp;
       pp_printf (&pp, "arg %i", i);
-      w.add_child (m_input_arr[i]->make_dump_widget (dwi,
+      w.add_child (m_input_arr[i]->make_dump_widget (nds,
 						     pp_formatted_text (&pp)));
     }
+}
+
+void
+asm_output_svalue::accept_node_visitor (symbolic::node_visitor &v) const
+{
+  if (v.visit_svalue (*this))
+    for (unsigned i = 0; i < m_num_inputs; i++)
+      m_input_arr[i]->accept_node_visitor (v);
+}
+
+std::unique_ptr<json::object>
+asm_output_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("asm_output_svalue");
+  obj->set_string ("id_reg", get_asm_string ());
+  obj->set_integer ("output_idx", get_output_idx ());
+  auto arr = std::make_unique<json::array> ();
+  for (unsigned i = 0; i < m_num_inputs; i++)
+    arr->append (m_input_arr[i]->to_json ());
+  obj->set ("input_arr", std::move (arr));
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+asm_output_svalue::
+make_markup_node (symbolic::markup_context &) const
+{
+  return diagnostics::markup::make_text_node ("asm_output_svalue");
 }
 
 /* Subroutine of asm_output_svalue::dump_to_pp.  */
@@ -2687,6 +2291,21 @@ asm_output_svalue::accept (visitor *v) const
 
 /* class const_fn_result_svalue : public svalue.  */
 
+bool
+const_fn_result_svalue::key_t::operator< (const key_t &other) const
+{
+  if (int c = cmp_types (m_type, other.m_type))
+    return c < 0;
+  if (int c = DECL_UID (m_fndecl) - DECL_UID (other.m_fndecl))
+    return c < 0;
+  if (int c = (int)m_num_inputs - (int)other.m_num_inputs)
+    return c < 0;
+  for (unsigned i = 0; i < m_num_inputs; i++)
+    if (int c = symbolic::node::cmp_ids (m_input_arr[i], other.m_input_arr[i]))
+      return c < 0;
+  return false;
+}
+
 /* Implementation of svalue::dump_to_pp vfunc for const_fn_result_svalue.  */
 
 void
@@ -2716,11 +2335,11 @@ const_fn_result_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
     }
 }
 
-/* Implementation of svalue::print_dump_widget_label vfunc for
+/* Implementation of svalue::print_svalue_for_dump_widget_label vfunc for
    const_fn_result_svalue.  */
 
 void
-const_fn_result_svalue::print_dump_widget_label (pretty_printer *pp) const
+const_fn_result_svalue::print_svalue_for_dump_widget_label (pretty_printer *pp) const
 {
   pp_printf (pp, "const_fn_result_svalue: %qD", m_fndecl);
 }
@@ -2731,15 +2350,43 @@ const_fn_result_svalue::print_dump_widget_label (pretty_printer *pp) const
 void
 const_fn_result_svalue::
 add_dump_widget_children (text_art::tree_widget &w,
-			  const text_art::dump_widget_info &dwi) const
+			  symbolic::node_dump_state &nds) const
 {
+  svalue::add_dump_widget_children (w, nds);
   for (unsigned i = 0; i < m_num_inputs; i++)
     {
       pretty_printer pp;
       pp_printf (&pp, "arg %i", i);
-      w.add_child (m_input_arr[i]->make_dump_widget (dwi,
+      w.add_child (m_input_arr[i]->make_dump_widget (nds,
 						     pp_formatted_text (&pp)));
     }
+}
+
+void
+const_fn_result_svalue::accept_node_visitor (symbolic::node_visitor &v) const
+{
+  if (v.visit_svalue (*this))
+    for (unsigned i = 0; i < m_num_inputs; i++)
+      m_input_arr[i]->accept_node_visitor (v);
+}
+
+std::unique_ptr<json::object>
+const_fn_result_svalue::to_json () const
+{
+  auto obj = svalue::make_json_obj ("const_fn_result_svalue");
+  obj->set ("fn_decl", tree_to_json (m_fndecl));
+  auto arr = std::make_unique<json::array> ();
+  for (unsigned i = 0; i < m_num_inputs; i++)
+    arr->append (m_input_arr[i]->to_json ());
+  obj->set ("input_arr", std::move (arr));
+  return obj;
+}
+
+std::unique_ptr<diagnostics::markup::node>
+const_fn_result_svalue::
+make_markup_node (symbolic::markup_context &) const
+{
+  return diagnostics::markup::make_text_node ("const_fn_result_svalue");
 }
 
 /* Subroutine of const_fn_result_svalue::dump_to_pp.  */

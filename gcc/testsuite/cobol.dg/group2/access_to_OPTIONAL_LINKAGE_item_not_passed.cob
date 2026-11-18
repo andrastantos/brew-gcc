@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/access_to_OPTIONAL_LINKAGE_item_not_passed.out" }
 
         identification   division.
@@ -24,7 +25,7 @@
           05 y          pic x(4).
         procedure        division using optional x.
         set py to address of x.
-        if py is not equal to zero
+        if py is not equal to null
             display y
         else
             display "parameter omitted"

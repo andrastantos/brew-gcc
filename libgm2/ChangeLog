@@ -1,3 +1,210 @@
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Use AC_CANONICAL_TARGET instead of
+	AC_CANONICAL_SYSTEM.  Remove unneeded AC_SUBST(target_alias).
+
+2026-11-07  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	* configure: Regenerate.
+	* configure.ac (maintainer-mode): Remove AC_ARG_ENABLE
+	definition.
+
+2026-11-04  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_CONFIG_HEADER with AC_CONFIG_HEADERS.
+
+2026-11-02  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Remove AC_LIBTOOL_DLOPEN and change LT_INIT to LT_INIT([dlopen]).
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* Makefile.in: Regenerate.
+	* acinclude.m4: Include ../config/mmap.m4.
+	* libm2cor/Makefile.in: Regenerate.
+	* libm2iso/Makefile.in: Regenerate.
+	* libm2log/Makefile.in: Regenerate.
+	* libm2min/Makefile.in: Regenerate.
+	* libm2pim/Makefile.in: Regenerate.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* configure: Regenerate.
+	* configure.ac: Drop AC_HEADER_STDC.
+
+2026-10-09  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127794
+	* libm2pim/Makefile.am (M2DEFS): Add LongStorage.def
+	and LongSysStorage.def.
+	(M2MODS): Add LongStorage.mod and LongSysStorage.mod.
+	* libm2pim/Makefile.in: Regenerate.
+
+2026-09-16  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127359
+	* libm2cor/Makefile.am: Use $(SHELL) to invoke makeSystem.
+	* libm2iso/Makefile.am: Ditto.
+	* libm2min/Makefile.am: Ditto.
+	* libm2pim/Makefile.am: Ditto.
+	* libm2pim/Makefile.in:	Rebuild.
+	* libm2cor/Makefile.in:	Ditto.
+	* libm2iso/Makefile.in:	Ditto.
+	* libm2min/Makefile.in:	Ditto.
+
+2026-09-15  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127359
+	* libm2cor/Makefile.am: Replace bash with sh.
+	* libm2iso/Makefile.am: Ditto.
+	* libm2min/Makefile.am: Ditto.
+	* libm2pim/Makefile.am: Ditto.
+	* libm2iso/Makefile.in: Regenerate.
+	* libm2cor/Makefile.in: Ditto.
+	* libm2min/Makefile.in: Ditto.
+	* libm2pim/Makefile.in:	Ditto.
+
+2026-09-13  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* acinclude.m4: Rename configure variables to match the
+	library.
+	* configure.ac: Likewise.
+	* configure.host: Likewise.
+	* libm2iso/wrapclock.cc: Likewise.
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* Makefile.in: Regenerate.
+	* libm2cor/Makefile.in: Regenerate.
+	* libm2iso/Makefile.in: Regenerate.
+	* libm2log/Makefile.in: Regenerate.
+	* libm2min/Makefile.in: Regenerate.
+	* libm2pim/Makefile.in: Regenerate.
+
+2026-09-13  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* libm2iso/wrapclock.cc (GetTimeRealtime): Provide a fallback when
+	clock_gettime is not available.
+
+2026-09-13  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* acinclude.m4:  Do not gate the use of 'timespec' with
+	_POSIX_TIMERS > 0. For the auto case, set ac_has_clock_monotonic
+	and ac_has_clock_realtime for Darwin versions that implement them.
+	* configure: Regenerate.
+
+2026-09-13  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* libm2iso/wrapclock.cc: Use stdlib.h instead of
+	malloc.h.
+	* libm2iso/wrapsock.c: Likewise.
+	* libm2iso/wraptime.cc: Likewise.
+
+2026-09-11  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	* Makefile.am (GM2_FOR_TARGET_ESC): Remove.
+	* Makefile.in: Rebuild.
+	* libm2iso/Makefile.am (GM2_FOR_TARGET_ESC): Remove
+	and replace with "$(GM2_FOR_TARGET)".
+	* libm2iso/Makefile.in: Rebuild.
+	* libm2min/Makefile.am (GM2_FOR_TARGET_ESC): Remove
+	and replace with "$(GM2_FOR_TARGET)".
+	* libm2min/Makefile.in: Rebuild.
+	* libm2pim/Makefile.am (GM2_FOR_TARGET_ESC): Remove
+	and replace with "$(GM2_FOR_TARGET)".
+	* libm2pim/Makefile.in: Rebuild.
+
+2026-08-27  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	* ax_python_interpreter.m4 (AC_PYTHON_INTERPRETER): Add
+	double quotes to $1 in test.
+	* configure: Regenerate.
+
+2026-08-24  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/126847
+	PR modula2/125129
+	PR modula2/126863
+	* Makefile.in: Regenerate.
+	* aclocal.m4: Regenerate.
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Call AC_PYTHON_INTERPRETER.
+	Remove call to AC_PYTHON_DEVEL.
+	* libm2cor/Makefile.in: Regenerate.
+	* libm2iso/Makefile.in: Regenerate.
+	* libm2log/Makefile.in: Regenerate.
+	* libm2min/Makefile.in: Regenerate.
+	* libm2pim/Makefile.in: Regenerate.
+	* ax_python_devel.m4: Removed.
+	* ax_python_interpreter.m4: New file.
+
+2026-08-12  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/125129
+	* Makefile.am (GM2_FOR_TARGET_ESC): New define.
+	(AM_MAKEFLAGS): Add GM2_FOR_TARGET_ESC.
+	Add HAVE_PYTHON_INTERPRETER.
+	* Makefile.in: Regenerate.
+	* aclocal.m4: Regenerate.
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Call AC_PYTHON_DEVEL.
+	Call GCC_PICFLAG.
+	* libm2cor/Makefile.am (libm2cor_la_M2FLAGS): Add
+	gm2-libs-cor-common and pathname.
+	(SYSTEM.def): Rewrite rule.
+	(SYSTEM.mod): Copy common file.
+	* libm2cor/Makefile.in: Regenerate.
+	* libm2iso/Makefile.am (AM_MAKEFLAGS): Add GM2_FOR_TARGET_ESC.
+	Add HAVE_PYTHON_INTERPRETER.
+	(libm2iso_la_CFLAGS): Add m2pim pathname and ../libm2pim to
+	include path.
+	* libm2log/Makefile.am: Rewrite to handle HAVE_PYTHON_INTERPRETER.
+	Falling back to the common versions of target sources if
+	HAVE_PYTHON_INTERPRETER is false.
+	* libm2min/Makefile.am: Ditto.
+	* libm2pim/Makefile.am:	Ditto.
+	* libm2iso/Makefile.in: Regenerate.
+	* libm2log/Makefile.in: Regenerate.
+	* libm2min/Makefile.in: Regenerate.
+	* libm2pim/Makefile.in: Regenerate.
+	* ax_python_devel.m4: New file.
+
+2026-07-09  Stefan Schulze Frielinghaus  <stefansf@gcc.gnu.org>
+
+	* configure.host: Remove s390 host part; keep s390x.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* acinclude.m4: Replace AC_HELP_STRING with AS_HELP_STRING.  Replace
+	AC_LANG_SAVE AC_LANG_CPLUSPLUS (...) AC_LANG_RESTORE with
+	AC_LANG_PUSH([C++]) (...) AC_LANG_POP([C++]).  Replace AC_TRY_LINK with
+	AC_LINK_IFELSE.  Replace AC_TRY_COMPILE with AC_COMPILE_IFELSE.
+	* configure: Regenerate.
+	* configure.ac: Replace AC_HELP_STRING AS_HELP_STRING.  Remove redundant
+	AM_PROG_LIBTOOL.  Replace AC_LANG_C with AC_LANG([C]).  Replace
+	AC_FOREACH with m4_foreach_w.
+
+2026-06-01  Jakub Jelinek  <jakub@redhat.com>
+
+	* configure: Regenerate.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* configure.ac: Fix typos.
+
 2026-04-21  Gaius Mulley  <gaiusmod2@gmail.com>
 
 	PR modula2/120189

@@ -563,8 +563,8 @@
 
 #ifndef __cpp_named_character_escapes
 #  error "__cpp_named_character_escapes"
-#elif __cpp_named_character_escapes != 202207
-#  error "__cpp_named_character_escapes != 202207"
+#elif __cpp_named_character_escapes != 202606
+#  error "__cpp_named_character_escapes != 202606"
 #endif
 
 #ifndef __cpp_static_call_operator
@@ -651,4 +651,22 @@
 #  error "__cpp_expansion_statements"
 #elif __cpp_expansion_statements != 202506
 #  error "__cpp_expansion_statements != 202506"
+#endif
+
+#ifndef __cpp_trivial_union
+#  error "__cpp_trivial_union"
+#elif __cpp_trivial_union != 202603
+#  error "__cpp_trivial_union != 202603"
+#endif
+
+// C++26 attributes:
+
+#ifdef __has_cpp_attribute
+#  if ! __has_cpp_attribute(indeterminate)
+#    error "__has_cpp_attribute(indeterminate)"
+#  elif __has_cpp_attribute(indeterminate) != 202403
+#    error "__has_cpp_attribute(indeterminate) != 202403"
+#  endif
+#else
+#  error "__has_cpp_attribute"
 #endif

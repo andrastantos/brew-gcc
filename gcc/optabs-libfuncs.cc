@@ -362,22 +362,16 @@ gen_int_unsigned_fixed_libfunc (optab optable, const char *name, char suffix,
     gen_unsigned_fixed_libfunc (optable, name, suffix, mode);
 }
 
-/* Initialize the libfunc fields of an entire group of entries of an
-   inter-mode-class conversion optab.  The string formation rules are
-   similar to the ones for init_libfuncs, above, but instead of having
-   a mode name and an operand count these functions have two mode names
-   and no operand count.  */
+/* Helper function for gen_interclass_conv_libfunc and gen_bitint_fp_libfunc.
+   Return name for interclass conversion function.  */
 
-void
-gen_interclass_conv_libfunc (convert_optab tab,
-			     const char *opname,
-			     machine_mode tmode,
-			     machine_mode fmode)
+static const char *
+gen_interclass_conv_libfunc_name (const char *opname, bool decimal_p,
+				  const char *tname, const char *fname)
 {
   size_t opname_len = strlen (opname);
   size_t mname_len = 0;
 
-  const char *fname, *tname;
   const char *q;
   int prefix_len = targetm.libfunc_gnu_prefix ? 6 : 2;
   char *libfunc_name, *suffix;
@@ -388,7 +382,7 @@ gen_interclass_conv_libfunc (convert_optab tab,
      depends on which underlying decimal floating point format is used.  */
   const size_t dec_len = sizeof (DECIMAL_PREFIX) - 1;
 
-  mname_len = strlen (GET_MODE_NAME (tmode)) + strlen (GET_MODE_NAME (fmode));
+  mname_len = strlen (tname) + strlen (fname);
 
   nondec_name = XALLOCAVEC (char, prefix_len + opname_len + mname_len + 1 + 1);
   nondec_name[0] = '_';
@@ -411,10 +405,7 @@ gen_interclass_conv_libfunc (convert_optab tab,
   memcpy (&dec_name[2+dec_len], opname, opname_len);
   dec_suffix = dec_name + dec_len + opname_len + 2;
 
-  fname = GET_MODE_NAME (fmode);
-  tname = GET_MODE_NAME (tmode);
-
-  if (DECIMAL_FLOAT_MODE_P (fmode) || DECIMAL_FLOAT_MODE_P (tmode))
+  if (decimal_p)
     {
       libfunc_name = dec_name;
       suffix = dec_suffix;
@@ -433,8 +424,28 @@ gen_interclass_conv_libfunc (convert_optab tab,
 
   *p = '\0';
 
-  set_conv_libfunc (tab, tmode, fmode,
-		    ggc_alloc_string (libfunc_name, p - libfunc_name));
+  return ggc_alloc_string (libfunc_name, p - libfunc_name);
+}
+
+/* Initialize the libfunc fields of an entire group of entries of an
+   inter-mode-class conversion optab.  The string formation rules are
+   similar to the ones for init_libfuncs, above, but instead of having
+   a mode name and an operand count these functions have two mode names
+   and no operand count.  */
+
+void
+gen_interclass_conv_libfunc (convert_optab tab,
+			     const char *opname,
+			     machine_mode tmode,
+			     machine_mode fmode)
+{
+  const char *name
+    = gen_interclass_conv_libfunc_name (opname,
+					DECIMAL_FLOAT_MODE_P (fmode)
+					|| DECIMAL_FLOAT_MODE_P (tmode),
+					GET_MODE_NAME (tmode),
+					GET_MODE_NAME (fmode));
+  set_conv_libfunc (tab, tmode, fmode, name);
 }
 
 /* Same as gen_interclass_conv_libfunc but verify that we are producing
@@ -701,6 +712,29 @@ gen_satfractuns_conv_libfunc (convert_optab tab,
     return;
 
   gen_interclass_conv_libfunc (tab, opname, tmode, fmode);
+}
+
+/* Pick proper libcall for bitinttofp_optab and bitintfromfp_optab.  */
+
+void
+gen_bitint_fp_libfunc (optab optable, const char *opname, char suffix,
+		       machine_mode mode)
+{
+  if (DECIMAL_FLOAT_MODE_P (mode) || GET_MODE_CLASS (mode) == MODE_FLOAT)
+    {
+      const char *name;
+      if (suffix == '0')
+	name = gen_interclass_conv_libfunc_name (opname,
+						 DECIMAL_FLOAT_MODE_P (mode),
+						 GET_MODE_NAME (mode),
+						 "bitint");
+      else
+	name = gen_interclass_conv_libfunc_name (opname,
+						 DECIMAL_FLOAT_MODE_P (mode),
+						 "bitint",
+						 GET_MODE_NAME (mode));
+      set_optab_libfunc (optable, mode, name);
+    }
 }
 
 /* Hashtable callbacks for libfunc_decls.  */

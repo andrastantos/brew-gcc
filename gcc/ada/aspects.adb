@@ -24,7 +24,6 @@
 ------------------------------------------------------------------------------
 
 with Atree;          use Atree;
-with Debug;          use Debug;
 with Einfo.Entities; use Einfo.Entities;
 with Einfo.Utils;    use Einfo.Utils;
 with Nlists;         use Nlists;
@@ -279,14 +278,6 @@ package body Aspects is
 
    function Get_Aspect_Id (Name : Name_Id) return Aspect_Id is
    begin
-      --  Aspect Unsigned_Base_Range temporarily disabled
-
-      if Name = Name_Unsigned_Base_Range
-        and then not Debug_Flag_Dot_U
-      then
-         return No_Aspect;
-      end if;
-
       return Aspect_Id_Hash_Table.Get (Name);
    end Get_Aspect_Id;
 
@@ -306,7 +297,9 @@ package body Aspects is
       Class_Present : Boolean := False) return Boolean
    is
    begin
-      return Present (Find_Aspect (Id, A, Class_Present => Class_Present));
+      return Present
+              (Find_Aspect
+                (Id, A, Class_Present => Class_Present, Or_Rep_Item => True));
    end Has_Aspect;
 
    function Has_Aspects (N : Node_Id) return Boolean

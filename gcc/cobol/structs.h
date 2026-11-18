@@ -34,8 +34,7 @@ extern tree var_decl_node_p_of( cbl_field_t *var );
 
 // Simple fetch
 extern tree member(tree var, const char *member_name);
-extern tree member(cbl_field_t *var, const char *member_name);
-extern tree member(cbl_refer_t refer, const char *member_name);
+extern tree member(const cbl_field_t *var, const char *member_name);
 
 extern tree member(cbl_file_t *var, const char *member_name);
 extern tree member2(tree var, const char *member_name, const char *submember);
@@ -46,6 +45,7 @@ extern void member(tree var, const char *member_name, tree value);
 extern void member(cbl_field_t *var, const char *member_name, tree value);
 
 extern void member2(tree var, const char *member_name, const char *submember, int value);
+extern void member2(tree var, const char *member_name, const char *submember, int value);
 extern void member2(tree var, const char *member_name, const char *submember, tree value);
 extern void member3(tree var, const char *mem, const char *sub1, const char *sub2, tree value);
 
@@ -54,7 +54,10 @@ extern GTY(()) tree cblc_field_p_type_node;
 extern GTY(()) tree cblc_field_pp_type_node;
 extern GTY(()) tree cblc_file_type_node;
 extern GTY(()) tree cblc_file_p_type_node;
+extern GTY(()) tree cblc_file_pp_type_node;
 extern GTY(()) tree cblc_goto_type_node;
+extern GTY(()) tree cblc_referlet_type_node;
+extern GTY(()) tree cblc_refer_type_node;
 
 extern void create_our_type_nodes();
 

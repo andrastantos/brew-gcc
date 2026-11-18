@@ -48,7 +48,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-array-bounds.h"
 #include "gimple-range.h"
 #include "gimple-range-path.h"
-#include "value-pointer-equiv.h"
 #include "gimple-fold.h"
 #include "tree-dfa.h"
 #include "tree-ssa-dce.h"
@@ -94,7 +93,7 @@ public:
   bool remove ();
   bool remove_and_update_globals ();
   bool fully_replaceable (tree name, basic_block bb);
-  vec<std::pair<int, int> > m_list;
+  vec<edge> m_list;
   range_query &m_ranger;
   bool final_p;
   bitmap m_tmp;
@@ -132,7 +131,7 @@ remove_unreachable::maybe_register (gimple *s)
   if (!final_p)
     handle_early (s, e);
   else
-    m_list.safe_push (std::make_pair (e->src->index, e->dest->index));
+    m_list.safe_push (e);
 }
 
 // Return true if all uses of NAME are dominated by block BB.  1 use
@@ -199,7 +198,7 @@ remove_unreachable::fully_replaceable (tree name, basic_block bb)
 void
 remove_unreachable::handle_early (gimple *s, edge e)
 {
-  // If there is no gori_ssa, there is no early processsing.
+  // If there is no gori_ssa, there is no early processing.
   if (!m_ranger.gori_ssa ())
     return ;
   bool lhs_p = TREE_CODE (gimple_cond_lhs (s)) == SSA_NAME;
@@ -249,7 +248,7 @@ remove_unreachable::handle_early (gimple *s, edge e)
     {
       auto_bitmap dce;
       bitmap_set_bit (dce, SSA_NAME_VERSION (ssa));
-      simple_dce_from_worklist (dce);
+      simple_dce_from_worklist (dce, nullptr, true);
     }
 }
 
@@ -267,12 +266,7 @@ remove_unreachable::remove ()
   unsigned i;
   for (i = 0; i < m_list.length (); i++)
     {
-      auto eb = m_list[i];
-      basic_block src = BASIC_BLOCK_FOR_FN (cfun, eb.first);
-      basic_block dest = BASIC_BLOCK_FOR_FN (cfun, eb.second);
-      if (!src || !dest)
-	continue;
-      edge e = find_edge (src, dest);
+      edge e = m_list[i];
       gimple *s = gimple_outgoing_range_stmt_p (e->src);
       gcc_checking_assert (gimple_code (s) == GIMPLE_COND);
 
@@ -280,7 +274,7 @@ remove_unreachable::remove ()
       if (!name)
 	name = gimple_range_ssa_p (gimple_cond_rhs (s));
       // Check if global value can be set for NAME.
-      if (name && fully_replaceable (name, src))
+      if (name && fully_replaceable (name, e->src))
 	{
 	  value_range r (TREE_TYPE (name));
 	  if (gori_name_on_edge (r, name, e, &m_ranger))
@@ -323,12 +317,7 @@ remove_unreachable::remove_and_update_globals ()
   auto_bitmap all_exports;
   for (i = 0; i < m_list.length (); i++)
     {
-      auto eb = m_list[i];
-      basic_block src = BASIC_BLOCK_FOR_FN (cfun, eb.first);
-      basic_block dest = BASIC_BLOCK_FOR_FN (cfun, eb.second);
-      if (!src || !dest)
-	continue;
-      edge e = find_edge (src, dest);
+      edge e = m_list[i];
       gimple *s = gimple_outgoing_range_stmt_p (e->src);
       gcc_checking_assert (gimple_code (s) == GIMPLE_COND);
 
@@ -547,14 +536,10 @@ get_single_symbol (tree t, bool *neg, tree *inv)
 	+2 if VAL1 != VAL2
 
    This is similar to tree_int_cst_compare but supports pointer values
-   and values that cannot be compared at compile time.
-
-   If STRICT_OVERFLOW_P is not NULL, then set *STRICT_OVERFLOW_P to
-   true if the return value is only valid if we assume that signed
-   overflow is undefined.  */
+   and values that cannot be compared at compile time.  */
 
 int
-compare_values_warnv (tree val1, tree val2, bool *strict_overflow_p)
+compare_values (tree val1, tree val2)
 {
   if (val1 == val2)
     return 0;
@@ -593,13 +578,6 @@ compare_values_warnv (tree val1, tree val2, bool *strict_overflow_p)
       if (!overflow_undefined)
 	return -2;
 
-      if (strict_overflow_p != NULL
-	  /* Symbolic range building sets the no-warning bit to declare
-	     that overflow doesn't happen.  */
-	  && (!inv1 || !warning_suppressed_p (val1, OPT_Woverflow))
-	  && (!inv2 || !warning_suppressed_p (val2, OPT_Woverflow)))
-	*strict_overflow_p = true;
-
       if (!inv1)
 	inv1 = build_int_cst (TREE_TYPE (val1), 0);
       if (!inv2)
@@ -618,13 +596,6 @@ compare_values_warnv (tree val1, tree val2, bool *strict_overflow_p)
     {
       if (!overflow_undefined)
 	return -2;
-
-      if (strict_overflow_p != NULL
-	  /* Symbolic range building sets the no-warning bit to declare
-	     that overflow doesn't happen.  */
-	  && (!sym1 || !warning_suppressed_p (val1, OPT_Woverflow))
-	  && (!sym2 || !warning_suppressed_p (val2, OPT_Woverflow)))
-	*strict_overflow_p = true;
 
       const signop sgn = TYPE_SIGN (TREE_TYPE (val1));
       tree cst = cst1 ? val1 : val2;
@@ -688,41 +659,23 @@ compare_values_warnv (tree val1, tree val2, bool *strict_overflow_p)
       if (operand_equal_p (val1, val2, 0))
 	return 0;
 
-      fold_defer_overflow_warnings ();
-
       /* If VAL1 is a lower address than VAL2, return -1.  */
       tree t = fold_binary_to_constant (LT_EXPR, boolean_type_node, val1, val2);
       if (t && integer_onep (t))
-	{
-	  fold_undefer_and_ignore_overflow_warnings ();
-	  return -1;
-	}
+	return -1;
 
       /* If VAL1 is a higher address than VAL2, return +1.  */
       t = fold_binary_to_constant (LT_EXPR, boolean_type_node, val2, val1);
       if (t && integer_onep (t))
-	{
-	  fold_undefer_and_ignore_overflow_warnings ();
-	  return 1;
-	}
+	return 1;
 
       /* If VAL1 is different than VAL2, return +2.  */
       t = fold_binary_to_constant (NE_EXPR, boolean_type_node, val1, val2);
-      fold_undefer_and_ignore_overflow_warnings ();
       if (t && integer_onep (t))
 	return 2;
 
       return -2;
     }
-}
-
-/* Compare values like compare_values_warnv.  */
-
-int
-compare_values (tree val1, tree val2)
-{
-  bool sop;
-  return compare_values_warnv (val1, val2, &sop);
 }
 
 /* Helper for overflow_comparison_p
@@ -1000,23 +953,39 @@ public:
       m_simplifier (r, r->non_executable_edge_flag)
   {
     m_ranger = r;
-    m_pta = new pointer_equiv_analyzer (m_ranger);
     m_last_bb_stmt = NULL;
-  }
-
-  ~rvrp_folder ()
-  {
-    delete m_pta;
   }
 
   tree value_of_expr (tree name, gimple *s = NULL) override
   {
     // Shortcircuit subst_and_fold callbacks for abnormal ssa_names.
     if (TREE_CODE (name) == SSA_NAME && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (name))
-      return NULL;
-    tree ret = m_ranger->value_of_expr (name, s);
-    if (!ret && supported_pointer_equiv_p (name))
-      ret = m_pta->get_equiv (name);
+      return NULL_TREE;
+    if (!value_range::supports_type_p (TREE_TYPE (name)))
+      return NULL_TREE;
+
+    value_range r (TREE_TYPE (name));
+    if (!m_ranger->range_of_expr (r, name, s))
+      return NULL_TREE;
+
+    // A constant used in an unreachable block often returns as UNDEFINED.
+    // If the result is undefined, check the global value for a constant.
+    if (r.undefined_p ())
+      range_of_expr (r, name);
+
+    tree ret;
+    if (r.singleton_p (&ret))
+      return ret;
+    else
+      ret = NULL_TREE;
+    if (is_a <prange> (r))
+      {
+	prange &p = as_a <prange> (r);
+	ret = p.addr_known ();
+	// A const points has to be gimple_min_invariant.
+	gcc_checking_assert (!ret || is_gimple_min_invariant (ret));
+      }
+
     return ret;
   }
 
@@ -1025,9 +994,31 @@ public:
     // Shortcircuit subst_and_fold callbacks for abnormal ssa_names.
     if (TREE_CODE (name) == SSA_NAME && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (name))
       return NULL;
-    tree ret = m_ranger->value_on_edge (e, name);
-    if (!ret && supported_pointer_equiv_p (name))
-      ret = m_pta->get_equiv (name);
+    if (!value_range::supports_type_p (TREE_TYPE (name)))
+      return NULL_TREE;
+
+    value_range r (TREE_TYPE (name));
+    if (!m_ranger->range_on_edge (r, e, name))
+      return NULL_TREE;
+
+    // A constant used in an unreachable block often returns as UNDEFINED.
+    // If the result is undefined, check the global value for a constant.
+    if (r.undefined_p ())
+      range_of_expr (r, name);
+
+    tree ret;
+    if (r.singleton_p (&ret))
+      return ret;
+    else
+      ret = NULL_TREE;
+    if (is_a <prange> (r))
+      {
+	prange &p = as_a <prange> (r);
+	ret = p.addr_known ();
+	// A const points has to be gimple_min_invariant.
+	gcc_checking_assert (!ret || is_gimple_min_invariant (ret));
+      }
+
     return ret;
   }
 
@@ -1041,21 +1032,14 @@ public:
 
   void pre_fold_bb (basic_block bb) override
   {
-    m_pta->enter (bb);
     for (gphi_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi);
 	 gsi_next (&gsi))
       m_ranger->register_inferred_ranges (gsi.phi ());
     m_last_bb_stmt = last_nondebug_stmt (bb);
   }
 
-  void post_fold_bb (basic_block bb) override
-  {
-    m_pta->leave (bb);
-  }
-
   void pre_fold_stmt (gimple *stmt) override
   {
-    m_pta->visit_stmt (stmt);
     // If this is the last stmt and there are inferred ranges, reparse the
     // block for transitive inferred ranges that occur earlier in the block.
     if (stmt == m_last_bb_stmt)
@@ -1081,7 +1065,6 @@ private:
   DISABLE_COPY_AND_ASSIGN (rvrp_folder);
   gimple_ranger *m_ranger;
   simplify_using_ranges m_simplifier;
-  pointer_equiv_analyzer *m_pta;
   gimple *m_last_bb_stmt;
 };
 
@@ -1146,7 +1129,7 @@ execute_ranger_vrp (struct function *fun, bool final_p)
 	{
 	  ipa_record_return_value_range (return_range);
 	  if (POINTER_TYPE_P (TREE_TYPE (TREE_TYPE (current_function_decl)))
-	      && return_range.nonzero_p ()
+	      && !return_range.contains_zero_p ()
 	      && cgraph_node::get (current_function_decl)
 			->add_detected_attribute ("returns_nonnull"))
 	    warn_function_returns_nonnull (current_function_decl);
@@ -1258,20 +1241,20 @@ execute_fast_vrp (struct function *fun, bool final_p)
 {
   calculate_dominance_info (CDI_DOMINATORS);
   dom_ranger dr;
+  // The relation oracle will be destroyed when the destructor for 'dr' runs.
+  dr.create_relation_oracle ();
   fvrp_folder folder (&dr, final_p);
 
-  gcc_checking_assert (!fun->x_range_query);
   set_all_edges_as_executable (fun);
-  fun->x_range_query = &dr;
-  // Create a relation oracle without transitives.
-  get_range_query (fun)->create_relation_oracle (false);
+  // Make DR the current range_query.
+  range_query *saved = set_range_query (fun, &dr);
 
   folder.substitute_and_fold ();
   if (folder.m_unreachable)
     folder.m_unreachable->remove ();
 
-  get_range_query (fun)->destroy_relation_oracle ();
-  fun->x_range_query = NULL;
+  range_query *q = set_range_query (fun, saved);
+  gcc_checking_assert (q == &dr);
   return 0;
 }
 

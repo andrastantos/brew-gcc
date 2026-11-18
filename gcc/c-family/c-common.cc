@@ -433,10 +433,13 @@ const struct c_common_resword c_common_reswords[] =
   { "__auto_type",	RID_AUTO_TYPE,	D_CONLY },
   { "__builtin_addressof", RID_ADDRESSOF, D_CXXONLY },
   { "__builtin_assoc_barrier", RID_BUILTIN_ASSOC_BARRIER, 0 },
+  { "__builtin_bitreverseg", RID_BUILTIN_BITREVERSEG, 0 },
   { "__builtin_bit_cast", RID_BUILTIN_BIT_CAST, D_CXXONLY },
+  { "__builtin_bswapg", RID_BUILTIN_BSWAPG, 0 },
   { "__builtin_call_with_static_chain",
     RID_BUILTIN_CALL_WITH_STATIC_CHAIN, D_CONLY },
   { "__builtin_choose_expr", RID_CHOOSE_EXPR, D_CONLY },
+  { "__builtin_clmulg", RID_BUILTIN_CLMULG, 0 },
   { "__builtin_complex", RID_BUILTIN_COMPLEX, D_CONLY },
   { "__builtin_convertvector", RID_BUILTIN_CONVERTVECTOR, 0 },
   { "__builtin_counted_by_ref", RID_BUILTIN_COUNTED_BY_REF, D_CONLY },
@@ -945,7 +948,7 @@ get_cpp_ttype_from_string_type (tree string_type)
   return CPP_OTHER;
 }
 
-/* The global record of string concatentations, for use in
+/* The global record of string concatenations, for use in
    extracting locations within string literals.  */
 
 GTY(()) string_concat_db *g_string_concat_db;
@@ -1380,6 +1383,9 @@ c_common_get_narrower (tree op, int *unsignedp_ptr)
   if (TREE_CODE (TREE_TYPE (op)) == ENUMERAL_TYPE
       && ENUM_IS_SCOPED (TREE_TYPE (op)))
     {
+      if (BITINT_TYPE_P (TREE_TYPE (op)))
+	return fold_convert (ENUM_UNDERLYING_TYPE (TREE_TYPE (op)), op);
+
       /* C++0x scoped enumerations don't implicitly convert to integral
 	 type; if we stripped an explicit conversion to a larger type we
 	 need to replace it so common_type will still work.  */
@@ -2087,6 +2093,7 @@ verify_tree (tree x, struct tlist **pbefore_sp, struct tlist **pno_sp,
     case CONSTRUCTOR:
     case SIZEOF_EXPR:
     case PAREN_SIZEOF_EXPR:
+    /* FIXME: Add C++ codes like NOEXCEPT_EXPR (cf. unevaluated_p) as well.  */
       return;
 
     case COMPOUND_EXPR:
@@ -2818,9 +2825,9 @@ c_common_signed_or_unsigned_type (int unsignedp, tree type)
       || TYPE_UNSIGNED (type) == unsignedp)
     return type;
 
-  if (TREE_CODE (type) == BITINT_TYPE
-      /* signed _BitInt(1) is invalid, avoid creating that.  */
-      && (unsignedp || TYPE_PRECISION (type) > 1))
+  if (BITINT_TYPE_P (type)
+      /* signed _BitInt(1) is invalid before C2Y, avoid creating that.  */
+      && (unsignedp || flag_isoc2y || TYPE_PRECISION (type) > 1))
     return build_bitint_type (TYPE_PRECISION (type), unsignedp);
 
 #define TYPE_OK(node)							    \
@@ -3422,12 +3429,6 @@ pointer_int_sum (location_t loc, enum tree_code resultcode,
 	}
     }
 
-  /* We are manipulating pointer values, so we don't need to warn
-     about relying on undefined signed overflow.  We disable the
-     warning here because we use integer types so fold won't know that
-     they are really pointers.  */
-  fold_defer_overflow_warnings ();
-
   /* If what we are about to multiply by the size of the elements
      contains a constant term, apply distributive law
      and multiply that constant term separately.
@@ -3476,8 +3477,6 @@ pointer_int_sum (location_t loc, enum tree_code resultcode,
 
       ret = fold_build_pointer_plus_loc (loc, ptrop, intop);
 
-      fold_undefer_and_ignore_overflow_warnings ();
-
       return ret;
     }
 
@@ -3505,8 +3504,6 @@ pointer_int_sum (location_t loc, enum tree_code resultcode,
     intop = fold_build1_loc (loc, NEGATE_EXPR, sizetype, intop);
 
   ret = fold_build_pointer_plus_loc (loc, ptrop, intop);
-
-  fold_undefer_and_ignore_overflow_warnings ();
 
   return ret;
 }
@@ -3880,7 +3877,7 @@ static void def_builtin_1  (enum built_in_function fncode,
 /* Apply the TYPE_QUALS to the new DECL.  */
 
 void
-c_apply_type_quals_to_decl (int type_quals, tree decl)
+c_apply_type_quals_to_decl (cv_qualifier type_quals, tree decl)
 {
   tree type = TREE_TYPE (decl);
 
@@ -3961,8 +3958,10 @@ c_common_get_alias_set (tree t)
 	 TYPE_ALIAS_SET_KNOWN_P.  */
       if (TYPE_UNSIGNED (t))
 	{
-	  /* There is no signed _BitInt(1).  */
-	  if (TREE_CODE (t) == BITINT_TYPE && TYPE_PRECISION (t) == 1)
+	  /* There is no signed _BitInt(1) before C2Y.  */
+	  if (TREE_CODE (t) == BITINT_TYPE
+	      && !flag_isoc2y
+	      && TYPE_PRECISION (t) == 1)
 	    return -1;
 	  tree t1 = c_common_signed_type (t);
 	  gcc_checking_assert (t != t1);
@@ -7356,7 +7355,8 @@ int
 complete_array_type (tree *ptype, tree initial_value, bool do_default)
 {
   tree maxindex, type, main_type, elt, unqual_elt;
-  int failure = 0, quals;
+  int failure = 0;
+  qualifier_set quals;
   bool overflow_p = false;
 
   maxindex = size_zero_node;
@@ -7450,10 +7450,13 @@ complete_array_type (tree *ptype, tree initial_value, bool do_default)
   type = *ptype;
   elt = TREE_TYPE (type);
   quals = TYPE_QUALS (strip_array_types (elt));
-  if (quals == 0)
+  if (!quals)
     unqual_elt = elt;
   else
-    unqual_elt = c_build_qualified_type (elt, KEEP_QUAL_ADDR_SPACE (quals));
+    unqual_elt = c_build_qualified_type (elt,
+					 /* Keep only the address space.  */
+					 {TYPE_UNQUALIFIED,
+					  quals.addr_space ()});
 
   /* Using build_distinct_type_copy and modifying things afterward instead
      of using build_array_type to create a new type preserves all of the
@@ -7489,7 +7492,7 @@ complete_array_type (tree *ptype, tree initial_value, bool do_default)
 			  TYPE_CANONICAL (TYPE_DOMAIN (main_type)),
 			  TYPE_TYPELESS_STORAGE (main_type));
 
-  if (quals == 0)
+  if (!quals)
     type = main_type;
   else
     type = c_build_qualified_type (main_type, quals);
@@ -7740,7 +7743,7 @@ sync_resolve_size (tree function, vec<tree, va_gc> *params, bool fetch,
 
   size = tree_to_uhwi (TYPE_SIZE_UNIT (type));
   if (size == 16
-      && TREE_CODE (type) == BITINT_TYPE
+      && BITINT_TYPE_P (type)
       && !targetm.scalar_mode_supported_p (TImode))
     {
       if (fetch && !orig_format)
@@ -7749,9 +7752,25 @@ sync_resolve_size (tree function, vec<tree, va_gc> *params, bool fetch,
     }
 
   if (size == 1 || size == 2 || size == 4 || size == 8 || size == 16)
-    return size;
+    {
+      /* For _BitInt with padding bits where the ABI mandates sign or
+	 zero extension into the padding bits, force a CAS loop so that
+	 the extension is properly performed.  */
+      if (fetch
+	  && BITINT_TYPE_P (type)
+	  && (TYPE_PRECISION (type)
+	      != GET_MODE_PRECISION (SCALAR_TYPE_MODE (type))))
+	{
+	  struct bitint_info info;
+	  bool ok = targetm.c.bitint_type_info (TYPE_PRECISION (type), &info);
+	  gcc_assert (ok);
+	  if (info.extended != bitint_ext_undef)
+	    return -1;
+	}
+      return size;
+    }
 
-  if (fetch && !orig_format && TREE_CODE (type) == BITINT_TYPE)
+  if (fetch && !orig_format && BITINT_TYPE_P (type))
     return -1;
 
  incompatible:
@@ -8007,9 +8026,9 @@ get_atomic_generic_size (location_t loc, tree function,
 
       {
 	auto_diagnostic_group d;
-	int quals = TYPE_QUALS (TREE_TYPE (type));
+	auto quals = TYPE_QUALS (TREE_TYPE (type));
 	/* Must not write to an argument of a const-qualified type.  */
-	if (outputs & (1 << x) && quals & TYPE_QUAL_CONST)
+	if (outputs & (1 << x) && quals.has (TYPE_QUAL_CONST))
 	  {
 	    if (c_dialect_cxx ())
 	      {
@@ -8026,7 +8045,7 @@ get_atomic_generic_size (location_t loc, tree function,
 		       function);
 	  }
 	/* Only the first argument is allowed to be volatile.  */
-	if (x > 0 && quals & TYPE_QUAL_VOLATILE)
+	if (x > 0 && quals.has (TYPE_QUAL_VOLATILE))
 	  {
 	    if (c_dialect_cxx ())
 	      {
@@ -8408,7 +8427,8 @@ resolve_overloaded_atomic_store (location_t loc, tree function,
 }
 
 /* Emit __atomic*fetch* on _BitInt which doesn't have a size of
-   1, 2, 4, 8 or 16 bytes using __atomic_compare_exchange loop.
+   1, 2, 4, 8 or 16 bytes (or if it has padding bits and they
+   need to be extended) using __atomic_compare_exchange loop.
    ORIG_CODE is the DECL_FUNCTION_CODE of ORIG_FUNCTION and
    ORIG_PARAMS arguments of the call.  */
 
@@ -8420,6 +8440,7 @@ atomic_bitint_fetch_using_cas_loop (location_t loc,
 {
   enum tree_code code = ERROR_MARK;
   bool return_old_p = false;
+  bool sync_p = false;
   switch (orig_code)
     {
     case BUILT_IN_ATOMIC_ADD_FETCH_N:
@@ -8462,13 +8483,65 @@ atomic_bitint_fetch_using_cas_loop (location_t loc,
       code = BIT_IOR_EXPR;
       return_old_p = true;
       break;
+    case BUILT_IN_SYNC_ADD_AND_FETCH_N:
+      code = PLUS_EXPR;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_SUB_AND_FETCH_N:
+      code = MINUS_EXPR;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_OR_AND_FETCH_N:
+      code = BIT_IOR_EXPR;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_AND_AND_FETCH_N:
+      code = BIT_AND_EXPR;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_XOR_AND_FETCH_N:
+      code = BIT_XOR_EXPR;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_NAND_AND_FETCH_N:
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_FETCH_AND_ADD_N:
+      code = PLUS_EXPR;
+      return_old_p = true;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_FETCH_AND_SUB_N:
+      code = MINUS_EXPR;
+      return_old_p = true;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_FETCH_AND_OR_N:
+      code = BIT_IOR_EXPR;
+      return_old_p = true;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_FETCH_AND_AND_N:
+      code = BIT_AND_EXPR;
+      return_old_p = true;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_FETCH_AND_XOR_N:
+      code = BIT_XOR_EXPR;
+      return_old_p = true;
+      sync_p = true;
+      break;
+    case BUILT_IN_SYNC_FETCH_AND_NAND_N:
+      return_old_p = true;
+      sync_p = true;
+      break;
     default:
       gcc_unreachable ();
     }
 
-  if (orig_params->length () != 3)
+  if (orig_params->length () != (sync_p ? 2 : 3))
     {
-      if (orig_params->length () < 3)
+      if (orig_params->length () < (sync_p ? 2 : 3))
 	error_at (loc, "too few arguments to function %qE", orig_function);
       else
 	error_at (loc, "too many arguments to function %qE", orig_function);
@@ -8479,16 +8552,18 @@ atomic_bitint_fetch_using_cas_loop (location_t loc,
 
   tree nonatomic_lhs_type = TREE_TYPE (TREE_TYPE ((*orig_params)[0]));
   nonatomic_lhs_type = TYPE_MAIN_VARIANT (nonatomic_lhs_type);
-  gcc_assert (TREE_CODE (nonatomic_lhs_type) == BITINT_TYPE);
+  gcc_assert (BITINT_TYPE_P (nonatomic_lhs_type));
 
   tree lhs_addr = (*orig_params)[0];
   tree val = convert (nonatomic_lhs_type, (*orig_params)[1]);
-  tree model = convert (integer_type_node, (*orig_params)[2]);
+  tree model
+    = sync_p ? NULL_TREE : convert (integer_type_node, (*orig_params)[2]);
   if (!c_dialect_cxx ())
     {
       lhs_addr = c_fully_fold (lhs_addr, false, NULL);
       val = c_fully_fold (val, false, NULL);
-      model = c_fully_fold (model, false, NULL);
+      if (model)
+	model = c_fully_fold (model, false, NULL);
     }
   if (TREE_SIDE_EFFECTS (lhs_addr))
     {
@@ -8504,7 +8579,7 @@ atomic_bitint_fetch_using_cas_loop (location_t loc,
 		    NULL_TREE);
       add_stmt (val);
     }
-  if (TREE_SIDE_EFFECTS (model))
+  if (model && TREE_SIDE_EFFECTS (model))
     {
       tree var = create_tmp_var_raw (integer_type_node);
       model = build4 (TARGET_EXPR, integer_type_node, var, model, NULL_TREE,
@@ -8521,6 +8596,8 @@ atomic_bitint_fetch_using_cas_loop (location_t loc,
   tree newval_addr = build_unary_op (loc, ADDR_EXPR, newval, false);
   TREE_ADDRESSABLE (newval) = 1;
   suppress_warning (newval);
+
+  tree retval = NULL_TREE;
 
   tree loop_decl = create_artificial_label (loc);
   tree loop_label = build1 (LABEL_EXPR, void_type_node, loop_decl);
@@ -8585,21 +8662,43 @@ atomic_bitint_fetch_using_cas_loop (location_t loc,
 
   /* if (__atomic_compare_exchange (addr, &old, &new, false, model, model))
        goto done;  */
-  fndecl = builtin_decl_explicit (BUILT_IN_ATOMIC_COMPARE_EXCHANGE);
-  params->quick_push (lhs_addr);
-  params->quick_push (old_addr);
-  params->quick_push (newval_addr);
-  params->quick_push (integer_zero_node);
-  params->quick_push (model);
-  if (tree_fits_uhwi_p (model)
-      && (tree_to_uhwi (model) == MEMMODEL_RELEASE
-	  || tree_to_uhwi (model) == MEMMODEL_ACQ_REL))
-    params->quick_push (build_int_cst (integer_type_node, MEMMODEL_RELAXED));
+  if (sync_p)
+    fndecl = builtin_decl_explicit (BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_N);
   else
-    params->quick_push (model);
+    fndecl = builtin_decl_explicit (BUILT_IN_ATOMIC_COMPARE_EXCHANGE);
+  params->quick_push (lhs_addr);
+  if (sync_p)
+    {
+      params->quick_push (old);
+      params->quick_push (newval);
+    }
+  else
+    {
+      params->quick_push (old_addr);
+      params->quick_push (newval_addr);
+      params->quick_push (integer_zero_node);
+      params->quick_push (model);
+      if (tree_fits_uhwi_p (model)
+	  && (tree_to_uhwi (model) == MEMMODEL_RELEASE
+	      || tree_to_uhwi (model) == MEMMODEL_ACQ_REL))
+	params->quick_push (build_int_cst (integer_type_node,
+					   MEMMODEL_RELAXED));
+      else
+	params->quick_push (model);
+    }
   func_call = resolve_overloaded_builtin (loc, fndecl, params);
   if (func_call == NULL_TREE)
     func_call = build_function_call_vec (loc, vNULL, fndecl, params, NULL);
+  if (sync_p)
+    {
+      if (return_old_p)
+	retval = create_tmp_var_raw (nonatomic_lhs_type);
+      else
+	retval = old;
+      func_call = build2 (MODIFY_EXPR, void_type_node, retval, func_call);
+      tree cmp = build2 (EQ_EXPR, boolean_type_node, retval, newval);
+      func_call = build2 (COMPOUND_EXPR, boolean_type_node, func_call, cmp);
+    }
 
   tree goto_stmt = build1 (GOTO_EXPR, void_type_node, done_decl);
   SET_EXPR_LOCATION (goto_stmt, loc);
@@ -8608,6 +8707,12 @@ atomic_bitint_fetch_using_cas_loop (location_t loc,
     = build3 (COND_EXPR, void_type_node, func_call, goto_stmt, NULL_TREE);
   SET_EXPR_LOCATION (stmt, loc);
   add_stmt (stmt);
+
+  if (sync_p && return_old_p)
+    {
+      stmt = build2_loc (loc, MODIFY_EXPR, void_type_node, old, retval);
+      add_stmt (stmt);
+    }
 
   /* goto loop;  */
   goto_stmt = build1 (GOTO_EXPR, void_type_node, loop_decl);
@@ -8872,7 +8977,7 @@ resolve_overloaded_builtin (location_t loc, tree function,
 	if (new_return)
 	  {
 	    /* Cast function result from I{1,2,4,8,16} to the required type.  */
-	    if (TREE_CODE (TREE_TYPE (new_return)) == BITINT_TYPE)
+	    if (BITINT_TYPE_P (TREE_TYPE (new_return)))
 	      {
 		struct bitint_info info;
 		unsigned prec = TYPE_PRECISION (TREE_TYPE (new_return));
@@ -9058,6 +9163,9 @@ user_facing_original_type_p (const_tree type)
   if (tree orig_id = TYPE_IDENTIFIER (orig_type))
     if (!name_reserved_for_implementation_p (IDENTIFIER_POINTER (orig_id)))
       return true;
+
+  if (typedef_variant_p (orig_type))
+    return user_facing_original_type_p (orig_type);
 
   switch (TREE_CODE (orig_type))
     {
@@ -9747,7 +9855,7 @@ cb_get_suggestion (cpp_reader *, const char *goal,
   return bm.get_best_meaningful_candidate ();
 }
 
-/* Return the latice point which is the wider of the two FLT_EVAL_METHOD
+/* Return the lattice point which is the wider of the two FLT_EVAL_METHOD
    modes X, Y.  This isn't just  >, as the FLT_EVAL_METHOD values added
    by C TS 18661-3 for interchange  types that are computed in their
    native precision are larger than the C11 values for evaluating in the
@@ -10234,7 +10342,7 @@ maybe_add_include_fixit (rich_location *richloc, const char *header,
 /* Attempt to convert a braced array initializer list CTOR for array
    TYPE into a STRING_CST for convenience and efficiency.  Return
    the converted string on success or the original ctor on failure.
-   Also, for non-convertable CTORs which contain RAW_DATA_CST values
+   Also, for non-convertible CTORs which contain RAW_DATA_CST values
    among the elts try to extend the range of RAW_DATA_CSTs.  */
 
 static tree
@@ -10559,19 +10667,6 @@ c_common_finalize_early_debug (void)
 	&& (cnode->has_gimple_body_p ()
 	    || !DECL_IS_UNDECLARED_BUILTIN (cnode->decl)))
       (*debug_hooks->early_global_decl) (cnode->decl);
-}
-
-/* Determine whether TYPE is an ISO C99 flexible array member type "[]".  */
-bool
-c_flexible_array_member_type_p (const_tree type)
-{
-  if (TREE_CODE (type) == ARRAY_TYPE
-      && TYPE_SIZE (type) == NULL_TREE
-      && TYPE_DOMAIN (type) != NULL_TREE
-      && TYPE_MAX_VALUE (TYPE_DOMAIN (type)) == NULL_TREE)
-    return true;
-
-  return false;
 }
 
 /* Get the LEVEL of the strict_flex_array for the ARRAY_FIELD based on the

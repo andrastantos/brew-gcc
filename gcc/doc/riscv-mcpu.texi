@@ -13,7 +13,7 @@
 @opindex mcpu
 @item -mcpu=@var{processor-string}
 Use architecture of and optimize the output for the given processor, specified
-by particular CPU name. Permissible values for this option are:
+by particular CPU name.  Permissible values for this option are:
 
 
 @samp{sifive-e20},
@@ -44,7 +44,11 @@ by particular CPU name. Permissible values for this option are:
 
 @samp{sifive-p450},
 
+@samp{sifive-p550},
+
 @samp{sifive-p670},
+
+@samp{sifive-p870-d},
 
 @samp{thead-c906},
 
@@ -60,7 +64,11 @@ by particular CPU name. Permissible values for this option are:
 
 @samp{xt-c920v2},
 
-@samp{tt-ascalon-d8},
+@samp{xt-c9501fdvt},
+
+@samp{tt-ascalon-x},
+
+@samp{tt-ascalon-xg},
 
 @samp{xiangshan-nanhu},
 
@@ -94,4 +102,8 @@ by particular CPU name. Permissible values for this option are:
 
 @samp{andes-ax45},
 
-@samp{spacemit-x60}.
+@samp{spacemit-x60},
+
+@samp{spacemit-x100},
+
+@samp{spacemit-a100}.

@@ -91,6 +91,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "errors.h"
 #include "read-md.h"
 #include "gensupport.h"
+#include "hash-map.h"
 #include "hash-table.h"
 
 /* No instruction can have more operands than this.  Sorry for this
@@ -154,6 +155,7 @@ public:
   const char *template_code;
   file_location loc;
   int code_number;
+  int output_code;		/* Which output_* to use.  */
   int n_generator_args;		/* Number of arguments passed to generator */
   int n_operands;		/* Number of operands this insn recognizes */
   int n_dups;			/* Number times match_dup appears in pattern */
@@ -168,7 +170,7 @@ public:
 static class data *idata;
 
 /* This variable points to the end of the insn chain.  This is where
-   everything relevant from the machien description is appended to.  */
+   everything relevant from the machine description is appended to.  */
 static class data **idata_end;
 
 
@@ -253,29 +255,19 @@ output_operand_data (void)
 
   for (d = odata; d; d = d->next)
     {
-      struct pred_data *pred;
+      struct pred_data *pred = NULL;
 
-      printf ("  {\n");
-
-      printf ("    %s,\n",
-	      d->predicate && d->predicate[0] ? d->predicate : "0");
-
-      printf ("    \"%s\",\n", d->constraint ? d->constraint : "");
-
-      printf ("    E_%smode,\n", GET_MODE_NAME (d->mode));
-
-      printf ("    %d,\n", d->strict_low);
-
-      printf ("    %d,\n", d->constraint == NULL ? 1 : 0);
-
-      printf ("    %d,\n", d->eliminable);
-
-      pred = NULL;
       if (d->predicate)
 	pred = lookup_predicate (d->predicate);
-      printf ("    %d\n", pred && pred->codes[MEM]);
 
-      printf ("  },\n");
+      printf ("  { %s, \"%s\", E_%smode, %d, %d, %d, %d },\n",
+	      d->predicate && d->predicate[0] ? d->predicate : "0",
+	      d->constraint ? d->constraint : "",
+	      GET_MODE_NAME (d->mode),
+	      d->strict_low,
+	      d->constraint == NULL ? 1 : 0,
+	      d->eliminable,
+	      pred && pred->codes[MEM]);
     }
   printf ("};\n\n\n");
 }
@@ -303,11 +295,11 @@ output_insn_data (void)
   for (d = idata; d; d = d->next)
     {
       printf ("  /* %s:%d */\n", d->loc.filename, d->loc.lineno);
-      printf ("  {\n");
+      printf ("  { ");
 
       if (d->name)
 	{
-	  printf ("    \"%s\",\n", d->name);
+	  printf ("\"%s\", ", d->name);
 	  name_offset = 0;
 	  last_name = d->name;
 	  next_name = 0;
@@ -326,32 +318,23 @@ output_insn_data (void)
 	  name_offset++;
 	  if (next_name && (last_name == 0
 			    || name_offset > next_name_offset / 2))
-	    printf ("    \"%s-%d\",\n", next_name,
+	    printf ("\"%s-%d\", ", next_name,
 		    next_name_offset - name_offset);
 	  else
-	    printf ("    \"%s+%d\",\n", last_name, name_offset);
+	    printf ("\"%s+%d\", ", last_name, name_offset);
 	}
 
       switch (d->output_format)
 	{
 	case INSN_OUTPUT_FORMAT_NONE:
-	  printf ("#if HAVE_DESIGNATED_UNION_INITIALIZERS\n");
-	  printf ("    { 0 },\n");
-	  printf ("#else\n");
-	  printf ("    { 0, 0, 0 },\n");
-	  printf ("#endif\n");
+	  printf ("{}, ");
 	  break;
 	case INSN_OUTPUT_FORMAT_SINGLE:
 	  {
 	    const char *p = d->template_code;
 	    char prev = 0;
 
-	    printf ("#if HAVE_DESIGNATED_UNION_INITIALIZERS\n");
-	    printf ("    { .single =\n");
-	    printf ("#else\n");
-	    printf ("    {\n");
-	    printf ("#endif\n");
-	    printf ("    \"");
+	    printf ("\"");
 	    while (*p)
 	      {
 		if (IS_VSPACE (*p) && prev != '\\')
@@ -366,45 +349,25 @@ output_insn_data (void)
 		prev = *p;
 		++p;
 	      }
-	    printf ("\",\n");
-	    printf ("#if HAVE_DESIGNATED_UNION_INITIALIZERS\n");
-	    printf ("    },\n");
-	    printf ("#else\n");
-	    printf ("    0, 0 },\n");
-	    printf ("#endif\n");
+	    printf ("\", ");
 	  }
 	  break;
 	case INSN_OUTPUT_FORMAT_MULTI:
-	  printf ("#if HAVE_DESIGNATED_UNION_INITIALIZERS\n");
-	  printf ("    { .multi = output_%d },\n", d->code_number);
-	  printf ("#else\n");
-	  printf ("    { 0, output_%d, 0 },\n", d->code_number);
-	  printf ("#endif\n");
-	  break;
 	case INSN_OUTPUT_FORMAT_FUNCTION:
-	  printf ("#if HAVE_DESIGNATED_UNION_INITIALIZERS\n");
-	  printf ("    { .function = output_%d },\n", d->code_number);
-	  printf ("#else\n");
-	  printf ("    { 0, 0, output_%d },\n", d->code_number);
-	  printf ("#endif\n");
+	  printf ("output_%d, ", d->output_code);
 	  break;
 	default:
 	  gcc_unreachable ();
 	}
 
       if (d->name && d->name[0] != '*')
-	printf ("    { (insn_gen_fn::stored_funcptr) gen_%s },\n", d->name);
+	printf ("{ (insn_gen_fn::stored_funcptr) gen_%s }, ", d->name);
       else
-	printf ("    { 0 },\n");
+	printf ("{ 0 }, ");
 
-      printf ("    &operand_data[%d],\n", d->operand_number);
-      printf ("    %d,\n", d->n_generator_args);
-      printf ("    %d,\n", d->n_operands);
-      printf ("    %d,\n", d->n_dups);
-      printf ("    %d,\n", d->n_alternatives);
-      printf ("    %d\n", d->output_format);
-
-      printf ("  },\n");
+      printf ("&operand_data[%d], %d, %d, %d, %d, %d },\n",
+	      d->operand_number, d->n_generator_args, d->n_operands,
+	      d->n_dups, d->n_alternatives, d->output_format);
     }
   printf ("};\n\n\n");
 }
@@ -609,7 +572,7 @@ operand_data_hasher::equal (const operand_data * op_info1,
   return compare_operands (op_info1, op_info2);
 }
 
-/* Hashtable of konwn pattern operands.  */
+/* Hashtable of known pattern operands.  */
 static hash_table<operand_data_hasher> *operand_datas;
 
 /* Scan the list of operands we've already committed to output and either
@@ -685,18 +648,104 @@ place_operands (class data *d)
    It is either the assembler code template, a list of assembler code
    templates, or C code to generate the assembler code template.  */
 
+/* An output_* definition that has been emitted.  */
+
+struct output_def
+{
+  /* The pattern it was emitted for.  */
+  int code_number;
+  /* The number of alternatives in the template, or -1 for a template that is
+     a single block of code and so has none.  */
+  int n_alternatives;
+};
+
+/* The output_* definitions emitted so far, keyed by the template that
+   produced them together with the .md location that template came from.
+   Two patterns agreeing on both get byte-identical definitions, down to the
+   #line, so the second can name the first rather than repeat it.  */
+
+static hash_map<nofree_string_hash, output_def> output_codes;
+
 static void
 process_template (class data *d, const char *template_code)
 {
   const char *cp;
   int i;
 
+  d->output_code = d->code_number;
+
+  /* Work out the output format first, so that the rest of the function can
+     test that rather than the template again.  */
+
   /* Templates starting with * contain straight code to be run.  */
   if (template_code[0] == '*')
     {
       d->template_code = 0;
       d->output_format = INSN_OUTPUT_FORMAT_FUNCTION;
+    }
 
+  /* If the assembler code template starts with a @ it is a newline-separated
+     list of assembler code templates, one for each alternative.  One of them
+     starting with a * makes the whole thing a function.  */
+  else if (template_code[0] == '@')
+    {
+      d->template_code = 0;
+      d->output_format = INSN_OUTPUT_FORMAT_MULTI;
+
+      for (cp = &template_code[1]; *cp; )
+	{
+	  while (ISSPACE (*cp))
+	    cp++;
+	  if (*cp == '*')
+	    {
+	      d->output_format = INSN_OUTPUT_FORMAT_FUNCTION;
+	      break;
+	    }
+	  while (!IS_VSPACE (*cp) && *cp != '\0')
+	    ++cp;
+	}
+    }
+  else
+    {
+      d->template_code = template_code;
+      d->output_format = INSN_OUTPUT_FORMAT_SINGLE;
+      return;
+    }
+
+  /* The template needs a definition of its own, which an earlier pattern may
+     already have emitted.  Iterators are what make that common: one
+     define_insn expanded over a mode iterator gives a pattern per mode, and
+     where the template does not mention the mode they all need the same
+     definition.  Two templates produce byte-identical definitions exactly
+     when they agree and come from the same place in the machine description,
+     since the location is what print_md_ptr_loc turns into the #line.  Name
+     the definition the earlier pattern emitted rather than repeat it.  */
+  const md_reader::ptr_loc *loc
+    = rtx_reader_ptr->get_md_ptr_loc (template_code);
+  char *key = xasprintf ("%s:%d\n%s", loc ? loc->loc.filename : "",
+			 loc ? loc->loc.lineno : 0, template_code);
+  bool existed;
+  output_def &prev = output_codes.get_or_insert (key, &existed);
+  if (existed)
+    {
+      free (key);
+      d->output_code = prev.code_number;
+      /* The template was checked when it was emitted.  How many alternatives
+	 the pattern has is not a property of the template, though: iterators
+	 substitute into the template and into the constraints separately, so
+	 patterns that share a template can still differ here.  */
+      if (prev.n_alternatives >= 0 && prev.n_alternatives != d->n_alternatives)
+	error_at (d->loc, "wrong number of alternatives in the output"
+		  " template");
+      return;
+    }
+  prev.code_number = d->code_number;
+  prev.n_alternatives = -1;
+
+  /* A template that is one block of code, rather than a list of alternatives
+     one of which is.  Both give INSN_OUTPUT_FORMAT_FUNCTION.  */
+  if (template_code[0] == '*')
+    {
       puts ("\nstatic const char *");
       printf ("output_%d (rtx *operands ATTRIBUTE_UNUSED, rtx_insn *insn ATTRIBUTE_UNUSED)\n",
 	      d->code_number);
@@ -704,147 +753,124 @@ process_template (class data *d, const char *template_code)
       rtx_reader_ptr->print_md_ptr_loc (template_code);
       puts (template_code + 1);
       puts ("}");
+      return;
     }
 
-  /* If the assembler code template starts with a @ it is a newline-separated
-     list of assembler code templates, one for each alternative.  */
-  else if (template_code[0] == '@')
+  bool found_star = d->output_format == INSN_OUTPUT_FORMAT_FUNCTION;
+
+  if (found_star)
     {
-      int found_star = 0;
-
-      for (cp = &template_code[1]; *cp; )
-	{
-	  while (ISSPACE (*cp))
-	    cp++;
-	  if (*cp == '*')
-	    found_star = 1;
-	  while (!IS_VSPACE (*cp) && *cp != '\0')
-	    ++cp;
-	}
-      d->template_code = 0;
-      if (found_star)
-	{
-	  d->output_format = INSN_OUTPUT_FORMAT_FUNCTION;
-	  puts ("\nstatic const char *");
-	  printf ("output_%d (rtx *operands ATTRIBUTE_UNUSED, "
-		  "rtx_insn *insn ATTRIBUTE_UNUSED)\n", d->code_number);
-	  puts ("{");
-	  puts ("  switch (which_alternative)\n    {");
-	}
-      else
-	{
-	  d->output_format = INSN_OUTPUT_FORMAT_MULTI;
-	  printf ("\nstatic const char * const output_%d[] = {\n",
-		  d->code_number);
-	}
-
-      for (i = 0, cp = &template_code[1]; *cp; )
-	{
-	  const char *ep, *sp, *bp;
-
-	  while (ISSPACE (*cp))
-	    cp++;
-
-	  bp = cp;
-	  if (found_star)
-	    {
-	      printf ("    case %d:", i);
-	      if (*cp == '*')
-		{
-		  printf ("\n      ");
-		  cp++;
-		}
-	      else
-		printf (" return \"");
-	    }
-	  else
-	    printf ("  \"");
-
-	  for (ep = sp = cp; !IS_VSPACE (*ep) && *ep != '\0'; ++ep)
-	    if (!ISSPACE (*ep))
-	      sp = ep + 1;
-
-	  if (sp != ep)
-	    message_at (d->loc, "trailing whitespace in output template");
-
-	  /* Check for any unexpanded iterators.  */
-	  if (bp[0] != '*' && d->compact_syntax_p)
-	    {
-	      const char *p = cp;
-	      const char *last_bracket = nullptr;
-	      while (p < sp)
-		{
-		  if (*p == '\\' && p + 1 < sp)
-		    {
-		      putchar (*p);
-		      putchar (*(p+1));
-		      p += 2;
-		      continue;
-		    }
-
-		  if (*p == '>' && last_bracket && *last_bracket == '<')
-		    {
-		      int len = p - last_bracket;
-		      fatal_at (d->loc, "unresolved iterator '%.*s' in '%s'",
-				len - 1, last_bracket + 1, cp);
-		    }
-		  else if (*p == '<' || *p == '>')
-		    last_bracket = p;
-
-		  putchar (*p);
-		  p += 1;
-		}
-
-	      if (last_bracket)
-		{
-		  char *nl = strchr (const_cast<char*> (cp), '\n');
-		  if (nl)
-		    *nl = '\0';
-		  fatal_at (d->loc, "unmatched angle brackets, likely an "
-			    "error in iterator syntax in %s", cp);
-		}
-	    }
-	  else
-	    {
-	      while (cp < sp)
-		putchar (*(cp++));
-	    }
-
-	  cp = sp;
-
-	  if (!found_star)
-	    puts ("\",");
-	  else if (*bp != '*')
-	    puts ("\";");
-	  else
-	    {
-	      /* The usual action will end with a return.
-		 If there is neither break or return at the end, this is
-		 assumed to be intentional; this allows to have multiple
-		 consecutive alternatives share some code.  */
-	      puts ("");
-	    }
-	  i++;
-	}
-      if (i == 1)
-	message_at (d->loc, "'@' is redundant for output template with"
-		    " single alternative");
-      if (i != d->n_alternatives)
-	error_at (d->loc, "wrong number of alternatives in the output"
-		  " template");
-
-      if (found_star)
-	puts ("      default: gcc_unreachable ();\n    }\n}");
-      else
-	printf ("};\n");
+      puts ("\nstatic const char *");
+      printf ("output_%d (rtx *operands ATTRIBUTE_UNUSED, "
+	      "rtx_insn *insn ATTRIBUTE_UNUSED)\n", d->code_number);
+      puts ("{");
+      puts ("  switch (which_alternative)\n    {");
     }
   else
+    printf ("\nstatic const char * const output_%d[] = {\n", d->code_number);
+
+  for (i = 0, cp = &template_code[1]; *cp; )
     {
-      d->template_code = template_code;
-      d->output_format = INSN_OUTPUT_FORMAT_SINGLE;
+      const char *ep, *sp, *bp;
+
+      while (ISSPACE (*cp))
+	cp++;
+
+      bp = cp;
+      if (found_star)
+	{
+	  printf ("    case %d:", i);
+	  if (*cp == '*')
+	    {
+	      printf ("\n      ");
+	      cp++;
+	    }
+	  else
+	    printf (" return \"");
+	}
+      else
+	printf ("  \"");
+
+      for (ep = sp = cp; !IS_VSPACE (*ep) && *ep != '\0'; ++ep)
+	if (!ISSPACE (*ep))
+	  sp = ep + 1;
+
+      if (sp != ep)
+	message_at (d->loc, "trailing whitespace in output template");
+
+      /* Check for any unexpanded iterators.  */
+      if (bp[0] != '*' && d->compact_syntax_p)
+	{
+	  const char *p = cp;
+	  const char *last_bracket = nullptr;
+	  while (p < sp)
+	    {
+	      if (*p == '\\' && p + 1 < sp)
+		{
+		  putchar (*p);
+		  putchar (*(p+1));
+		  p += 2;
+		  continue;
+		}
+
+	      if (*p == '>' && last_bracket && *last_bracket == '<')
+		{
+		  int len = p - last_bracket;
+		  fatal_at (d->loc, "unresolved iterator '%.*s' in '%s'",
+			    len - 1, last_bracket + 1, cp);
+		}
+	      else if (*p == '<' || *p == '>')
+		last_bracket = p;
+
+	      putchar (*p);
+	      p += 1;
+	    }
+
+	  if (last_bracket)
+	    {
+	      char *nl = strchr (const_cast<char*> (cp), '\n');
+	      if (nl)
+		*nl = '\0';
+	      fatal_at (d->loc, "unmatched angle brackets, likely an "
+			"error in iterator syntax in %s", cp);
+	    }
+	}
+      else
+	{
+	  while (cp < sp)
+	    putchar (*(cp++));
+	}
+
+      cp = sp;
+
+      if (!found_star)
+	puts ("\",");
+      else if (*bp != '*')
+	puts ("\";");
+      else
+	{
+	  /* The usual action will end with a return.
+	     If there is neither break or return at the end, this is
+	     assumed to be intentional; this allows to have multiple
+	     consecutive alternatives share some code.  */
+	  puts ("");
+	}
+      i++;
     }
+  if (i == 1)
+    message_at (d->loc, "'@' is redundant for output template with"
+		" single alternative");
+  if (i != d->n_alternatives)
+    error_at (d->loc, "wrong number of alternatives in the output"
+	      " template");
+  prev.n_alternatives = i;
+
+  if (found_star)
+    puts ("      default: gcc_unreachable ();\n    }\n}");
+  else
+    printf ("};\n");
 }
-
+
 /* Check insn D for consistency in number of constraint alternatives.  */
 
 static void
@@ -1176,8 +1202,10 @@ main (int argc, const char **argv)
 	    max_len = len;
 	}
       printf ("void\nverify_reg_names_in_constraints ()\n{\n");
-      printf ("  static const char hregnames[%zu][%zu] = {\n",
-	      used_reg_names.elements (), max_len + 1);
+      printf ("  static const char hregnames[" HOST_SIZE_T_PRINT_UNSIGNED "]["
+	      HOST_SIZE_T_PRINT_UNSIGNED "] = {\n",
+	      (fmt_size_t) used_reg_names.elements (),
+	      (fmt_size_t) (max_len + 1));
       auto it = used_reg_names.begin ();
       while (it != used_reg_names.end ())
 	{
@@ -1188,8 +1216,8 @@ main (int argc, const char **argv)
 	  printf ("\n");
 	}
       printf ("  };\n");
-      printf ("  for (size_t i = 0; i < %zu; ++i)\n",
-	      used_reg_names.elements ());
+      printf ("  for (size_t i = 0; i < " HOST_SIZE_T_PRINT_UNSIGNED
+	      "; ++i)\n", (fmt_size_t) used_reg_names.elements ());
       printf ("    if (decode_reg_name (hregnames[i]) < 0)\n");
       printf ("      internal_error (\"invalid register %%qs used in "
 	      "constraint of machine description\", hregnames[i]);\n");

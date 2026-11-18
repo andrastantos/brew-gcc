@@ -735,14 +735,14 @@ package body Sem_Aggr is
 
       Itype := Create_Itype (E_Array_Subtype, N);
 
-      Set_First_Rep_Item         (Itype, First_Rep_Item        (Typ));
-      Set_Convention             (Itype, Convention            (Typ));
-      Set_Depends_On_Private     (Itype, Has_Private_Component (Typ));
-      Set_Etype                  (Itype, Base_Type             (Typ));
-      Set_Has_Alignment_Clause   (Itype, Has_Alignment_Clause  (Typ));
-      Set_Is_Aliased             (Itype, Is_Aliased            (Typ));
-      Set_Is_Independent         (Itype, Is_Independent        (Typ));
-      Set_Depends_On_Private     (Itype, Depends_On_Private    (Typ));
+      Set_First_Rep_Item         (Itype, First_Rep_Item          (Typ));
+      Set_Convention             (Itype, Convention              (Typ));
+      Set_Depends_On_Private     (Itype, Is_Incompletely_Defined (Typ));
+      Set_Etype                  (Itype, Base_Type               (Typ));
+      Set_Has_Alignment_Clause   (Itype, Has_Alignment_Clause    (Typ));
+      Set_Is_Aliased             (Itype, Is_Aliased              (Typ));
+      Set_Is_Independent         (Itype, Is_Independent          (Typ));
+      Set_Depends_On_Private     (Itype, Depends_On_Private      (Typ));
 
       Copy_Suppress_Status (Index_Check,  Typ, Itype);
       Copy_Suppress_Status (Length_Check, Typ, Itype);
@@ -776,7 +776,6 @@ package body Sem_Aggr is
       Set_Size_Known_At_Compile_Time
         (Itype,
          Is_Fully_Positional
-           and then Comes_From_Source (N)
            and then Size_Known_At_Compile_Time (Component_Type (Typ)));
 
       --  We always need a freeze node for a packed array subtype, so that we
@@ -2064,13 +2063,18 @@ package body Sem_Aggr is
             --  verify legality. We use a copy because the expression will be
             --  analyzed anew when the enclosing aggregate is expanded and the
             --  construct is rewritten as a loop with a new iteration variable.
+            --  However, we need to preanalyze the expression itself inside a
+            --  generic to be able to capture global references present in it.
             --  This does not apply to SPARK mode, where expansion is skipped.
 
             --  If the parent is a component association, we also temporarily
             --  point its Expression field to the copy, because analysis may
             --  expect this invariant to hold.
 
-            if Iterated_Expr and then not GNATprove_Mode then
+            if Iterated_Expr
+              and then not Inside_A_Generic
+              and then not GNATprove_Mode
+            then
                declare
                   In_Assoc : constant Boolean :=
                     Nkind (Parent (Expr)) in N_Component_Association
@@ -2581,7 +2585,10 @@ package body Sem_Aggr is
                         Analyze (Choice);
 
                         if Is_Object_Reference (Choice)
-                          and then Is_Iterator (Etype (Choice))
+                          and then (Is_Iterator (Etype (Choice))
+                                     or else
+                                       Has_Aspect
+                                         (Etype (Choice), Aspect_Iterable))
                         then
                            Set_Iterator_Specification
                              (Assoc,
@@ -2700,17 +2707,21 @@ package body Sem_Aggr is
                        ("(Ada 83) illegal context for OTHERS choice", N);
                   end if;
 
-               elsif Is_Entity_Name (Choice) then
+               else
                   Analyze (Choice);
 
-                  declare
-                     E      : constant Entity_Id := Entity (Choice);
-                     New_Cs : List_Id;
-                     P      : Node_Id;
-                     C      : Node_Id;
+                  if Is_Entity_Name (Choice)
+                    and then Is_Type (Entity (Choice))
+                    and then Has_Predicates (Entity (Choice))
+                  then
+                     declare
+                        E : constant Entity_Id := Entity (Choice);
 
-                  begin
-                     if Is_Type (E) and then Has_Predicates (E) then
+                        C : Node_Id;
+                        L : List_Id;
+                        P : Node_Id;
+
+                     begin
                         Freeze_Before (N, E);
 
                         if Has_Dynamic_Predicate_Aspect (E)
@@ -2734,19 +2745,19 @@ package body Sem_Aggr is
                         if Present (Static_Discrete_Predicate (E)) then
                            Delete_Choice := True;
 
-                           New_Cs := New_List;
+                           L := New_List;
                            P := First (Static_Discrete_Predicate (E));
                            while Present (P) loop
                               C := New_Copy (P);
                               Set_Sloc (C, Sloc (Choice));
-                              Append_To (New_Cs, C);
+                              Append_To (L, C);
                               Next (P);
                            end loop;
 
-                           Insert_List_After (Choice, New_Cs);
+                           Insert_List_After (Choice, L);
                         end if;
-                     end if;
-                  end;
+                     end;
+                  end if;
                end if;
 
                Nb_Choices := Nb_Choices + 1;
@@ -2873,8 +2884,8 @@ package body Sem_Aggr is
 
                   --  Test for subtype mark without constraint
 
-                  elsif Is_Entity_Name (Choice) and then
-                    Is_Type (Entity (Choice))
+                  elsif Is_Entity_Name (Choice)
+                    and then Is_Type (Entity (Choice))
                   then
                      if Base_Type (Entity (Choice)) /= Index_Base then
                         Error_Msg_N
@@ -4505,12 +4516,18 @@ package body Sem_Aggr is
 
                Enter_Name (Id);
 
-               --  Analyze a copy of the expression, to verify legality. We use
-               --  a copy because the expression will be analyzed anew when the
-               --  enclosing aggregate is expanded, and the construct is
-               --  rewritten as a loop with a new index variable.
+               --  Preanalyze a copy of the expression to verify legality. We
+               --  use a copy because the expression will be analyzed anew when
+               --  the enclosing aggregate is expanded and the construct is
+               --  rewritten as a loop with a new iteration variable. However,
+               --  we need to preanalyze the expression itself inside a generic
+               --  to be able to capture global references present in it.
 
-               Expr := Copy_Separate_Tree (Expression (Assoc));
+               if Inside_A_Generic then
+                  Expr := Expression (Assoc);
+               else
+                  Expr := Copy_Separate_Tree (Expression (Assoc));
+               end if;
                Set_Parent (Expr, Assoc);
                Preanalyze_And_Resolve (Expr, Component_Type (Typ));
                End_Scope;
@@ -4520,7 +4537,7 @@ package body Sem_Aggr is
             Choice := First (Choice_List (Assoc));
             while Present (Choice) loop
                if Is_Deep_Choice (Choice, Typ) then
-                  pragma Assert (All_Extensions_Allowed);
+                  pragma Assert (Core_Extensions_Allowed);
                   Deep_Choice_Seen := True;
 
                   --  a deep delta aggregate
@@ -4796,7 +4813,8 @@ package body Sem_Aggr is
             Deep_Choice := Nkind (Choice) /= N_Identifier;
             if Deep_Choice then
                Error_Msg_GNAT_Extension
-                 ("deep delta aggregate", Sloc (Choice));
+                 ("deep delta aggregate", Sloc (Choice),
+                  Is_Core_Extension => True);
             end if;
 
             Comp_Type := Get_Component_Type
@@ -5499,10 +5517,10 @@ package body Sem_Aggr is
       --  ancestor part.
       --
       --  If the aggregate is in a context with expansion delayed, it will be
-      --  reanalyzed. The inherited discriminant values must not be reinserted
-      --  in the component list to prevent spurious errors, but they must be
-      --  present on first analysis to build the proper subtype indications.
-      --  The flag Inherited_Discriminant is used to prevent the re-insertion.
+      --  reanalyzed. The inherited discriminant values must not be present in
+      --  the component list the second time to prevent spurious errors and,
+      --  therefore, need to be removed at the end of the first processing.
+      --  The flag Inherited_Discriminant is used to implement this scheme.
 
       function Find_Private_Ancestor (Typ : Entity_Id) return Entity_Id;
       --  AI05-0115: Find earlier ancestor in the derivation chain that is
@@ -5591,38 +5609,18 @@ package body Sem_Aggr is
       --------------------------
 
       function Discriminant_Present (Input_Discr : Entity_Id) return Boolean is
-         Regular_Aggr : constant Boolean := Nkind (N) /= N_Extension_Aggregate;
-
+         Ancestor           : Node_Id;
          Ancestor_Is_Subtyp : Boolean;
-
-         Loc : Source_Ptr;
-
-         Ancestor     : Node_Id;
-         Ancestor_Typ : Entity_Id;
-         Comp_Assoc   : Node_Id;
-         Discr        : Entity_Id;
-         Discr_Expr   : Node_Id;
-         Discr_Val    : Elmt_Id := No_Elmt;
-         Orig_Discr   : Entity_Id;
+         Ancestor_Typ       : Entity_Id;
+         Discr              : Entity_Id;
+         Discr_Expr         : Node_Id;
+         Discr_Val          : Elmt_Id;
+         Loc                : Source_Ptr;
+         Orig_Discr         : Entity_Id;
 
       begin
-         if Regular_Aggr then
+         if Nkind (N) /= N_Extension_Aggregate then
             return True;
-         end if;
-
-         --  Check whether inherited discriminant values have already been
-         --  inserted in the aggregate. This will be the case if we are
-         --  re-analyzing an aggregate whose expansion was delayed.
-
-         if Present (Component_Associations (N)) then
-            Comp_Assoc := First (Component_Associations (N));
-            while Present (Comp_Assoc) loop
-               if Inherited_Discriminant (Comp_Assoc) then
-                  return True;
-               end if;
-
-               Next (Comp_Assoc);
-            end loop;
          end if;
 
          Ancestor     := Ancestor_Part (N);
@@ -6974,7 +6972,24 @@ package body Sem_Aggr is
       Step_8 : declare
          New_Aggregate : constant Node_Id := New_Copy (N);
 
+         Assoc      : Node_Id;
+         Next_Assoc : Node_Id;
+
       begin
+         --  If this is an extension aggregate, remove the inherited
+         --  discriminants from the list in case it is reanalyzed.
+
+         if Nkind (N) = N_Extension_Aggregate then
+            Assoc := First (New_Assoc_List);
+            while Present (Assoc) loop
+               Next_Assoc := Next (Assoc);
+               if Inherited_Discriminant (Assoc) then
+                  Remove (Assoc);
+               end if;
+               Assoc := Next_Assoc;
+            end loop;
+         end if;
+
          Set_Expressions            (New_Aggregate, No_List);
          Set_Etype                  (New_Aggregate, Etype (N));
          Set_Component_Associations (New_Aggregate, New_Assoc_List);

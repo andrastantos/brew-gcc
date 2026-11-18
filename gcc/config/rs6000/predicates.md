@@ -119,6 +119,18 @@
   return VSX_REGNO_P (REGNO (op));
 })
 
+;; Return 1 if op is a register that can be used for vector fusion.  If XXEVAL
+;; is supported, return true for all VSX registers, otherwise the fusion is
+;; limited to Altivec registers since the machine only fuses Altivec
+;; operations.
+(define_predicate "vector_fusion_operand"
+  (match_operand 0 "register_operand")
+{
+  return (TARGET_XXEVAL
+	  ? vsx_register_operand (op, mode)
+	  : altivec_register_operand (op, mode));
+})
+
 ;; Return 1 if op is a vector register that operates on floating point vectors
 ;; (either altivec or VSX).
 (define_predicate "vfloat_operand"
@@ -161,6 +173,40 @@
     return 1;
 
   return VINT_REGNO_P (REGNO (op));
+})
+
+;; Return 1 if op is a dense math register
+(define_predicate "dmr_register_operand"
+  (match_operand 0 "register_operand")
+{
+  if (!TARGET_DMF)
+    return 0;
+
+  if (!REG_P (op))
+    return 0;
+
+  if (!HARD_REGISTER_P (op))
+    return 1;
+
+  return DMR_REGNO_P (REGNO (op));
+})
+
+;; Return 1 if op is an accumulator.  On power10/11 systems, the accumulators
+;; overlap with the FPRs. If TARGET_DMF is true, it will be Dense math register.
+(define_predicate "accumulator_operand"
+  (match_operand 0 "register_operand")
+{
+  if (SUBREG_P (op))
+    op = SUBREG_REG (op);
+
+  if (!REG_P (op))
+    return 0;
+
+  if (!HARD_REGISTER_P (op))
+    return 1;
+
+  int r = REGNO (op);
+  return TARGET_DMF ? DMR_REGNO_P (r) : (FP_REGNO_P (r) && (r & 3) == 0);
 })
 
 ;; Return 1 if op is a vector register to do logical operations on (and, or,
@@ -312,6 +358,11 @@
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), 2, 3)")))
 
+;; Match op = 0..6.
+(define_predicate "const_0_to_6_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), 0, 6)")))
+
 ;; Match op = 0..7.
 (define_predicate "const_0_to_7_operand"
   (and (match_code "const_int")
@@ -335,6 +386,68 @@
     return 0;
 
   return SIGNED_INTEGER_34BIT_P (INTVAL (op));
+})
+
+;; Return 1 if op is a 64-bit constant that uses the paddis instruction
+(define_predicate "paddis_operand"
+  (match_code "const_int")
+{
+  if (!TARGET_PADDIS)
+    return false;
+
+  if (mode != VOIDmode && mode != DImode)
+    return false;
+
+  HOST_WIDE_INT value = INTVAL (op);
+
+  if (!SIGNED_INTEGER_64BIT_P (value))
+    return false;
+
+  /* If paddi alone can handle the number, don't return true.  */
+  if (SIGNED_INTEGER_34BIT_P (value))
+    return false;
+
+  /* If the bottom 32-bits are non-zero, paddis alone can't handle it.  */
+  if ((value & HOST_WIDE_INT_C(0xffffffff)) != 0)
+    return false;
+
+  return true;
+})
+
+;; Return 1 if op is a 64-bit constant that can be created with a
+;; combination of paddi and paddis.  Don't generate paddi and paddis if
+;; we can do it via addis and rldicl.
+(define_predicate "paddis_paddi_operand"
+  (match_code "const_int")
+{
+  if (!TARGET_PADDIS)
+    return false;
+
+  if (mode != VOIDmode && mode != DImode)
+    return false;
+
+  HOST_WIDE_INT value = INTVAL (op);
+
+  if (!SIGNED_INTEGER_64BIT_P (value))
+    return false;
+
+  /* Don't worry about negative values at the moment.  */
+  if (value < 0)
+    return false;
+
+  /* If paddi alone can handle the number, don't return true.  */
+  if (SIGNED_INTEGER_34BIT_P (value))
+    return false;
+
+  /* If we can do the add or generate the constant via addis/rldicl, fail.  */
+  if (rs6000_is_valid_and_mask (op, mode))
+    return false;
+
+  /* Only return true if we need both paddi and paddis.  */
+  if ((value & HOST_WIDE_INT_C(0xffffffff)) == 0)
+    return false;
+
+  return true;
 })
 
 ;; Return 1 if op is a register that is not special.
@@ -362,6 +475,9 @@
     return 1;
 
   if (TARGET_VSX && VSX_REGNO_P (REGNO (op)))
+    return 1;
+
+  if (TARGET_DMF && DMR_REGNO_P (REGNO (op)))
     return 1;
 
   return INT_REGNO_P (REGNO (op)) || FP_REGNO_P (REGNO (op));
@@ -527,18 +643,22 @@
   (ior (match_operand 0 "zero_constant")
        (match_operand 0 "gpc_reg_operand")))
 
-;; Return 1 if op is a constant integer valid for addition with addis, addi.
+;; Return 1 if op is a constant integer valid for addition with addis,
+;; addi, paddi, or paddis.
 (define_predicate "add_cint_operand"
   (and (match_code "const_int")
-       (match_test "((unsigned HOST_WIDE_INT) INTVAL (op)
-		       + (mode == SImode ? 0x80000000 : 0x80008000))
-		    < (unsigned HOST_WIDE_INT) 0x100000000ll")))
+       (ior (match_test "((unsigned HOST_WIDE_INT) INTVAL (op)
+			   + (mode == SImode ? 0x80000000 : 0x80008000))
+		    	< (unsigned HOST_WIDE_INT) 0x100000000ll")
+	    (match_operand 0 "cint34_operand")
+	    (match_operand 0 "paddis_operand"))))
 
 ;; Return 1 if op is a constant integer valid for addition
 ;; or non-special register.
 (define_predicate "reg_or_add_cint_operand"
   (if_then_else (match_code "const_int")
-    (match_operand 0 "add_cint_operand")
+    (ior (match_operand 0 "add_cint_operand")
+	 (match_operand 0 "paddis_paddi_operand"))
     (match_operand 0 "gpc_reg_operand")))
 
 ;; Return 1 if op is a constant integer valid for subtraction
@@ -1081,7 +1201,8 @@
   (if_then_else (match_code "const_int")
     (match_test "satisfies_constraint_I (op)
 		 || satisfies_constraint_L (op)
-		 || satisfies_constraint_eI (op)")
+		 || satisfies_constraint_eI (op)
+		 || satisfies_constraint_eU (op)")
     (match_operand 0 "gpc_reg_operand")))
 
 ;; Return 1 if the operand is either a non-special register, or 0, or -1.
@@ -1342,7 +1463,7 @@
     vmode = V2DImode;
   else if (mode == SImode && TARGET_P9_VECTOR)
     vmode = V4SImode;
-  else if (mode == SFmode && TARGET_P9_VECTOR)
+  else if (mode == SFmode && TARGET_VSX)
     vmode = V4SFmode;
   else
     return false;

@@ -69,6 +69,10 @@ static gomp_mutex_t goacc_thread_lock;
    grouped by device in target.c:devices).  */
 static struct gomp_device_descr *dispatchers[_ACC_device_hwm] = { 0 };
 
+/* Device types for init and shutdown directives to check all devices.  */
+#define GOACC_DIRECTIVE_DEVICE_MASK                                            \
+  ((1 << acc_device_host) | (1 << acc_device_nvidia) | (1 << acc_device_radeon))
+
 attribute_hidden void
 goacc_register (struct gomp_device_descr *disp)
 {
@@ -148,7 +152,7 @@ resolve_device (acc_device_t d, bool fail_is_error)
 	      if (dispatchers[d]
 		  && !strcasecmp (goacc_device_type,
 				  get_openacc_name (dispatchers[d]->name))
-		  && dispatchers[d]->get_num_devices_func (0) > 0)
+		  && dispatchers[d]->get_num_devices_func () > 0)
 		goto found;
 
 	    if (fail_is_error)
@@ -169,7 +173,7 @@ resolve_device (acc_device_t d, bool fail_is_error)
     case acc_device_not_host:
       /* Find the first available device after acc_device_not_host.  */
       while (known_device_type_p (++d))
-	if (dispatchers[d] && dispatchers[d]->get_num_devices_func (0) > 0)
+	if (dispatchers[d] && dispatchers[d]->get_num_devices_func () > 0)
 	  goto found;
       if (d_arg == acc_device_default)
 	{
@@ -231,7 +235,8 @@ acc_dev_num_out_of_range (acc_device_t d, int ord, int ndevs)
    held before calling this function.  */
 
 static struct gomp_device_descr *
-acc_init_1 (acc_device_t d, acc_construct_t parent_construct, int implicit)
+acc_init_1 (acc_device_t d, acc_construct_t parent_construct, int implicit,
+	    int dev_num)
 {
   gomp_mutex_lock (&acc_init_state_lock);
   acc_init_state = initializing;
@@ -302,12 +307,14 @@ acc_init_1 (acc_device_t d, acc_construct_t parent_construct, int implicit)
 
   base_dev = resolve_device (d, true);
 
-  ndevs = base_dev->get_num_devices_func (0);
+  ndevs = base_dev->get_num_devices_func ();
 
-  if (ndevs <= 0 || goacc_device_num >= ndevs)
-    acc_dev_num_out_of_range (d, goacc_device_num, ndevs);
+  dev_num = (dev_num == -1 ? goacc_device_num : dev_num);
 
-  acc_dev = &base_dev[goacc_device_num];
+  if (ndevs <= 0 || dev_num >= ndevs)
+    acc_dev_num_out_of_range (d, dev_num, ndevs);
+
+  acc_dev = &base_dev[dev_num];
 
   gomp_mutex_lock (&acc_dev->lock);
   if (acc_dev->state == GOMP_DEVICE_INITIALIZED)
@@ -316,7 +323,7 @@ acc_init_1 (acc_device_t d, acc_construct_t parent_construct, int implicit)
       gomp_fatal ("device already active");
     }
 
-  gomp_init_device (acc_dev);
+  gomp_init_device (acc_dev, false);
   gomp_mutex_unlock (&acc_dev->lock);
 
   if (profiling_p)
@@ -341,7 +348,7 @@ acc_init_1 (acc_device_t d, acc_construct_t parent_construct, int implicit)
 /* ACC_DEVICE_LOCK must be held before calling this function.  */
 
 static void
-acc_shutdown_1 (acc_device_t d)
+acc_shutdown_1 (acc_device_t d, int dev_num)
 {
   struct gomp_device_descr *base_dev;
   struct goacc_thread *walk;
@@ -351,23 +358,44 @@ acc_shutdown_1 (acc_device_t d)
   /* Get the base device for this device type.  */
   base_dev = resolve_device (d, true);
 
-  ndevs = base_dev->get_num_devices_func (0);
+  ndevs = base_dev->get_num_devices_func ();
 
-  /* Unload all the devices of this type that have been opened.  */
-  for (i = 0; i < ndevs; i++)
+  if (dev_num != -1 && ndevs <= dev_num)
+    acc_dev_num_out_of_range (d, dev_num, ndevs);
+
+  if (dev_num != -1)
     {
-      struct gomp_device_descr *acc_dev = &base_dev[i];
-
+      struct gomp_device_descr *acc_dev = &base_dev[dev_num];
       gomp_mutex_lock (&acc_dev->lock);
       gomp_unload_device (acc_dev);
       gomp_mutex_unlock (&acc_dev->lock);
     }
-  
+  else
+    {
+      /* Unload all the devices of this type that have been opened.  */
+      for (i = 0; i < ndevs; i++)
+	{
+	  struct gomp_device_descr *acc_dev = &base_dev[i];
+
+	  gomp_mutex_lock (&acc_dev->lock);
+	  gomp_unload_device (acc_dev);
+	  gomp_mutex_unlock (&acc_dev->lock);
+	}
+    }
+
   gomp_mutex_lock (&goacc_thread_lock);
 
   /* Free target-specific TLS data and close all devices.  */
   for (walk = goacc_threads; walk != NULL; walk = walk->next)
     {
+      /* These checks are necessary since init supports
+       * multiples devices.  */
+      if (walk->base_dev != base_dev)
+	continue;
+
+      if (dev_num != -1 && walk->dev != &base_dev[dev_num])
+	continue;
+
       if (walk->target_tls)
 	base_dev->openacc.destroy_thread_data_func (walk->target_tls);
 
@@ -409,19 +437,37 @@ acc_shutdown_1 (acc_device_t d)
 
   gomp_mutex_unlock (&goacc_thread_lock);
 
-  /* Close all the devices of this type that have been opened.  */
   bool ret = true;
-  for (i = 0; i < ndevs; i++)
+
+  if (dev_num != -1)
     {
-      struct gomp_device_descr *acc_dev = &base_dev[i];
+      struct gomp_device_descr *acc_dev = &base_dev[dev_num];
       gomp_mutex_lock (&acc_dev->lock);
+
       if (acc_dev->state == GOMP_DEVICE_INITIALIZED)
-        {
+	{
 	  devices_active = true;
 	  ret &= gomp_fini_device (acc_dev);
 	  acc_dev->state = GOMP_DEVICE_UNINITIALIZED;
 	}
+
       gomp_mutex_unlock (&acc_dev->lock);
+    }
+  else
+    {
+      /* Close all the devices of this type that have been opened.  */
+      for (i = 0; i < ndevs; i++)
+	{
+	  struct gomp_device_descr *acc_dev = &base_dev[i];
+	  gomp_mutex_lock (&acc_dev->lock);
+	  if (acc_dev->state == GOMP_DEVICE_INITIALIZED)
+	    {
+	      devices_active = true;
+	      ret &= gomp_fini_device (acc_dev);
+	      acc_dev->state = GOMP_DEVICE_UNINITIALIZED;
+	    }
+	  gomp_mutex_unlock (&acc_dev->lock);
+	}
     }
 
   if (!ret)
@@ -502,13 +548,13 @@ goacc_attach_host_thread_to_device (int ord)
   struct goacc_thread *thr = goacc_thread ();
   struct gomp_device_descr *acc_dev = NULL, *base_dev = NULL;
   int num_devices;
-  
+
   if (thr && thr->dev && (thr->dev->target_id == ord || ord < 0))
     return;
-  
+
   if (ord < 0)
     ord = goacc_device_num;
-  
+
   /* Decide which type of device to use.  If the current thread has a device
      type already (e.g. set by acc_set_device_type), use that, else use the
      global default.  */
@@ -519,15 +565,15 @@ goacc_attach_host_thread_to_device (int ord)
       assert (cached_base_dev);
       base_dev = cached_base_dev;
     }
-  
-  num_devices = base_dev->get_num_devices_func (0);
+
+  num_devices = base_dev->get_num_devices_func ();
   if (num_devices <= 0 || ord >= num_devices)
     acc_dev_num_out_of_range (acc_device_type (base_dev->type), ord,
 			      num_devices);
-  
+
   if (!thr)
     thr = goacc_new_thread ();
-  
+
   thr->base_dev = base_dev;
   thr->dev = acc_dev = &base_dev[ord];
   thr->saved_bound_dev = NULL;
@@ -539,6 +585,109 @@ goacc_attach_host_thread_to_device (int ord)
 
   thr->target_tls
     = acc_dev->openacc.create_thread_data_func (ord);
+}
+
+void
+GOACC_init (int n_device, int d)
+{
+  /* The OpenACC spec says that if the n_device isn't specified
+     then all the devices available are initializated, but
+     the current acc_init_1 implementation initialize just the
+     goacc_device_num device number. acc_init_1 it's keeped
+     because the profiling dispatch code.  */
+
+  gomp_init_targets_once ();
+  /* All the device types.  */
+  if ((acc_device_t) d == acc_device_none)
+    {
+      int i;
+      for (i = 0; i < _ACC_device_hwm; i++)
+	{
+	  if (!(GOACC_DIRECTIVE_DEVICE_MASK & (1 << i)))
+	    continue;
+	  gomp_mutex_lock (&acc_device_lock);
+
+	  struct gomp_device_descr *dev
+	    = resolve_device ((acc_device_t) i, false);
+	  if (!dev || dev->get_num_devices_func () <= 0)
+	    {
+	      gomp_debug (0,
+			  "init directive: Device type %s isn't available or "
+			  "does not have devices.\n",
+			  name_of_acc_device_t ((acc_device_t) i));
+	      /* if isn't available, just continue.  */
+	      gomp_mutex_unlock (&acc_device_lock);
+	      continue;
+	    }
+
+	  gomp_debug (0,
+		      "init directive: Initializing device type %s and device "
+		      "number %d. \n",
+		      name_of_acc_device_t ((acc_device_t) i), n_device);
+	  cached_base_dev
+	    = acc_init_1 ((acc_device_t) i, acc_construct_init, 0, n_device);
+	  gomp_mutex_unlock (&acc_device_lock);
+	}
+    }
+  else
+    {
+      gomp_debug (
+	0, "init directive: Initializing device type %s and device number %d\n",
+	name_of_acc_device_t ((acc_device_t) d), n_device);
+
+      gomp_mutex_lock (&acc_device_lock);
+      cached_base_dev
+	= acc_init_1 ((acc_device_t) d, acc_construct_init, 0, n_device);
+      gomp_mutex_unlock (&acc_device_lock);
+
+      goacc_attach_host_thread_to_device (-1);
+    }
+}
+
+void
+GOACC_shutdown (int n_device, int d)
+{
+  gomp_init_targets_once ();
+
+  if ((acc_device_t) d == acc_device_none)
+    {
+      int i;
+      for (i = 0; i < _ACC_device_hwm; i++)
+	{
+	  if (!(GOACC_DIRECTIVE_DEVICE_MASK & (1 << i)))
+	    continue;
+
+	  gomp_mutex_lock (&acc_device_lock);
+
+	  struct gomp_device_descr *dev
+	    = resolve_device ((acc_device_t) i, false);
+
+	  if (!dev || dev->get_num_devices_func () <= 0)
+	    {
+	      gomp_mutex_unlock (&acc_device_lock);
+	      continue;
+	    }
+
+	  acc_shutdown_1 ((acc_device_t) i, n_device);
+
+	  gomp_mutex_unlock (&acc_device_lock);
+	}
+    }
+  else
+    {
+      gomp_mutex_lock (&acc_device_lock);
+
+      acc_shutdown_1 ((acc_device_t) d, n_device);
+
+      gomp_mutex_unlock (&acc_device_lock);
+    }
+}
+
+void
+GOACC_set_device (int n_device, int d)
+{
+  acc_set_device_type ((acc_device_t) d);
+  acc_set_device_num (n_device, (acc_device_t) d);
 }
 
 /* OpenACC 2.0a (3.2.12, 3.2.13) doesn't specify whether the serialization of
@@ -553,13 +702,11 @@ acc_init (acc_device_t d)
   gomp_init_targets_once ();
 
   gomp_mutex_lock (&acc_device_lock);
-  cached_base_dev = acc_init_1 (d, acc_construct_runtime_api, 0);
+  cached_base_dev = acc_init_1 (d, acc_construct_runtime_api, 0, -1);
   gomp_mutex_unlock (&acc_device_lock);
-  
+
   goacc_attach_host_thread_to_device (-1);
 }
-
-ialias (acc_init)
 
 void
 acc_shutdown (acc_device_t d)
@@ -571,12 +718,10 @@ acc_shutdown (acc_device_t d)
 
   gomp_mutex_lock (&acc_device_lock);
 
-  acc_shutdown_1 (d);
+  acc_shutdown_1 (d, -1);
 
   gomp_mutex_unlock (&acc_device_lock);
 }
-
-ialias (acc_shutdown)
 
 int
 acc_get_num_devices (acc_device_t d)
@@ -599,14 +744,12 @@ acc_get_num_devices (acc_device_t d)
   if (!acc_dev)
     return 0;
 
-  n = acc_dev->get_num_devices_func (0);
+  n = acc_dev->get_num_devices_func ();
   if (n < 0)
     n = 0;
 
   return n;
 }
-
-ialias (acc_get_num_devices)
 
 /* Set the device type for the current thread only (using the current global
    default device number), initialising that device if necessary.  Also set the
@@ -636,7 +779,7 @@ acc_set_device_type (acc_device_t d)
 
   gomp_mutex_lock (&acc_dev->lock);
   if (acc_dev->state == GOMP_DEVICE_UNINITIALIZED)
-    gomp_init_device (acc_dev);
+    gomp_init_device (acc_dev, false);
   gomp_mutex_unlock (&acc_dev->lock);
 
   gomp_mutex_unlock (&acc_device_lock);
@@ -658,8 +801,6 @@ acc_set_device_type (acc_device_t d)
       thr->api_info = NULL;
     }
 }
-
-ialias (acc_set_device_type)
 
 static bool
 self_initializing_p (void)
@@ -717,8 +858,6 @@ acc_get_device_type (void)
   return res;
 }
 
-ialias (acc_get_device_type)
-
 int
 acc_get_device_num (acc_device_t d)
 {
@@ -752,8 +891,6 @@ acc_get_device_num (acc_device_t d)
   return goacc_device_num;
 }
 
-ialias (acc_get_device_num)
-
 void
 acc_set_device_num (int ord, acc_device_t d)
 {
@@ -779,7 +916,7 @@ acc_set_device_num (int ord, acc_device_t d)
 
       cached_base_dev = base_dev = resolve_device (d, true);
 
-      num_devices = base_dev->get_num_devices_func (0);
+      num_devices = base_dev->get_num_devices_func ();
 
       if (num_devices <= 0 || ord >= num_devices)
         acc_dev_num_out_of_range (d, ord, num_devices);
@@ -788,18 +925,16 @@ acc_set_device_num (int ord, acc_device_t d)
 
       gomp_mutex_lock (&acc_dev->lock);
       if (acc_dev->state == GOMP_DEVICE_UNINITIALIZED)
-        gomp_init_device (acc_dev);
+	gomp_init_device (acc_dev, false);
       gomp_mutex_unlock (&acc_dev->lock);
 
       gomp_mutex_unlock (&acc_device_lock);
 
       goacc_attach_host_thread_to_device (ord);
     }
-  
+
   goacc_device_num = ord;
 }
-
-ialias (acc_set_device_num)
 
 static union goacc_property_value
 get_property_any (int ord, acc_device_t d, acc_device_property_t prop)
@@ -814,7 +949,7 @@ get_property_any (int ord, acc_device_t d, acc_device_property_t prop)
 
   struct gomp_device_descr *dev = resolve_device (d, true);
 
-  int num_devices = dev->get_num_devices_func (0);
+  int num_devices = dev->get_num_devices_func ();
 
   if (num_devices <= 0 || ord >= num_devices)
     acc_dev_num_out_of_range (d, ord, num_devices);
@@ -823,7 +958,7 @@ get_property_any (int ord, acc_device_t d, acc_device_property_t prop)
 
   gomp_mutex_lock (&dev->lock);
   if (dev->state == GOMP_DEVICE_UNINITIALIZED)
-    gomp_init_device (dev);
+    gomp_init_device (dev, false);
   gomp_mutex_unlock (&dev->lock);
 
   gomp_mutex_unlock (&acc_device_lock);
@@ -845,8 +980,6 @@ acc_get_property (int ord, acc_device_t d, acc_device_property_t prop)
     return get_property_any (ord, d, prop).val;
 }
 
-ialias (acc_get_property)
-
 const char *
 acc_get_property_string (int ord, acc_device_t d, acc_device_property_t prop)
 {
@@ -858,8 +991,6 @@ acc_get_property_string (int ord, acc_device_t d, acc_device_property_t prop)
   else
     return NULL;
 }
-
-ialias (acc_get_property_string)
 
 /* For -O and higher, the compiler always attempts to expand acc_on_device, but
    if the user disables the builtin, or calls it via a pointer, we'll need this
@@ -876,8 +1007,6 @@ acc_on_device (acc_device_t dev)
 {
   return __builtin_acc_on_device (dev);
 }
-
-ialias (acc_on_device)
 
 attribute_hidden void
 goacc_runtime_initialize (void)
@@ -931,7 +1060,7 @@ goacc_restore_bind (void)
 }
 
 /* This is called from any OpenACC support function that may need to implicitly
-   initialize the libgomp runtime, either globally or from a new host thread. 
+   initialize the libgomp runtime, either globally or from a new host thread.
    On exit "goacc_thread" will return a valid & populated thread block.  */
 
 attribute_hidden void
@@ -946,8 +1075,8 @@ goacc_lazy_initialize (void)
 
   gomp_mutex_lock (&acc_device_lock);
   if (!cached_base_dev)
-    cached_base_dev = acc_init_1 (acc_device_default,
-				  acc_construct_parallel, 1);
+    cached_base_dev
+      = acc_init_1 (acc_device_default, acc_construct_parallel, 1, -1);
   gomp_mutex_unlock (&acc_device_lock);
 
   goacc_attach_host_thread_to_device (-1);

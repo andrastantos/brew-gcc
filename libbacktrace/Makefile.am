@@ -133,6 +133,23 @@ libbacktrace_noformat_la_LIBADD = $(BACKTRACE_FILE) $(VIEW_FILE) $(ALLOC_FILE)
 libbacktrace_noformat_la_DEPENDENCIES = $(libbacktrace_noformat_la_LIBADD)
 
 if HAVE_ELF
+if HAVE_OBJCOPY_STRIPDEBUG
+
+strippedtest_SOURCES = strippedtest.c testlib.c
+strippedtest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -O
+strippedtest_LDFLAGS = $(libbacktrace_testing_ldflags) -static -Wl,-Bstatic
+strippedtest_LDADD = libbacktrace.la
+
+check_PROGRAMS += strippedtest
+MAKETESTS += strippedtest_stripped
+
+%_stripped: %
+	$(OBJCOPY) --strip-debug $< $@
+
+endif HAVE_OBJCOPY_STRIPDEBUG
+endif HAVE_ELF
+
+if HAVE_ELF
 if HAVE_OBJCOPY_DEBUGLINK
 
 TEST_BUILD_ID_DIR=$(abs_builddir)/usr/lib/debug/.build-id/
@@ -345,6 +362,13 @@ endif HAVE_OBJCOPY_DEBUGLINK
 
 endif HAVE_DWZ
 
+mdtest_SOURCES = mdtest.c testlib.c
+mdtest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -O
+mdtest_LDFLAGS = $(libbacktrace_testing_ldflags)
+mdtest_LDADD = libbacktrace.la
+
+BUILDTESTS += mdtest
+
 stest_SOURCES = stest.c
 stest_CFLAGS = $(libbacktrace_TEST_CFLAGS)
 stest_LDFLAGS = $(libbacktrace_testing_ldflags)
@@ -391,14 +415,15 @@ ztest_alloc_LDFLAGS = $(libbacktrace_testing_ldflags)
 BUILDTESTS += ztest_alloc
 
 zstdtest_SOURCES = zstdtest.c testlib.c
-zstdtest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -DSRCDIR=\"$(srcdir)\"
+zstdtest_CFLAGS = \
+	$(libbacktrace_TEST_CFLAGS) $(ZSTD_CFLAGS) -DSRCDIR=\"$(srcdir)\"
 zstdtest_LDFLAGS = $(libbacktrace_testing_ldflags)
 zstdtest_LDADD = libbacktrace.la
 zstdtest_alloc_LDADD = libbacktrace_alloc.la
 
 if HAVE_ZSTD
-zstdtest_LDADD += -lzstd
-zstdtest_alloc_LDADD += -lzstd
+zstdtest_LDADD += $(ZSTD_LIBS)
+zstdtest_alloc_LDADD += $(ZSTD_LIBS)
 endif
 zstdtest_LDADD += $(CLOCK_GETTIME_LINK)
 zstdtest_alloc_LDADD += $(CLOCK_GETTIME_LINK)

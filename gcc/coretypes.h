@@ -105,6 +105,9 @@ enum tree_index : unsigned;
 /* Forward declare rtx_code, so that we can use it in target hooks without
    needing to pull in rtl.h.  */
 enum rtx_code : unsigned;
+/* Forward declare tree_code, so that we can use it in target hooks without
+   needing to pull in tree-core.h.  */
+enum tree_code : unsigned;
 
 /* Forward decls for leaf gimple subclasses (for individual gimple codes).
    Keep this in the same order as the corresponding codes in gimple.def.  */
@@ -188,7 +191,7 @@ class bitmap_view;
 typedef unsigned char addr_space_t;
 
 /* The value of addr_space_t that represents the generic address space.  */
-#define ADDR_SPACE_GENERIC 0
+#define ADDR_SPACE_GENERIC ((addr_space_t) 0)
 #define ADDR_SPACE_GENERIC_P(AS) ((AS) == ADDR_SPACE_GENERIC)
 
 /* The major intermediate representations of GCC.  */
@@ -294,17 +297,25 @@ enum optimization_type {
   OPTIMIZE_FOR_SIZE
 };
 
+/* How strongly a comparison should start a conditional-compare sequence.  */
+enum ccmp_first_kind {
+  CCMP_FIRST_UNSUPPORTED,
+  CCMP_FIRST_NONE,
+  CCMP_FIRST_PREFERRED,
+  CCMP_FIRST_REQUIRED
+};
+
 /* Enumerates a padding direction.  */
 enum pad_direction {
   /* No padding is required.  */
   PAD_NONE,
 
-  /* Insert padding above the data, i.e. at higher memeory addresses
+  /* Insert padding above the data, i.e. at higher memory addresses
      when dealing with memory, and at the most significant end when
      dealing with registers.  */
   PAD_UPWARD,
 
-  /* Insert padding below the data, i.e. at lower memeory addresses
+  /* Insert padding below the data, i.e. at lower memory addresses
      when dealing with memory, and at the least significant end when
      dealing with registers.  */
   PAD_DOWNWARD
@@ -318,30 +329,6 @@ enum var_init_status
   VAR_INIT_STATUS_UNKNOWN,
   VAR_INIT_STATUS_UNINITIALIZED,
   VAR_INIT_STATUS_INITIALIZED
-};
-
-/* Names for the different levels of -Wstrict-overflow=N.  The numeric
-   values here correspond to N.  */
-enum warn_strict_overflow_code
-{
-  /* Overflow warning that should be issued with -Wall: a questionable
-     construct that is easy to avoid even when using macros.  Example:
-     folding (x + CONSTANT > x) to 1.  */
-  WARN_STRICT_OVERFLOW_ALL = 1,
-  /* Overflow warning about folding a comparison to a constant because
-     of undefined signed overflow, other than cases covered by
-     WARN_STRICT_OVERFLOW_ALL.  Example: folding (abs (x) >= 0) to 1
-     (this is false when x == INT_MIN).  */
-  WARN_STRICT_OVERFLOW_CONDITIONAL = 2,
-  /* Overflow warning about changes to comparisons other than folding
-     them to a constant.  Example: folding (x + 1 > 1) to (x > 0).  */
-  WARN_STRICT_OVERFLOW_COMPARISON = 3,
-  /* Overflow warnings not covered by the above cases.  Example:
-     folding ((x * 10) / 5) to (x * 2).  */
-  WARN_STRICT_OVERFLOW_MISC = 4,
-  /* Overflow warnings about reducing magnitude of constants in
-     comparison.  Example: folding (x + 2 > y) to (x + 1 >= y).  */
-  WARN_STRICT_OVERFLOW_MAGNITUDE = 5
 };
 
 /* Kind of artificial, compiler-generated lookup table.  Type of the

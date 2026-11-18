@@ -1129,11 +1129,15 @@ canonicalize_base_object_address (tree addr)
    dummy outermost loop.  In other cases perform loop analysis.
 
    Return true if the analysis succeeded and store the results in DRB if so.
-   BB analysis can only fail for bitfield or reversed-storage accesses.  */
+   BB analysis can only fail for bitfield or reversed-storage accesses.
+
+   If NOWRAP_BOUND is nonzero, allow simple_iv to record no-wrap bounds.
+   Then, store non-trivial bounds in NOWRAP_BOUND.  */
 
 opt_result
 dr_analyze_innermost (innermost_loop_behavior *drb, tree ref,
-		      class loop *loop, const gimple *stmt)
+		      class loop *loop, const gimple *stmt,
+		      tree *nowrap_bound)
 {
   poly_int64 pbitsize, pbitpos;
   tree base, poffset;
@@ -1195,9 +1199,12 @@ dr_analyze_innermost (innermost_loop_behavior *drb, tree ref,
       base = build_fold_addr_expr (base);
     }
 
+  bool record_nowrap_assumptions_p = (nowrap_bound != nullptr);
+
   if (in_loop)
     {
-      if (!simple_iv (loop, loop, base, &base_iv, true))
+      if (!simple_iv (loop, loop, base, &base_iv, true,
+		      record_nowrap_assumptions_p))
 	return opt_result::failure_at
 	  (stmt, "failed: evolution of base is not affine.\n");
     }
@@ -1206,23 +1213,35 @@ dr_analyze_innermost (innermost_loop_behavior *drb, tree ref,
       base_iv.base = base;
       base_iv.step = ssize_int (0);
       base_iv.no_overflow = true;
+      base_iv.nowrap_bound = NULL_TREE;
     }
 
   if (!poffset)
     {
       offset_iv.base = ssize_int (0);
       offset_iv.step = ssize_int (0);
+      offset_iv.nowrap_bound = NULL_TREE;
     }
   else
     {
       if (!in_loop)
-        {
-          offset_iv.base = poffset;
-          offset_iv.step = ssize_int (0);
-        }
-      else if (!simple_iv (loop, loop, poffset, &offset_iv, true))
+	{
+	  offset_iv.base = poffset;
+	  offset_iv.step = ssize_int (0);
+	  offset_iv.nowrap_bound = NULL_TREE;
+	}
+      else if (!simple_iv (loop, loop, poffset, &offset_iv, true,
+			   record_nowrap_assumptions_p))
 	return opt_result::failure_at
 	  (stmt, "failed: evolution of offset is not affine.\n");
+    }
+
+  /* simple_iv might store bounds for BASE_IV and OFFSET_IV.  Combine them
+     and store the result in NOWRAP_BOUND.  */
+  if (nowrap_bound)
+    {
+      *nowrap_bound = base_iv.nowrap_bound;
+      scev_combine_nowrap_bounds (nowrap_bound, offset_iv.nowrap_bound);
     }
 
   init = ssize_int (pbytepos);
@@ -1295,7 +1314,9 @@ access_fn_component_p (tree op)
       return true;
 
     case COMPONENT_REF:
-      return TREE_CODE (TREE_TYPE (TREE_OPERAND (op, 0))) == RECORD_TYPE;
+      return (TREE_CODE (TREE_TYPE (TREE_OPERAND (op, 0))) == RECORD_TYPE
+	      || (!AGGREGATE_TYPE_P (TREE_TYPE (op))
+		  && TREE_CODE (TREE_TYPE (op)) != COMPLEX_TYPE));
 
     default:
       return false;
@@ -1320,10 +1341,14 @@ base_supports_access_fn_components_p (tree base)
 }
 
 /* Determines the base object and the list of indices of memory reference
-   DR, analyzed in LOOP and instantiated before NEST.  */
+   DR, analyzed in LOOP and instantiated before NEST.
+
+   If NOWRAP_BOUND is nonzero, pass it to scev which will then store
+   the bound under which we do not wrap.  */
 
 static void
-dr_analyze_indices (struct indices *dri, tree ref, edge nest, loop_p loop)
+dr_analyze_indices (struct indices *dri, tree ref, edge nest, loop_p loop,
+		    tree *nowrap_bound = nullptr)
 {
   /* If analyzing a basic-block there are no indices to analyze
      and thus no access functions.  */
@@ -1358,22 +1383,32 @@ dr_analyze_indices (struct indices *dri, tree ref, edge nest, loop_p loop)
       if (TREE_CODE (ref) == ARRAY_REF)
 	{
 	  tree op = TREE_OPERAND (ref, 1);
-	  tree access_fn = analyze_scalar_evolution (loop, op);
+	  tree access_fn = analyze_scalar_evolution (loop, op, nowrap_bound);
 	  access_fn = instantiate_scev (nest, loop, access_fn);
 	  access_fns.safe_push (access_fn);
 	}
       else if (TREE_CODE (ref) == COMPONENT_REF
-	       && TREE_CODE (TREE_TYPE (TREE_OPERAND (ref, 0))) == RECORD_TYPE)
+	       && (TREE_CODE (TREE_TYPE (TREE_OPERAND (ref, 0))) == RECORD_TYPE
+		   || (!AGGREGATE_TYPE_P (TREE_TYPE (ref))
+		       && TREE_CODE (TREE_TYPE (ref)) != COMPLEX_TYPE)))
 	{
 	  /* For COMPONENT_REFs of records (but not unions!) use the
 	     FIELD_DECL offset as constant access function so we can
-	     disambiguate a[i].f1 and a[i].f2.  */
-	  tree off = component_ref_field_offset (ref);
-	  off = size_binop (PLUS_EXPR,
-			    size_binop (MULT_EXPR,
-					fold_convert (bitsizetype, off),
-					bitsize_int (BITS_PER_UNIT)),
-			    DECL_FIELD_BIT_OFFSET (TREE_OPERAND (ref, 1)));
+	     disambiguate a[i].f1 and a[i].f2.  For unions and accesses
+	     we do not create further access functions for just use
+	     zero.  */
+	  tree off;
+	  if (TREE_CODE (TREE_TYPE (TREE_OPERAND (ref, 0))) == RECORD_TYPE)
+	    {
+	      off = component_ref_field_offset (ref);
+	      off = size_binop (PLUS_EXPR,
+				size_binop (MULT_EXPR,
+					    fold_convert (bitsizetype, off),
+					    bitsize_int (BITS_PER_UNIT)),
+				DECL_FIELD_BIT_OFFSET (TREE_OPERAND (ref, 1)));
+	    }
+	  else
+	    off = bitsize_zero_node;
 	  access_fns.safe_push (off);
 	}
       else
@@ -1390,7 +1425,7 @@ dr_analyze_indices (struct indices *dri, tree ref, edge nest, loop_p loop)
   if (TREE_CODE (ref) == MEM_REF)
     {
       tree op = TREE_OPERAND (ref, 0);
-      tree access_fn = analyze_scalar_evolution (loop, op);
+      tree access_fn = analyze_scalar_evolution (loop, op, nowrap_bound);
       access_fn = instantiate_scev (nest, loop, access_fn);
       STRIP_NOPS (access_fn);
       if (TREE_CODE (access_fn) == POLYNOMIAL_CHREC)
@@ -1473,7 +1508,7 @@ dr_analyze_alias (struct data_reference *dr)
     {
       addr = TREE_OPERAND (base, 0);
       if (TREE_CODE (addr) == SSA_NAME)
-	DR_PTR_INFO (dr) = SSA_NAME_PTR_INFO (addr);
+	DR_PTR_INFO (dr) = ssa_name_pt_solution (addr);
     }
 }
 
@@ -1496,11 +1531,16 @@ free_data_ref (data_reference_p dr)
 
    Return the data_reference description of MEMREF.  NEST is the outermost
    loop in which the reference should be instantiated, LOOP is the loop
-   in which the data reference should be analyzed.  */
+   in which the data reference should be analyzed.
+
+   If RECORD_NOWRAP_ASSUMPTIONS is true, pass an empty no-wrap bound to
+   scev and have it store its assumptions there.  If we got a nontrivial
+   assumption, save it in DR's DR_NOWRAP_BOUND.  */
 
 struct data_reference *
 create_data_ref (edge nest, loop_p loop, tree memref, gimple *stmt,
-		 bool is_read, bool is_conditional_in_stmt)
+		 bool is_read, bool is_conditional_in_stmt,
+		 bool record_nowrap_assumptions)
 {
   struct data_reference *dr;
 
@@ -1517,10 +1557,24 @@ create_data_ref (edge nest, loop_p loop, tree memref, gimple *stmt,
   DR_IS_READ (dr) = is_read;
   DR_IS_CONDITIONAL_IN_STMT (dr) = is_conditional_in_stmt;
 
+  tree nowrap_bound = NULL_TREE;
   dr_analyze_innermost (&DR_INNERMOST (dr), memref,
-			nest != NULL ? loop : NULL, stmt);
-  dr_analyze_indices (&dr->indices, DR_REF (dr), nest, loop);
+			nest != NULL ? loop : NULL, stmt,
+			record_nowrap_assumptions ? &nowrap_bound : nullptr);
+  dr_analyze_indices (&dr->indices, DR_REF (dr), nest, loop,
+		      record_nowrap_assumptions ? &nowrap_bound : nullptr);
   dr_analyze_alias (dr);
+
+  if (nowrap_bound)
+    {
+      /* If there is a bound but it is zero, the assumption we build with it
+	 would never hold and we would always fall back to the scalar loop.
+	 Reset the DR so we can still get gather/scatter.  */
+      if (integer_zerop (nowrap_bound))
+	dr_reset (dr);
+      else
+	DR_NOWRAP_BOUND (dr) = nowrap_bound;
+    }
 
   if (dump_file && (dump_flags & TDF_DETAILS))
     {
@@ -1541,6 +1595,11 @@ create_data_ref (edge nest, loop_p loop, tree memref, gimple *stmt,
       fprintf (dump_file, "\n\tstep alignment: %d", DR_STEP_ALIGNMENT (dr));
       fprintf (dump_file, "\n\tbase_object: ");
       print_generic_expr (dump_file, DR_BASE_OBJECT (dr), TDF_SLIM);
+      if (DR_NOWRAP_BOUND (dr))
+	{
+	  fprintf (dump_file, "\n\tnowrap bound: ");
+	  print_generic_expr (dump_file, DR_NOWRAP_BOUND (dr), TDF_SLIM);
+	}
       fprintf (dump_file, "\n");
       for (i = 0; i < DR_NUM_DIMENSIONS (dr); i++)
 	{
@@ -1795,7 +1854,7 @@ dump_alias_pair (dr_with_seg_len_pair_t *alias_pair, const char *indent)
    memory of store_ptr_0 cannot be between the memory of load_ptr_0 and
    load_ptr_1.)
 
-   we then can use only the following expression to finish the alising checks
+   we then can use only the following expression to finish the aliasing checks
    between store_ptr_0 & load_ptr_0 and store_ptr_0 & load_ptr_1:
 
    ((store_ptr_0 + store_segment_length_0) <= load_ptr_0)
@@ -2037,7 +2096,7 @@ create_ifn_alias_checks (tree *cond_expr,
   tree addr_a = DR_BASE_ADDRESS (dr_a.dr);
   tree addr_b = DR_BASE_ADDRESS (dr_b.dr);
 
-  /* See whether the target suports what we want to do.  WAW checks are
+  /* See whether the target supports what we want to do.  WAW checks are
      equivalent to WAR checks here.  */
   internal_fn ifn = (alias_pair.flags & DR_ALIAS_RAW
 		     ? IFN_CHECK_RAW_PTRS
@@ -2676,7 +2735,6 @@ create_runtime_alias_checks (class loop *loop,
 {
   tree part_cond_expr;
 
-  fold_defer_overflow_warnings ();
   for (const dr_with_seg_len_pair_t &alias_pair : alias_pairs)
     {
       gcc_assert (alias_pair.flags);
@@ -2694,7 +2752,6 @@ create_runtime_alias_checks (class loop *loop,
       else
 	*cond_expr = part_cond_expr;
     }
-  fold_undefer_and_ignore_overflow_warnings ();
 }
 
 /* Check if OFFSET1 and OFFSET2 (DR_OFFSETs of some data-refs) are identical
@@ -3048,6 +3105,17 @@ dr_may_alias_p (const struct data_reference *a, const struct data_reference *b,
       if (aff_comb_cannot_overlap_p (&off2, size1, size2))
 	return false;
     }
+
+  /* Try the points-to information recorded for the base pointers the
+     references were originally analyzed from.  DR_BASE_OBJECT can be less
+     precise, rooting at another SSA name or at one created after points-to
+     information was computed and thus without points-to info.  A
+     recorded solution is not revalidated.  It covers every dynamic value
+     of its SSA name, so it holds for cross-iteration queries as well.  */
+  const pt_solution *pt_a = DR_PTR_INFO (a);
+  const pt_solution *pt_b = DR_PTR_INFO (b);
+  if (pt_a && pt_b && !pt_solutions_intersect (pt_a, pt_b))
+    return false;
 
   if ((TREE_CODE (addr_a) == MEM_REF || TREE_CODE (addr_a) == TARGET_MEM_REF)
       && (TREE_CODE (addr_b) == MEM_REF || TREE_CODE (addr_b) == TARGET_MEM_REF)
@@ -4151,16 +4219,16 @@ compute_overlap_steps_for_affine_univar (HOST_WIDE_INT niter,
 	  tau2 = FLOOR_DIV (niter, step_overlaps_a);
 	  tau2 = MIN (tau2, FLOOR_DIV (niter, step_overlaps_b));
 	  last_conflict = tau2;
-	  *last_conflicts = build_int_cst (NULL_TREE, last_conflict);
+	  *last_conflicts = build_int_cst (integer_type_node, last_conflict);
 	}
       else
 	*last_conflicts = chrec_dont_know;
 
       *overlaps_a = affine_fn_univar (integer_zero_node, dim,
-				      build_int_cst (NULL_TREE,
+				      build_int_cst (integer_type_node,
 						     step_overlaps_a));
       *overlaps_b = affine_fn_univar (integer_zero_node, dim,
-				      build_int_cst (NULL_TREE,
+				      build_int_cst (integer_type_node,
 						     step_overlaps_b));
     }
 
@@ -4712,14 +4780,14 @@ analyze_subscript_affine_affine (tree chrec_a,
 
 	      *overlaps_a
 		= conflict_fn (1,
-			       affine_fn_univar (build_int_cst (NULL_TREE, x1),
+			       affine_fn_univar (build_int_cst (integer_type_node, x1),
 						 1,
-						 build_int_cst (NULL_TREE, i1)));
+						 build_int_cst (integer_type_node, i1)));
 	      *overlaps_b
 		= conflict_fn (1,
-			       affine_fn_univar (build_int_cst (NULL_TREE, y1),
+			       affine_fn_univar (build_int_cst (integer_type_node, y1),
 						 1,
-						 build_int_cst (NULL_TREE, j1)));
+						 build_int_cst (integer_type_node, j1)));
 	    }
 	  else
 	    {
@@ -5288,6 +5356,8 @@ add_multivariate_self_dist (struct data_dependence_relation *ddr, tree c_2)
       || TREE_CODE (CHREC_RIGHT (c_2)) != INTEGER_CST)
     {
       DDR_AFFINE_P (ddr) = false;
+      DDR_ARE_DEPENDENT (ddr) = chrec_dont_know;
+      DDR_DIST_VECTS (ddr).release ();
       return;
     }
 
@@ -5338,6 +5408,7 @@ add_other_self_distances (struct data_dependence_relation *ddr)
 	      if (DDR_NUM_SUBSCRIPTS (ddr) != 1)
 		{
 		  DDR_ARE_DEPENDENT (ddr) = chrec_dont_know;
+		  DDR_DIST_VECTS (ddr).release ();
 		  return;
 		}
 
@@ -5346,11 +5417,15 @@ add_other_self_distances (struct data_dependence_relation *ddr)
 	      if (TREE_CODE (CHREC_LEFT (access_fun)) == POLYNOMIAL_CHREC)
 		add_multivariate_self_dist (ddr, access_fun);
 	      else
-		/* The evolution step is not constant: it varies in
-		   the outer loop, so this cannot be represented by a
-		   distance vector.  For example in pr34635.c the
-		   evolution is {0, +, {0, +, 4}_1}_2.  */
-		DDR_AFFINE_P (ddr) = false;
+		{
+		  /* The evolution step is not constant: it varies in
+		     the outer loop, so this cannot be represented by a
+		     distance vector.  For example in pr34635.c the
+		     evolution is {0, +, {0, +, 4}_1}_2.  */
+		  DDR_AFFINE_P (ddr) = false;
+		  DDR_ARE_DEPENDENT (ddr) = chrec_dont_know;
+		  DDR_DIST_VECTS (ddr).release ();
+		}
 
 	      return;
 	    }
@@ -5669,6 +5744,172 @@ subscript_dependence_tester_1 (struct data_dependence_relation *ddr,
   return false;
 }
 
+/* Return true if every distance vector of DDR has, in the loops marked in
+   VARIES, the distances of the first vector or all of them negated.  */
+
+static bool
+dist_vectors_agree_p (const struct data_dependence_relation *ddr,
+		      const vec<bool> &varies)
+{
+  if (DDR_NUM_DIST_VECTS (ddr) == 0)
+    return true;
+  lambda_vector first = DDR_DIST_VECT (ddr, 0);
+  for (lambda_vector v : DDR_DIST_VECTS (ddr))
+    {
+      bool same = true, opposite = true;
+      for (unsigned i = 0; i < DDR_NB_LOOPS (ddr); i++)
+	if (varies[i])
+	  {
+	    same &= v[i] == first[i];
+	    opposite &= v[i] == -first[i];
+	  }
+      if (!same && !opposite)
+	return false;
+    }
+  return true;
+}
+
+/* Set VARIES[I] for each loop I of the nest of DDR in which CHREC has an
+   evolution part, as evolution_part_in_loop_num finds it, walking CHREC
+   once.  The nest is a chain of loops at consecutive depths, as
+   find_loop_nest builds it, so loop I is at the depth of loop 0 plus I.  */
+
+static void
+mark_evolving_loops (const struct data_dependence_relation *ddr, tree chrec,
+		     vec<bool> *varies)
+{
+  unsigned n = DDR_NB_LOOPS (ddr);
+  if (automatically_generated_chrec_p (chrec))
+    for (unsigned i = 0; i < n; i++)
+      (*varies)[i] = true;
+  unsigned depth0 = loop_depth (DDR_LOOP_NEST (ddr)[0]);
+  for (; TREE_CODE (chrec) == POLYNOMIAL_CHREC; chrec = CHREC_LEFT (chrec))
+    {
+      class loop *loop = get_chrec_loop (chrec);
+      unsigned i = loop_depth (loop) - depth0;
+      if (i < n && DDR_LOOP_NEST (ddr)[i] == loop)
+	(*varies)[i] = true;
+    }
+}
+
+/* What the distance vectors of a dependence miss in its free loops.  */
+
+enum free_loop_distances
+{
+  /* They miss nothing.  */
+  FREE_LOOP_DISTANCES_KEPT,
+  /* They miss distances, and agree in the loops the subscripts constrain,
+     so they can be completed.  */
+  FREE_LOOP_DISTANCES_LOST,
+  /* They miss distances and do not agree there.  */
+  FREE_LOOP_DISTANCES_DISAGREE
+};
+
+/* Return whether the distance vectors of DDR miss distances because of a
+   free loop, a loop of the nest that contains both references and in
+   which no compared access function evolves, so that the dependence can
+   have any distance in it.  The vectors give a free loop a distance of
+   its own only when it is the only free loop and lies outside every loop
+   the subscripts constrain, and the vectors agree in the loops the
+   subscripts constrain.  Otherwise its distance is taken as zero, which
+   misses the distances of opposite signs in it and in another free loop
+   or in a loop with a nonzero distance.  Set FREE_LOOPS[I] when loop I of
+   the nest is free and VARIES[I] when a compared access function evolves
+   in it; both have room for DDR_NB_LOOPS (DDR) elements.  */
+
+static enum free_loop_distances
+check_free_loop_distances (const struct data_dependence_relation *ddr,
+			   vec<bool> *free_loops, vec<bool> *varies)
+{
+  unsigned n = DDR_NB_LOOPS (ddr);
+  if (n < 2)
+    return FREE_LOOP_DISTANCES_KEPT;
+  free_loops->quick_grow_cleared (n);
+
+  varies->quick_grow_cleared (n);
+  for (subscript *sub : DDR_SUBSCRIPTS (ddr))
+    for (unsigned k = 0; k < 2; k++)
+      mark_evolving_loops (ddr, SUB_ACCESS_FN (sub, k), varies);
+
+  basic_block bb_a = gimple_bb (DR_STMT (DDR_A (ddr)));
+  basic_block bb_b = gimple_bb (DR_STMT (DDR_B (ddr)));
+  unsigned first_varying = n, nfree = 0, free_idx = 0;
+  for (unsigned i = 0; i < n; i++)
+    if ((*varies)[i])
+      first_varying = MIN (first_varying, i);
+    else if (flow_bb_inside_loop_p (DDR_LOOP_NEST (ddr)[i], bb_a)
+	     && flow_bb_inside_loop_p (DDR_LOOP_NEST (ddr)[i], bb_b))
+      {
+	nfree++;
+	free_idx = i;
+	(*free_loops)[i] = true;
+      }
+  if (nfree == 0)
+    return FREE_LOOP_DISTANCES_KEPT;
+  if (!dist_vectors_agree_p (ddr, *varies))
+    return FREE_LOOP_DISTANCES_DISAGREE;
+  if (nfree == 1 && free_idx < first_varying)
+    return FREE_LOOP_DISTANCES_KEPT;
+  if (nfree > 1)
+    return FREE_LOOP_DISTANCES_LOST;
+
+  unsigned j;
+  lambda_vector v;
+  FOR_EACH_VEC_ELT (DDR_DIST_VECTS (ddr), j, v)
+    for (unsigned i = 0; i < n; i++)
+      if ((*varies)[i] && v[i] != 0)
+	return FREE_LOOP_DISTANCES_LOST;
+  return FREE_LOOP_DISTANCES_KEPT;
+}
+
+/* Add the distance vectors of DDR that its free loops FREE_LOOPS miss,
+   when its vectors agree in the loops the subscripts constrain: every
+   lexicographically positive vector with the distances of the first
+   vector, or their opposite, in the other loops and -1, 0 or 1 in each
+   free loop.  That is not possible when the bases differ and the objects
+   vary in the nest; return false then, when there is no vector to start
+   from, or as soon as more than 32 vectors would be needed.  */
+
+static bool
+add_free_loop_distances (struct data_dependence_relation *ddr,
+			 const vec<bool> &free_loops)
+{
+  if ((DDR_COULD_BE_INDEPENDENT_P (ddr) && !DDR_OBJECT_A (ddr))
+      || DDR_NUM_DIST_VECTS (ddr) == 0)
+    return false;
+  unsigned n = DDR_NB_LOOPS (ddr), nfree = 0, ncomb = 1;
+  for (bool f : free_loops)
+    if (f)
+      {
+	nfree++;
+	ncomb *= 3;
+      }
+  if (nfree > 3)
+    return false;
+
+  lambda_vector first = DDR_DIST_VECT (ddr, 0);
+  for (int sign = 1; sign >= -1; sign -= 2)
+    for (unsigned c = 0; c < ncomb; c++)
+      {
+	lambda_vector v = lambda_vector_new (n);
+	for (unsigned i = 0, rest = c; i < n; i++)
+	  if (free_loops[i])
+	    {
+	      v[i] = (int) (rest % 3) - 1;
+	      rest /= 3;
+	    }
+	  else
+	    v[i] = sign * first[i];
+	if (lambda_vector_lexico_pos (v, n))
+	  {
+	    save_dist_v (ddr, v);
+	    if (DDR_NUM_DIST_VECTS (ddr) > 32)
+	      return false;
+	  }
+      }
+  return true;
+}
+
 /* Computes the conflicting iterations in LOOP_NEST, and initialize DDR.  */
 
 static void
@@ -5681,6 +5922,21 @@ subscript_dependence_tester (struct data_dependence_relation *ddr,
   compute_subscript_distance (ddr);
   if (build_classic_dist_vector (ddr, loop_nest))
     {
+      unsigned n = DDR_NB_LOOPS (ddr);
+      auto_vec<bool, 8> free_loops (n), varies (n);
+      enum free_loop_distances lost
+	= check_free_loop_distances (ddr, &free_loops, &varies);
+      if (lost == FREE_LOOP_DISTANCES_DISAGREE
+	  || (lost == FREE_LOOP_DISTANCES_LOST
+	      && !add_free_loop_distances (ddr, free_loops)))
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    fprintf (dump_file, "(distance vectors miss a free loop)\n");
+	  DDR_ARE_DEPENDENT (ddr) = chrec_dont_know;
+	  DDR_DIST_VECTS (ddr).release ();
+	  return;
+	}
+
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
 	  unsigned i;
@@ -6027,11 +6283,14 @@ loop_nest_has_data_refs (loop_p loop)
 
 /* Stores the data references in STMT to DATAREFS.  If there is an unanalyzable
    reference, returns false, otherwise returns true.  NEST is the outermost
-   loop of the loop nest in which the references should be analyzed.  */
+   loop of the loop nest in which the references should be analyzed.
+   RECORD_NOWRAP_ASSUMPTIONS determines whether or not no-wrap assumptions
+   are allowed and recorded.  */
 
 opt_result
 find_data_references_in_stmt (class loop *nest, gimple *stmt,
-			      vec<data_reference_p> *datarefs)
+			      vec<data_reference_p> *datarefs,
+			      bool record_nowrap_assumptions)
 {
   auto_vec<data_ref_loc, 2> references;
   data_reference_p dr;
@@ -6044,7 +6303,8 @@ find_data_references_in_stmt (class loop *nest, gimple *stmt,
     {
       dr = create_data_ref (nest ? loop_preheader_edge (nest) : NULL,
 			    loop_containing_stmt (stmt), ref.ref,
-			    stmt, ref.is_read, ref.is_conditional_in_stmt);
+			    stmt, ref.is_read, ref.is_conditional_in_stmt,
+			    record_nowrap_assumptions);
       gcc_assert (dr != NULL);
       datarefs->safe_push (dr);
     }
@@ -6395,6 +6655,16 @@ free_data_refs (vec<data_reference_p>& datarefs)
   for (data_reference *dr : datarefs)
     free_data_ref (dr);
   datarefs.release ();
+}
+
+/* Reset DR_INNERMOST, DR_NOWRAP_BOUND, and access functions of DR.  */
+
+void
+dr_reset (data_reference *dr)
+{
+  DR_INNERMOST (dr) = innermost_loop_behavior ();
+  DR_NOWRAP_BOUND (dr) = NULL_TREE;
+  dr->indices.access_fns.release ();
 }
 
 /* Common routine implementing both dr_direction_indicator and

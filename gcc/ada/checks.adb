@@ -1551,8 +1551,9 @@ package body Checks is
       end if;
 
       --  If an assignment target is present, then we need to generate the
-      --  actual subtype if the target is a parameter or aliased object with
-      --  an unconstrained nominal subtype.
+      --  actual subtype if the target is a parameter, or a view conversion
+      --  of a constrained object, or an aliased object with unconstrained
+      --  nominal subtype.
 
       --  Ada 2005 (AI-363): For Ada 2005, we limit the building of the actual
       --  subtype to the parameter and dereference cases, since other aliased
@@ -1561,6 +1562,10 @@ package body Checks is
 
       if Present (Lhs)
         and then (Present (Param_Entity (Lhs))
+                   or else (not Is_Constrained (T_Typ)
+                             and then Is_View_Conversion (Lhs)
+                             and then
+                               Is_Constrained (Etype (Expression (Lhs))))
                    or else (Ada_Version < Ada_2005
                              and then not Is_Constrained (T_Typ)
                              and then Is_Aliased_View (Lhs)
@@ -3367,6 +3372,12 @@ package body Checks is
       --  for floating-point types. But the additional less precise tests below
       --  catch these cases.
 
+      --  Under GNATProve mode, when the type of the expression is Universal
+      --  Integer we cannot determine if the expression is in the range of the
+      --  target type. Required because, Universal_Integer is implemented as a
+      --  128-bit type but, in theory, its values may be out of range for
+      --  128-bit target types.
+
       --  Note: skip this if we are given a source_typ, since the point of
       --  supplying a Source_Typ is to stop us looking at the expression.
       --  We could sharpen this test to be out parameters only ???
@@ -3374,6 +3385,8 @@ package body Checks is
       if Is_Discrete_Type (Target_Typ)
         and then not Is_Unconstrained_Subscr_Ref
         and then No (Source_Typ)
+        and then not (Etype (Expr) = Universal_Integer
+                        and then GNATprove_Mode)
       then
          declare
             Thi : constant Node_Id := Type_High_Bound (Target_Typ);
@@ -4133,7 +4146,7 @@ package body Checks is
            and then Etype (N) = Entity (N)
          then
             Rewrite (N,
-              New_Occurrence_Of (First_Formal (Current_Subprogram), Loc));
+              New_Occurrence_Of (First_Formal (Enclosing_Init_Proc), Loc));
          end if;
 
          return OK;
@@ -4174,7 +4187,7 @@ package body Checks is
          --  Replace references to the current instance of the type with the
          --  corresponding _init formal of the initialization procedure.
 
-         if Within_Init_Proc then
+         if Inside_Init_Proc then
             Search_And_Replace_Current_Instance (Dval);
          end if;
 

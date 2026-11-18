@@ -35,7 +35,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "tree-diagnostic.h"
 #include "output.h"
-#include "timevar.h"
 #include "stor-layout.h"
 #include "cgraph.h"
 #include "debug.h"
@@ -262,7 +261,7 @@ lhd_tree_dump_dump_tree (void *di ATTRIBUTE_UNUSED, tree t ATTRIBUTE_UNUSED)
 /* lang_hooks.tree_dump.type_qual:  Determine type qualifiers in a
    language-specific way.  */
 
-int
+qualifier_set
 lhd_tree_dump_type_quals (const_tree t)
 {
   return TYPE_QUALS (t);
@@ -646,7 +645,8 @@ lhd_omp_array_size (tree, gimple_seq *)
   return NULL_TREE;
 }
 
-/* Returns true when additional mappings for a decl are needed.  */
+/* Return false, implying that no additional data-mapping operations
+   are required for the tree containing a map clause.  */
 
 bool
 lhd_omp_deep_mapping_p (const gimple *, tree)
@@ -654,7 +654,8 @@ lhd_omp_deep_mapping_p (const gimple *, tree)
   return false;
 }
 
-/* Returns number of additional mappings for a decl.  */
+/* Return NULL_TREE, implying that no additional data-mapping operations
+   are required for the tree containing a map clause.  */
 
 tree
 lhd_omp_deep_mapping_cnt (const gimple *, tree, gimple_seq *)
@@ -662,7 +663,8 @@ lhd_omp_deep_mapping_cnt (const gimple *, tree, gimple_seq *)
   return NULL_TREE;
 }
 
-/* Do the additional mappings.  */
+/* Do nothing as no additional data-mapping operations
+   are required for the second argument that contains a map clause.  */
 
 void
 lhd_omp_deep_mapping (const gimple *, tree, unsigned HOST_WIDE_INT, tree, tree,

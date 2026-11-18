@@ -298,8 +298,13 @@ convert_memory_address_addr_space_1 (scalar_int_mode to_mode ATTRIBUTE_UNUSED,
 				     bool in_const ATTRIBUTE_UNUSED,
 				     bool no_emit ATTRIBUTE_UNUSED)
 {
+  machine_mode xmode = GET_MODE (x);
+  bool vecaddr_p = VECTOR_MODE_P (GET_MODE (x));
+  if (vecaddr_p)
+    xmode = GET_MODE_INNER (xmode);
+
 #ifndef POINTERS_EXTEND_UNSIGNED
-  gcc_assert (GET_MODE (x) == to_mode || GET_MODE (x) == VOIDmode);
+  gcc_assert (xmode == to_mode || xmode == VOIDmode);
   return x;
 #else /* defined(POINTERS_EXTEND_UNSIGNED) */
   scalar_int_mode pointer_mode, address_mode, from_mode;
@@ -307,8 +312,11 @@ convert_memory_address_addr_space_1 (scalar_int_mode to_mode ATTRIBUTE_UNUSED,
   enum rtx_code code;
 
   /* If X already has the right mode, just return it.  */
-  if (GET_MODE (x) == to_mode)
+  if (xmode == to_mode)
     return x;
+
+  /* TODO: support vector conversions.  */
+  gcc_assert (!vecaddr_p);
 
   pointer_mode = targetm.addr_space.pointer_mode (as);
   address_mode = targetm.addr_space.address_mode (as);
@@ -852,9 +860,8 @@ promote_function_mode (const_tree type, machine_mode mode, int *punsignedp,
 	return mode;
     }
 
-  switch (TREE_CODE (type))
+  if (BITINT_TYPE_P (type))
     {
-    case BITINT_TYPE:
       if (TYPE_MODE (type) == BLKmode)
 	return mode;
 
@@ -865,10 +872,12 @@ promote_function_mode (const_tree type, machine_mode mode, int *punsignedp,
 
       if (!info.extended)
 	return mode;
-      /* FALLTHRU */
+    }
+  switch (TREE_CODE (type))
+    {
     case INTEGER_TYPE:   case ENUMERAL_TYPE:   case BOOLEAN_TYPE:
     case REAL_TYPE:      case OFFSET_TYPE:     case FIXED_POINT_TYPE:
-    case POINTER_TYPE:   case REFERENCE_TYPE:
+    case POINTER_TYPE:   case REFERENCE_TYPE:  case BITINT_TYPE:
       return targetm.calls.promote_function_mode (type, mode, punsignedp, funtype,
 						  for_return);
 
@@ -898,14 +907,13 @@ promote_mode (const_tree type ATTRIBUTE_UNUSED, machine_mode mode,
 
   /* FIXME: this is the same logic that was there until GCC 4.4, but we
      probably want to test POINTERS_EXTEND_UNSIGNED even if PROMOTE_MODE
-     is not defined.  The affected targets are M32C, S390, SPARC.  */
+     is not defined.  The affected targets are S390, SPARC.  */
 #ifdef PROMOTE_MODE
   code = TREE_CODE (type);
   unsignedp = *punsignedp;
 
-  switch (code)
+  if (BITINT_TYPE_P (type))
     {
-    case BITINT_TYPE:
       if (TYPE_MODE (type) == BLKmode)
 	return mode;
 
@@ -916,9 +924,12 @@ promote_mode (const_tree type ATTRIBUTE_UNUSED, machine_mode mode,
 
       if (!info.extended)
 	return mode;
-      /* FALLTHRU */
+    }
+  switch (code)
+    {
     case INTEGER_TYPE:   case ENUMERAL_TYPE:   case BOOLEAN_TYPE:
     case REAL_TYPE:      case OFFSET_TYPE:     case FIXED_POINT_TYPE:
+    case BITINT_TYPE:
       /* Values of these types always have scalar mode.  */
       smode = as_a <scalar_mode> (mode);
       PROMOTE_MODE (smode, unsignedp, type);
@@ -1592,6 +1603,8 @@ allocate_dynamic_stack_space (rtx size, unsigned size_align,
   /* Don't let anti_adjust_stack emit notes.  */
   suppress_reg_args_size = true;
 
+  poly_int64 saved_stack_pointer_delta = stack_pointer_delta;
+
   /* Perform the required allocation from the stack.  Some systems do
      this differently than simply incrementing/decrementing from the
      stack pointer, such as acquiring the space by calling malloc().  */
@@ -1607,8 +1620,6 @@ allocate_dynamic_stack_space (rtx size, unsigned size_align,
     }
   else
     {
-      poly_int64 saved_stack_pointer_delta;
-
       if (!STACK_GROWS_DOWNWARD)
 	emit_move_insn (target, force_operand (addr, target));
 
@@ -1636,8 +1647,6 @@ allocate_dynamic_stack_space (rtx size, unsigned size_align,
 	  emit_label (space_available);
 	}
 
-      saved_stack_pointer_delta = stack_pointer_delta;
-
       /* If stack checking or stack clash protection is requested,
 	 then probe the stack while allocating space from it.  */
       if (flag_stack_check && STACK_CHECK_MOVING_SP)
@@ -1647,14 +1656,14 @@ allocate_dynamic_stack_space (rtx size, unsigned size_align,
       else
 	anti_adjust_stack (size);
 
-      /* Even if size is constant, don't modify stack_pointer_delta.
-	 The constant size alloca should preserve
-	 crtl->preferred_stack_boundary alignment.  */
-      stack_pointer_delta = saved_stack_pointer_delta;
-
       if (STACK_GROWS_DOWNWARD)
 	emit_move_insn (target, force_operand (addr, target));
     }
+
+  /* Even if size is constant, don't modify stack_pointer_delta.
+     The constant size alloca should preserve
+     crtl->preferred_stack_boundary alignment.  */
+  stack_pointer_delta = saved_stack_pointer_delta;
 
   suppress_reg_args_size = false;
 
@@ -2011,8 +2020,8 @@ compute_stack_clash_protection_loop_data (rtx *rounded_size, rtx *last_addr,
 
    LAST addr is the value for SP which stops the loop.  */
 void
-emit_stack_clash_protection_probe_loop_start (rtx *loop_lab,
-					      rtx *end_lab,
+emit_stack_clash_protection_probe_loop_start (rtx_code_label **loop_lab,
+					      rtx_code_label **end_lab,
 					      rtx last_addr,
 					      bool rotated)
 {
@@ -2033,7 +2042,8 @@ emit_stack_clash_protection_probe_loop_start (rtx *loop_lab,
    emitting END_LOOP after the loop.  */
 
 void
-emit_stack_clash_protection_probe_loop_end (rtx loop_lab, rtx end_loop,
+emit_stack_clash_protection_probe_loop_end (rtx_code_label *loop_lab,
+					    rtx_code_label *end_loop,
 					    rtx last_addr, bool rotated)
 {
   if (rotated)
@@ -2113,7 +2123,7 @@ anti_adjust_stack_and_probe_stack_clash (rtx size)
 	}
       else
 	{
-	  rtx loop_lab, end_loop;
+	  rtx_code_label *loop_lab, *end_loop;
 	  bool rotate_loop = CONST_INT_P (rounded_size);
 	  emit_stack_clash_protection_probe_loop_start (&loop_lab, &end_loop,
 							last_addr, rotate_loop);
@@ -2134,7 +2144,7 @@ anti_adjust_stack_and_probe_stack_clash (rtx size)
 
   if (residual != CONST0_RTX (Pmode))
     {
-      rtx label = NULL_RTX;
+      rtx_code_label *label = nullptr;
       /* RESIDUAL could be zero at runtime and in that case *sp could
 	 hold live data.  Furthermore, we do not want to probe into the
 	 red zone.
@@ -2202,7 +2212,7 @@ anti_adjust_stack_and_probe (rtx size, bool adjust_back)
 {
   /* We skip the probe for the first interval + a small dope of 4 words and
      probe that many bytes past the specified size to maintain a protection
-     area at the botton of the stack.  */
+     area at the bottom of the stack.  */
   const int dope = 4 * UNITS_PER_WORD;
 
   /* First ensure SIZE is Pmode.  */

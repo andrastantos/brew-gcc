@@ -65,7 +65,7 @@
 
      PART 3: Implement target hook stuff definitions.
 
-     PART 4: Implemet extern function definitions,
+     PART 4: Implement extern function definitions,
              the prototype is in nds32-protos.h.
 
      PART 5: Initialize target hook structure and definitions.  */
@@ -237,7 +237,7 @@ static const char * const nds32_intrinsic_register_names[] =
   "$ITB"
 };
 
-/* Define instrinsic cctl names.  */
+/* Define intrinsic cctl names.  */
 static const char * const nds32_cctl_names[] =
 {
   "L1D_VA_FILLCK",
@@ -452,7 +452,7 @@ nds32_compute_stack_frame (void)
   cfun->machine->fp_size = (df_regs_ever_live_p (FP_REGNUM)) ? 4 : 0;
 
   /* If $gp value is required to be saved on stack, it needs 4 bytes space.
-     Check whether we are using PIC code genration.  */
+     Check whether we are using PIC code generation.  */
   cfun->machine->gp_size =
     (flag_pic && df_regs_ever_live_p (PIC_OFFSET_TABLE_REGNUM)) ? 4 : 0;
 
@@ -500,8 +500,8 @@ nds32_compute_stack_frame (void)
 	      if (cfun->machine->callee_saved_first_fpr_regno == SP_REGNUM)
 		{
 		  /* Make first callee-saved number is even,
-		     bacause we use doubleword access, and this way
-		     promise 8-byte alignemt.  */
+		     because we use doubleword access, and this way
+		     promise 8-byte alignment.  */
 		  if (!NDS32_FPR_REGNO_OK_FOR_DOUBLE (r))
 		    cfun->machine->callee_saved_first_fpr_regno = r - 1;
 		  else
@@ -733,7 +733,7 @@ nds32_emit_stack_push_multiple (unsigned Rb, unsigned Re,
   rtx mem;
   rtx push_rtx;
   rtx adjust_sp_rtx;
-  rtx parallel_insn;
+  rtx parallel_body;
   rtx dwarf;
 
   /* We need to provide a customized rtx which contains
@@ -771,7 +771,7 @@ nds32_emit_stack_push_multiple (unsigned Rb, unsigned Re,
 
   /* In addition to used registers,
      we need one more space for (set sp sp-x) rtx.  */
-  parallel_insn = gen_rtx_PARALLEL (VOIDmode,
+  parallel_body = gen_rtx_PARALLEL (VOIDmode,
 				    rtvec_alloc (num_use_regs + 1));
   par_index = 0;
 
@@ -791,7 +791,7 @@ nds32_emit_stack_push_multiple (unsigned Rb, unsigned Re,
 						  stack_pointer_rtx,
 						  offset));
       push_rtx = gen_rtx_SET (mem, reg);
-      XVECEXP (parallel_insn, 0, par_index) = push_rtx;
+      XVECEXP (parallel_body, 0, par_index) = push_rtx;
       RTX_FRAME_RELATED_P (push_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -805,7 +805,7 @@ nds32_emit_stack_push_multiple (unsigned Rb, unsigned Re,
 						  stack_pointer_rtx,
 						  offset));
       push_rtx = gen_rtx_SET (mem, reg);
-      XVECEXP (parallel_insn, 0, par_index) = push_rtx;
+      XVECEXP (parallel_body, 0, par_index) = push_rtx;
       RTX_FRAME_RELATED_P (push_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -817,7 +817,7 @@ nds32_emit_stack_push_multiple (unsigned Rb, unsigned Re,
 						  stack_pointer_rtx,
 						  offset));
       push_rtx = gen_rtx_SET (mem, reg);
-      XVECEXP (parallel_insn, 0, par_index) = push_rtx;
+      XVECEXP (parallel_body, 0, par_index) = push_rtx;
       RTX_FRAME_RELATED_P (push_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -829,7 +829,7 @@ nds32_emit_stack_push_multiple (unsigned Rb, unsigned Re,
 						  stack_pointer_rtx,
 						  offset));
       push_rtx = gen_rtx_SET (mem, reg);
-      XVECEXP (parallel_insn, 0, par_index) = push_rtx;
+      XVECEXP (parallel_body, 0, par_index) = push_rtx;
       RTX_FRAME_RELATED_P (push_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -842,10 +842,10 @@ nds32_emit_stack_push_multiple (unsigned Rb, unsigned Re,
   adjust_sp_rtx
     = gen_rtx_SET (stack_pointer_rtx,
 		   plus_constant (Pmode, stack_pointer_rtx, offset));
-  XVECEXP (parallel_insn, 0, par_index) = adjust_sp_rtx;
+  XVECEXP (parallel_body, 0, par_index) = adjust_sp_rtx;
   RTX_FRAME_RELATED_P (adjust_sp_rtx) = 1;
 
-  parallel_insn = emit_insn (parallel_insn);
+  rtx_insn *parallel_insn = emit_insn (parallel_body);
 
   /* The insn rtx 'parallel_insn' will change frame layout.
      We need to use RTX_FRAME_RELATED_P so that GCC is able to
@@ -881,7 +881,7 @@ nds32_emit_stack_pop_multiple (unsigned Rb, unsigned Re,
   rtx mem;
   rtx pop_rtx;
   rtx adjust_sp_rtx;
-  rtx parallel_insn;
+  rtx parallel_body;
   rtx dwarf = NULL_RTX;
 
   /* We need to provide a customized rtx which contains
@@ -903,7 +903,7 @@ nds32_emit_stack_pop_multiple (unsigned Rb, unsigned Re,
 		(set (reg:SI SP_REGNUM)
 		     (plus (reg:SI SP_REGNUM) (const_int 32)))]) */
 
-  /* Calculate the number of registers that will be poped.  */
+  /* Calculate the number of registers that will be popped.  */
   extra_count = 0;
   if (save_fp_p)
     extra_count++;
@@ -919,7 +919,7 @@ nds32_emit_stack_pop_multiple (unsigned Rb, unsigned Re,
 
   /* In addition to used registers,
      we need one more space for (set sp sp+x) rtx.  */
-  parallel_insn = gen_rtx_PARALLEL (VOIDmode,
+  parallel_body = gen_rtx_PARALLEL (VOIDmode,
 				    rtvec_alloc (num_use_regs + 1));
   par_index = 0;
 
@@ -939,7 +939,7 @@ nds32_emit_stack_pop_multiple (unsigned Rb, unsigned Re,
 						  stack_pointer_rtx,
 						  offset));
       pop_rtx = gen_rtx_SET (reg, mem);
-      XVECEXP (parallel_insn, 0, par_index) = pop_rtx;
+      XVECEXP (parallel_body, 0, par_index) = pop_rtx;
       RTX_FRAME_RELATED_P (pop_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -955,7 +955,7 @@ nds32_emit_stack_pop_multiple (unsigned Rb, unsigned Re,
 						  stack_pointer_rtx,
 						  offset));
       pop_rtx = gen_rtx_SET (reg, mem);
-      XVECEXP (parallel_insn, 0, par_index) = pop_rtx;
+      XVECEXP (parallel_body, 0, par_index) = pop_rtx;
       RTX_FRAME_RELATED_P (pop_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -969,7 +969,7 @@ nds32_emit_stack_pop_multiple (unsigned Rb, unsigned Re,
 						  stack_pointer_rtx,
 						  offset));
       pop_rtx = gen_rtx_SET (reg, mem);
-      XVECEXP (parallel_insn, 0, par_index) = pop_rtx;
+      XVECEXP (parallel_body, 0, par_index) = pop_rtx;
       RTX_FRAME_RELATED_P (pop_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -983,7 +983,7 @@ nds32_emit_stack_pop_multiple (unsigned Rb, unsigned Re,
 						  stack_pointer_rtx,
 						  offset));
       pop_rtx = gen_rtx_SET (reg, mem);
-      XVECEXP (parallel_insn, 0, par_index) = pop_rtx;
+      XVECEXP (parallel_body, 0, par_index) = pop_rtx;
       RTX_FRAME_RELATED_P (pop_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -997,12 +997,12 @@ nds32_emit_stack_pop_multiple (unsigned Rb, unsigned Re,
   adjust_sp_rtx
     = gen_rtx_SET (stack_pointer_rtx,
 		   plus_constant (Pmode, stack_pointer_rtx, offset));
-  XVECEXP (parallel_insn, 0, par_index) = adjust_sp_rtx;
+  XVECEXP (parallel_body, 0, par_index) = adjust_sp_rtx;
 
   /* Tell gcc we adjust SP in this insn.  */
   dwarf = alloc_reg_note (REG_CFA_ADJUST_CFA, copy_rtx (adjust_sp_rtx), dwarf);
 
-  parallel_insn = emit_insn (parallel_insn);
+  rtx_insn *parallel_insn = emit_insn (parallel_body);
 
   /* The insn rtx 'parallel_insn' will change frame layout.
      We need to use RTX_FRAME_RELATED_P so that GCC is able to
@@ -1032,7 +1032,7 @@ nds32_emit_stack_v3push (unsigned Rb,
   rtx mem;
   rtx push_rtx;
   rtx adjust_sp_rtx;
-  rtx parallel_insn;
+  rtx parallel_body;
 
   /* We need to provide a customized rtx which contains
      necessary information for data analysis,
@@ -1062,7 +1062,7 @@ nds32_emit_stack_v3push (unsigned Rb,
 
   /* In addition to used registers,
      we need one more space for (set sp sp-x-imm8u) rtx.  */
-  parallel_insn = gen_rtx_PARALLEL (VOIDmode,
+  parallel_body = gen_rtx_PARALLEL (VOIDmode,
 				    rtvec_alloc (num_use_regs + 1));
   par_index = 0;
 
@@ -1079,7 +1079,7 @@ nds32_emit_stack_v3push (unsigned Rb,
 						  stack_pointer_rtx,
 						  offset));
       push_rtx = gen_rtx_SET (mem, reg);
-      XVECEXP (parallel_insn, 0, par_index) = push_rtx;
+      XVECEXP (parallel_body, 0, par_index) = push_rtx;
       RTX_FRAME_RELATED_P (push_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -1091,7 +1091,7 @@ nds32_emit_stack_v3push (unsigned Rb,
 					      stack_pointer_rtx,
 					      offset));
   push_rtx = gen_rtx_SET (mem, reg);
-  XVECEXP (parallel_insn, 0, par_index) = push_rtx;
+  XVECEXP (parallel_body, 0, par_index) = push_rtx;
   RTX_FRAME_RELATED_P (push_rtx) = 1;
   offset = offset + 4;
   par_index++;
@@ -1101,7 +1101,7 @@ nds32_emit_stack_v3push (unsigned Rb,
 					      stack_pointer_rtx,
 					      offset));
   push_rtx = gen_rtx_SET (mem, reg);
-  XVECEXP (parallel_insn, 0, par_index) = push_rtx;
+  XVECEXP (parallel_body, 0, par_index) = push_rtx;
   RTX_FRAME_RELATED_P (push_rtx) = 1;
   offset = offset + 4;
   par_index++;
@@ -1111,7 +1111,7 @@ nds32_emit_stack_v3push (unsigned Rb,
 					      stack_pointer_rtx,
 					      offset));
   push_rtx = gen_rtx_SET (mem, reg);
-  XVECEXP (parallel_insn, 0, par_index) = push_rtx;
+  XVECEXP (parallel_body, 0, par_index) = push_rtx;
   RTX_FRAME_RELATED_P (push_rtx) = 1;
   offset = offset + 4;
   par_index++;
@@ -1125,10 +1125,10 @@ nds32_emit_stack_v3push (unsigned Rb,
 		   plus_constant (Pmode,
 				  stack_pointer_rtx,
 				  offset - imm8u));
-  XVECEXP (parallel_insn, 0, par_index) = adjust_sp_rtx;
+  XVECEXP (parallel_body, 0, par_index) = adjust_sp_rtx;
   RTX_FRAME_RELATED_P (adjust_sp_rtx) = 1;
 
-  parallel_insn = emit_insn (parallel_insn);
+  rtx_insn *parallel_insn = emit_insn (parallel_body);
 
   /* The insn rtx 'parallel_insn' will change frame layout.
      We need to use RTX_FRAME_RELATED_P so that GCC is able to
@@ -1155,7 +1155,7 @@ nds32_emit_stack_v3pop (unsigned Rb,
   rtx mem;
   rtx pop_rtx;
   rtx adjust_sp_rtx;
-  rtx parallel_insn;
+  rtx parallel_body;
   rtx dwarf = NULL_RTX;
 
   /* We need to provide a customized rtx which contains
@@ -1177,8 +1177,8 @@ nds32_emit_stack_v3pop (unsigned Rb,
 		(set (reg:SI SP_REGNUM)
 		     (plus (reg:SI SP_REGNUM) (const_int 32+imm8u)))]) */
 
-  /* Calculate the number of registers that will be poped.
-     Since $fp, $gp, and $lp is always poped with v3pop instruction,
+  /* Calculate the number of registers that will be popped.
+     Since $fp, $gp, and $lp is always popped with v3pop instruction,
      we need to count these three registers.
      Under v3push, Rb is $r6, while Re is $r6, $r8, $r10, or $r14.
      So there is no need to worry about Rb=Re=SP_REGNUM case.  */
@@ -1186,7 +1186,7 @@ nds32_emit_stack_v3pop (unsigned Rb,
 
   /* In addition to used registers,
      we need one more space for (set sp sp+x+imm8u) rtx.  */
-  parallel_insn = gen_rtx_PARALLEL (VOIDmode,
+  parallel_body = gen_rtx_PARALLEL (VOIDmode,
 				    rtvec_alloc (num_use_regs + 1));
   par_index = 0;
 
@@ -1203,7 +1203,7 @@ nds32_emit_stack_v3pop (unsigned Rb,
 						  stack_pointer_rtx,
 						  offset));
       pop_rtx = gen_rtx_SET (reg, mem);
-      XVECEXP (parallel_insn, 0, par_index) = pop_rtx;
+      XVECEXP (parallel_body, 0, par_index) = pop_rtx;
       RTX_FRAME_RELATED_P (pop_rtx) = 1;
       offset = offset + 4;
       par_index++;
@@ -1217,7 +1217,7 @@ nds32_emit_stack_v3pop (unsigned Rb,
 					      stack_pointer_rtx,
 					      offset));
   pop_rtx = gen_rtx_SET (reg, mem);
-  XVECEXP (parallel_insn, 0, par_index) = pop_rtx;
+  XVECEXP (parallel_body, 0, par_index) = pop_rtx;
   RTX_FRAME_RELATED_P (pop_rtx) = 1;
   offset = offset + 4;
   par_index++;
@@ -1229,7 +1229,7 @@ nds32_emit_stack_v3pop (unsigned Rb,
 					      stack_pointer_rtx,
 					      offset));
   pop_rtx = gen_rtx_SET (reg, mem);
-  XVECEXP (parallel_insn, 0, par_index) = pop_rtx;
+  XVECEXP (parallel_body, 0, par_index) = pop_rtx;
   RTX_FRAME_RELATED_P (pop_rtx) = 1;
   offset = offset + 4;
   par_index++;
@@ -1241,7 +1241,7 @@ nds32_emit_stack_v3pop (unsigned Rb,
 					      stack_pointer_rtx,
 					      offset));
   pop_rtx = gen_rtx_SET (reg, mem);
-  XVECEXP (parallel_insn, 0, par_index) = pop_rtx;
+  XVECEXP (parallel_body, 0, par_index) = pop_rtx;
   RTX_FRAME_RELATED_P (pop_rtx) = 1;
   offset = offset + 4;
   par_index++;
@@ -1255,7 +1255,7 @@ nds32_emit_stack_v3pop (unsigned Rb,
 		   plus_constant (Pmode,
 				  stack_pointer_rtx,
 				  offset + imm8u));
-  XVECEXP (parallel_insn, 0, par_index) = adjust_sp_rtx;
+  XVECEXP (parallel_body, 0, par_index) = adjust_sp_rtx;
 
   if (frame_pointer_needed)
     {
@@ -1273,7 +1273,7 @@ nds32_emit_stack_v3pop (unsigned Rb,
 			      copy_rtx (adjust_sp_rtx), dwarf);
     }
 
-  parallel_insn = emit_insn (parallel_insn);
+  rtx_insn *parallel_insn = emit_insn (parallel_body);
 
   /* The insn rtx 'parallel_insn' will change frame layout.
      We need to use RTX_FRAME_RELATED_P so that GCC is able to
@@ -1324,7 +1324,7 @@ static void
 nds32_emit_adjust_frame (rtx to_reg, rtx from_reg, int adjust_value)
 {
   rtx tmp_reg;
-  rtx frame_adjust_insn;
+  rtx_insn *frame_adjust_insn;
   rtx adjust_value_rtx = GEN_INT (adjust_value);
 
   if (adjust_value == 0)
@@ -1344,11 +1344,11 @@ nds32_emit_adjust_frame (rtx to_reg, rtx from_reg, int adjust_value)
       emit_move_insn (tmp_reg, adjust_value_rtx);
 
       /* Create new 'add' rtx.  */
-      frame_adjust_insn = gen_addsi3 (to_reg,
-				      from_reg,
-				      tmp_reg);
+      rtx adj_pat = gen_addsi3 (to_reg,
+				from_reg,
+				tmp_reg);
       /* Emit rtx into insn list and receive its transformed insn rtx.  */
-      frame_adjust_insn = emit_insn (frame_adjust_insn);
+      frame_adjust_insn = emit_insn (adj_pat);
 
       /* Because (tmp_reg <- full_value) may be split into two
 	 rtl patterns, we cannot set its RTX_FRAME_RELATED_P.
@@ -1367,11 +1367,11 @@ nds32_emit_adjust_frame (rtx to_reg, rtx from_reg, int adjust_value)
   else
     {
       /* Generate sp adjustment instruction if and only if sp_adjust != 0.  */
-      frame_adjust_insn = gen_addsi3 (to_reg,
-				      from_reg,
-				      adjust_value_rtx);
+      rtx adj_pat = gen_addsi3 (to_reg,
+				from_reg,
+				adjust_value_rtx);
       /* Emit rtx into instructions list and receive INSN rtx form.  */
-      frame_adjust_insn = emit_insn (frame_adjust_insn);
+      frame_adjust_insn = emit_insn (adj_pat);
     }
 
     /* The insn rtx 'sp_adjust_insn' will change frame layout.
@@ -1768,7 +1768,7 @@ nds32_can_change_mode_class (machine_mode from,
 			     machine_mode to,
 			     reg_class_t rclass)
 {
-  /* Don't spill double-precision register to two singal-precision
+  /* Don't spill double-precision register to two single-precision
      registers  */
   if ((TARGET_FPU_SINGLE || TARGET_FPU_DOUBLE)
        && GET_MODE_SIZE (from) != GET_MODE_SIZE (to))
@@ -1795,7 +1795,7 @@ nds32_can_change_mode_class (machine_mode from,
        1. previous hard frame pointer
        2. return address
        3. callee-saved registers
-       4. <padding bytes> (we will calculte in nds32_compute_stack_frame()
+       4. <padding bytes> (we will calculate in nds32_compute_stack_frame()
 			   and save it at
 			   cfun->machine->callee_saved_area_padding_bytes)
 
@@ -1813,7 +1813,7 @@ nds32_can_change_mode_class (machine_mode from,
    We 'wrap' these blocks together with
    hard frame pointer ($r28) and stack pointer ($r31).
    By applying the basic frame/stack/argument pointers concept,
-   the layout of a stack frame shoule be like this:
+   the layout of a stack frame should be like this:
 
 			    |    |
        old stack pointer ->  ----
@@ -1980,7 +1980,7 @@ nds32_arg_partial_bytes (cumulative_args_t ca, const function_arg_info &arg)
   if (TARGET_HARD_FLOAT)
     return 0;
 
-  /* If we have already runned out of argument registers, return zero
+  /* If we have already run out of argument registers, return zero
      so that the argument will be entirely pushed on the stack.  */
   if (NDS32_AVAILABLE_REGNUM_FOR_GPR_ARG (cum->gpr_offset, arg.mode, arg.type)
       >= NDS32_GPR_ARG_FIRST_REGNUM + NDS32_MAX_GPR_REGS_FOR_ARGS)
@@ -1997,7 +1997,7 @@ nds32_arg_partial_bytes (cumulative_args_t ca, const function_arg_info &arg)
 					     arg.mode, arg.type)
 	 - NDS32_GPR_ARG_FIRST_REGNUM);
 
-  /* Note that we have to return the nubmer of bytes, not registers count.  */
+  /* Note that we have to return the number of bytes, not registers count.  */
   if (needed_reg_count > remaining_reg_count)
     return remaining_reg_count * UNITS_PER_WORD;
 
@@ -2321,7 +2321,7 @@ nds32_function_ok_for_sibcall (tree decl,
 	because the stack layout may be a mess.
      4. We don't want to apply sibling call optimization for indirect
 	sibcall because the pop behavior in epilogue may pollute the
-	content of caller-saved regsiter when the register is used for
+	content of caller-saved register when the register is used for
 	indirect sibcall.
      5. In pic mode, it may use some registers for PLT call.  */
   return (!TARGET_V3PUSH
@@ -3014,7 +3014,7 @@ nds32_register_move_cost (machine_mode mode,
 			  reg_class_t from,
 			  reg_class_t to)
 {
-  /* In garywolf cpu, FPR to GPR is chaper than other cpu.  */
+  /* In graywolf cpu, FPR to GPR is cheaper than other cpu.  */
   if (TARGET_PIPELINE_GRAYWOLF)
     {
       if (GET_MODE_SIZE (mode) == 8)
@@ -3467,7 +3467,7 @@ nds32_print_operand (FILE *stream, rtx x, int code)
       else
 	{
 	  /* If user applies normal way with __NDS32_REG_XXX__ enum data,
-	     we can print out register name.  Remember to substract 1024.  */
+	     we can print out register name.  Remember to subtract 1024.  */
 	  fprintf (stream, "%s",
 			   nds32_intrinsic_register_names[op_value - 1024]);
 	}
@@ -3837,7 +3837,6 @@ static rtx
 nds32_dwarf_register_span (rtx reg)
 {
   rtx dwarf_high, dwarf_low;
-  rtx dwarf_single;
   machine_mode mode;
   int regno;
 
@@ -3920,7 +3919,7 @@ nds32_merge_decl_attributes (tree olddecl, tree newdecl)
   combined_attrs = merge_attributes (DECL_ATTRIBUTES (olddecl),
 				     DECL_ATTRIBUTES (newdecl));
 
-  /* Since newdecl is acutally a duplicate of olddecl,
+  /* Since newdecl is actually a duplicate of olddecl,
      we can take olddecl for some operations.  */
   if (TREE_CODE (olddecl) == FUNCTION_DECL)
     {
@@ -3983,7 +3982,7 @@ nds32_insert_attributes (tree decl, tree *attributes)
 
       /* The following code may use attribute arguments.  If there is no
 	 argument from source code, it will cause segmentation fault.
-	 Therefore, return dircetly and report error message later.  */
+	 Therefore, return directly and report error message later.  */
       if ((intr && TREE_VALUE (intr) == NULL)
 	  || (excp && TREE_VALUE (excp) == NULL)
 	  || (reset && TREE_VALUE (reset) == NULL))
@@ -4245,7 +4244,7 @@ nds32_init_libfuncs (void)
 
 /* ------------------------------------------------------------------------ */
 
-/* PART 4: Implemet extern function definitions,
+/* PART 4: Implement extern function definitions,
            the prototype is in nds32-protos.h.  */
 
 /* Run-time Target Specification.  */
@@ -4987,7 +4986,7 @@ nds32_expand_epilogue (bool sibcall_p)
 	 CFA is described using $ta then SP is modified.  */
 
       rtx ta_reg;
-      rtx insn;
+      rtx_insn *insn;
 
       ta_reg = gen_rtx_REG (SImode, TA_REGNUM);
 
@@ -5217,7 +5216,7 @@ nds32_expand_epilogue_v3pop (bool sibcall_p)
   /* We have to consider alloca issue as well.
      If the function does call alloca(), the stack pointer is not fixed.
      In that case, we cannot use 'pop25 Re,imm8u' directly.
-     We have to caculate stack pointer from frame pointer
+     We have to calculate stack pointer from frame pointer
      and then use 'pop25 Re,0'.
      Of course, the frame_pointer_needed should be nonzero
      if the function calls alloca().  */
@@ -5385,7 +5384,7 @@ nds32_can_use_return_insn (void)
      1. This is a naked function.
 	So there is no callee-saved, local size, or outgoing size.
      2. This is NOT a variadic function.
-	So there is no pushing arguement registers into the stack.  */
+	So there is no pushing argument registers into the stack.  */
   return (cfun->machine->naked_p && (cfun->machine->va_args_size == 0));
 }
 
@@ -5421,7 +5420,7 @@ nds32_target_alignment (rtx_insn *label)
 
   /* Always align to 4 byte when first instruction after label is jump
      instruction since length for that might changed, so let's always align
-     it for make sure we don't lose any perfomance here.  */
+     it for make sure we don't lose any performance here.  */
   if (insn == 0
       || (get_attr_length (insn) == 2
 	  && !JUMP_P (insn) && !CALL_P (insn)))
@@ -5495,7 +5494,7 @@ nds32_split_double_word_load_store_p(rtx *operands, bool load_p)
   if (optimize == 0 || !flag_schedule_insns_after_reload)
     return !satisfies_constraint_Da (mem) || MEM_VOLATILE_P (mem);
 
-  /* Split double word load store after copy propgation.  */
+  /* Split double word load store after copy propagation.  */
   if (current_pass == NULL)
     return false;
 

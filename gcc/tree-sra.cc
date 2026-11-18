@@ -262,7 +262,7 @@ struct access
   /* Should TREE_NO_WARNING of a replacement be set?  */
   unsigned grp_no_warning : 1;
 
-  /* Result of propagation accross link from LHS to RHS.  */
+  /* Result of propagation across link from LHS to RHS.  */
   unsigned grp_result_of_prop_from_lhs : 1;
 };
 
@@ -389,7 +389,7 @@ static struct
      components.  */
   int aggregate_params_reduced;
 
-  /* Numbber of components created when splitting aggregate parameters.  */
+  /* Number of components created when splitting aggregate parameters.  */
   int param_reductions_created;
 
   /* Number of deferred_init calls that are modified.  */
@@ -968,8 +968,7 @@ create_access (tree expr, gimple *stmt, bool write)
       disqualify_candidate (base, "Encountered an access beyond the base.");
       return NULL;
     }
-  if (TREE_CODE (TREE_TYPE (expr)) == BITINT_TYPE
-      && size > WIDE_INT_MAX_PRECISION - 1)
+  if (BITINT_TYPE_P (TREE_TYPE (expr)) && size > WIDE_INT_MAX_PRECISION - 1)
     {
       disqualify_candidate (base, "Encountered too large _BitInt access.");
       return NULL;
@@ -1413,7 +1412,7 @@ build_access_from_call_arg (tree expr, gimple *stmt, bool can_be_returned,
       if (can_be_returned)
 	{
 	  disqualify_base_of_expr (base, "Address possibly returned, "
-				   "leading to an alis SRA may not know.");
+				   "leading to an alias SRA may not know.");
 	  return false;
 	}
       if (abnormal_edge_after_stmt_p (stmt, oe_check))
@@ -1905,8 +1904,7 @@ build_ref_for_offset (location_t loc, tree base, poly_int64 offset,
   addr_space_t as = TYPE_ADDR_SPACE (TREE_TYPE (base));
   if (as != TYPE_ADDR_SPACE (exp_type))
     exp_type = build_qualified_type (exp_type,
-				     TYPE_QUALS (exp_type)
-				     | ENCODE_QUAL_ADDR_SPACE (as));
+				     TYPE_QUALS (exp_type).with_as (as));
 
   poly_int64 byte_offset = exact_div (offset, BITS_PER_UNIT);
   get_object_alignment_1 (base, &align, &misalign);
@@ -2091,16 +2089,20 @@ build_debug_ref_for_model (location_t loc, tree base, HOST_WIDE_INT offset,
 }
 
 /* Construct a memory reference consisting of component_refs and array_refs to
-   a part of an aggregate *RES (which is of type TYPE).  The requested part
-   should have type EXP_TYPE at be the given OFFSET.  This function might not
-   succeed, it returns true when it does and only then *RES points to something
-   meaningful.  This function should be used only to build expressions that we
-   might need to present to user (e.g. in warnings).  In all other situations,
+   a part of an aggregate *RES which is of type TYPE.  The requested part
+   should have type EXP_TYPE at the given OFFSET.  CUR_SIZE must be the size of
+   *RES unless it is known that *RES alone cannot be the result.  This function
+   might not succeed, it returns true when it does and only then *RES points to
+   something meaningful.
+
+   This function should be used only to build expressions that we might need to
+   present to user (e.g. in warnings).  In all other situations,
    build_ref_for_model or build_ref_for_offset should be used instead.  */
 
 static bool
 build_user_friendly_ref_for_offset (tree *res, tree type, HOST_WIDE_INT offset,
-				    tree exp_type)
+				    HOST_WIDE_INT cur_size, tree exp_type,
+				    HOST_WIDE_INT exp_size)
 {
   while (1)
     {
@@ -2108,7 +2110,8 @@ build_user_friendly_ref_for_offset (tree *res, tree type, HOST_WIDE_INT offset,
       tree tr_size, index, minidx;
       HOST_WIDE_INT el_size;
 
-      if (offset == 0 && exp_type
+      if (offset == 0
+	  && cur_size == exp_size
 	  && types_compatible_p (exp_type, type))
 	return true;
 
@@ -2146,7 +2149,8 @@ build_user_friendly_ref_for_offset (tree *res, tree type, HOST_WIDE_INT offset,
 			     NULL_TREE);
 	      expr_ptr = &expr;
 	      if (build_user_friendly_ref_for_offset (expr_ptr, TREE_TYPE (fld),
-						      offset - pos, exp_type))
+						      offset - pos, size,
+						      exp_type, exp_size))
 		{
 		  *res = expr;
 		  return true;
@@ -2169,17 +2173,12 @@ build_user_friendly_ref_for_offset (tree *res, tree type, HOST_WIDE_INT offset,
 	  *res = build4 (ARRAY_REF, TREE_TYPE (type), *res, index,
 			 NULL_TREE, NULL_TREE);
 	  offset = offset % el_size;
+	  cur_size = el_size;
 	  type = TREE_TYPE (type);
 	  break;
 
 	default:
-	  if (offset != 0)
-	    return false;
-
-	  if (exp_type)
-	    return false;
-	  else
-	    return true;
+	  return false;
 	}
     }
 }
@@ -2311,7 +2310,7 @@ path_comparable_for_same_access (tree expr)
     {
       if (TREE_CODE (expr) == ARRAY_REF)
 	{
-	  /* SSA name indices can occur here too when the array is of sie one.
+	  /* SSA name indices can occur here too when the array is of size one.
 	     But we cannot just re-use array_refs with SSA names elsewhere in
 	     the function, so disallow non-constant indices.  TODO: Remove this
 	     limitation after teaching build_reconstructed_reference to replace
@@ -2950,7 +2949,7 @@ analyze_access_subtree (struct access *root, struct access *parent,
 	  tree rt = root->type;
 	  gcc_assert ((root->offset % BITS_PER_UNIT) == 0
 		      && (root->size % BITS_PER_UNIT) == 0);
-	  if (TREE_CODE (root->type) == BITINT_TYPE)
+	  if (BITINT_TYPE_P (root->type))
 	    root->type = build_bitint_type (root->size, TYPE_UNSIGNED (rt));
 	  else
 	    root->type = build_nonstandard_integer_type (root->size,
@@ -3055,7 +3054,7 @@ child_would_conflict_in_acc (struct access *acc, HOST_WIDE_INT norm_offset,
    Return the new access or NULL if it cannot be created.  Note that this
    access is created long after all splicing and sorting, it's not located in
    any access vector and is automatically a representative of its group.  Set
-   the gpr_write flag of the new accesss if SET_GRP_WRITE is true.  */
+   the gpr_write flag of the new access if SET_GRP_WRITE is true.  */
 
 static struct access *
 create_artificial_child_access (struct access *parent, struct access *model,
@@ -3070,7 +3069,8 @@ create_artificial_child_access (struct access *parent, struct access *model,
   struct access *access = access_pool.allocate ();
   memset (access, 0, sizeof (struct access));
   if (!build_user_friendly_ref_for_offset (&expr, TREE_TYPE (expr), new_offset,
-					   model->type))
+					   parent->size, model->type,
+					   model->size))
     {
       access->grp_no_warning = true;
       expr = build_ref_for_model (EXPR_LOCATION (parent->base), parent->base,
@@ -3211,8 +3211,11 @@ propagate_subaccesses_from_rhs (struct access *lacc, struct access *racc)
 	  tree t = lacc->base;
 
 	  lacc->type = racc->type;
+	  /* We know racc and lacc are of different types so can pass -1 as
+	     cur_size.  */
 	  if (build_user_friendly_ref_for_offset (&t, TREE_TYPE (t),
-						  lacc->offset, racc->type))
+						  lacc->offset, -1,
+						  racc->type, racc->size))
 	    {
 	      lacc->expr = t;
 	      lacc->grp_same_access_path = true;
@@ -3270,7 +3273,6 @@ propagate_subaccesses_from_rhs (struct access *lacc, struct access *racc)
 	}
 
       if (rchild->grp_unscalarizable_region
-	  || (rchild->size % BITS_PER_UNIT) != 0
 	  || !budget_for_propagation_access (lacc->base))
 	{
 	  if (!lacc->grp_write && access_or_its_child_written (rchild))
@@ -3330,7 +3332,6 @@ propagate_subaccesses_from_lhs (struct access *lacc, struct access *racc)
       HOST_WIDE_INT norm_offset = lchild->offset + norm_delta;
 
       if (lchild->grp_unscalarizable_region
-	  || (lchild->size % BITS_PER_UNIT) != 0
 	  || child_would_conflict_in_acc (racc, norm_offset, lchild->size,
 					  &matching_acc)
 	  || !budget_for_propagation_access (racc->base))
@@ -4342,7 +4343,7 @@ sra_modify_call_arg (tree *expr, gimple_stmt_iterator *call_gsi,
 }
 
 /* Where scalar replacements of the RHS have been written to when a replacement
-   of a LHS of an assigments cannot be direclty loaded from a replacement of
+   of a LHS of an assignments cannot be directly loaded from a replacement of
    the RHS. */
 enum unscalarized_data_handling { SRA_UDH_NONE,  /* Nothing done so far. */
 				  SRA_UDH_RIGHT, /* Data flushed to the RHS. */

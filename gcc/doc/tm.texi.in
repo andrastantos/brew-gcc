@@ -232,6 +232,15 @@ See the file @file{sun3.h} for an example of this.
 Do not define this macro if it does not need to do anything.
 @end defmac
 
+@defmac ASM_V_SPEC
+A C string constant that tells the GCC driver how to translate the
+@option{-v}, @option{-w}, and @option{-I} options into their assembler
+equivalents.
+
+Only define this macro if the default, which matches GNU as, isn't
+appropriate.
+@end defmac
+
 @defmac ASM_FINAL_SPEC
 A C string constant that tells the GCC driver program how to
 run any programs which cleanup after the normal assembler.
@@ -293,7 +302,7 @@ passes the string @option{-lgcc} to the linker.
 By default, if @code{ENABLE_SHARED_LIBGCC} is defined, the
 @code{LIBGCC_SPEC} is not directly used by the driver program but is
 instead modified to refer to different versions of @file{libgcc.a}
-depending on the values of the command line flags @option{-static},
+depending on the values of the command-line options @option{-static},
 @option{-shared}, @option{-static-libgcc}, and @option{-shared-libgcc}.  On
 targets where these modifications are inappropriate, define
 @code{REAL_LIBGCC_SPEC} instead.  @code{REAL_LIBGCC_SPEC} tells the
@@ -653,7 +662,7 @@ built-in preprocessor macros and assertions for the target CPU, using
 the functions @code{builtin_define}, @code{builtin_define_std} and
 @code{builtin_assert}.  When the front end
 calls this macro it provides a trailing semicolon, and since it has
-finished command line option processing your code can use those
+finished command-line option processing your code can use those
 results freely.
 
 @code{builtin_assert} takes a string in the form you pass to the
@@ -1353,14 +1362,6 @@ A C expression for the size in bits of the type @code{long} on the
 target machine.  If you don't define this, the default is one word.
 @end defmac
 
-@defmac ADA_LONG_TYPE_SIZE
-On some machines, the size used for the Ada equivalent of the type
-@code{long} by a native Ada compiler differs from that used by C@.  In
-that situation, define this macro to be a C expression to be used for
-the size of that type.  If you don't define this, the default is the
-value of @code{LONG_TYPE_SIZE}.
-@end defmac
-
 @defmac LONG_LONG_TYPE_SIZE
 A C expression for the size in bits of the type @code{long long} on the
 target machine.  If you don't define this, the default is two
@@ -1430,21 +1431,11 @@ the target machine.  If you don't define this, the default is
 
 @defmac LIBGCC2_GNU_PREFIX
 This macro corresponds to the @code{TARGET_LIBFUNC_GNU_PREFIX} target
-hook and should be defined if that hook is overriden to be true.  It
+hook and should be defined if that hook is overridden to be true.  It
 causes function names in libgcc to be changed to use a @code{__gnu_}
 prefix for their name rather than the default @code{__}.  A port which
 uses this macro should also arrange to use @file{t-gnu-prefix} in
 the libgcc @file{config.host}.
-@end defmac
-
-@defmac WIDEST_HARDWARE_FP_SIZE
-A C expression for the size in bits of the widest floating-point format
-supported by the hardware.  If you define this macro, you must specify a
-value less than or equal to mode precision of the mode used for C type
-@code{long double} (from hook @code{targetm.c.mode_for_floating_type}
-with argument @code{TI_LONG_DOUBLE_TYPE}).  If you do not define this
-macro, mode precision of the mode used for C type @code{long double} is
-the default.
 @end defmac
 
 @defmac DEFAULT_SIGNED_CHAR
@@ -1743,8 +1734,6 @@ must be defined.  Modern ports should define @code{CALL_REALLY_USED_REGISTERS}.
 @cindex call-saved register
 @hook TARGET_FNTYPE_ABI
 
-@hook TARGET_INSN_CALLEE_ABI
-
 @cindex call-used register
 @cindex call-clobbered register
 @cindex call-saved register
@@ -1889,6 +1878,10 @@ should give the natural size in bytes for the specified mode.  It is
 used by the register allocator to try to optimize its results.  This
 happens for example on SPARC 64-bit where the natural size of
 floating-point registers is still 32-bit.
+
+If a target specifies @code{REGMODE_NATURAL_SIZE}, it must provide
+move patterns for all scalar integer modes no larger than the
+largest @code{REGMODE_NATURAL_SIZE}.
 @end defmac
 
 @hook TARGET_HARD_REGNO_MODE_OK
@@ -2077,6 +2070,9 @@ Therefore, register classes cannot be used to enforce a requirement for
 a register pair to start with an even-numbered register.  The way to
 specify this requirement is with @code{TARGET_HARD_REGNO_MODE_OK},
 or with a filter expression in a @code{define_register_constraint}.
+An operand's constraint that is dependent on another operand's register
+or mode can be expressed using a dependent register constraint with
+an additional operand index in @code{define_register_constraint}.
 
 Register classes used for input-operands of bitwise-and or shift
 instructions have a special requirement: each such class must have, for
@@ -2139,6 +2135,9 @@ register.
 A macro whose definition is the name of the class to which a valid
 base register must belong.  A base register is one used in an address
 which is the register value plus a displacement.
+
+This macro is obsolete, new ports should use the target hook
+@code{TARGET_BASE_REG_CLASS} instead.
 @end defmac
 
 @defmac MODE_BASE_REG_CLASS (@var{mode})
@@ -2146,6 +2145,9 @@ This is a variation of the @code{BASE_REG_CLASS} macro which allows
 the selection of a base register in a mode dependent manner.  If
 @var{mode} is VOIDmode then it should return the same value as
 @code{BASE_REG_CLASS}.
+
+This macro is obsolete, new ports should use the target hook
+@code{TARGET_BASE_REG_CLASS} instead.
 @end defmac
 
 @defmac MODE_BASE_REG_REG_CLASS (@var{mode})
@@ -2153,6 +2155,9 @@ A C expression whose value is the register class to which a valid
 base register must belong in order to be used in a base plus index
 register address.  You should define this macro if base plus index
 addresses have different requirements than other base register uses.
+
+This macro is obsolete, new ports should use the target hook
+@code{TARGET_BASE_REG_CLASS} instead.
 @end defmac
 
 @defmac MODE_CODE_BASE_REG_CLASS (@var{mode}, @var{address_space}, @var{outer_code}, @var{index_code})
@@ -2164,16 +2169,12 @@ the code of the immediately enclosing expression (@code{MEM} for the top level
 of an address, @code{ADDRESS} for something that occurs in an
 @code{address_operand}).  @var{index_code} is the code of the corresponding
 index expression if @var{outer_code} is @code{PLUS}; @code{SCRATCH} otherwise.
+
+This macro is obsolete, new ports should use the target hook
+@code{TARGET_BASE_REG_CLASS} instead.
 @end defmac
 
-@defmac INSN_BASE_REG_CLASS (@var{insn})
-A C expression whose value is the register class to which a valid
-base register for a specified @var{insn} must belong. This macro is
-used when some backend insns may have limited usage of base register
-compared with other insns. If you define this macro, the compiler will
-use it instead of all other defined macros that relate to
-BASE_REG_CLASS.
-@end defmac
+@hook TARGET_BASE_REG_CLASS
 
 @defmac INDEX_REG_CLASS
 A macro whose definition is the name of the class to which a valid
@@ -2426,6 +2427,8 @@ in the reload pass.
 
 @hook TARGET_CANNOT_SUBSTITUTE_MEM_EQUIV_P
 
+@hook TARGET_CANNOT_SUBSTITUTE_CONST_EQUIV_P
+
 @hook TARGET_LEGITIMIZE_ADDRESS_DISPLACEMENT
 
 @hook TARGET_SPILL_CLASS
@@ -2570,12 +2573,15 @@ define this macro.  The default is to do nothing.
 
 @hook TARGET_BUILTIN_SETJMP_FRAME_VALUE
 
-@defmac FRAME_ADDR_RTX (@var{frameaddr})
+@defmac FRAME_ADDR_RTX (@var{count}, @var{frameaddr})
 A C expression whose value is RTL representing the value of the frame
-address for the current frame.  @var{frameaddr} is the frame pointer
-of the current frame.  This is used for __builtin_frame_address.
-You need only define this macro if the frame address is not the same
-as the frame pointer.  Most machines do not need to define it.
+address for the frame @var{count} steps up from the current frame.
+@var{frameaddr} is the frame pointer of that frame.  This is used for
+__builtin_frame_address.  A value of @code{NULL_RTX} means the target
+cannot supply that frame address; @code{__builtin_frame_address} then
+warns and returns zero.  You need only define this macro if the frame
+address is not the same as the frame pointer, or if some frames cannot
+be reached.  Most machines do not need to define it.
 @end defmac
 
 @defmac RETURN_ADDR_RTX (@var{count}, @var{frameaddr})
@@ -3825,6 +3831,8 @@ generic code.
 
 @hook TARGET_STACK_PROTECT_GUARD
 
+@hook TARGET_STACK_PROTECT_GUARD_SYMBOL_P
+
 @hook TARGET_STACK_PROTECT_FAIL
 
 @hook TARGET_STACK_PROTECT_RUNTIME_ENABLED_P
@@ -4151,8 +4159,8 @@ If the macro is set to 0, the "GNU" Objective-C message sending convention
 will be used by default.  This convention passes just the object and the
 selector to the method-lookup function, which returns a pointer to the method.
 
-In either case, it remains possible to select code-generation for the alternate
-scheme, by means of compiler command line switches.
+In either case, it remains possible to select code-generation for the
+alternate scheme by means of compiler command-line options.
 @end defmac
 
 @node Addressing Modes
@@ -4797,6 +4805,8 @@ Define this macro if a non-short-circuit operation produced by
 @hook TARGET_NO_SPECULATION_IN_DELAY_SLOTS_P
 
 @hook TARGET_ESTIMATED_POLY_VALUE
+
+@hook TARGET_POLY_INT_INDETERMINATE_BOUND
 
 @hook TARGET_AVOID_STORE_FORWARDING_P
 
@@ -6348,6 +6358,22 @@ the @samp{%} specification that was used to request printing of the
 operand.  If the specification was just @samp{%@var{digit}} then
 @var{code} is 0; if the specification was @samp{%@var{ltr}
 @var{digit}} then @var{code} is the ASCII code for @var{ltr}.
+If the specification used the multi-character form
+@samp{%[@var{name}:@var{digit}]}, then @var{code} is the value
+returned by @code{TARGET_PRINT_OPERAND_MODIFIER}.
+User @code{asm} statements can combine this form with symbolic operand names
+by writing @samp{%[@var{name}:@var{asmSymbolicName}]}.  The front end
+resolves the symbolic operand name before final output, so the
+@code{PRINT_OPERAND} implementation still sees the same @var{code} as it
+would for @samp{%[@var{name}:@var{digit}]}.
+
+@findex output_operand_modifier_operand
+For @samp{%[@var{name}:@var{n},@var{m}]}, use
+@code{output_operand_modifier_operand (@var{code}, @var{i})} to access
+operand @var{i} in the list, counting from zero, using the @var{code}
+passed to @code{PRINT_OPERAND}.  It resolves @code{SUBREG}s and records
+symbol references as @code{output_operand} does.  It returns null if the
+position is absent.
 
 @findex reg_names
 If @var{x} is a register, this macro should print the register's name.
@@ -6360,6 +6386,8 @@ When the machine description has a specification @samp{%@var{punct}}
 with a null pointer for @var{x} and the punctuation character for
 @var{code}.
 @end defmac
+
+@hook TARGET_PRINT_OPERAND_MODIFIER
 
 @defmac PRINT_OPERAND_PUNCT_VALID_P (@var{code})
 A C expression which evaluates to true if @var{code} is a valid
@@ -6543,6 +6571,10 @@ If this macro is not defined, nothing special is output at the end of
 the jump-table.
 @end defmac
 
+@hook TARGET_ASM_JUMP_TABLE_BASE
+
+@hook TARGET_CAN_SHARE_JUMP_TABLE_P
+
 @hook TARGET_ASM_POST_CFI_STARTPROC
 
 @hook TARGET_ASM_EMIT_UNWIND_LABEL
@@ -6583,7 +6615,7 @@ specially named labels.  The collect2 process will locate these
 labels and generate code to register the frames.
 
 This might be necessary, for instance, if the system linker will not
-place the eh_frames in-between the sentinals from @file{crtstuff.c},
+place the eh_frames in-between the sentinels from @file{crtstuff.c},
 or if the system linker does garbage collection and sections cannot
 be marked as not to be collected.
 @end defmac
@@ -7999,6 +8031,8 @@ lists.
 @hook TARGET_HAVE_CONDITIONAL_EXECUTION
 
 @hook TARGET_GEN_CCMP_FIRST
+
+@hook TARGET_CCMP_FIRST_PREFERENCE
 
 @hook TARGET_GEN_CCMP_NEXT
 

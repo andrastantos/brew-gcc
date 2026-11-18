@@ -20,24 +20,28 @@
 /* Code organization: See block comment at the top of
    aarch64-sve-builtins.def.  */
 
+/* Define an SME function group.
+   See `struct function_group_info` for the meaning of each argument.  */
 #ifndef DEF_SME_FUNCTION_GS
 #define DEF_SME_FUNCTION_GS(NAME, SHAPE, TYPES, GROUPS, PREDS) \
   DEF_SME_FUNCTION_GS_FPM (NAME, SHAPE, TYPES, GROUPS, PREDS, unused)
 #endif
 
-#ifndef DEF_SME_FUNCTION
-#define DEF_SME_FUNCTION(NAME, SHAPE, TYPES, PREDS) \
-  DEF_SME_FUNCTION_GS_FPM (NAME, SHAPE, TYPES, none, PREDS, unused)
-#endif
+/* Same as `DEF_SME_FUNCTION_GS` above, but with GROUPS = none.  */
+#define DEF_SME_FUNCTION(NAME, SHAPE, TYPES,       PREDS) \
+    DEF_SME_FUNCTION_GS (NAME, SHAPE, TYPES, none, PREDS)
 
+/* Define an SME function that operates on ZA.
+   See `function_group_info` for the meaning of each argument.  */
 #ifndef DEF_SME_ZA_FUNCTION_GS
 #define DEF_SME_ZA_FUNCTION_GS(NAME, SHAPE, TYPES, GROUP, PREDS) \
-  DEF_SME_ZA_FUNCTION_GS_FPM (NAME, SHAPE, TYPES, GROUP, PREDS, unused)
+   DEF_SME_ZA_FUNCTION_GS_FPM (NAME, SHAPE, TYPES, GROUP, PREDS, unused)
 #endif
 
+/* Same as `DEF_SME_ZA_FUNCTION_GS` above, but with GROUPS = none.  */
 #ifndef DEF_SME_ZA_FUNCTION
-#define DEF_SME_ZA_FUNCTION(NAME, SHAPE, TYPES, PREDS) \
-  DEF_SME_ZA_FUNCTION_GS_FPM (NAME, SHAPE, TYPES, none, PREDS, unused)
+#define DEF_SME_ZA_FUNCTION(NAME, SHAPE, TYPES,       PREDS) \
+DEF_SME_ZA_FUNCTION_GS_FPM (NAME, SHAPE, TYPES, none, PREDS, unused)
 #endif
 
 #define REQUIRED_EXTENSIONS streaming_compatible (0)
@@ -309,7 +313,99 @@ DEF_SME_ZA_FUNCTION_GS_FPM (svmla, binary_za_slice_opt_single, za_s_mf8, vg1x24,
 DEF_SME_ZA_FUNCTION_GS_FPM (svmopa, binary_za_m, za_s_mf8, none, za_m, set)
 #undef REQUIRED_EXTENSIONS
 
+// All svmop4a functions also have `_1x2`, `2x1` and `2x2` variants, and all
+// functions except `mf8_mf8` have `svmop4s` variants.
+
+// svmop4a[_1x1]_za32[_f32_f32]
+// svmop4a[_1x1]_za32[_f16_f16]
+// svmop4a[_1x1]_za32[_bf16_bf16]
+// svmop4a[_1x1]_za32[_s16_s16]
+// svmop4a[_1x1]_za32[_u16_u16]
+// svmop4a[_1x1]_za32[_s8_s8]
+// svmop4a[_1x1]_za32[_u8_u8]
+// svmop4a[_1x1]_za32[_s8_u8]
+// svmop4a[_1x1]_za32[_u8_s8]
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2 \
+					  | AARCH64_FL_SME_MOP4)
+DEF_SME_ZA_FUNCTION_GS (svmop4a, mop4, mop4_base, none, none)
+DEF_SME_ZA_FUNCTION_GS (svmop4s, mop4, mop4_base, none, none)
+#undef REQUIRED_EXTENSIONS
+
+// svmop4a[_1x1]_za16[_f16_f16] (only if __ARM_FEATURE_SME_F16F16 != 0)
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2 \
+					  | AARCH64_FL_SME_MOP4 \
+					  | AARCH64_FL_SME_F16F16)
+DEF_SME_ZA_FUNCTION_GS (svmop4a, mop4, mop4_f16f16, none, none)
+DEF_SME_ZA_FUNCTION_GS (svmop4s, mop4, mop4_f16f16, none, none)
+#undef REQUIRED_EXTENSIONS
+
+// svmop4a[_1x1]_za16[_bf16_bf16] (only if __ARM_FEATURE_SME_B16B16 != 0)
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2 \
+					  | AARCH64_FL_SME_MOP4 \
+					  | AARCH64_FL_SME_B16B16)
+DEF_SME_ZA_FUNCTION_GS (svmop4a, mop4, mop4_b16b16, none, none)
+DEF_SME_ZA_FUNCTION_GS (svmop4s, mop4, mop4_b16b16, none, none)
+#undef REQUIRED_EXTENSIONS
+
+// svmop4a[_1x1]_za64[_f64_f64] (only if __ARM_FEATURE_SME_F64F64 != 0)
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2 \
+					  | AARCH64_FL_SME_MOP4 \
+					  | AARCH64_FL_SME_F64F64)
+DEF_SME_ZA_FUNCTION_GS (svmop4a, mop4, mop4_f64f64, none, none)
+DEF_SME_ZA_FUNCTION_GS (svmop4s, mop4, mop4_f64f64, none, none)
+#undef REQUIRED_EXTENSIONS
+
+// svmop4a[_1x1]_za64[_s16_s16] (only if __ARM_FEATURE_SME_I16I64 != 0)
+// svmop4a[_1x1]_za64[_u16_u16] (only if __ARM_FEATURE_SME_I16I64 != 0)
+// svmop4a[_1x1]_za64[_s16_u16] (only if __ARM_FEATURE_SME_I16I64 != 0)
+// svmop4a[_1x1]_za64[_u16_s16] (only if __ARM_FEATURE_SME_I16I64 != 0)
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2 \
+					  | AARCH64_FL_SME_MOP4 \
+					  | AARCH64_FL_SME_I16I64)
+DEF_SME_ZA_FUNCTION_GS (svmop4a, mop4, mop4_i16i64, none, none)
+DEF_SME_ZA_FUNCTION_GS (svmop4s, mop4, mop4_i16i64, none, none)
+#undef REQUIRED_EXTENSIONS
+
+// svmop4a[_1x1]_za16[_mf8_mf8]_fpm (only if __ARM_FEATURE_SME_F8F16 != 0)
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2 \
+					  | AARCH64_FL_SME_MOP4 \
+					  | AARCH64_FL_SME_F8F16)
+DEF_SME_ZA_FUNCTION_GS_FPM (svmop4a, mop4, mop4_f8f16, none, none, set)
+#undef REQUIRED_EXTENSIONS
+
+// svmop4a[_1x1]_za32[_mf8_mf8]_fpm (only if __ARM_FEATURE_SME_F8F32 != 0)
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2 \
+					  | AARCH64_FL_SME_MOP4 \
+					  | AARCH64_FL_SME_F8F32)
+DEF_SME_ZA_FUNCTION_GS_FPM (svmop4a, mop4, mop4_f8f32, none, none, set)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME_TMOP)
+DEF_SME_ZA_FUNCTION_GS (svtmopa_lane, ternary_za_uint_dual_single, tmop_base, none, none)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME_TMOP \
+					    | AARCH64_FL_SME_F16F16)
+DEF_SME_ZA_FUNCTION_GS (svtmopa_lane, ternary_za_uint_dual_single, tmop_h_float, none, none)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME_TMOP \
+					    | AARCH64_FL_SME_B16B16)
+DEF_SME_ZA_FUNCTION_GS (svtmopa_lane, ternary_za_uint_dual_single, tmop_h_bfloat, none, none)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME_TMOP \
+					    | AARCH64_FL_SME_F8F16)
+DEF_SME_ZA_FUNCTION_GS_FPM (svtmopa_lane, ternary_za_uint_dual_single, tmop_h_mf8, none, none, set)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME_TMOP \
+					    | AARCH64_FL_SME_F8F32)
+DEF_SME_ZA_FUNCTION_GS_FPM (svtmopa_lane, ternary_za_uint_dual_single, tmop_s_mf8, none, none, set)
+#undef REQUIRED_EXTENSIONS
+
 #undef DEF_SME_ZA_FUNCTION
 #undef DEF_SME_ZA_FUNCTION_GS
 #undef DEF_SME_ZA_FUNCTION_GS_FPM
 #undef DEF_SME_FUNCTION
+#undef DEF_SME_FUNCTION_GS

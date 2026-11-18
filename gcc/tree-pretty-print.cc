@@ -437,25 +437,36 @@ dump_omp_iterators (pretty_printer *pp, tree iter, int spc, dump_flags_t flags)
     {
       if (it != iter)
 	pp_string (pp, ", ");
-      dump_generic_node (pp, TREE_TYPE (TREE_VEC_ELT (it, 0)), spc, flags,
+      dump_generic_node (pp, TREE_TYPE (OMP_ITERATOR_VAR (it)), spc, flags,
 			 false);
       pp_space (pp);
-      dump_generic_node (pp, TREE_VEC_ELT (it, 0), spc, flags, false);
+      dump_generic_node (pp, OMP_ITERATOR_VAR (it), spc, flags, false);
       pp_equal (pp);
-      dump_generic_node (pp, TREE_VEC_ELT (it, 1), spc, flags, false);
+      dump_generic_node (pp, OMP_ITERATOR_BEGIN (it), spc, flags, false);
       pp_colon (pp);
-      dump_generic_node (pp, TREE_VEC_ELT (it, 2), spc, flags, false);
+      dump_generic_node (pp, OMP_ITERATOR_END (it), spc, flags, false);
       pp_colon (pp);
-      dump_generic_node (pp, TREE_VEC_ELT (it, 3), spc, flags, false);
+      dump_generic_node (pp, OMP_ITERATOR_STEP (it), spc, flags, false);
     }
-  if (TREE_VEC_LENGTH (iter) > 6)
+  if (flags & TDF_DETAILS && OMP_ITERATOR_BLOCK (iter))
+    {
+      pp_string (pp, ", block=");
+      pp_left_brace (pp);
+      newline_and_indent (pp, spc + 2);
+      dump_generic_node (pp, BLOCK_SUBBLOCKS (OMP_ITERATOR_BLOCK (iter)),
+			 spc + 2, flags, true);
+      newline_and_indent (pp, spc);
+      pp_right_brace (pp);
+    }
+  if (OMP_ITERATOR_EXPANDED_P (iter))
     {
       pp_string (pp, ", loop_label=");
-      dump_generic_node (pp, TREE_VEC_ELT (iter, 6), spc, flags, false);
+      dump_generic_node (pp, OMP_ITERATOR_LABEL (iter), spc, flags, false);
       pp_string (pp, ", elems=");
-      dump_generic_node (pp, TREE_VEC_ELT (iter, 7), spc, flags, false);
+      dump_generic_node (pp, OMP_ITERATOR_ELEMS (iter), spc, flags, false);
       pp_string (pp, ", index=");
-      dump_generic_node (pp, TREE_VEC_ELT (iter, 8), spc, flags, false);
+      dump_generic_node (pp, OMP_ITERATOR_INDEX (iter), spc, flags, false);
+      /* The count field is not used yet.  */
     }
   pp_right_paren (pp);
 }
@@ -703,6 +714,16 @@ dump_omp_clause (pretty_printer *pp, tree clause, int spc, dump_flags_t flags)
 
     case OMP_CLAUSE_NUM_THREADS:
       pp_string (pp, "num_threads(");
+      if (OMP_CLAUSE_NUM_THREADS_STRICT (clause))
+	pp_string (pp, "strict");
+      if (OMP_CLAUSE_NUM_THREADS_STRICT (clause)
+	  && OMP_CLAUSE_NUM_THREADS_DIMS (clause))
+	pp_comma (pp);
+      if (OMP_CLAUSE_NUM_THREADS_DIMS (clause))
+	pp_string (pp, "dims()");
+      if (OMP_CLAUSE_NUM_THREADS_STRICT (clause)
+	  || OMP_CLAUSE_NUM_THREADS_DIMS (clause))
+	pp_colon (pp);
       dump_generic_node (pp, OMP_CLAUSE_NUM_THREADS_EXPR (clause),
 			 spc, flags, false);
       pp_right_paren (pp);
@@ -817,6 +838,28 @@ dump_omp_clause (pretty_printer *pp, tree clause, int spc, dump_flags_t flags)
 
     case OMP_CLAUSE_MERGEABLE:
       pp_string (pp, "mergeable");
+      break;
+
+    case OMP_CLAUSE_MESSAGE:
+      if (OMP_CLAUSE_MESSAGE_EXPR (clause))
+	{
+	  pp_string (pp, "message(");
+	  dump_generic_node (pp, OMP_CLAUSE_MESSAGE_EXPR (clause),
+			     spc, flags, false);
+	  if (OMP_CLAUSE_MESSAGE_LEN (clause))
+	    {
+	      pp_string (pp, " [len:");
+	      dump_generic_node (pp, OMP_CLAUSE_MESSAGE_LEN (clause),
+				 spc, flags, false);
+	      pp_right_bracket (pp);
+	    }
+	  pp_right_paren (pp);
+	  pp_space (pp);
+	}
+      if (OMP_CLAUSE_MESSAGE_SEVERITY_WARN (clause))
+	pp_string (pp, "severity(warning)");
+      else
+	pp_string (pp, "severity(fatal)");
       break;
 
     case OMP_CLAUSE_LINEAR:
@@ -1154,6 +1197,9 @@ dump_omp_clause (pretty_printer *pp, tree clause, int spc, dump_flags_t flags)
 	case GOMP_MAP_POP_MAPPER_NAME:
 	  pp_string (pp, "pop_mapper");
 	  break;
+	case GOMP_MAP_USES_ALLOCATORS:
+	  pp_string (pp, "uses_allocators");
+	  break;
 	default:
 	  gcc_unreachable ();
 	}
@@ -1268,6 +1314,8 @@ dump_omp_clause (pretty_printer *pp, tree clause, int spc, dump_flags_t flags)
 
     case OMP_CLAUSE_NUM_TEAMS:
       pp_string (pp, "num_teams(");
+      if (OMP_CLAUSE_NUM_TEAMS_DIMS (clause))
+	pp_string (pp, "dims():");
       if (OMP_CLAUSE_NUM_TEAMS_LOWER_EXPR (clause))
 	{
 	  dump_generic_node (pp, OMP_CLAUSE_NUM_TEAMS_LOWER_EXPR (clause),
@@ -1281,6 +1329,16 @@ dump_omp_clause (pretty_printer *pp, tree clause, int spc, dump_flags_t flags)
 
     case OMP_CLAUSE_THREAD_LIMIT:
       pp_string (pp, "thread_limit(");
+      if (OMP_CLAUSE_THREAD_LIMIT_STRICT (clause))
+	pp_string (pp, "strict");
+      if (OMP_CLAUSE_THREAD_LIMIT_STRICT (clause)
+	  && OMP_CLAUSE_THREAD_LIMIT_DIMS (clause))
+	pp_comma (pp);
+      if (OMP_CLAUSE_THREAD_LIMIT_DIMS (clause))
+	pp_string (pp, "dims()");
+      if (OMP_CLAUSE_THREAD_LIMIT_STRICT (clause)
+	  || OMP_CLAUSE_THREAD_LIMIT_DIMS (clause))
+	pp_colon (pp);
       dump_generic_node (pp, OMP_CLAUSE_THREAD_LIMIT_EXPR (clause),
 			 spc, flags, false);
       pp_right_paren (pp);
@@ -1377,6 +1435,20 @@ dump_omp_clause (pretty_printer *pp, tree clause, int spc, dump_flags_t flags)
 
     case OMP_CLAUSE_SIMDLEN:
       pp_string (pp, "simdlen(");
+      if (OMP_CLAUSE_SIMDLEN_TYPE (clause))
+	{
+	  pp_string (pp, "scaled(");
+	  dump_generic_node (pp, OMP_CLAUSE_SIMDLEN_TYPE (clause),
+			     spc, flags, false);
+	  if (OMP_CLAUSE_SIMDLEN_DIVISOR (clause))
+	    {
+	      pp_comma (pp);
+	      dump_generic_node (pp, OMP_CLAUSE_SIMDLEN_DIVISOR (clause),
+				 spc, flags, false);
+	    }
+	  pp_right_paren (pp);
+	  pp_colon (pp);
+	}
       dump_generic_node (pp, OMP_CLAUSE_SIMDLEN_EXPR (clause),
 			 spc, flags, false);
       pp_right_paren (pp);
@@ -1727,6 +1799,7 @@ dump_omp_context_selector (pretty_printer *pp, tree ctx, int spc,
 	    pp_string (pp, OMP_TS_NAME (sel));
 	  tree score = OMP_TS_SCORE (sel);
 	  tree props = OMP_TS_PROPERTIES (sel);
+	  enum omp_tp_type tp_type = omp_ts_map[OMP_TS_CODE (sel)].tp_type;
 	  if (props)
 	    {
 	      pp_string (pp, " (");
@@ -1738,7 +1811,9 @@ dump_omp_context_selector (pretty_printer *pp, tree ctx, int spc,
 		}
 	      for (tree prop = props; prop; prop = TREE_CHAIN (prop))
 		{
-		  if (OMP_TP_NAME (prop) == OMP_TP_NAMELIST_NODE)
+		  if (tp_type == OMP_TRAIT_PROPERTY_CLAUSE_LIST)
+		    dump_omp_clause (pp, prop, spc + 4, flags);
+		  else if (OMP_TP_NAME (prop) == OMP_TP_NAMELIST_NODE)
 		    {
 		      const char *str = omp_context_name_list_prop (prop);
 		      pp_string (pp, "\"");
@@ -1848,7 +1923,9 @@ dump_block_node (pretty_printer *pp, tree block, int spc, dump_flags_t flags)
       newline_and_indent (pp, spc + 2);
     }
 
-  if (BLOCK_SUBBLOCKS (block))
+  if (BLOCK_SUBBLOCKS (block)
+      && (!lang_GNU_Fortran ()
+	  || TREE_CODE (BLOCK_SUBBLOCKS (block)) != STATEMENT_LIST))
     {
       pp_string (pp, "SUBBLOCKS: ");
       for (t = BLOCK_SUBBLOCKS (block); t; t = BLOCK_CHAIN (t))
@@ -2023,6 +2100,12 @@ dump_mem_ref (pretty_printer *pp, tree node, int spc, dump_flags_t flags)
 	      dump_generic_node (pp, TREE_OPERAND (node, 4),
 				 spc, flags | TDF_SLIM, false);
 	    }
+	}
+      if (TREE_CODE (node) == MEM_REF
+	  && REF_REVERSE_STORAGE_ORDER (node))
+	{
+	  pp_string (pp, ", ");
+	  pp_decimal_int (pp, REF_REVERSE_STORAGE_ORDER (node));
 	}
       if (MR_DEPENDENCE_CLIQUE (node) != 0)
 	{
@@ -2264,8 +2347,9 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, dump_flags_t flags,
     case BOOLEAN_TYPE:
     case BITINT_TYPE:
     case OPAQUE_TYPE:
+    case NULLPTR_TYPE:
       {
-	unsigned int quals = TYPE_QUALS (node);
+	auto quals = TYPE_QUALS_NO_ADDR_SPACE (node);
 	enum tree_code_class tclass;
 
 	if (quals & TYPE_QUAL_ATOMIC)
@@ -2400,6 +2484,8 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, dump_flags_t flags,
 	      }
 	    else if (TREE_CODE (node) == VOID_TYPE)
 	      pp_string (pp, "void");
+	    else if (TREE_CODE (node) == NULLPTR_TYPE)
+	      pp_string (pp, "nullptr_t");
 	    else
               pp_string (pp, "<unnamed type>");
 	  }
@@ -2439,17 +2525,17 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, dump_flags_t flags,
 	}
       else
         {
-	  unsigned int quals = TYPE_QUALS (node);
+	  auto quals = TYPE_QUALS (node);
 
           dump_generic_node (pp, TREE_TYPE (node), spc, flags, false);
 	  pp_space (pp);
 	  pp_string (pp, str);
 
-	  if (quals & TYPE_QUAL_CONST)
+	  if (quals.has (TYPE_QUAL_CONST))
 	    pp_string (pp, " const");
-	  if (quals & TYPE_QUAL_VOLATILE)
+	  if (quals.has (TYPE_QUAL_VOLATILE))
 	    pp_string (pp, " volatile");
-	  if (quals & TYPE_QUAL_RESTRICT)
+	  if (quals.has (TYPE_QUAL_RESTRICT))
 	    pp_string (pp, " restrict");
 
 	  if (!ADDR_SPACE_GENERIC_P (TYPE_ADDR_SPACE (node)))
@@ -2475,7 +2561,7 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, dump_flags_t flags,
 
     case ARRAY_TYPE:
       {
-	unsigned int quals = TYPE_QUALS (node);
+	auto quals = TYPE_QUALS_NO_ADDR_SPACE (node);
 	tree tmp;
 
 	if (quals & TYPE_QUAL_ATOMIC)
@@ -2505,7 +2591,7 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, dump_flags_t flags,
     case UNION_TYPE:
     case QUAL_UNION_TYPE:
       {
-	unsigned int quals = TYPE_QUALS (node);
+	auto quals = TYPE_QUALS_NO_ADDR_SPACE (node);
 
 	if (quals & TYPE_QUAL_ATOMIC)
 	  pp_string (pp, "atomic ");
@@ -2990,6 +3076,28 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, dump_flags_t flags,
 	widest_int curidx;
 	if (flags & TDF_GIMPLE)
 	  {
+	    if (TREE_CLOBBER_P (node))
+	      {
+		pp_string (pp, "__CLOBBER");
+		switch (CLOBBER_KIND (node))
+		  {
+		  case CLOBBER_STORAGE_BEGIN:
+		    pp_string (pp, "(bos)");
+		    break;
+		  case CLOBBER_STORAGE_END:
+		    pp_string (pp, "(eos)");
+		    break;
+		  case CLOBBER_OBJECT_BEGIN:
+		    pp_string (pp, "(bob)");
+		    break;
+		  case CLOBBER_OBJECT_END:
+		    pp_string (pp, "(eob)");
+		    break;
+		  default:
+		    break;
+		  }
+		break;
+	      }
 	    pp_string (pp, "_Literal (");
 	    dump_generic_node (pp, TREE_TYPE (node), spc, flags, false);
 	    pp_string (pp, ") ");
@@ -5199,34 +5307,6 @@ dump_function_header (FILE *dump_file, tree fdecl, dump_flags_t flags)
     }
   else
     fprintf (dump_file, ")\n\n");
-}
-
-/* Dump double_int D to pretty_printer PP.  UNS is true
-   if D is unsigned and false otherwise.  */
-void
-pp_double_int (pretty_printer *pp, double_int d, bool uns)
-{
-  if (d.fits_shwi ())
-    pp_wide_integer (pp, d.low);
-  else if (d.fits_uhwi ())
-    pp_unsigned_wide_integer (pp, d.low);
-  else
-    {
-      unsigned HOST_WIDE_INT low = d.low;
-      HOST_WIDE_INT high = d.high;
-      if (!uns && d.is_negative ())
-	{
-	  pp_minus (pp);
-	  high = ~high + !low;
-	  low = -low;
-	}
-      /* Would "%x%0*x" or "%x%*0x" get zero-padding on all
-	 systems?  */
-      sprintf (pp_buffer (pp)->m_digit_buffer,
-	       HOST_WIDE_INT_PRINT_DOUBLE_HEX,
-	       (unsigned HOST_WIDE_INT) high, low);
-      pp_string (pp, pp_buffer (pp)->m_digit_buffer);
-    }
 }
 
 #if __GNUC__ >= 10

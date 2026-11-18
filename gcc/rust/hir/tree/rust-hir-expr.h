@@ -1413,6 +1413,7 @@ class CallExpr : public ExprWithoutBlock
 {
   std::unique_ptr<Expr> function;
   std::vector<std::unique_ptr<Expr>> params;
+  std::vector<size_t> const_argument_indexes;
   location_t locus;
 
 public:
@@ -1439,6 +1440,22 @@ public:
 
   void accept_vis (HIRFullVisitor &vis) override;
   void accept_vis (HIRExpressionVisitor &vis) override;
+
+  void set_const_argument_indexes (const std::vector<size_t> &indexes)
+  {
+    const_argument_indexes = indexes;
+  }
+
+  bool is_const_argument (size_t index) const
+  {
+    for (auto const_index : const_argument_indexes)
+      {
+	if (index == const_index)
+	  return true;
+      }
+
+    return false;
+  }
 
   bool has_fnexpr () const { return function != nullptr; }
   Expr &get_fnexpr () { return *function; }
@@ -2176,53 +2193,6 @@ protected:
   }
 };
 
-// Range from (inclusive) and to (inclusive) expression HIR node object
-// aka RangeInclusiveExpr; constructs a std::ops::RangeInclusive object
-class RangeFromToInclExpr : public RangeExpr
-{
-  std::unique_ptr<Expr> from;
-  std::unique_ptr<Expr> to;
-
-public:
-  std::string to_string () const override;
-
-  RangeFromToInclExpr (Analysis::NodeMapping mappings,
-		       std::unique_ptr<Expr> range_from,
-		       std::unique_ptr<Expr> range_to, location_t locus);
-  // outer attributes not allowed
-
-  // Copy constructor with clone
-  RangeFromToInclExpr (RangeFromToInclExpr const &other);
-
-  // Overload assignment operator to use clone
-  RangeFromToInclExpr &operator= (RangeFromToInclExpr const &other);
-
-  // move constructors
-  RangeFromToInclExpr (RangeFromToInclExpr &&other) = default;
-  RangeFromToInclExpr &operator= (RangeFromToInclExpr &&other) = default;
-
-  void accept_vis (HIRFullVisitor &vis) override;
-  void accept_vis (HIRExpressionVisitor &vis) override;
-
-  Expr &get_from_expr () { return *from; }
-  Expr &get_to_expr () { return *to; }
-
-protected:
-  /* Use covariance to implement clone function as returning this object rather
-   * than base */
-  RangeFromToInclExpr *clone_expr_impl () const override
-  {
-    return new RangeFromToInclExpr (*this);
-  }
-
-  /* Use covariance to implement clone function as returning this object rather
-   * than base */
-  RangeFromToInclExpr *clone_expr_without_block_impl () const override
-  {
-    return new RangeFromToInclExpr (*this);
-  }
-};
-
 // Range to (inclusive) expression HIR node object
 // aka RangeToInclusiveExpr; constructs a std::ops::RangeToInclusive object
 class RangeToInclExpr : public RangeExpr
@@ -2264,6 +2234,52 @@ protected:
   RangeToInclExpr *clone_expr_without_block_impl () const override
   {
     return new RangeToInclExpr (*this);
+  }
+};
+
+// Box expression HIR node representation
+class BoxExpr : public ExprWithoutBlock
+{
+public:
+  std::unique_ptr<Expr> expr;
+
+  location_t locus;
+
+  std::string to_string () const override;
+
+  // Constructor for BoxExpr.
+  BoxExpr (Analysis::NodeMapping mappings, location_t locus,
+	   std::unique_ptr<Expr> expr,
+	   AST::AttrVec outer_attribs = AST::AttrVec ());
+  // Copy constructor with clone
+  BoxExpr (BoxExpr const &other);
+
+  // Overloaded assignment operator to clone expr pointer
+  BoxExpr &operator= (BoxExpr const &other);
+
+  // move constructors
+  BoxExpr (BoxExpr &&other) = default;
+  BoxExpr &operator= (BoxExpr &&other) = default;
+
+  location_t get_locus () const override final { return locus; }
+
+  void accept_vis (HIRFullVisitor &vis) override;
+  void accept_vis (HIRExpressionVisitor &vis) override;
+
+  Expr &get_expr () { return *expr; }
+
+  ExprType get_expression_type () const override final { return ExprType::Box; }
+
+protected:
+  /* Use covariance to implement clone function as returning this object rather
+   * than base */
+  BoxExpr *clone_expr_impl () const override { return new BoxExpr (*this); }
+
+  /* Use covariance to implement clone function as returning this object rather
+   * than base */
+  BoxExpr *clone_expr_without_block_impl () const override
+  {
+    return new BoxExpr (*this);
   }
 };
 
@@ -3298,18 +3314,18 @@ public:
   AST::AttrVec outer_attrs;
   std::vector<LlvmOperand> inputs;
   std::vector<LlvmOperand> outputs;
-  std::vector<AST::TupleTemplateStr> templates;
+  AST::TupleTemplateStr template_str;
   std::vector<AST::TupleClobber> clobbers;
   Options options;
 
   LlvmInlineAsm (location_t locus, std::vector<LlvmOperand> inputs,
 		 std::vector<LlvmOperand> outputs,
-		 std::vector<AST::TupleTemplateStr> templates,
+		 AST::TupleTemplateStr template_str,
 		 std::vector<AST::TupleClobber> clobbers, Options options,
 		 AST::AttrVec outer_attrs, Analysis::NodeMapping mappings)
     : ExprWithoutBlock (mappings, std::move (outer_attrs)), locus (locus),
       inputs (std::move (inputs)), outputs (std::move (outputs)),
-      templates (std::move (templates)), clobbers (std::move (clobbers)),
+      template_str (std::move (template_str)), clobbers (std::move (clobbers)),
       options (options)
   {}
 
@@ -3327,7 +3343,7 @@ public:
     return new LlvmInlineAsm (*this);
   }
 
-  std::vector<AST::TupleTemplateStr> &get_templates () { return templates; }
+  AST::TupleTemplateStr &get_template () { return template_str; }
 
   Expr::ExprType get_expression_type () const override
   {

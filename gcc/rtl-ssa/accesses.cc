@@ -1,4 +1,4 @@
-// Implementation of access-related functions for RTL SSA           -*- C++ -*-
+// Implementation of access-related functions for RTL SSA.
 // Copyright (C) 2020-2026 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
@@ -53,7 +53,7 @@ clobber_info::recompute_group ()
   gcc_checking_assert (m_parent);
 
   // If the previous splay operation did anything, this clobber is now an
-  // ancestor of CURSOR, and all the nodes inbetween have a stale group.
+  // ancestor of CURSOR, and all the nodes in between have a stale group.
   // Since we have visited the nodes, we might as well update them too.
   //
   // If the previous splay operation did nothing, start the update from

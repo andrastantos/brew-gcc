@@ -47,6 +47,8 @@ extern enum calling_abi ix86_function_type_abi (const_tree);
 extern bool ix86_use_pseudo_pic_reg (void);
 
 extern void ix86_reset_previous_fndecl (void);
+extern call_saved_registers_type
+  ix86_fntype_call_saved_registers (const_tree, location_t * = nullptr);
 
 extern bool ix86_using_red_zone (void);
 
@@ -78,10 +80,9 @@ extern void substitute_vpternlog_operands (rtx[]);
 extern bool ix86_expand_strlen (rtx, rtx, rtx, rtx);
 extern bool ix86_expand_set_or_cpymem (rtx, rtx, rtx, rtx, rtx, rtx,
 				       rtx, rtx, rtx, rtx, bool);
-extern bool ix86_expand_movmem (rtx[]);
+extern bool ix86_expand_set_or_movmem (rtx[], bool, bool);
 extern bool ix86_expand_cmpstrn_or_cmpmem (rtx, rtx, rtx, rtx, rtx, bool);
 
-extern enum reg_class ix86_insn_base_reg_class (rtx_insn *);
 extern bool ix86_regno_ok_for_insn_base_p (int, rtx_insn *);
 extern enum reg_class ix86_insn_index_reg_class (rtx_insn *);
 extern bool constant_address_p (rtx);
@@ -130,7 +131,8 @@ extern void ix86_split_lea_for_addr (rtx_insn *, rtx[], machine_mode);
 extern bool ix86_lea_for_add_ok (rtx_insn *, rtx[]);
 extern int ix86_last_zero_store_uid;
 extern bool ix86_vec_interleave_v2df_operator_ok (rtx operands[3], bool high);
-extern bool ix86_dep_by_shift_count (const_rtx set_insn, const_rtx use_insn);
+extern bool ix86_dep_by_shift_count (const rtx_insn *set_insn,
+				      const rtx_insn *use_insn);
 extern bool ix86_agi_dependent (rtx_insn *set_insn, rtx_insn *use_insn);
 extern rtx ix86_build_const_vector (machine_mode, bool, rtx);
 extern rtx ix86_build_signbit_mask (machine_mode, bool, bool);
@@ -150,12 +152,13 @@ extern void ix86_split_fp_absneg_operator (enum rtx_code, machine_mode,
 					   rtx[]);
 extern void ix86_expand_copysign (rtx []);
 extern void ix86_expand_xorsign (rtx []);
-extern bool ix86_match_ccmode (rtx, machine_mode);
-extern bool ix86_match_ptest_ccmode (rtx);
+extern bool ix86_match_ccmode (rtx_insn *, machine_mode);
+extern bool ix86_match_ptest_ccmode (rtx_insn *);
 extern void ix86_expand_branch (enum rtx_code, rtx, rtx, rtx);
 extern void ix86_expand_setcc (rtx, enum rtx_code, rtx, rtx);
 extern bool ix86_expand_int_movcc (rtx[]);
 extern bool ix86_expand_fp_movcc (rtx[]);
+extern void ix86_expand_cond_fma (rtx[], bool, bool);
 extern bool ix86_expand_fp_vcond (rtx[]);
 extern bool ix86_expand_int_vcond (rtx[]);
 extern void ix86_expand_vec_perm (rtx[]);
@@ -186,9 +189,9 @@ extern void ix86_expand_v1ti_ashiftrt (rtx[]);
 extern void ix86_expand_v2di_ashiftrt (rtx[]);
 extern rtx ix86_replace_reg_with_reg (rtx, rtx, rtx);
 extern rtx ix86_find_base_term (rtx);
-extern bool ix86_check_movabs (rtx, int);
-extern bool ix86_check_movs (rtx, int);
-extern bool ix86_check_no_addr_space (rtx);
+extern bool ix86_check_movabs (rtx_insn *, int);
+extern bool ix86_check_movs (rtx_insn *, int);
+extern bool ix86_check_no_addr_space (rtx_insn *);
 extern void ix86_split_idivmod (machine_mode, rtx[], bool);
 extern bool ix86_hardreg_mov_ok (rtx, rtx);
 
@@ -231,6 +234,7 @@ extern void ix86_expand_floorceil (rtx, rtx, bool);
 extern void ix86_expand_floorceildf_32 (rtx, rtx, bool);
 extern void ix86_expand_trunc (rtx, rtx);
 extern void ix86_expand_truncdf_32 (rtx, rtx);
+extern void ix86_expand_truncsfbf2 (rtx, rtx);
 extern void ix86_expand_round (rtx, rtx);
 extern void ix86_expand_rounddf_32 (rtx, rtx);
 extern void ix86_expand_round_sse4 (rtx, rtx);
@@ -263,6 +267,7 @@ extern rtx ix86_expand_ternlog (machine_mode mode, rtx op0, rtx op1, rtx op2,
 				int idx, rtx target);
 extern void ix86_expand_vector_sf2bf_with_vec_perm (rtx, rtx);
 extern void ix86_expand_vector_bf2sf_with_vec_perm (rtx, rtx);
+extern void ix86_expand_bitreverse (rtx, rtx);
 
 
 #ifdef TREE_CODE
@@ -283,7 +288,6 @@ extern tree ix86_valid_target_attribute_tree (tree, tree,
 					      struct gcc_options *,
 					      struct gcc_options *, bool);
 extern unsigned int ix86_get_callcvt (const_tree);
-extern bool ix86_type_no_callee_saved_registers_p (const_tree);
 
 #endif
 
@@ -292,6 +296,8 @@ extern bool ix86_gpr_tls_address_pattern_p (rtx);
 extern bool ix86_tls_address_pattern_p (rtx);
 extern rtx ix86_rewrite_tls_address (rtx);
 extern rtx ix86_tls_get_addr (void);
+class predefined_function_abi;
+extern const predefined_function_abi & ix86_tls_get_addr_abi (void);
 
 extern void ix86_expand_vector_init (bool, rtx, rtx);
 extern void ix86_expand_vector_set (bool, rtx, rtx, int);
@@ -306,12 +312,15 @@ extern void ix86_expand_mul_widen_evenodd (rtx, rtx, rtx, bool, bool);
 extern void ix86_expand_mul_widen_hilo (rtx, rtx, rtx, bool, bool);
 extern void ix86_expand_sse2_mulv4si3 (rtx, rtx, rtx);
 extern void ix86_expand_sse2_mulvxdi3 (rtx, rtx, rtx);
+extern void ix86_expand_umulvndi_highpart (rtx, rtx, rtx);
 extern void ix86_expand_sse2_abs (rtx, rtx);
 extern bool ix86_expand_vector_init_duplicate (bool, machine_mode, rtx,
 					       rtx);
 extern bool ix86_expand_vector_init_one_nonzero (bool, machine_mode, rtx,
 						 rtx, int);
 extern bool ix86_extract_perm_from_pool_constant (int*, rtx);
+
+extern void ix86_expand_lcp_stall_peephole (rtx_insn *, rtx *, bool);
 
 /* In i386-c.cc  */
 extern void ix86_target_macros (void);
@@ -326,18 +335,11 @@ extern void i386_pe_asm_output_aligned_decl_common (FILE *, tree,
 						    HOST_WIDE_INT,
 						    HOST_WIDE_INT);
 extern void i386_pe_start_function (FILE *, const char *, tree);
-extern void i386_pe_end_function (FILE *, const char *, tree);
-extern void i386_pe_end_cold_function (FILE *, const char *, tree);
 extern void i386_pe_assemble_visibility (tree, int);
 extern tree i386_pe_mangle_decl_assembler_name (tree, tree);
 extern tree i386_pe_mangle_assembler_name (const char *);
 
-extern void i386_pe_seh_init (FILE *);
-extern void i386_pe_seh_end_prologue (FILE *);
-extern void i386_pe_seh_cold_init (FILE *, const char *);
 extern void i386_pe_seh_unwind_emit (FILE *, rtx_insn *);
-extern void i386_pe_seh_emit_except_personality (rtx);
-extern void i386_pe_seh_init_sections (void);
 
 /* In winnt-cxx.cc and winnt-stubs.cc  */
 extern void i386_pe_adjust_class_at_definition (tree);
@@ -450,3 +452,6 @@ extern void ix86_set_handled_components (sbitmap);
 bool ix86_check_builtin_isa_match (unsigned int, HOST_WIDE_INT*,
 				   HOST_WIDE_INT*);
 rtx ix86_vgf2p8affine_shift_matrix (rtx, rtx, enum rtx_code);
+extern void ix86_expand_crc_using_pclmul (scalar_mode, scalar_mode, rtx *);
+extern void ix86_expand_reversed_crc_using_pclmul (scalar_mode, scalar_mode,
+						   rtx *);

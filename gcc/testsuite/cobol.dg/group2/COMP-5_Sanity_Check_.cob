@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
 
       *> This program should produce no output.  It is a sanity check of
       *> COMP-5 moves and addition.

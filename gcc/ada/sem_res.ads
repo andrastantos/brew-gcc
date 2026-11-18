@@ -95,6 +95,10 @@ package Sem_Res is
    --  interpolated expression; used to improve the clarity of reported
    --  error messages.
 
+   procedure Malformed_Quantified_Expression (N : Node_Id);
+   --  N is an N_Iterated_Component_Association in a boolean context. Give an
+   --  error about a malformed quantified expression.
+
    procedure Preanalyze_And_Resolve (N : Node_Id; T : Entity_Id);
    --  Performs a preanalysis of expression node N. During preanalysis, N is
    --  analyzed and then resolved against type T, but no expansion is carried
@@ -130,8 +134,7 @@ package Sem_Res is
 
    procedure Resolve_Entry (Entry_Name : Node_Id);
    --  Find name of entry being called, and resolve prefix of name with its
-   --  own type. For now we assume that the prefix cannot be overloaded and
-   --  the name of the entry plays no role in the resolution.
+   --  own type.
 
    procedure Resolve_Implicit_Dereference (P : Node_Id);
    --  Called when P is the prefix of an indexed component, or of a selected
@@ -154,10 +157,11 @@ package Sem_Res is
    --  whether the conversion is legal. Reports errors in the case of illegal
    --  conversions, unless Report_Errs is False.
 
-private
-   procedure Resolve_Implicit_Type (N : Node_Id) renames Resolve;
-   pragma Inline (Resolve_Implicit_Type);
-   --  We use this renaming to make the application of Inline very explicit to
-   --  this version, since other versions of Resolve are not inlined.
+   function Valid_Tagged_Conversion
+     (N           : Node_Id;
+      Target_Type : Entity_Id;
+      Opnd_Type   : Entity_Id;
+      Report_Errs : Boolean := True) return Boolean;
+   --  Specific version of Valid_Conversion for when Target_Type is tagged
 
 end Sem_Res;

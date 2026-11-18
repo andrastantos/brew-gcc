@@ -1,3 +1,71 @@
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Use AC_CANONICAL_TARGET instead of
+	AC_CANONICAL_SYSTEM.  Remove unneeded AC_SUBST(target_alias).
+
+2026-11-04  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_CONFIG_HEADER with AC_CONFIG_HEADERS.
+
+2026-11-02  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Remove AC_LIBTOOL_DLOPEN and change LT_INIT to LT_INIT([dlopen]).
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	* configure.ac: Add comment for AC_CHECK_SIZEOF use in configure.tgt.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for alloca.h.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+
+2026-07-23  Harmen Stoppels  <me@harmenstoppels.nl>
+
+	* Makefile.am: Override all-recursive and define explicit
+	DAG dependencies for all-* targets to enable parallel builds.
+	* Makefile.in: Regenerate.
+
+2026-07-20  Jakub Jelinek  <jakub@redhat.com>
+
+	PR sanitizer/126307
+	* tsan/tsan_trace.h: Cherry-pick llvm-project revision
+	cdfdb06c9155080ec97d6e4f4dd90b6e7cefb0ca.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AM_PROG_LIBTOOL with LT_INIT.  Replace
+	AC_TRY_COMPILE with AC_COMPILE_IFELSE.  Replace AC_FOREACH with
+	m4_foreach_w.
+
+2026-06-02  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* sanitizer_common/sanitizer_platform_limits_solaris.cpp:
+	Cherry-pick llvm-project revision
+	0e92b557a78eddc7493ade4cfc0a3b6b93ee61cf.
+
+2026-04-29  Jakub Jelinek  <jakub@redhat.com>
+
+	* sanitizer_common/sanitizer_platform_limits_posix.cpp: Cherry picked
+	from LLVM commit 3dc4fd6dd41100f051a63642f449b16324389c96.
+
+2026-04-28  Maximilian Ciric  <max.ciric@gmail.com>
+
+	* configure.tgt: Enable HWASAN support for RISC-V target.
+
 2026-04-21  Marian Buschsieweke  <maribu@users.noreply.github.com>
 
 	PR sanitizer/124248

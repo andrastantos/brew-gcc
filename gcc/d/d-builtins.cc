@@ -1059,7 +1059,7 @@ d_init_attributes (void)
 #define DEF_ATTR_NULL_TREE(ENUM)	\
   built_in_attributes[(int) ENUM] = NULL_TREE;
 # define DEF_ATTR_INT(ENUM, VALUE)	\
-  built_in_attributes[(int) ENUM] = build_int_cst (NULL_TREE, VALUE);
+  built_in_attributes[(int) ENUM] = build_int_cst (integer_type_node, VALUE);
 #define DEF_ATTR_STRING(ENUM, VALUE)	\
   built_in_attributes[(int) ENUM] = build_string (strlen (VALUE), VALUE);
 #define DEF_ATTR_IDENT(ENUM, STRING)	\

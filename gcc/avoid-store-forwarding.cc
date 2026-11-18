@@ -34,6 +34,7 @@
 #include "expmed.h"
 #include "recog.h"
 #include "regset.h"
+#include "regs.h"
 #include "df.h"
 #include "expr.h"
 #include "memmodel.h"
@@ -101,6 +102,15 @@ public:
 				 rtx load_mem);
   void avoid_store_forwarding (basic_block);
   void update_stats (function *);
+
+private:
+  /* Per-insn live-out hard-register sets for the current BB.  Populated
+     lazily on the first candidate with bit-insert side-effect clobbers
+     (so aarch64 bfi pays nothing).  Cleared on each avoid_store_forwarding
+     entry.  */
+  hash_map<rtx_insn *, HARD_REG_SET> m_bb_live_after;
+
+  void compute_bb_live_after (basic_block bb);
 };
 
 /* Return a bit insertion sequence that would make DEST have the correct value
@@ -132,6 +142,35 @@ generate_bit_insert_sequence (store_fwd_info *store_info, rtx dest)
       return NULL;
 
   return insns;
+}
+
+/* note_stores callback: record hard regs clobbered (not set) by an insn,
+   to capture side-effect clobbers (e.g. flags) without the intended dest.  */
+
+static void
+record_hard_reg_clobbers (rtx x, const_rtx pat, void *data)
+{
+  if (GET_CODE (pat) == CLOBBER && REG_P (x) && HARD_REGISTER_P (x))
+    add_to_hard_reg_set ((HARD_REG_SET *) data, GET_MODE (x), REGNO (x));
+}
+
+/* Populate m_bb_live_after with the hard registers live immediately
+   after each real insn in BB.  */
+
+void
+store_forwarding_analyzer::compute_bb_live_after (basic_block bb)
+{
+  auto_bitmap live;
+  df_simulate_initialize_backwards (bb, live);
+  rtx_insn *scan;
+  FOR_BB_INSNS_REVERSE (bb, scan)
+    if (INSN_P (scan))
+      {
+	HARD_REG_SET hrs;
+	REG_SET_TO_HARD_REG_SET (hrs, live);
+	m_bb_live_after.put (scan, hrs);
+	df_simulate_one_insn_backwards (bb, scan, live);
+      }
 }
 
 /* Return true iff a store to STORE_MEM would write to a sub-region of bytes
@@ -332,6 +371,32 @@ process_store_forwarding (vec<store_fwd_info> &stores, rtx_insn *load_insn,
       it->store_saved_value_insn = insn2;
     }
 
+  /* Reject if the bit-insert sequences clobber a hard register live at
+     the insertion point (e.g. shift/and/or on x86 clobber flags, which
+     would break carry chains).  Done before the target cost query so
+     we skip cost work on candidates we would reject anyway.  */
+  HARD_REG_SET clobbered_regs;
+  CLEAR_HARD_REG_SET (clobbered_regs);
+  FOR_EACH_VEC_ELT (stores, i, it)
+    for (rtx_insn *ins = it->bits_insert_insns; ins; ins = NEXT_INSN (ins))
+      note_stores (ins, record_hard_reg_clobbers, &clobbered_regs);
+
+  if (!hard_reg_set_empty_p (clobbered_regs))
+    {
+      if (m_bb_live_after.is_empty ())
+	compute_bb_live_after (BLOCK_FOR_INSN (load_insn));
+
+      const HARD_REG_SET *live_at_insert = m_bb_live_after.get (load_insn);
+      if (live_at_insert
+	  && hard_reg_set_intersect_p (clobbered_regs, *live_at_insert))
+	{
+	  if (dump_file)
+	    fprintf (dump_file,
+		     "Not transformed: bit-insert clobbers live hard reg.\n");
+	  return false;
+	}
+    }
+
   if (load_elim)
     total_cost -= insn_cost (load_insn, true);
 
@@ -355,20 +420,36 @@ process_store_forwarding (vec<store_fwd_info> &stores, rtx_insn *load_insn,
       stores.ordered_remove (move_to_front);
     }
 
-  if (load_elim)
+  machine_mode outer_mode = GET_MODE (SET_DEST (load));
+  if (load_elim || outer_mode != load_mem_mode)
     {
-      machine_mode outer_mode = GET_MODE (SET_DEST (load));
-      rtx load_move;
-      rtx load_value = dest;
+      /* If the load is being eliminated, emit a move (with extension if
+	 needed) from the temp register to the original load destination.
+	 Otherwise, if the load has SIGN_EXTEND or ZERO_EXTEND wrapping
+	 the MEM, the bit insert sequence may have modified bits that
+	 affect the extension (e.g. the sign bit), so re-apply it.  */
+      rtx move_src;
       if (outer_mode != load_mem_mode)
 	{
-	  load_value = simplify_gen_unary (GET_CODE (SET_SRC (load)),
-					   outer_mode, dest, load_mem_mode);
+	  rtx ext_op = dest;
+	  if (!load_elim)
+	    {
+	      ext_op = lowpart_subreg (load_mem_mode, dest, outer_mode);
+	      if (!ext_op)
+		return false;
+	    }
+	  move_src = simplify_gen_unary (GET_CODE (SET_SRC (load)),
+					 outer_mode, ext_op, load_mem_mode);
 	}
-      load_move = gen_rtx_SET (SET_DEST (load), load_value);
+      else
+	move_src = dest;
+
+      /* In the non-elimination case the load insn is retained, so unshare
+	 its destination to avoid sharing a SUBREG between two insns.  */
+      rtx move = gen_rtx_SET (copy_rtx (SET_DEST (load)), move_src);
 
       start_sequence ();
-      rtx_insn *insn = emit_insn (load_move);
+      rtx_insn *insn = emit_insn (move);
       rtx_insn *seq = end_sequence ();
 
       if (recog_memoized (insn) < 0)
@@ -421,7 +502,11 @@ process_store_forwarding (vec<store_fwd_info> &stores, rtx_insn *load_insn,
   df_insn_rescan (load_insn);
 
   if (load_elim)
-    delete_insn (load_insn);
+    {
+      /* Prevent a dangling rtx_insn * key after delete_insn.  */
+      m_bb_live_after.remove (load_insn);
+      delete_insn (load_insn);
+    }
 
   return true;
 }
@@ -434,23 +519,23 @@ store_forwarding_analyzer::avoid_store_forwarding (basic_block bb)
   if (!optimize_bb_for_speed_p (bb))
     return;
 
+  m_bb_live_after.empty ();
+
   auto_vec<store_fwd_info, 8> store_exprs;
-  auto_vec<rtx> store_exprs_del;
   rtx_insn *insn;
   unsigned int insn_cnt = 0;
 
-  /* We are iterating over the basic block's instructions detecting store
-     instructions.  Upon reaching a load instruction, we check if any of the
-     previously detected stores could result in store forwarding.  In that
-     case, we try to reorder the load and store instructions.
-     We skip this transformation when we encounter complex memory operations,
-     instructions that might throw an exception, instruction dependencies,
-     etc.  This is done by clearing the vector of detected stores, while
-     keeping the removed stores in another vector.  By doing so, we can check
-     if any of the removed stores operated on the load's address range, when
-     reaching a subsequent store that operates on the same address range,
-     as this would lead to incorrect values on the register that keeps the
-     loaded value.  */
+  /* Iterate over the basic block's instructions detecting store instructions.
+     Upon reaching a load instruction, check if any of the previously detected
+     stores could result in store forwarding.  In that case, try to reorder
+     the load and store instructions.  When we encounter instructions that
+     might throw an exception, instruction dependencies, etc., clear the
+     vector of detected stores and continue.
+
+     Invariant: dropping a candidate from store_exprs (via it->remove or
+     truncate) only removes it from the forwarding list; the store insn
+     stays in the IR so later loads read its effect from memory.  Only
+     process_store_forwarding may delete the original store.  */
   FOR_BB_INSNS (bb, insn)
     {
       if (!NONDEBUG_INSN_P (insn))
@@ -463,10 +548,6 @@ store_forwarding_analyzer::avoid_store_forwarding (basic_block bb)
 
       if (!set || insn_could_throw_p (insn))
 	{
-	  unsigned int i;
-	  store_fwd_info *it;
-	  FOR_EACH_VEC_ELT (store_exprs, i, it)
-	    store_exprs_del.safe_push (it->store_mem);
 	  store_exprs.truncate (0);
 	  continue;
 	}
@@ -484,16 +565,16 @@ store_forwarding_analyzer::avoid_store_forwarding (basic_block bb)
       /* The mem RTX if INSN is a store, NULL_RTX otherwise.  */
       rtx store_mem = MEM_P (SET_DEST (set)) ? SET_DEST (set) : NULL_RTX;
 
-      /* We cannot analyze memory RTXs that have unknown size.	*/
-      if ((store_mem && (!MEM_SIZE_KNOWN_P (store_mem)
+      /* We cannot analyze memory RTXs that have unknown size.  BLKmode
+	 memory is rejected as well, as there is no mode for the forwarded
+	 value, even when its size is known.  */
+      if ((store_mem && (GET_MODE (store_mem) == BLKmode
+			 || !MEM_SIZE_KNOWN_P (store_mem)
 			 || !MEM_SIZE (store_mem).is_constant ()))
-	  || (load_mem && (!MEM_SIZE_KNOWN_P (load_mem)
+	  || (load_mem && (GET_MODE (load_mem) == BLKmode
+			   || !MEM_SIZE_KNOWN_P (load_mem)
 			   || !MEM_SIZE (load_mem).is_constant ())))
 	{
-	  unsigned int i;
-	  store_fwd_info *it;
-	  FOR_EACH_VEC_ELT (store_exprs, i, it)
-	    store_exprs_del.safe_push (it->store_mem);
 	  store_exprs.truncate (0);
 	  continue;
 	}
@@ -545,7 +626,6 @@ store_forwarding_analyzer::avoid_store_forwarding (basic_block bb)
 		    it->remove = true;
 		    removed_count++;
 		    remove_rest = true;
-		    store_exprs_del.safe_push (it->store_mem);
 		  }
 	      }
 	  }
@@ -589,42 +669,21 @@ store_forwarding_analyzer::avoid_store_forwarding (basic_block bb)
 		}
 	      else if (is_store_forwarding (store_mem, load_mem, &off_val))
 		{
-		  unsigned int j;
-		  rtx *del_it;
-		  bool same_range_as_removed = false;
-
-		  /* Check if another store in the load's address range has
-		     been deleted due to a constraint violation.  In this case
-		     we can't forward any other stores that operate in this
-		     range, as it would lead to partial update of the register
-		     that holds the loaded value.  */
-		  FOR_EACH_VEC_ELT (store_exprs_del, j, del_it)
-		    {
-		      rtx del_store_mem = *del_it;
-		      same_range_as_removed
-			= is_store_forwarding (del_store_mem, load_mem, NULL);
-		      if (same_range_as_removed)
-			break;
-		    }
-
 		  /* Check if moving this store after the load is legal.  */
 		  bool write_dep = false;
-		  if (!same_range_as_removed)
+		  unsigned int j = store_exprs.length () - 1;
+		  for (; j != i; j--)
 		    {
-		      unsigned int j = store_exprs.length () - 1;
-		      for (; j != i; j--)
+		      if (!store_exprs[j].forwarded
+			  && output_dependence (store_mem,
+						store_exprs[j].store_mem))
 			{
-			  if (!store_exprs[j].forwarded
-			      && output_dependence (store_mem,
-						    store_exprs[j].store_mem))
-			    {
-			      write_dep = true;
-			      break;
-			    }
+			  write_dep = true;
+			  break;
 			}
 		    }
 
-		  if (!same_range_as_removed && !write_dep)
+		  if (!write_dep)
 		    {
 		      it->forwarded = true;
 		      it->offset = off_val;
@@ -652,30 +711,35 @@ store_forwarding_analyzer::avoid_store_forwarding (basic_block bb)
 	    process_store_forwarding (forwardings, insn, load_mem);
 	}
 
-	/* Abort in case that we encounter a memory read/write that is not a
-	   simple store/load, as we can't make safe assumptions about the
-	   side-effects of this.  */
-	if ((writes_mem && !is_simple_store)
-	     || (reads_mem && !is_simple_load))
-	  return;
+      /* If we encounter a memory read/write that is not a simple
+	 store/load, flush all pending store candidates and continue.
+	 We can't make safe assumptions about the side-effects, but
+	 store-forwarding opportunities later in the BB should still
+	 be analyzed.  */
+      if ((writes_mem && !is_simple_store)
+	  || (reads_mem && !is_simple_load))
+	{
+	  store_exprs.truncate (0);
+	  continue;
+	}
 
-	if (removed_count)
+      if (removed_count)
 	{
 	  unsigned int i, j;
 	  store_fwd_info *it;
 	  VEC_ORDERED_REMOVE_IF (store_exprs, i, j, it, it->remove);
 	}
 
-	/* Don't consider store forwarding if the RTL instruction distance is
-	   more than PARAM_STORE_FORWARDING_MAX_DISTANCE and the cost checks
-	   are not disabled.  */
-	const bool unlimited_cost = (param_store_forwarding_max_distance == 0);
-	if (!unlimited_cost && !store_exprs.is_empty ()
-	    && (store_exprs[0].insn_cnt
-		+ param_store_forwarding_max_distance <= insn_cnt))
-	  store_exprs.ordered_remove (0);
+      /* Don't consider store forwarding if the RTL instruction distance is
+	 more than PARAM_STORE_FORWARDING_MAX_DISTANCE and the cost checks
+	 are not disabled.  */
+      const bool unlimited_cost = (param_store_forwarding_max_distance == 0);
+      if (!unlimited_cost && !store_exprs.is_empty ()
+	  && (store_exprs[0].insn_cnt
+	      + param_store_forwarding_max_distance <= insn_cnt))
+	store_exprs.ordered_remove (0);
 
-	insn_cnt++;
+      insn_cnt++;
     }
 }
 

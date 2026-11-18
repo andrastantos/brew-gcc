@@ -100,7 +100,7 @@ extern struct tm *localtime_r(const time_t *, struct tm *);
 #include "adaint.h"
 
 /* Don't use macros versions of this functions on VxWorks since they cause
-   imcompatible changes in some VxWorks versions */
+   incompatible changes in some VxWorks versions */
 #ifdef __vxworks
 #undef getchar
 #undef putchar
@@ -394,7 +394,7 @@ getc_immediate_common (FILE *stream,
     || defined (__Lynx__) || defined (__FreeBSD__) || defined (__OpenBSD__) \
     || defined (__GLIBC__) || defined (__APPLE__) || defined (__DragonFly__) \
     || defined (__QNX__)
-  char c;
+  unsigned char c;
   int nread;
   int good_one = 0;
   int eof_ch = 4; /* Ctrl-D */
@@ -409,12 +409,7 @@ getc_immediate_common (FILE *stream,
       /* Set RAW mode, with no echo */
       termios_rec.c_lflag = termios_rec.c_lflag & ~ICANON & ~ECHO;
 
-#if defined (__linux__) || defined (__sun__) \
-    || defined (__MACHTEN__) || defined (__hpux__) \
-    || defined (_AIX) || (defined (__svr4__) && defined (__i386__)) \
-    || defined (__Lynx__) || defined (__FreeBSD__) || defined (__OpenBSD__) \
-    || defined (__GLIBC__) || defined (__APPLE__) || defined (__DragonFly__) \
-    || defined (__QNX__)
+#if !defined (__CYGWIN32__)
       eof_ch = termios_rec.c_cc[VEOF];
 
       /* If waiting (i.e. Get_Immediate (Char)), set MIN = 1 and wait for
@@ -512,7 +507,7 @@ getc_immediate_common (FILE *stream,
   struct fd_set readFds;
   /* Timeout before select returns if nothing can be read.  */
   struct timeval timeOut;
-  char c;
+  unsigned char c;
   int fd = fileno (stream);
   int nread;
   int option;
@@ -659,16 +654,17 @@ long __gnat_invalid_tzoff = 259273;
 
 /* Definition of __gnat_localtime_r used by a-calend.adb */
 
+extern void
+__gnat_localtime_tzoff (OS_Time, int, long *);
+
 #if defined (__MINGW32__)
 
 /* Reentrant localtime for Windows. */
 
-extern void
-__gnat_localtime_tzoff (const OS_Time *, const int *, long *);
-
 static const unsigned long long w32_epoch_offset = 11644473600ULL;
+
 void
-__gnat_localtime_tzoff (const OS_Time *timer, const int *is_historic, long *off)
+__gnat_localtime_tzoff (OS_Time timer, int is_historic, long *off)
 {
   TIME_ZONE_INFORMATION tzi;
 
@@ -681,7 +677,7 @@ __gnat_localtime_tzoff (const OS_Time *timer, const int *is_historic, long *off)
      signifies that the date is NOT historic, see the
      body of Ada.Calendar.UTC_Time_Offset. */
 
-  if (*is_historic == 0) {
+  if (is_historic == 0) {
     *off = tzi.Bias;
 
     /* The system is operating in the range covered by the StandardDate
@@ -712,7 +708,7 @@ __gnat_localtime_tzoff (const OS_Time *timer, const int *is_historic, long *off)
     BOOL status;
 
     /* First convert unix time_t structure to windows FILETIME format.  */
-    utc_time.ull_time = ((unsigned long long) *timer + w32_epoch_offset)
+    utc_time.ull_time = ((unsigned long long) timer + w32_epoch_offset)
                         * 10000000ULL;
 
     /* If GetTimeZoneInformation does not return a value between 0 and 2 then
@@ -757,11 +753,8 @@ __gnat_localtime_tzoff (const OS_Time *timer, const int *is_historic, long *off)
    spec is required. Only use when ___THREADS_POSIX4ad4__ is defined,
    the Lynx convention when building against the legacy API. */
 
-extern void
-__gnat_localtime_tzoff (const OS_Time *, const int *, long *);
-
 void
-__gnat_localtime_tzoff (const OS_Time *timer, const int *is_historic, long *off)
+__gnat_localtime_tzoff (OS_Time timer, int is_historic, long *off)
 {
   *off = 0;
 }
@@ -776,16 +769,13 @@ extern void (*Lock_Task) (void);
 #define Unlock_Task system__soft_links__unlock_task
 extern void (*Unlock_Task) (void);
 
-extern void
-__gnat_localtime_tzoff (const OS_Time *, const int *, long *);
-
 void
-__gnat_localtime_tzoff (const OS_Time *timer ATTRIBUTE_UNUSED,
-			const int *is_historic ATTRIBUTE_UNUSED,
+__gnat_localtime_tzoff (OS_Time timer ATTRIBUTE_UNUSED,
+			int is_historic ATTRIBUTE_UNUSED,
 			long *off ATTRIBUTE_UNUSED)
 {
   struct tm tp ATTRIBUTE_UNUSED;
-  const time_t time = (time_t) *timer;
+  const time_t time = (time_t) timer;
 
 /* AIX, HPUX, Sun Solaris */
 #if defined (_AIX) || defined (__hpux__) || defined (__sun__)

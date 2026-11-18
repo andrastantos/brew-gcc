@@ -740,7 +740,7 @@ process_obj (const char *fname_in, FILE *cfile, uint32_t omp_requires)
   fprintf (cfile,
 	   "static unsigned char gcn_code[] = {\n"
 	   "#embed \"%s\" if_empty (error_file_is_empty)\n"
-	   "};\n\n", fname_in);
+	   "};\n\n", lbasename (fname_in));
 
   fprintf (cfile,
 	   "static const struct gcn_image {\n"
@@ -806,7 +806,7 @@ static void
 compile_native (const char *infile, const char *outfile, const char *compiler,
 		bool fPIC, bool fpic)
 {
-  const char *collect_gcc_options = getenv ("COLLECT_GCC_OPTIONS");
+  const char *collect_gcc_options = read_collect_gcc_options ();
   if (!collect_gcc_options)
     fatal_error (input_location,
 		 "environment variable %<COLLECT_GCC_OPTIONS%> must be set");
@@ -1333,9 +1333,15 @@ main (int argc, char **argv)
 	obstack_ptr_grow (&ld_argv_obstack, "-save-temps");
 
       for (int i = 1; i < argc; i++)
-	if (startswith (argv[i], "-l")
-	    || startswith (argv[i], "-Wl")
-	    || startswith (argv[i], "-march"))
+	if (strcmp (argv[i], "-L") == 0 && i + 1 < argc)
+	  {
+	    obstack_ptr_grow (&ld_argv_obstack, argv[i]);
+	    obstack_ptr_grow (&ld_argv_obstack, argv[++i]);
+	  }
+	else if (startswith (argv[i], "-l")
+		 || startswith (argv[i], "-L")
+		 || startswith (argv[i], "-Wl")
+		 || startswith (argv[i], "-march"))
 	  obstack_ptr_grow (&ld_argv_obstack, argv[i]);
 
       obstack_ptr_grow (&cc_argv_obstack, "-dumpdir");

@@ -149,6 +149,7 @@ extern const char *lhd_get_sarif_source_language (const char *);
 #define LANG_HOOKS_INIT_TS		lhd_do_nothing
 #define LANG_HOOKS_EH_PERSONALITY	lhd_gcc_personality
 #define LANG_HOOKS_EH_RUNTIME_TYPE	lhd_pass_through_t
+#define LANG_HOOKS_EXCEPTION_MATCHES_TYPE_P hook_bool_tree_tree_false
 #define LANG_HOOKS_EH_PROTECT_CLEANUP_ACTIONS	NULL
 #define LANG_HOOKS_BLOCK_MAY_FALLTHRU	hook_bool_const_tree_true
 #define LANG_HOOKS_EH_USE_CXA_END_CLEANUP	false
@@ -176,7 +177,7 @@ extern const char *lhd_get_sarif_source_language (const char *);
 
 /* Tree dump hooks.  */
 extern bool lhd_tree_dump_dump_tree (void *, tree);
-extern int lhd_tree_dump_type_quals (const_tree);
+extern qualifier_set lhd_tree_dump_type_quals (const_tree);
 extern tree lhd_make_node (enum tree_code);
 
 #define LANG_HOOKS_TREE_DUMP_DUMP_TREE_FN lhd_tree_dump_dump_tree
@@ -263,6 +264,7 @@ extern tree lhd_unit_size_without_reusable_padding (tree);
 #define LANG_HOOKS_POST_COMPILATION_PARSING_CLEANUPS NULL
 #define LANG_HOOKS_DECL_OK_FOR_SIBCALL	lhd_decl_ok_for_sibcall
 #define LANG_HOOKS_OMP_ARRAY_DATA	hook_tree_tree_bool_null
+#define LANG_HOOKS_OMP_ARRAY_DATA_PRIVATIZE hook_bool_tree_false
 #define LANG_HOOKS_OMP_ARRAY_SIZE	lhd_omp_array_size
 #define LANG_HOOKS_OMP_IS_ALLOCATABLE_OR_PTR hook_bool_const_tree_false
 #define LANG_HOOKS_OMP_CHECK_OPTIONAL_ARGUMENT hook_tree_tree_bool_null
@@ -305,7 +307,8 @@ extern tree lhd_unit_size_without_reusable_padding (tree);
   LANG_HOOKS_POST_COMPILATION_PARSING_CLEANUPS, \
   LANG_HOOKS_DECL_OK_FOR_SIBCALL, \
   LANG_HOOKS_OMP_ARRAY_DATA, \
-  LANG_HOOKS_OMP_ARRAY_SIZE, \
+  LANG_HOOKS_OMP_ARRAY_DATA_PRIVATIZE, \
+  LANG_HOOKS_OMP_ARRAY_SIZE,		\
   LANG_HOOKS_OMP_IS_ALLOCATABLE_OR_PTR, \
   LANG_HOOKS_OMP_CHECK_OPTIONAL_ARGUMENT, \
   LANG_HOOKS_OMP_PRIVATIZE_BY_REFERENCE, \
@@ -404,6 +407,7 @@ extern void lhd_end_section (void);
   LANG_HOOKS_EXPR_TO_DECL, \
   LANG_HOOKS_EH_PERSONALITY, \
   LANG_HOOKS_EH_RUNTIME_TYPE, \
+  LANG_HOOKS_EXCEPTION_MATCHES_TYPE_P, \
   LANG_HOOKS_EH_PROTECT_CLEANUP_ACTIONS, \
   LANG_HOOKS_BLOCK_MAY_FALLTHRU, \
   LANG_HOOKS_EH_USE_CXA_END_CLEANUP, \

@@ -47,11 +47,25 @@ ExpandVisitor::go (AST::Crate &crate)
 
 static std::vector<std::unique_ptr<AST::Item>>
 builtin_derive_item (AST::Item &item, const AST::Attribute &derive,
-		     BuiltinMacro to_derive)
+		     BuiltinMacro to_derive, MacroExpander &expander)
 {
-  auto items = AST::DeriveVisitor::derive (item, derive, to_derive);
-  for (auto &item : items)
-    Analysis::Mappings::get ().add_derived_node (item->get_node_id ());
+  auto &mappings = Analysis::Mappings::get ();
+  auto item_source = AST::Builder::get_item_source (expander.crate);
+
+  auto items
+    = AST::DeriveVisitor::derive (item, derive, to_derive, item_source);
+
+  for (auto it = items.begin (); it != items.end ();)
+    {
+      if (*it == nullptr)
+	it = items.erase (it);
+      else
+	{
+	  mappings.add_derived_node ((*it)->get_node_id ());
+	  ++it;
+	}
+    }
+
   return items;
 }
 
@@ -198,7 +212,8 @@ ExpandVisitor::expand_inner_items (
 			{
 			  auto new_items
 			    = builtin_derive_item (item, current,
-						   maybe_builtin.value ());
+						   maybe_builtin.value (),
+						   expander);
 
 			  for (auto &&new_item : new_items)
 			    it = items.insert (it, std::move (new_item));
@@ -284,7 +299,8 @@ ExpandVisitor::expand_inner_stmts (AST::BlockExpr &expr)
 			{
 			  auto new_items
 			    = builtin_derive_item (item, current,
-						   maybe_builtin.value ());
+						   maybe_builtin.value (),
+						   expander);
 
 			  // this inserts the derive *before* the item - is it a
 			  // problem?
@@ -422,18 +438,6 @@ ExpandVisitor::maybe_expand_pattern (std::unique_ptr<AST::Pattern> &pattern)
   auto final_fragment = expander.take_expanded_fragment ();
   if (final_fragment.should_expand () && final_fragment.is_pattern_fragment ())
     pattern = final_fragment.take_pattern_fragment ();
-}
-
-void
-ExpandVisitor::expand_struct_fields (std::vector<AST::StructField> &fields)
-{
-  expand_fields (fields);
-}
-
-void
-ExpandVisitor::expand_tuple_fields (std::vector<AST::TupleField> &fields)
-{
-  expand_fields (fields);
 }
 
 // FIXME: This can definitely be refactored with the method above
@@ -735,6 +739,9 @@ ExpandVisitor::visit (AST::UseDeclaration &use_decl)
 void
 ExpandVisitor::visit (AST::Function &function)
 {
+  visit_outer_attrs (function);
+  // TODO: handle body inner attributes more regularly?
+  //       apparently, they should be applied to this function
   if (function.has_body ())
     visit_inner_using_attrs (
       function, function.get_definition ().value ()->get_inner_attrs ());
@@ -754,58 +761,13 @@ ExpandVisitor::visit (AST::Function &function)
 }
 
 void
-ExpandVisitor::visit (AST::StructStruct &struct_item)
-{
-  for (auto &generic : struct_item.get_generic_params ())
-    visit (generic);
-
-  if (struct_item.has_where_clause ())
-    expand_where_clause (struct_item.get_where_clause ());
-
-  expand_struct_fields (struct_item.get_fields ());
-}
-
-void
-ExpandVisitor::visit (AST::TupleStruct &tuple_struct)
-{
-  for (auto &generic : tuple_struct.get_generic_params ())
-    visit (generic);
-
-  if (tuple_struct.has_where_clause ())
-    expand_where_clause (tuple_struct.get_where_clause ());
-
-  expand_tuple_fields (tuple_struct.get_fields ());
-}
-
-void
 ExpandVisitor::visit (AST::EnumItem &item)
 {}
-
-void
-ExpandVisitor::visit (AST::EnumItemTuple &item)
-{
-  expand_tuple_fields (item.get_tuple_fields ());
-}
-
-void
-ExpandVisitor::visit (AST::EnumItemStruct &item)
-{
-  expand_struct_fields (item.get_struct_fields ());
-}
 
 void
 ExpandVisitor::visit (AST::EnumItemDiscriminant &item)
 {
   maybe_expand_expr (item.get_expr_ptr ());
-}
-
-void
-ExpandVisitor::visit (AST::Union &union_item)
-{
-  for (auto &generic : union_item.get_generic_params ())
-    visit (generic);
-
-  expand_struct_fields (union_item.get_variants ());
 }
 
 void
@@ -880,12 +842,6 @@ ExpandVisitor::visit (AST::TraitImpl &impl)
 void
 ExpandVisitor::visit (AST::ExternalTypeItem &item)
 {}
-
-void
-ExpandVisitor::visit (AST::ExternalStaticItem &static_item)
-{
-  maybe_expand_type (static_item.get_type_ptr ());
-}
 
 void
 ExpandVisitor::visit (AST::ExternBlock &block)

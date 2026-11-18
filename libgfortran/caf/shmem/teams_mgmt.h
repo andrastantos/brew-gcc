@@ -35,7 +35,7 @@ struct caf_shmem_team
   int team_no;
   /* The index is the image's index minus one in this team.  I.e. if in Fortran
      notion the current image is 3, then the value of index is 2.  This allows
-     access to the image_map without having to substract one each time (and
+     access to the image_map without having to subtract one each time (and
      missing it).  Returning the image's index to the user is rarer, so adding
      one there is cheaper.  */
   int index;
@@ -62,10 +62,19 @@ struct caf_shmem_team
 	 this is checked against the global number and the image_count and
 	 image_map is updated.  */
       int num_term_images;
-      memid lastmemid;
+      /* The next team in the supervisor's list of teams.  */
+      shared_mem_ptr next_team;
+      /* The id of the team, unique among all teams formed.  */
+      memid id;
+      /* The ids given to the teams formed from this one by the FORM TEAM
+	 statement with number NEW_TEAMS_GEN, see new_team_id.  */
+      shared_mem_ptr new_teams;
+      int new_teams_gen;
       int image_map[];
     } *image_info;
   } u;
+  /* The number of FORM TEAM statements executed with this team current.  */
+  int teams_formed;
 };
 typedef struct caf_shmem_team *caf_shmem_team_t;
 
@@ -86,8 +95,40 @@ extern caf_shmem_team_t caf_teams_formed;
 
 void update_teams_images (caf_shmem_team_t);
 
-void check_health (int *, char *, size_t);
+/* Make TEAM known to the supervisor.  To be called once per team, by the
+   image that created it.  */
 
-#define HEALTH_CHECK(stat, errmsg, errlen) check_health (stat, errmsg, errlen)
+void register_team (caf_shmem_team_t);
+
+/* Drop the images that terminated from the barriers of every team known to
+   the supervisor.  For the supervisor, which has no access to the teams an
+   image was a member of.  */
+
+void update_registered_teams (void);
+
+/* Drop this image, which terminated, from the barriers of all teams it is a
+   member of.  The number of finished or failed images has to be updated
+   before the call for it to have any effect.  When STOPPED, image control
+   statements and collective subroutines no longer synchronize with the other
+   images of these teams.  Otherwise only collective subroutines do not.  */
+
+void leave_teams (bool stopped);
+
+/* Set STAT for the stopped or failed images among the COUNT images in MAP.
+   Returns the stat value.  */
+
+int check_health (const int *map, int count, int *stat, char *errmsg,
+		  size_t errmsg_len);
+
+/* Perform the health check on the specified team.  */
+
+#define TEAM_HEALTH_CHECK(team, stat, errmsg, errlen)                          \
+  check_health ((team)->u.image_info->image_map,                               \
+		(team)->u.image_info->image_map_size, stat, errmsg, errlen)
+
+/* Perform the health check on the current team.  */
+
+#define HEALTH_CHECK(stat, errmsg, errlen)                                     \
+  TEAM_HEALTH_CHECK (caf_current_team, stat, errmsg, errlen)
 
 #endif

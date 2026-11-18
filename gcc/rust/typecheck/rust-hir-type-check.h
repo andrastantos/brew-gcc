@@ -22,6 +22,7 @@
 #include "rust-hir-map.h"
 #include "rust-mapping-common.h"
 #include "rust-tyty.h"
+#include "rust-hir-impl-trait-context.h"
 #include "rust-hir-trait-reference.h"
 #include "rust-stacked-contexts.h"
 #include "rust-autoderef.h"
@@ -163,21 +164,20 @@ struct DeferredOpOverload
   HirId expr_id;
   LangItem::Kind lang_item_type;
   HIR::PathIdentSegment specified_segment;
-  TyTy::TypeBoundPredicate predicate;
   HIR::OperatorExprMeta op;
+  TyTy::TyVar result_type;
 
   DeferredOpOverload (HirId expr_id, LangItem::Kind lang_item_type,
 		      HIR::PathIdentSegment specified_segment,
-		      TyTy::TypeBoundPredicate &predicate,
-		      HIR::OperatorExprMeta op)
+		      HIR::OperatorExprMeta op, TyTy::TyVar result_type)
     : expr_id (expr_id), lang_item_type (lang_item_type),
-      specified_segment (specified_segment), predicate (predicate), op (op)
+      specified_segment (specified_segment), op (op), result_type (result_type)
   {}
 
   DeferredOpOverload (const struct DeferredOpOverload &other)
     : expr_id (other.expr_id), lang_item_type (other.lang_item_type),
-      specified_segment (other.specified_segment), predicate (other.predicate),
-      op (other.op)
+      specified_segment (other.specified_segment), op (other.op),
+      result_type (other.result_type)
   {}
 
   DeferredOpOverload &operator= (struct DeferredOpOverload const &other)
@@ -186,6 +186,7 @@ struct DeferredOpOverload
     lang_item_type = other.lang_item_type;
     specified_segment = other.specified_segment;
     op = other.op;
+    result_type = other.result_type;
 
     return *this;
   }
@@ -208,7 +209,20 @@ public:
   bool lookup_type (HirId id, TyTy::BaseType **type) const;
   void clear_type (TyTy::BaseType *ty);
 
+  void mark_function_body_pending (DefId id);
+  void clear_function_body_pending (DefId id);
+  bool function_body_pending (DefId id) const;
+
   void insert_implicit_type (HirId id, TyTy::BaseType *type);
+
+  bool
+  lookup_adt_substitution (DefId id,
+			   const TyTy::SubstitutionArgumentMappings &mappings,
+			   TyTy::ADTType **type) const;
+  void
+  insert_adt_substitution (DefId id,
+			   const TyTy::SubstitutionArgumentMappings &mappings,
+			   TyTy::ADTType *type);
 
   void insert_type_by_node_id (NodeId ref, HirId id);
   bool lookup_type_by_node_id (NodeId ref, HirId *id);
@@ -219,6 +233,10 @@ public:
   void push_return_type (TypeCheckContextItem item,
 			 TyTy::BaseType *return_type);
   void pop_return_type ();
+
+  void push_expected_type (TyTy::BaseType *expected);
+  void pop_expected_type ();
+  TyTy::BaseType *peek_expected_type () const;
 
   StackedContexts<TypeCheckBlockContextItem> &block_context ();
 
@@ -231,6 +249,15 @@ public:
   TyTy::BaseType *pop_loop_context ();
 
   void swap_head_loop_context (TyTy::BaseType *val);
+
+  bool
+  find_matching_impl_trait_frame (const TraitReference &tref,
+				  TyTy::BaseType &self,
+				  struct ImplTraitContextFrame *find) const;
+  bool have_impl_trait_context () const;
+  void push_impl_trait_context (struct ImplTraitContextFrame frame);
+  struct ImplTraitContextFrame pop_impl_trait_context ();
+  struct ImplTraitContextFrame peek_impl_trait_context ();
 
   void insert_trait_reference (DefId id, TraitReference &&ref);
   bool lookup_trait_reference (DefId id, TraitReference **ref);
@@ -281,8 +308,11 @@ public:
   void insert_unconstrained_check_marker (HirId id, bool status);
   bool have_checked_for_unconstrained (HirId id, bool *result);
 
-  void insert_resolved_predicate (HirId id, TyTy::TypeBoundPredicate predicate);
+  void insert_resolved_predicate (HirId id,
+				  const TyTy::TypeBoundPredicate &predicate);
   bool lookup_predicate (HirId id, TyTy::TypeBoundPredicate *result);
+  std::vector<TyTy::TypeBoundPredicate>
+  predicates_for_type (const TyTy::BaseType *receiver) const;
 
   void insert_query (HirId id);
   void query_completed (HirId id);
@@ -308,6 +338,14 @@ public:
 
   TyTy::VarianceAnalysis::CrateCtx &get_variance_analysis_ctx ();
 
+  void push_const_context (void) { const_context++; }
+  void pop_const_context (void)
+  {
+    if (const_context > 0)
+      const_context--;
+  }
+  bool const_context_p (void) { return (const_context > 0); }
+
 private:
   TypeCheckContext ();
 
@@ -316,13 +354,18 @@ private:
 
   std::map<NodeId, HirId> node_id_refs;
   std::map<HirId, TyTy::BaseType *> resolved;
+  std::map<std::pair<DefId, std::vector<HirId>>, TyTy::ADTType *>
+    adt_substitutions;
+  std::set<DefId> function_bodies_pending;
   std::vector<std::unique_ptr<TyTy::BaseType>> builtins;
   std::vector<std::pair<TypeCheckContextItem, TyTy::BaseType *>>
     return_type_stack;
+  std::vector<TyTy::BaseType *> expected_type_stack;
   std::vector<TyTy::BaseType *> loop_type_stack;
   StackedContexts<TypeCheckBlockContextItem> block_stack;
   std::map<DefId, TraitReference> trait_context;
   std::map<HirId, AssociatedImplTrait> associated_impl_traits;
+  std::vector<ImplTraitContextFrame> impl_trait_frame_stack;
 
   // trait-id -> list of < self-tyty:impl-id>
   std::map<HirId, std::vector<std::pair<TyTy::BaseType *, HirId>>>
@@ -355,6 +398,8 @@ private:
 
   // variance analysis
   TyTy::VarianceAnalysis::CrateCtx variance_analysis_ctx;
+
+  unsigned int const_context = 0;
 
   /** Used to resolve (interned) lifetime names to their bounding scope. */
   class LifetimeResolver
@@ -556,6 +601,47 @@ public:
 private:
   DefId id;
   TypeCheckContext &ctx;
+};
+
+template <typename T> class ScopedPush
+{
+public:
+  ScopedPush (std::vector<T> &stack, T value, bool enabled = true)
+    : stack (stack), enabled (enabled)
+  {
+    if (enabled)
+      stack.push_back (value);
+  }
+
+  ~ScopedPush ()
+  {
+    if (enabled)
+      stack.pop_back ();
+  }
+
+  static bool contains (const std::vector<T> &stack, const T &value)
+  {
+    return std::find (stack.begin (), stack.end (), value) != stack.end ();
+  }
+
+private:
+  std::vector<T> &stack;
+  bool enabled;
+};
+
+class ImplTraitFrameGuard
+{
+public:
+  ImplTraitFrameGuard (ImplTraitContextFrame frame)
+    : ctx (*TypeCheckContext::get ())
+  {
+    ctx.push_impl_trait_context (frame);
+  }
+
+  ~ImplTraitFrameGuard () { ctx.pop_impl_trait_context (); }
+
+private:
+  Resolver::TypeCheckContext &ctx;
 };
 
 } // namespace Resolver

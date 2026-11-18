@@ -92,7 +92,7 @@ struct GTY((chain_next("%h.next_lp"))) eh_landing_pad_d
 
 /* A catch handler associated with an ERT_TRY region.  */
 
-struct GTY(()) eh_catch_d
+struct GTY((chain_next("%h.next_catch"), chain_prev("%h.prev_catch"))) eh_catch_d
 {
   /* The double-linked list of all catch handlers for the region.  */
   struct eh_catch_d *next_catch;
@@ -115,7 +115,7 @@ struct GTY(()) eh_catch_d
 
 /* Describes one exception region.  */
 
-struct GTY(()) eh_region_d
+struct GTY((chain_next("%h.next_peer"))) eh_region_d
 {
   /* The immediately surrounding region.  */
   struct eh_region_d *outer;
@@ -220,7 +220,7 @@ struct GTY(()) eh_status
 
 /* Invokes CALLBACK for every exception handler label.  Only used by old
    loop hackery; should not be used by new code.  */
-extern void for_each_eh_label (void (*) (rtx));
+extern void for_each_eh_label (void (*) (rtx_code_label *));
 
 extern void init_eh_for_function (void);
 
@@ -278,8 +278,8 @@ extern void add_type_for_runtime (tree);
 extern tree lookup_type_for_runtime (tree);
 extern void assign_filter_values (void);
 
-extern eh_region get_eh_region_from_rtx (const_rtx);
-extern eh_landing_pad get_eh_landing_pad_from_rtx (const_rtx);
+extern eh_region get_eh_region_from_rtx (const rtx_insn *);
+extern eh_landing_pad get_eh_landing_pad_from_rtx (const rtx_insn *);
 
 extern void finish_eh_generation (void);
 

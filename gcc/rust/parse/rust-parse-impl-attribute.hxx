@@ -293,16 +293,6 @@ Parser<ManagedTokenSource>::parse_attr_input ()
 
 	t = lexer.peek_token ();
 
-	/* Ensure token is a "literal expression" (literally only a literal
-	 * token of any type) */
-	if (!t->is_literal ())
-	  {
-	    Error error (
-	      t->get_locus (),
-	      "arbitrary expressions in key-value attributes are unstable");
-	    collect_potential_gating_error (
-	      Feature::Name::EXTENDED_KEY_VALUE_ATTRIBUTES, std::move (error));
-	  }
 	// attempt to parse macro
 	// TODO: macros may/may not be allowed in attributes
 	// this is needed for "#[doc = include_str!(...)]"
@@ -335,6 +325,9 @@ Parser<ManagedTokenSource>::parse_attr_input ()
 	    break;
 	  case BYTE_STRING_LITERAL:
 	    lit_type = AST::Literal::BYTE_STRING;
+	    break;
+	  case C_STRING_LITERAL:
+	    lit_type = AST::Literal::C_STRING;
 	    break;
 	  case RAW_STRING_LITERAL:
 	    lit_type = AST::Literal::RAW_STRING;

@@ -118,11 +118,11 @@ static gfc_dt *current_dt;
 enum format_token
 {
   FMT_NONE, FMT_UNKNOWN, FMT_SIGNED_INT, FMT_ZERO, FMT_POSINT, FMT_PERIOD,
-  FMT_COMMA, FMT_COLON, FMT_SLASH, FMT_DOLLAR, FMT_LPAREN,
-  FMT_RPAREN, FMT_X, FMT_SIGN, FMT_BLANK, FMT_CHAR, FMT_P, FMT_IBOZ, FMT_F,
-  FMT_E, FMT_EN, FMT_ES, FMT_G, FMT_L, FMT_A, FMT_D, FMT_H, FMT_END,
-  FMT_ERROR, FMT_DC, FMT_DP, FMT_T, FMT_TR, FMT_TL, FMT_STAR, FMT_RC,
-  FMT_RD, FMT_RN, FMT_RP, FMT_RU, FMT_RZ, FMT_DT
+  FMT_COMMA, FMT_COLON, FMT_SLASH, FMT_DOLLAR, FMT_LPAREN, FMT_RPAREN, FMT_X,
+  FMT_SIGN, FMT_BLANK, FMT_CHAR, FMT_P, FMT_IBOZ, FMT_F, FMT_E, FMT_EN, FMT_ES,
+  FMT_G, FMT_L, FMT_A, FMT_D, FMT_H, FMT_END, FMT_ERROR, FMT_DC, FMT_DP, FMT_T,
+  FMT_TR, FMT_TL, FMT_STAR, FMT_RC, FMT_RD, FMT_RN, FMT_RP, FMT_RU, FMT_RZ,
+  FMT_DT, FMT_EX, FMT_LPS, FMT_LPZ, FMT_LZ
 };
 
 /* Local variables for checking format strings.  The saved_token is
@@ -422,6 +422,8 @@ format_lex (void)
 	token = FMT_EN;
       else if (c == 'S')
         token = FMT_ES;
+      else if (c == 'X')
+	token = FMT_EX;
       else
 	{
 	  token = FMT_E;
@@ -439,6 +441,37 @@ format_lex (void)
       break;
 
     case 'L':
+      c = next_char_not_space ();
+      switch (c)
+	{
+	case 'P':
+	  c = next_char_not_space ();
+	  switch (c)
+	  {
+	    case 'S':
+	      token = FMT_LPS;
+	      break;
+
+	    case 'Z':
+	      token = FMT_LPZ;
+	      break;
+
+	    default:
+	      token = FMT_UNKNOWN;
+	      unget_char ();
+	      break;
+	  }
+	  break;
+
+	case 'Z':
+	  token = FMT_LZ;
+	  break;
+
+	default:
+	  token = FMT_UNKNOWN;
+	  unget_char ();
+	  break;
+	}
       token = FMT_L;
       break;
 
@@ -746,6 +779,7 @@ format_item_1:
     case FMT_E:
     case FMT_EN:
     case FMT_ES:
+    case FMT_EX:
     case FMT_G:
     case FMT_L:
     case FMT_A:
@@ -879,6 +913,7 @@ data_desc:
 
     case FMT_D:
     case FMT_E:
+    case FMT_EX:
     case FMT_G:
     case FMT_EN:
     case FMT_ES:
@@ -1760,6 +1795,7 @@ resolve_tag_format (gfc_expr *e)
 	  return false;
 	}
 
+      gfc_value_used_expr (e, VALUE_USED);
       return true;
     }
 
@@ -1800,6 +1836,7 @@ resolve_tag_format (gfc_expr *e)
 	}
     }
 
+  gfc_value_used_expr (e, VALUE_USED);
   return true;
 }
 
@@ -1869,6 +1906,12 @@ resolve_tag (const io_tag *tag, gfc_expr *e)
 	return false;
     }
 
+  if (tag == &tag_convert)
+    {
+      if (!gfc_notify_std (GFC_STD_GNU, "CONVERT tag at %L", &e->where))
+	return false;
+    }
+
   /* NEWUNIT, IOSTAT, SIZE and IOMSG are variable definition contexts.  */
   if (tag == &tag_newunit || tag == &tag_iostat
       || tag == &tag_size || tag == &tag_iomsg)
@@ -1878,13 +1921,11 @@ resolve_tag (const io_tag *tag, gfc_expr *e)
       sprintf (context, _("%s tag"), tag->name);
       if (!gfc_check_vardef_context (e, false, false, false, context))
 	return false;
-    }
 
-  if (tag == &tag_convert)
-    {
-      if (!gfc_notify_std (GFC_STD_GNU, "CONVERT tag at %L", &e->where))
-	return false;
+      gfc_expr_set_at (e, &e->where, VALUE_VARDEF);
     }
+  else
+    gfc_value_used_expr (e, VALUE_USED);
 
   return true;
 }
@@ -2182,7 +2223,7 @@ check_open_constraints (gfc_open *open, locus *where)
     } \
 }
 
-  bool warn = (open->err || open->iostat) ? true : false;
+  bool warn = open->err || open->iostat;
 
   /* Checks on the ACCESS specifier.  */
   if (open->access && open->access->expr_type == EXPR_CONSTANT)
@@ -2709,7 +2750,7 @@ cleanup:
 static bool
 check_close_constraints (gfc_close *close, locus *where)
 {
-  bool warn = (close->iostat || close->err) ? true : false;
+  bool warn = close->iostat || close->err;
 
   if (close->unit == NULL)
     {
@@ -3111,6 +3152,7 @@ match_dt_element (io_kind k, gfc_dt *dt)
   char name[GFC_MAX_SYMBOL_LEN + 1];
   gfc_symbol *sym;
   match m;
+  locus where;
 
   if (gfc_match (" unit =") == MATCH_YES)
     {
@@ -3126,6 +3168,7 @@ match_dt_element (io_kind k, gfc_dt *dt)
 	return m;
     }
 
+  where = gfc_current_locus;
   if (gfc_match (" nml = %n", name) == MATCH_YES)
     {
       if (dt->namelist != NULL)
@@ -3145,6 +3188,7 @@ match_dt_element (io_kind k, gfc_dt *dt)
 	}
 
       dt->namelist = sym;
+      dt->nml_where = where;
       if (k == M_READ && check_namelist (sym))
 	return MATCH_ERROR;
 
@@ -3265,6 +3309,7 @@ gfc_resolve_dt (gfc_code *dt_code, gfc_dt *dt, locus *loc)
 {
   gfc_expr *e;
   io_kind k;
+  bool internal_unit;
 
   /* This is set in any case.  */
   gcc_assert (dt->dt_io_kind);
@@ -3313,6 +3358,7 @@ gfc_resolve_dt (gfc_code *dt_code, gfc_dt *dt, locus *loc)
       return false;
     }
 
+  internal_unit = false;
   if (gfc_resolve_expr (e)
       && (e->ts.type != BT_INTEGER
 	  && (e->ts.type != BT_CHARACTER || e->expr_type != EXPR_VARIABLE)))
@@ -3352,6 +3398,7 @@ gfc_resolve_dt (gfc_code *dt_code, gfc_dt *dt, locus *loc)
 
   if (e->ts.type == BT_CHARACTER)
     {
+      internal_unit = true;
       if (gfc_has_vector_index (e))
 	{
 	  gfc_error ("Internal unit with vector subscript at %L", &e->where);
@@ -3360,10 +3407,16 @@ gfc_resolve_dt (gfc_code *dt_code, gfc_dt *dt, locus *loc)
 
       /* If we are writing, make sure the internal unit can be changed.  */
       gcc_assert (k != M_PRINT);
-      if (k == M_WRITE
-	  && !gfc_check_vardef_context (e, false, false, false,
+      if (k == M_WRITE)
+	{
+	  if (!gfc_check_vardef_context (e, false, false, false,
 					_("internal unit in WRITE")))
-	return false;
+	    return false;
+
+	  gfc_expr_set_at (e, &e->where, VALUE_VARDEF);
+	}
+      else
+	gfc_value_used_expr (e, VALUE_USED);
     }
 
   if (e->rank && e->ts.type != BT_CHARACTER)
@@ -3380,6 +3433,9 @@ gfc_resolve_dt (gfc_code *dt_code, gfc_dt *dt, locus *loc)
       return false;
     }
 
+  if (!internal_unit)
+    gfc_value_used_expr (e, VALUE_USED);
+
   /* If we are reading and have a namelist, check that all namelist symbols
      can appear in a variable definition context.  */
   if (dt->namelist)
@@ -3390,9 +3446,10 @@ gfc_resolve_dt (gfc_code *dt_code, gfc_dt *dt, locus *loc)
 	  gfc_expr* e;
 	  bool t;
 
+	  e = gfc_get_variable_expr (gfc_find_sym_in_symtree (n->sym));
+
 	  if (k == M_READ)
 	    {
-	      e = gfc_get_variable_expr (gfc_find_sym_in_symtree (n->sym));
 	      t = gfc_check_vardef_context (e, false, false, false, NULL);
 	      gfc_free_expr (e);
 
@@ -3404,7 +3461,16 @@ gfc_resolve_dt (gfc_code *dt_code, gfc_dt *dt, locus *loc)
 			     dt->namelist->name, loc, n->sym->name);
 		  return false;
 		}
+	      gfc_value_set_at (n->sym, &dt->nml_where, VALUE_READ);
 	    }
+	  else if (k == M_WRITE || k == M_PRINT)
+	    {
+	      e->where = dt->nml_where;
+	      gfc_value_used_expr (e,  VALUE_USED);
+	      gfc_free_expr (e);
+	    }
+
+	  n->sym->attr.referenced = 1;
 
 	  t = dtio_procs_present (n->sym, k);
 
@@ -3776,7 +3842,7 @@ if (condition) \
   gfc_symbol *sym = NULL;
   bool warn, unformatted;
 
-  warn = (dt->err || dt->iostat) ? true : false;
+  warn = dt->err || dt->iostat;
   unformatted = dt->format_expr == NULL && dt->format_label == NULL
 		&& dt->namelist == NULL;
 
@@ -4347,6 +4413,7 @@ match_io (io_kind k)
 	      m = MATCH_ERROR;
 	      goto cleanup;
 	    }
+	  dt->nml_where = where;
 	  goto next;
 	}
     }
@@ -4741,6 +4808,7 @@ gfc_resolve_inquire (gfc_inquire *inquire)
       if (gfc_check_vardef_context ((expr), false, false, false, \
 				    context) == false) \
 	return false; \
+      gfc_expr_set_at (expr, &expr->where, VALUE_VARDEF);	\
     }
   INQUIRE_RESOLVE_TAG (&tag_iomsg, inquire->iomsg);
   INQUIRE_RESOLVE_TAG (&tag_iostat, inquire->iostat);

@@ -1,3 +1,165 @@
+2026-11-04  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_CONFIG_HEADER with AC_CONFIG_HEADERS.
+
+2026-10-27  Torbjörn SVENSSON  <torbjorn.svensson@foss.st.com>
+
+	* configure.ac: Make zstd detection failures nonfatal when
+	configuring a GCC target library for a different host.
+	* configure: Regenerate.
+
+2026-10-20  Torbjörn SVENSSON  <torbjorn.svensson@foss.st.com>
+
+	* config.h.in: Regenerate.
+
+2026-10-20  Torbjörn SVENSSON  <torbjorn.svensson@foss.st.com>
+
+	* aclocal.m4: Include pkg.m4 and zstd.m4.
+	* configure: Regenerate.
+	* configure.ac: Use AC_ZSTD for zstd detection.
+	* Makefile.am: Use the detected zstd flags.
+	* Makefile.in: Regenerate.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+
+2026-09-03  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (backtrace_syminfo_to_full_callback_moredata): Move to
+	elf.c from fileline.c and make static.
+	* fileline.c (backtrace_syminfo_to_full_callback_moredata):
+	Moved to elf.c.
+	* internal.h (backtrace_syminfo_to_full_callback_moredata): Don't
+	declare.
+
+2026-09-01  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_nodebug): Handle state->moredata.
+	* fileline.c (backtrace_syminfo_to_full_callback): Remove
+	incorrect comment about MOREDATA.
+	(backtrace_syminfo_to_full_callback_moredata): New function.
+	* internal.h (backtrace_syminfo_to_full_callback_moredata):
+	Declare.
+	* strippedtest.c: New file.
+	* configure.ac: check whether objcopy supports --strip-debug.
+	* Makefile.am (strippedtest_SOURCES): New variable.
+	(strippedtest_CFLAGS, strippedtest_LDFLAGS): Likewise.
+	(strippedtest_LDADD): Likewise.
+	(check_PROGRAMS): Add strippedtest.
+	(MAKETESTS): Add strippedtest_stripped
+	(%_stripped): New rule.
+	* configure, Makefile.in: Regenerate.
+
+2026-09-01  Ian Lance Taylor  <iant@golang.org>
+
+	* pecoff.c (coff_syminfo): Use BACKTRACE_MOREDATA_VERSION.
+	* xcoff.c (xcoff_syminfo): Likewise.
+	(xcoff_lookup_pc): Likewise.
+	(xcoff_fileline): Likewise.
+	* unknown.c (unknown_fileline): Likewise.
+
+2026-08-31  Ian Lance Taylor  <iant@golang.org>
+
+	* backtrace.h (struct backtrace_moredata): Add
+	backtrace_decl_lineno field.
+	* internal.h (BACKTRACE_MOREDATA_VERSION): Change to 4.
+	* dwarf.c (struct function): Add decl_lineno field.
+	(call_callback): Add decl_lineno parameter. Change all callers.
+	(read_referenced_name_from_attr): Likewise.
+	(read_referenced_name): Likewise.
+	(report_inlined_functions): Likewise.
+	(read_function_entry): Set decl_lineno field.
+	(dwarf_lookup_pc): Handle decl_lineno across inlines.
+	* mdtest.c (struct mdinfo): Define.
+	(struct mddata): Define.
+	(md_callback_one): Adjust for mddata.
+	(md_callback_three): Likewise.
+	(test1, f2): Reformat for simpler line number testing.
+	(f3): Test that decl_lineno is correct.
+	(f13): Adjust for mddata.
+
+2026-07-06  Ian Lance Taylor  <iant@golang.org>
+
+	* backtrace.h (backtrace_create_state): Rewrite comment to change
+	threaded parameter to flags.
+	(backtrace_full_callback, backtrace_syminfo_callback): Document
+	behavior change if moredata flag is set.
+	(struct backtrace_moredata): Define.
+	* backtrace-supported.h.in (BACKTRACE_SUPPORTS_MOREDATA): Define.
+	* internal.h (struct backtrace_state): Add moredata field.
+	(BACKTRACE_MOREDATA_VERSION): Define.
+	* state.c (backtrace_create_state): Change threaded parameter to
+	flags.  Set state moredata field based on flags.
+	* dwarf.c (struct line): Add disc field.
+	(struct function): Add caller_disc field.
+	(call_callback): New static function.
+	(add_line): Add disc parameter.  Change all callers.  Store disc
+	in new line value.
+	(read_line_program): Track discriminator value.
+	(read_line_info): Initialize disc field in final line entry.
+	(read_function_entry): Handle DW_AT_GNU_discriminator.
+	(report_inlined_functions): Add disc parameter. Change all
+	callers. Call call_callback rather than calling callback
+	directly.
+	(dwarf_lookup_pc): Handle inlined discriminators. Call
+	call_callback rather than calling callback directly.
+	(dwarf_fileline): Call call_callback rather than calling callback
+	directly.
+	* elf.c (elf_syminfo): Pass moredata if requested.
+	* macho.c (macho_syminfo): Likewise.
+	* pecoff.c (coff_syminfo): Likewise.
+	* xcoff.c (xcoff_syminfo): Likewise.
+	(xcoff_lookup_pc): Likewise.
+	* backtrace.c: #include <string.h>.
+	(unwind): Pass moredata if requested.
+	* unknown.c: #include <string.h>.
+	(unknown_fileline): Pass moredata if requested.
+	* fileline.c (backtrace_syminfo_to_full_callback): Add comment
+	about moredata.
+	* mdtest.c: New test file.
+	* Makefile.am (mdtest_SOURCES): Define.
+	(mdtest_CFLAGS, mdtest_LDFLAGS, mdtest_LDADD): Define.
+	(BUILDTESTS): Add mdtest.
+	* Makefile.in: Regenerate.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Remove redundant AM_PROG_LIBTOOL.
+
+2026-06-27  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_zstd_unpack_seq_decode): Set table field for RLE
+	sequence.
+	* zstdtest.c (tests): Add rle-sequence-tables test.
+
+2026-06-27  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_zstd_decompress_frame): Support a compressed block
+	that does not set the single segment flag.
+	* zstdtest.c (tests): Add tests without single segment.
+
+2026-06-02  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_zstd_decompress_frame): Support a compressed block
+	with no sequences, only literals.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* allocfail.sh: Fix typos.
+	* elf.c (elf_fetch_bits): Likewise.
+
+2026-05-04  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_zstd_decompress_frame): New static function,
+	broken out of elf_zstd_decompress.
+	(elf_zstd_decompress): Call elf_zstd_decompress_frame in a loop.
+	* zstdtest.c (test_large): Compress the file in chunks.
+
 2025-12-29  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
 
 	* configure: Regenerate.

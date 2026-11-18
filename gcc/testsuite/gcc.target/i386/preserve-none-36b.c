@@ -1,0 +1,22 @@
+/* { dg-do compile { target { *-*-linux* && lp64 } } } */
+/* { dg-options "-O2 -mtune-ctrl=^prologue_using_move,^epilogue_using_move -mno-push-args -fomit-frame-pointer -march=x86-64" } */
+/* Keep labels and directives ('.cfi_startproc', '.cfi_endproc').  */
+/* { dg-final { check-function-bodies "**" "" "" { target "*-*-*" } {^\t?\.}  } } */
+
+/*
+**entry:
+**.LFB0:
+**	.cfi_startproc
+**	movq	%rdi, %r12
+**	movq	%rsi, %r13
+**	movq	%rdx, %r14
+**	movq	%rcx, %r15
+**	movq	%r8, %rdi
+**	jmp	continuation
+**	.cfi_endproc
+**...
+*/
+
+#define CALLER_ATTRIBUTE __attribute__ ((no_callee_saved_registers, sysv_abi))
+
+#include "preserve-none-36a.c"

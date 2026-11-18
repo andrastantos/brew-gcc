@@ -120,9 +120,13 @@ known_function_manager::get_match (tree fndecl, const call_details &cd) const
       return nullptr;
     }
 
-  if (DECL_CONTEXT (fndecl)
-      && TREE_CODE (DECL_CONTEXT (fndecl)) != TRANSLATION_UNIT_DECL)
-    return nullptr;
+  /* Only match functions declared at global scope, or within namespace
+     __cxxabiv1 (e.g. __dynamic_cast).  */
+  if (!is_cxxabi_function_p (fndecl))
+    if (DECL_CONTEXT (fndecl)
+	&& TREE_CODE (DECL_CONTEXT (fndecl)) != TRANSLATION_UNIT_DECL)
+      return nullptr;
+
   if (tree identifier = DECL_NAME (fndecl))
     if (const known_function *candidate = get_by_identifier (identifier))
       if (candidate->matches_call_types_p (cd))
@@ -186,6 +190,50 @@ known_function_manager::get_by_identifier_in_std_ns (tree identifier) const
     return *slot;
   else
     return nullptr;
+}
+
+static std::unique_ptr<json::array>
+get_keys_as_json (const hash_map<tree, known_function *> &map)
+{
+  std::vector<std::string> vec_keys;
+  for (const auto &iter : map)
+    vec_keys.push_back (IDENTIFIER_POINTER (iter.first));
+
+  std::sort (vec_keys.begin (), vec_keys.end ());
+
+  auto arr = std::make_unique<json::array> ();
+  for (auto iter : vec_keys)
+    arr->append_string (iter.c_str ());
+  return arr;
+}
+
+std::unique_ptr<json::object>
+known_function_manager::to_json () const
+{
+  auto obj = std::make_unique<json::object> ();
+
+  obj->set ("root_ns", get_keys_as_json (m_map_id_to_kf));
+  obj->set ("std_ns", get_keys_as_json (m_std_ns_map_id_to_kf));
+
+  // Built-in functions
+  // TODO: needs bulletproofing of combined_fn_name
+  if (0)
+    {
+      std::vector<std::string> vec_keys;
+      for (int i = 0; i < CFN_LAST; ++i)
+	if (m_combined_fns_arr[i])
+	  vec_keys.push_back
+	    (combined_fn_name (static_cast<enum combined_fn> (i)));
+
+      std::sort (vec_keys.begin (), vec_keys.end ());
+
+      auto arr = std::make_unique<json::array> ();
+      for (auto iter : vec_keys)
+	arr->append_string (iter.c_str ());
+      obj->set ("builtin_fns", std::move (arr));
+    }
+
+  return obj;
 }
 
 

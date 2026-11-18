@@ -25,6 +25,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "target.h"
 #include "rtl.h"
 #include "tree.h"
+#include "tree-eh.h"
 #include "gimple.h"
 #include "predict.h"
 #include "stringpool.h"
@@ -40,7 +41,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "stor-layout.h"
 #include "dojump.h"
 #include "expr.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "asan.h"
 #include "ubsan.h"
@@ -156,46 +156,53 @@ init_internal_fns ()
 
 /* Create static initializers for the information returned by
    direct_internal_fn.  */
-#define not_direct { -2, -2, false }
-#define mask_load_direct { -1, 2, false }
-#define load_lanes_direct { -1, -1, false }
-#define mask_load_lanes_direct { -1, -1, false }
-#define gather_load_direct { 3, 1, false }
-#define strided_load_direct { -1, -1, false }
-#define len_load_direct { -1, -1, false }
-#define mask_len_load_direct { -1, 4, false }
-#define mask_store_direct { 3, 2, false }
-#define store_lanes_direct { 0, 0, false }
-#define mask_store_lanes_direct { 0, 0, false }
-#define vec_cond_mask_direct { 1, 0, false }
-#define vec_cond_mask_len_direct { 1, 1, false }
-#define vec_cond_direct { 2, 0, false }
-#define scatter_store_direct { 3, 1, false }
-#define strided_store_direct { 1, 1, false }
-#define len_store_direct { 3, 3, false }
-#define mask_len_store_direct { 4, 5, false }
-#define vec_set_direct { 3, 3, false }
-#define vec_extract_direct { 0, -1, false }
-#define unary_direct { 0, 0, true }
-#define unary_convert_direct { -1, 0, true }
-#define binary_direct { 0, 0, true }
-#define ternary_direct { 0, 0, true }
-#define cond_unary_direct { 1, 1, true }
-#define cond_binary_direct { 1, 1, true }
-#define cond_ternary_direct { 1, 1, true }
-#define cond_len_unary_direct { 1, 1, true }
-#define cond_len_binary_direct { 1, 1, true }
-#define cond_len_ternary_direct { 1, 1, true }
-#define while_direct { 0, 2, false }
-#define fold_extract_direct { 2, 2, false }
-#define fold_len_extract_direct { 2, 2, false }
-#define fold_left_direct { 1, 1, false }
-#define mask_fold_left_direct { 1, 1, false }
-#define mask_len_fold_left_direct { 1, 1, false }
-#define check_ptrs_direct { 0, 0, false }
-#define crc_direct { 1, -1, true }
-#define reduc_sbool_direct { 0, 0, true }
-#define select_vl_direct { 2, 0, false }
+#define not_direct { -2, -2, false, 0, 0 }
+#define mask_load_direct { -1, 2, false, 4, 4 }
+#define load_lanes_direct { -1, -1, false, 1, 1 }
+#define mask_load_lanes_direct { -1, -1, false, 4, 4 }
+#define mask_len_load_lanes_direct { -1, -1, false, 6, 6 }
+#define gather_load_direct { 3, 1, false, 5, 5 }
+#define mask_gather_load_direct { 3, 1, false, 7, 7 }
+#define mask_len_gather_load_direct { 3, 1, false, 9, 9 }
+#define strided_load_direct { -1, -1, false, 7, 7 }
+#define len_load_direct { -1, -1, false, 5, 5 }
+#define mask_len_load_direct { -1, 4, false, 6, 6 }
+#define mask_store_direct { 3, 2, false, 4, 4 }
+#define store_lanes_direct { 0, 0, false, 1, 1 }
+#define mask_store_lanes_direct { 0, 0, false, 4, 4 }
+#define mask_len_store_lanes_direct { 0, 0, false, 6, 6 }
+#define vec_cond_mask_direct { 1, 0, false, 3, 3 }
+#define vec_cond_mask_len_direct { 1, 1, false, 5, 5 }
+#define vec_cond_direct { 2, 0, false, 5, 5 }
+#define scatter_store_direct { 3, 1, false, 5, 5 }
+#define mask_scatter_store_direct { 3, 1, false, 6, 6 }
+#define mask_len_scatter_store_direct { 3, 1, false, 8, 8 }
+#define strided_store_direct { 1, 1, false, 6, 6 }
+#define len_store_direct { 3, 3, false, 5, 5 }
+#define mask_len_store_direct { 4, 5, false, 6, 6 }
+#define vec_set_direct { 3, 3, false, 3, 3 }
+#define vec_extract_direct { 0, -1, false, 2, 2 }
+#define unary_direct { 0, 0, true, 1, 1 }
+#define unary_opt_direct { 0, 0, true, 1, 2 }
+#define unary_convert_direct { -1, 0, true, 1, 1 }
+#define binary_direct { 0, 0, true, 2, 2 }
+#define ternary_direct { 0, 0, true, 3, 3 }
+#define cond_unary_direct { 1, 1, true, 3, 3 }
+#define cond_binary_direct { 1, 1, true, 4, 4 }
+#define cond_ternary_direct { 1, 1, true, 5, 5 }
+#define cond_len_unary_direct { 1, 1, true, 5, 5 }
+#define cond_len_binary_direct { 1, 1, true, 6, 6 }
+#define cond_len_ternary_direct { 1, 1, true, 7, 7 }
+#define while_direct { 0, 2, false, 3, 3 }
+#define fold_extract_direct { 2, 2, false, 3, 3 }
+#define fold_len_extract_direct { 2, 2, false, 5, 5 }
+#define fold_left_direct { 1, 1, false, 2, 2 }
+#define mask_fold_left_direct { 1, 1, false, 3, 3 }
+#define mask_len_fold_left_direct { 1, 1, false, 5, 5 }
+#define check_ptrs_direct { 0, 0, false, 4, 4 }
+#define crc_direct { 1, -1, true, 3, 3 }
+#define reduc_sbool_direct { 0, 0, true, 1, 1 }
+#define select_vl_direct { 2, 0, false, 3, 3 }
 
 const direct_internal_fn_info direct_internal_fn_array[IFN_LAST + 1] = {
 #define DEF_INTERNAL_FN(CODE, FLAGS, FNSPEC) not_direct,
@@ -1073,11 +1080,14 @@ expand_arith_set_overflow (tree lhs, rtx target)
 /* Helper for expand_*_overflow.  Store RES into the __real__ part
    of TARGET.  If RES has larger MODE than __real__ part of TARGET,
    set the __imag__ part to 1 if RES doesn't fit into it.  Similarly
-   if LHS has smaller precision than its mode.  */
+   if LHS has smaller precision than its mode, unless OVERFLOW_CHECKED
+   is true in which case the caller has already performed the
+   overflow check and recorded the result.  */
 
 static void
 expand_arith_overflow_result_store (tree lhs, rtx target,
-				    scalar_int_mode mode, rtx res)
+				    scalar_int_mode mode, rtx res,
+				    bool overflow_checked = false)
 {
   scalar_int_mode tgtmode
     = as_a <scalar_int_mode> (GET_MODE_INNER (GET_MODE (target)));
@@ -1096,7 +1106,7 @@ expand_arith_overflow_result_store (tree lhs, rtx target,
     }
   int prec = TYPE_PRECISION (TREE_TYPE (TREE_TYPE (lhs)));
   int tgtprec = GET_MODE_PRECISION (tgtmode);
-  if (prec < tgtprec)
+  if (prec < tgtprec && !overflow_checked)
     {
       rtx_code_label *done_label = gen_label_rtx ();
       int uns = TYPE_UNSIGNED (TREE_TYPE (TREE_TYPE (lhs)));
@@ -1122,6 +1132,28 @@ expand_arith_overflow_result_store (tree lhs, rtx target,
       expand_arith_set_overflow (lhs, target);
       emit_label (done_label);
     }
+  else if (prec < tgtprec)
+    {
+      /* overflow_checked: the caller already detected and recorded overflow
+	 via the hipart comparison.  */
+      int uns = TYPE_UNSIGNED (TREE_TYPE (TREE_TYPE (lhs)));
+      res = lres;
+      if (uns)
+	{
+	  rtx mask
+	    = immed_wide_int_const (wi::shifted_mask (0, prec, false, tgtprec),
+				    tgtmode);
+	  lres = expand_simple_binop (tgtmode, AND, res, mask, NULL_RTX,
+				      true, OPTAB_LIB_WIDEN);
+	}
+      else
+	{
+	  lres = expand_shift (LSHIFT_EXPR, tgtmode, res, tgtprec - prec,
+			       NULL_RTX, 1);
+	  lres = expand_shift (RSHIFT_EXPR, tgtmode, lres, tgtprec - prec,
+			       NULL_RTX, 0);
+	}
+    }
   write_complex_part (target, lres, false, false);
 }
 
@@ -1131,7 +1163,7 @@ static void
 expand_ubsan_result_store (tree lhs, rtx target, scalar_int_mode mode,
 			   rtx res, rtx_code_label *do_error)
 {
-  if (TREE_CODE (TREE_TYPE (lhs)) == BITINT_TYPE
+  if (BITINT_TYPE_P (TREE_TYPE (lhs))
       && TYPE_PRECISION (TREE_TYPE (lhs)) < GET_MODE_PRECISION (mode))
     {
       int uns = TYPE_UNSIGNED (TREE_TYPE (lhs));
@@ -1617,7 +1649,7 @@ expand_addsub_overflow (location_t loc, tree_code code, tree lhs,
 	    res = expand_binop (mode, add_optab, res, sgn, NULL_RTX, false,
 				OPTAB_LIB_WIDEN);
 
-	  expand_arith_overflow_result_store (lhs, target, mode, res);
+	  expand_arith_overflow_result_store (lhs, target, mode, res, false);
 	}
     }
 }
@@ -1709,7 +1741,7 @@ expand_neg_overflow (location_t loc, tree lhs, tree arg1, bool is_ubsan,
       if (is_ubsan)
 	expand_ubsan_result_store (lhs, target, mode, res, do_error);
       else
-	expand_arith_overflow_result_store (lhs, target, mode, res);
+	expand_arith_overflow_result_store (lhs, target, mode, res, false);
     }
 }
 
@@ -1750,7 +1782,7 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
 		     tree *datap)
 {
   rtx res, op0, op1;
-  tree fn, type;
+  tree fn, type, orig_arg0 = arg0, orig_arg1 = arg1;
   rtx_code_label *done_label, *do_error;
   rtx target = NULL_RTX;
   signop sign;
@@ -1764,11 +1796,28 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
   do_error = gen_label_rtx ();
 
   do_pending_stack_adjust ();
+
+  scalar_int_mode mode = SCALAR_INT_TYPE_MODE (TREE_TYPE (arg0));
+  /* If the operand types don't have mode precision, extend them
+     to mode precision.  */
+  if (TYPE_PRECISION (TREE_TYPE (arg0)) < GET_MODE_PRECISION (mode))
+    {
+      tree type = build_nonstandard_integer_type (GET_MODE_PRECISION (mode),
+						  uns0_p);
+      arg0 = fold_convert_loc (loc, type, arg0);
+    }
+  if (TYPE_PRECISION (TREE_TYPE (arg1)) < GET_MODE_PRECISION (mode))
+    {
+      tree type = build_nonstandard_integer_type (GET_MODE_PRECISION (mode),
+						  uns1_p);
+      arg1 = fold_convert_loc (loc, type, arg1);
+    }
+
   op0 = expand_normal (arg0);
   op1 = expand_normal (arg1);
 
-  scalar_int_mode mode = SCALAR_INT_TYPE_MODE (TREE_TYPE (arg0));
   bool uns = unsr_p;
+  bool overflow_checked = false;
   if (lhs)
     {
       target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
@@ -1829,12 +1878,6 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
 
   int pos_neg0 = get_range_pos_neg (arg0, currently_expanding_gimple_stmt);
   int pos_neg1 = get_range_pos_neg (arg1, currently_expanding_gimple_stmt);
-  /* Unsigned types with smaller than mode precision, even if they have most
-     significant bit set, are still zero-extended.  */
-  if (uns0_p && TYPE_PRECISION (TREE_TYPE (arg0)) < GET_MODE_PRECISION (mode))
-    pos_neg0 = 1;
-  if (uns1_p && TYPE_PRECISION (TREE_TYPE (arg1)) < GET_MODE_PRECISION (mode))
-    pos_neg1 = 1;
 
   /* s1 * u2 -> ur  */
   if (!uns0_p && uns1_p && unsr_p)
@@ -2187,23 +2230,42 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
 	  && can_widen_mult_without_libcall (wmode, mode, op0, op1, uns))
 	{
 	twoxwider:
+	  int ovf_prec = prec;
+	  if (!is_ubsan && lhs && unsr_p)
+	    ovf_prec = TYPE_PRECISION (TREE_TYPE (TREE_TYPE (lhs)));
 	  ops.code = WIDEN_MULT_EXPR;
 	  ops.type
 	    = build_nonstandard_integer_type (GET_MODE_PRECISION (wmode), uns);
 
 	  res = expand_expr_real_2 (&ops, NULL_RTX, wmode, EXPAND_NORMAL);
-	  rtx hipart = expand_shift (RSHIFT_EXPR, wmode, res, prec,
+	  rtx hipart = expand_shift (RSHIFT_EXPR, wmode, res, ovf_prec,
 				     NULL_RTX, uns);
-	  hipart = convert_modes (mode, wmode, hipart, uns);
-	  res = convert_modes (mode, wmode, res, uns);
 	  if (uns)
-	    /* For the unsigned multiplication, there was overflow if
-	       HIPART is non-zero.  */
-	    do_compare_rtx_and_jump (hipart, const0_rtx, EQ, true, mode,
-				     NULL_RTX, NULL, done_label,
-				     profile_probability::very_likely ());
+	    {
+	      /* For the unsigned multiplication, there was overflow if
+		 HIPART is non-zero. Convert RES before the branch so that
+		 both the no-overflow fall-through and the overflow path see
+		 RES in MODE.  */
+	      res = convert_modes (mode, wmode, res, uns);
+	      if (ovf_prec < prec)
+		{
+		  overflow_checked = true;
+		  do_compare_rtx_and_jump (hipart, const0_rtx, EQ, true, wmode,
+					   NULL_RTX, NULL, done_label,
+					   profile_probability::very_likely ());
+		}
+	      else
+		{
+		  hipart = convert_modes (mode, wmode, hipart, uns);
+		  do_compare_rtx_and_jump (hipart, const0_rtx, EQ, true, mode,
+					   NULL_RTX, NULL, done_label,
+					   profile_probability::very_likely ());
+		}
+	    }
 	  else
 	    {
+	      hipart = convert_modes (mode, wmode, hipart, uns);
+	      res = convert_modes (mode, wmode, res, uns);
 	      /* RES is used more than once, place it in a pseudo.  */
 	      res = force_reg (mode, res);
 
@@ -2559,8 +2621,8 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
     {
       /* Expand the ubsan builtin call.  */
       push_temp_slots ();
-      fn = ubsan_build_overflow_builtin (MULT_EXPR, loc, TREE_TYPE (arg0),
-					 arg0, arg1, datap);
+      fn = ubsan_build_overflow_builtin (MULT_EXPR, loc, TREE_TYPE (orig_arg0),
+					 orig_arg0, orig_arg1, datap);
       expand_normal (fn);
       pop_temp_slots ();
       do_pending_stack_adjust ();
@@ -2605,7 +2667,8 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
       if (is_ubsan)
 	expand_ubsan_result_store (lhs, target, mode, res, do_error);
       else
-	expand_arith_overflow_result_store (lhs, target, mode, res);
+	expand_arith_overflow_result_store (lhs, target, mode, res,
+					    overflow_checked);
     }
   flag_trapv = save_flag_trapv;
 }
@@ -3144,8 +3207,9 @@ expand_partial_load_optab_fn (internal_fn ifn, gcall *stmt, convert_optab optab)
     icode = convert_optab_handler (optab, TYPE_MODE (type),
 				   TYPE_MODE (TREE_TYPE (maskt)));
 
-  mem = expand_expr (rhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
+  mem = expand_expr (rhs, NULL_RTX, VOIDmode, EXPAND_MEMORY);
   gcc_assert (MEM_P (mem));
+  MEM_NOTRAP_P (mem) = !tree_could_trap_p (rhs);
   /* The built MEM_REF does not accurately reflect that the load
      is only partial.  Clear it.  */
   set_mem_expr (mem, NULL_TREE);
@@ -3161,6 +3225,7 @@ expand_partial_load_optab_fn (internal_fn ifn, gcall *stmt, convert_optab optab)
 
 #define expand_mask_load_optab_fn expand_partial_load_optab_fn
 #define expand_mask_load_lanes_optab_fn expand_mask_load_optab_fn
+#define expand_mask_len_load_lanes_optab_fn expand_mask_load_optab_fn
 #define expand_len_load_optab_fn expand_partial_load_optab_fn
 #define expand_mask_len_load_optab_fn expand_partial_load_optab_fn
 
@@ -3205,6 +3270,7 @@ expand_partial_store_optab_fn (internal_fn ifn, gcall *stmt, convert_optab optab
 
 #define expand_mask_store_optab_fn expand_partial_store_optab_fn
 #define expand_mask_store_lanes_optab_fn expand_mask_store_optab_fn
+#define expand_mask_len_store_lanes_optab_fn expand_mask_store_optab_fn
 #define expand_len_store_optab_fn expand_partial_store_optab_fn
 #define expand_mask_len_store_optab_fn expand_partial_store_optab_fn
 
@@ -3404,7 +3470,7 @@ expand_RAWMEMCHR (internal_fn, gcall *stmt)
   create_call_lhs_operand (&ops[0], lhs_rtx, lhs_mode);
 
   tree mem = gimple_call_arg (stmt, 0);
-  rtx mem_rtx = get_memory_rtx (mem, NULL);
+  rtx mem_rtx = get_memory_rtx (mem, NULL, false);
   create_fixed_operand (&ops[1], mem_rtx);
 
   tree pattern = gimple_call_arg (stmt, 1);
@@ -3526,7 +3592,7 @@ expand_DEFERRED_INIT (internal_fn, gcall *stmt)
       mark_addressable (lhs);
       tree var_addr = build_fold_addr_expr (lhs);
 
-      tree value = (init_type == AUTO_INIT_PATTERN)
+      tree value = ((init_type & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN)
 		    ? build_int_cst (integer_type_node,
 				     INIT_PATTERN_VALUE)
 		    : integer_zero_node;
@@ -3543,7 +3609,7 @@ expand_DEFERRED_INIT (internal_fn, gcall *stmt)
       scalar_int_mode var_mode;
       if (TREE_CODE (TREE_TYPE (lhs)) != BOOLEAN_TYPE
 	  && tree_fits_uhwi_p (var_size)
-	  && (init_type == AUTO_INIT_PATTERN
+	  && ((init_type & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN
 	      || !is_gimple_reg_type (var_type))
 	  && int_mode_for_size (tree_to_uhwi (var_size) * BITS_PER_UNIT,
 				0).exists (&var_mode)
@@ -3551,10 +3617,10 @@ expand_DEFERRED_INIT (internal_fn, gcall *stmt)
 	{
 	  unsigned HOST_WIDE_INT total_bytes = tree_to_uhwi (var_size);
 	  unsigned char *buf = XALLOCAVEC (unsigned char, total_bytes);
-	  memset (buf, (init_type == AUTO_INIT_PATTERN
+	  memset (buf, ((init_type & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN
 			? INIT_PATTERN_VALUE : 0), total_bytes);
-	  tree itype = build_nonstandard_integer_type
-			 (total_bytes * BITS_PER_UNIT, 1);
+	  tree itype
+	    = build_nonstandard_integer_type (total_bytes * BITS_PER_UNIT, 1);
 	  wide_int w = wi::from_buffer (buf, total_bytes);
 	  init = wide_int_to_tree (itype, w);
 	  /* Pun the LHS to make sure its type has constant size
@@ -3806,6 +3872,9 @@ expand_scatter_store_optab_fn (internal_fn, gcall *stmt, direct_optab optab)
   expand_insn (icode, i, ops);
 }
 
+#define expand_mask_scatter_store_optab_fn expand_scatter_store_optab_fn
+#define expand_mask_len_scatter_store_optab_fn expand_scatter_store_optab_fn
+
 /* Expand {MASK_,}GATHER_LOAD call CALL using optab OPTAB.  */
 
 static void
@@ -3834,6 +3903,9 @@ expand_gather_load_optab_fn (internal_fn ifn, gcall *stmt, direct_optab optab)
   expand_insn (icode, i, ops);
   assign_call_lhs (lhs, lhs_rtx, &ops[0]);
 }
+
+#define expand_mask_gather_load_optab_fn expand_gather_load_optab_fn
+#define expand_mask_len_gather_load_optab_fn expand_gather_load_optab_fn
 
 /* Expand MASK_LEN_STRIDED_LOAD call CALL by optab OPTAB.  */
 
@@ -4082,6 +4154,8 @@ static void
 expand_direct_optab_fn (internal_fn fn, gcall *stmt, direct_optab optab,
 			unsigned int nargs)
 {
+  gcc_checking_assert (direct_internal_fn_nargs_ok_p
+		       (fn, gimple_call_num_args (stmt)));
   tree_pair types = direct_internal_fn_types (fn, stmt);
   insn_code icode = direct_optab_handler (optab, TYPE_MODE (types.first));
   expand_fn_using_insn (stmt, icode, 1, nargs);
@@ -4136,6 +4210,8 @@ static void
 expand_convert_optab_fn (internal_fn fn, gcall *stmt, convert_optab optab,
 			 unsigned int nargs)
 {
+  gcc_checking_assert (direct_internal_fn_nargs_ok_p
+		       (fn, gimple_call_num_args (stmt)));
   tree_pair types = direct_internal_fn_types (fn, stmt);
   insn_code icode = convert_optab_handler (optab, TYPE_MODE (types.first),
 					  TYPE_MODE (types.second));
@@ -4216,8 +4292,7 @@ expand_crc_optab_fn (internal_fn fn, gcall *stmt, convert_optab optab)
       else
 	/* If it's IFN_CRC_REV generate bit-reversed CRC.  */
 	expand_reversed_crc_table_based (dest, crc, data, polynomial,
-					 TYPE_MODE (data_type),
-					 generate_reflecting_code_standard);
+					 TYPE_MODE (data_type));
 
       /* Now get the return value where it needs to be, taking care to
 	 ensure it's promoted appropriately if the ABI demands it.
@@ -4270,6 +4345,8 @@ expand_reduc_sbool_optab_fn (internal_fn fn, gcall *stmt, direct_optab optab)
 
 #define expand_unary_optab_fn(FN, STMT, OPTAB) \
   expand_direct_optab_fn (FN, STMT, OPTAB, 1)
+
+#define expand_unary_opt_optab_fn expand_unary_optab_fn
 
 #define expand_binary_optab_fn(FN, STMT, OPTAB) \
   expand_direct_optab_fn (FN, STMT, OPTAB, 2)
@@ -4396,6 +4473,7 @@ multi_vector_optab_supported_p (convert_optab optab, tree_pair types,
 }
 
 #define direct_unary_optab_supported_p direct_optab_supported_p
+#define direct_unary_opt_optab_supported_p direct_optab_supported_p
 #define direct_unary_convert_optab_supported_p convert_optab_supported_p
 #define direct_binary_optab_supported_p direct_optab_supported_p
 #define direct_ternary_optab_supported_p direct_optab_supported_p
@@ -4409,16 +4487,25 @@ multi_vector_optab_supported_p (convert_optab optab, tree_pair types,
 #define direct_mask_load_optab_supported_p convert_optab_supported_p
 #define direct_load_lanes_optab_supported_p multi_vector_optab_supported_p
 #define direct_mask_load_lanes_optab_supported_p multi_vector_optab_supported_p
+#define direct_mask_len_load_lanes_optab_supported_p \
+  multi_vector_optab_supported_p
 #define direct_gather_load_optab_supported_p convert_optab_supported_p
+#define direct_mask_gather_load_optab_supported_p convert_optab_supported_p
+#define direct_mask_len_gather_load_optab_supported_p convert_optab_supported_p
 #define direct_strided_load_optab_supported_p direct_optab_supported_p
 #define direct_len_load_optab_supported_p direct_optab_supported_p
 #define direct_mask_len_load_optab_supported_p convert_optab_supported_p
 #define direct_mask_store_optab_supported_p convert_optab_supported_p
 #define direct_store_lanes_optab_supported_p multi_vector_optab_supported_p
 #define direct_mask_store_lanes_optab_supported_p multi_vector_optab_supported_p
+#define direct_mask_len_store_lanes_optab_supported_p \
+  multi_vector_optab_supported_p
 #define direct_vec_cond_mask_optab_supported_p convert_optab_supported_p
 #define direct_vec_cond_optab_supported_p convert_optab_supported_p
 #define direct_scatter_store_optab_supported_p convert_optab_supported_p
+#define direct_mask_scatter_store_optab_supported_p convert_optab_supported_p
+#define direct_mask_len_scatter_store_optab_supported_p \
+  convert_optab_supported_p
 #define direct_strided_store_optab_supported_p direct_optab_supported_p
 #define direct_len_store_optab_supported_p direct_optab_supported_p
 #define direct_mask_len_store_optab_supported_p convert_optab_supported_p
@@ -4597,6 +4684,8 @@ commutative_binary_fn_p (internal_fn fn)
     case IFN_UBSAN_CHECK_MUL:
     case IFN_ADD_OVERFLOW:
     case IFN_MUL_OVERFLOW:
+    case IFN_CLMUL:
+    case IFN_CLMUL_WIDEN:
     case IFN_SAT_ADD:
     case IFN_SAT_MUL:
     case IFN_VEC_WIDEN_PLUS:
@@ -4747,6 +4836,58 @@ widening_evenodd_fn_p (code_helper code)
     }
 }
 
+/* Check the NARGS arguments ARGS of a call to internal function FN.
+   Return true if they are valid.  Otherwise report an error at LOC
+   and return false.  */
+
+bool
+check_internal_fn_args (location_t loc, internal_fn fn, unsigned int nargs,
+			const tree *args)
+{
+  const char *name = internal_fn_name (fn);
+  if (direct_internal_fn_p (fn))
+    {
+      const direct_internal_fn_info &info = direct_internal_fn (fn);
+      if (nargs < info.nargs_min)
+	{
+	  error_at (loc, "%<.%s%> call with too few arguments", name);
+	  return false;
+	}
+      if (nargs > info.nargs_max)
+	{
+	  error_at (loc, "%<.%s%> call with too many arguments", name);
+	  return false;
+	}
+    }
+
+  switch (fn)
+    {
+    case IFN_CLZ:
+    case IFN_CTZ:
+      {
+	tree type = TREE_TYPE (args[0]);
+	if (!(INTEGRAL_TYPE_P (type) || VECTOR_INTEGER_TYPE_P (type))
+	    || !TYPE_UNSIGNED (type))
+	  {
+	    error_at (loc, "%<.%s%> call with an argument that is not "
+		      "unsigned integer", name);
+	    return false;
+	  }
+	if (nargs == 2 && TREE_CODE (args[1]) != INTEGER_CST)
+	  {
+	    error_at (loc, "%<.%s%> call with a value at zero that is not "
+		      "constant", name);
+	    return false;
+	  }
+	break;
+      }
+
+    default:
+      break;
+    }
+  return true;
+}
+
 /* Return true if IFN_SET_EDOM is supported.  */
 
 bool
@@ -4766,6 +4907,7 @@ set_edom_supported_p (void)
     expand_##TYPE##_optab_fn (fn, stmt, OPTAB##_optab);	\
   }
 #define DEF_INTERNAL_INT_EXT_FN(CODE, FLAGS, OPTAB, TYPE)
+#define DEF_INTERNAL_INTSZ_EXT_FN(CODE, FLAGS, OPTAB, TYPE)
 #define DEF_INTERNAL_SIGNED_OPTAB_FN(CODE, FLAGS, SELECTOR, SIGNED_OPTAB, \
 				     UNSIGNED_OPTAB, TYPE)		\
   static void								\
@@ -5687,6 +5829,13 @@ expand_MASK_CALL (internal_fn, gcall *)
 }
 
 void
+expand_VARYING (internal_fn, gcall *)
+{
+  /* This IFN should reach expand.  */
+  gcc_unreachable ();
+}
+
+void
 expand_MULBITINT (internal_fn, gcall *stmt)
 {
   rtx_mode_t args[6];
@@ -5715,32 +5864,7 @@ expand_FLOATTOBITINT (internal_fn, gcall *stmt)
   rtx arg0 = expand_normal (gimple_call_arg (stmt, 0));
   rtx arg1 = expand_normal (gimple_call_arg (stmt, 1));
   rtx arg2 = expand_normal (gimple_call_arg (stmt, 2));
-  const char *mname = GET_MODE_NAME (mode);
-  unsigned mname_len = strlen (mname);
-  int len = 12 + mname_len;
-  if (DECIMAL_FLOAT_MODE_P (mode))
-    len += 4;
-  char *libfunc_name = XALLOCAVEC (char, len);
-  char *p = libfunc_name;
-  const char *q;
-  if (DECIMAL_FLOAT_MODE_P (mode))
-    {
-#if ENABLE_DECIMAL_BID_FORMAT
-      memcpy (p, "__bid_fix", 9);
-#else
-      memcpy (p, "__dpd_fix", 9);
-#endif
-      p += 9;
-    }
-  else
-    {
-      memcpy (p, "__fix", 5);
-      p += 5;
-    }
-  for (q = mname; *q; q++)
-    *p++ = TOLOWER (*q);
-  memcpy (p, "bitint", 7);
-  rtx fun = init_one_libfunc (libfunc_name);
+  rtx fun = optab_libfunc (bitintfromfp_optab, mode);
   emit_library_call (fun, LCT_NORMAL, VOIDmode, arg0, ptr_mode, arg1,
 		     SImode, arg2, mode);
 }
@@ -5754,32 +5878,7 @@ expand_BITINTTOFLOAT (internal_fn, gcall *stmt)
   machine_mode mode = TYPE_MODE (TREE_TYPE (lhs));
   rtx arg0 = expand_normal (gimple_call_arg (stmt, 0));
   rtx arg1 = expand_normal (gimple_call_arg (stmt, 1));
-  const char *mname = GET_MODE_NAME (mode);
-  unsigned mname_len = strlen (mname);
-  int len = 14 + mname_len;
-  if (DECIMAL_FLOAT_MODE_P (mode))
-    len += 4;
-  char *libfunc_name = XALLOCAVEC (char, len);
-  char *p = libfunc_name;
-  const char *q;
-  if (DECIMAL_FLOAT_MODE_P (mode))
-    {
-#if ENABLE_DECIMAL_BID_FORMAT
-      memcpy (p, "__bid_floatbitint", 17);
-#else
-      memcpy (p, "__dpd_floatbitint", 17);
-#endif
-      p += 17;
-    }
-  else
-    {
-      memcpy (p, "__floatbitint", 13);
-      p += 13;
-    }
-  for (q = mname; *q; q++)
-    *p++ = TOLOWER (*q);
-  *p = '\0';
-  rtx fun = init_one_libfunc (libfunc_name);
+  rtx fun = optab_libfunc (bitinttofp_optab, mode);
   rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
   rtx val = emit_library_call_value (fun, target, LCT_PURE, mode,
 				     arg0, ptr_mode, arg1, SImode);
@@ -5796,7 +5895,13 @@ expand_bitquery (internal_fn fn, gcall *stmt)
   tree arg = gimple_call_arg (stmt, 0);
   if (TREE_CODE (arg) == INTEGER_CST)
     {
-      tree ret = fold_const_call (as_combined_fn (fn), TREE_TYPE (arg), arg);
+      tree ret;
+      /* A second argument of IFN_CLZ or IFN_CTZ is the result for zero.  */
+      if ((fn == IFN_CLZ || fn == IFN_CTZ) && gimple_call_num_args (stmt) == 2)
+	ret = fold_const_call (as_combined_fn (fn), TREE_TYPE (lhs), arg,
+			       gimple_call_arg (stmt, 1));
+      else
+	ret = fold_const_call (as_combined_fn (fn), TREE_TYPE (arg), arg);
       gcc_checking_assert (ret && TREE_CODE (ret) == INTEGER_CST);
       expand_assignment (lhs, ret, false);
       return false;
@@ -5811,18 +5916,73 @@ expand_CLRSB (internal_fn fn, gcall *stmt)
     expand_unary_optab_fn (fn, stmt, clrsb_optab);
 }
 
+/* Expand STMT, a call to the IFN_CLZ or IFN_CTZ internal function FN,
+   using OPTAB.  The optional second argument of STMT is the result for a
+   zero first argument.  If it is not the value that the instruction gives
+   for zero, test the first argument for zero and use the second argument
+   as the result.  If the target does not define the instruction for zero,
+   execute it only for a nonzero first argument.  */
+
+static void
+expand_clz_ctz (internal_fn fn, gcall *stmt, direct_optab optab)
+{
+  if (!expand_bitquery (fn, stmt))
+    return;
+  tree arg = gimple_call_arg (stmt, 0);
+  machine_mode mode = TYPE_MODE (TREE_TYPE (arg));
+  int val = 0, defined = 0;
+  if (gimple_call_num_args (stmt) == 2)
+    defined = (fn == IFN_CLZ
+	       ? CLZ_DEFINED_VALUE_AT_ZERO (mode, val)
+	       : CTZ_DEFINED_VALUE_AT_ZERO (mode, val));
+  if (gimple_call_num_args (stmt) == 1
+      || (defined == 2 && wi::to_widest (gimple_call_arg (stmt, 1)) == val))
+    {
+      expand_unary_optab_fn (fn, stmt, optab);
+      return;
+    }
+  /* The vectorizer creates vector calls only with the value of the
+     target.  */
+  gcc_checking_assert (!VECTOR_TYPE_P (TREE_TYPE (arg)));
+
+  tree lhs = gimple_call_lhs (stmt);
+  rtx op0 = force_reg (mode, expand_normal (arg));
+  rtx zero_val = expand_normal (fold_convert (TREE_TYPE (lhs),
+					      gimple_call_arg (stmt, 1)));
+  rtx res = gen_reg_rtx (TYPE_MODE (TREE_TYPE (lhs)));
+  rtx_code_label *done = gen_label_rtx ();
+  if (defined)
+    {
+      convert_move (res, expand_unop (mode, optab, op0, NULL_RTX, 1), 1);
+      emit_cmp_and_jump_insns (op0, const0_rtx, NE, NULL_RTX, mode, true,
+			       done, profile_probability::likely ());
+      emit_move_insn (res, zero_val);
+    }
+  else
+    {
+      emit_move_insn (res, zero_val);
+      emit_cmp_and_jump_insns (op0, const0_rtx, EQ, NULL_RTX, mode, true,
+			       done, profile_probability::unlikely ());
+      convert_move (res, expand_unop (mode, optab, op0, NULL_RTX, 1), 1);
+    }
+  emit_label (done);
+  rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
+  if (GET_CODE (target) == SUBREG && SUBREG_PROMOTED_VAR_P (target))
+    convert_move (SUBREG_REG (target), res, SUBREG_PROMOTED_SIGN (target));
+  else
+    emit_move_insn (target, res);
+}
+
 void
 expand_CLZ (internal_fn fn, gcall *stmt)
 {
-  if (expand_bitquery (fn, stmt))
-    expand_unary_optab_fn (fn, stmt, clz_optab);
+  expand_clz_ctz (fn, stmt, clz_optab);
 }
 
 void
 expand_CTZ (internal_fn fn, gcall *stmt)
 {
-  if (expand_bitquery (fn, stmt))
-    expand_unary_optab_fn (fn, stmt, ctz_optab);
+  expand_clz_ctz (fn, stmt, ctz_optab);
 }
 
 void
@@ -5929,5 +6089,405 @@ expand_POPCOUNT (internal_fn fn, gcall *stmt)
       emit_move_insn (plhs, cmp);
       rtx_insn *all_insns = end_sequence ();
       emit_insn (all_insns);
+    }
+}
+
+void
+expand_BSWAP (internal_fn fn, gcall *stmt)
+{
+  if (expand_bitquery (fn, stmt))
+    expand_unary_optab_fn (fn, stmt, bswap_optab);
+}
+
+void
+expand_BITREVERSE (internal_fn fn, gcall *stmt)
+{
+  if (expand_bitquery (fn, stmt))
+    expand_unary_optab_fn (fn, stmt, bitreverse_optab);
+}
+
+/* Expand CLMUL (OP0, OP1) where operands are in OP_MODE and have
+   minimum unsigned precision PREC0 and PREC1.  Compute result in MODE.  */
+
+static rtx
+expand_clmul (machine_mode mode, machine_mode op_mode, rtx op0, rtx op1,
+	      unsigned int prec0, unsigned int prec1)
+{
+  unsigned int op_prec = GET_MODE_PRECISION (as_a <scalar_int_mode> (op_mode));
+  unsigned int prec = GET_MODE_PRECISION (as_a <scalar_int_mode> (mode));
+  machine_mode cmode;
+  optab_methods olw = OPTAB_LIB_WIDEN;
+  if (MIN (prec0, prec1) == 1)
+    {
+      /* If one operand has [0, 1] range, we can do just
+	 multiplication and if both are [0, 1], this is equivalent to AND.  */
+      rtx res = expand_binop (op_mode, prec0 == prec1 ? and_optab : smul_optab,
+			      op0, op1, NULL_RTX, 1, olw);
+      return convert_modes (mode, op_mode, res, 1);
+    }
+  FOR_EACH_MODE_IN_CLASS (cmode, MODE_INT)
+    {
+      unsigned int this_prec
+	= GET_MODE_PRECISION (as_a <scalar_int_mode> (cmode));
+      if (prec0 > this_prec || prec1 > this_prec)
+	continue;
+      if (optab_handler (clmul_optab, cmode) != CODE_FOR_nothing
+	  && (prec0 + prec1 - 1 <= this_prec || prec <= this_prec))
+	{
+	  rtx_insn *start = get_last_insn ();
+	  rtx op0c = convert_modes (cmode, op_mode, op0, 1);
+	  rtx op1c = convert_modes (cmode, op_mode, op1, 1);
+	  if (rtx res = expand_binop (cmode, clmul_optab, op0c, op1c,
+				      NULL_RTX, 1, OPTAB_DIRECT))
+	    return convert_modes (mode, cmode, res, 1);
+	  delete_insns_since (start);
+	}
+      if (optab_handler (clmul_widen_optab, cmode) != CODE_FOR_nothing)
+	{
+	  rtx_insn *start = get_last_insn ();
+	  rtx op0c = convert_modes (cmode, op_mode, op0, 1);
+	  rtx op1c = convert_modes (cmode, op_mode, op1, 1);
+	  rtx reslo = gen_reg_rtx (cmode);
+	  rtx reshi = gen_reg_rtx (cmode);
+	  class expand_operand ops[4];
+	  create_output_operand (&ops[0], reslo, cmode);
+	  create_output_operand (&ops[1], reshi, cmode);
+	  create_input_operand (&ops[2], op0c, cmode);
+	  create_input_operand (&ops[3], op1c, cmode);
+	  if (maybe_expand_insn (optab_handler (clmul_widen_optab, cmode),
+				 4, ops))
+	    {
+	      if (prec0 + prec1 - 1 <= this_prec || prec <= this_prec)
+		return convert_modes (mode, cmode, reslo, 1);
+	      machine_mode wmode;
+	      if (!GET_MODE_2XWIDER_MODE (cmode).exists (&wmode))
+		wmode = mode;
+	      reslo = convert_modes (wmode, cmode, reslo, 1);
+	      reshi = convert_modes (wmode, cmode, reshi, 1);
+	      reshi = expand_shift (LSHIFT_EXPR, wmode, reshi, this_prec,
+				    NULL_RTX, 1);
+	      rtx res = expand_binop (wmode, ior_optab, reslo, reshi,
+				      NULL_RTX, 1, olw);
+	      return convert_modes (mode, wmode, res, 1);
+	    }
+	  delete_insns_since (start);
+	}
+    }
+  if (CONST_SCALAR_INT_P (op1))
+    {
+      wide_int wop1 = rtx_mode_t (op1, op_mode);
+      unsigned lz = wi::clz (wop1);
+      unsigned tz = wi::ctz (wop1);
+      unsigned cnt = wi::popcount (wop1);
+      if (lz + cnt + tz == op_prec
+	  && (pow2p_hwi (cnt) || (lz == 0 && prec == op_prec)))
+	{
+	  /* Optimize the cases where one argument is a constant
+	     equal to ((((T) 1) << M) - 1) << N for some M and N
+	     constants.
+	     In this case the clmul (x, ((((T) 1) << M) - 1) << N)
+	     result can be computed as
+	     T r = x;
+	     for (unsigned i = 1; i < M; i = i + i)
+	       r ^= r << i;
+	     return r << N;
+	     If M is not a power of two, it shouldn't be a widening
+	     shift and most significant bit of the constant should be
+	     set.  */
+	  rtx x = convert_modes (mode, op_mode, op0, 1);
+	  rtx res = gen_reg_rtx (mode);
+	  emit_move_insn (res, x);
+	  rtx i = gen_reg_rtx (TYPE_MODE (integer_type_node));
+	  emit_move_insn (i, const1_rtx);
+	  rtx_code_label *loop_label = gen_label_rtx ();
+	  emit_label (loop_label);
+	  rtx tem = expand_variable_shift (LSHIFT_EXPR, mode, res,
+					   make_tree (integer_type_node, i),
+					   NULL_RTX, 1);
+	  tem = expand_binop (mode, xor_optab, res, tem, res, 1, olw);
+	  if (tem != res)
+	    emit_move_insn (res, tem);
+	  tem = expand_binop (GET_MODE (i), add_optab, i, i, i, 1, olw);
+	  if (tem != res)
+	    emit_move_insn (i, tem);
+	  do_compare_rtx_and_jump (i, gen_int_mode (cnt, GET_MODE (i)),
+				   LTU, true, GET_MODE (i), NULL_RTX, NULL,
+				   loop_label,
+				   profile_probability::very_likely ());
+	  if (tz)
+	    {
+	      tem = expand_shift (LSHIFT_EXPR, mode, res, tz, res, 1);
+	      if (tem != res)
+		emit_move_insn (res, tem);
+	    }
+	  return res;
+	}
+    }
+  /* Fallback using Kronecker substitution.
+     Depending on the number of active bits in the operand with smaller
+     number of those and the result precision we choose smallest spacing
+     S in [2, 13], such that MIN (prec0, prec1) <= S * ((1 << S) - 1),
+     or prec <= S * (1 << S) or prec0 + prec1 - 1 <= S * (1 << S).
+     The algorithm then uses S * S multiplications, 3 * S bitwise ANDs,
+     S * (S - 1) XORs and S - 1 IORs.
+     For e.g. S = 4 this is:
+     uint64_t x0 = x & 0x1111111111111111ULL, y0 = y & 0x1111111111111111ULL;
+     uint64_t x1 = x & 0x2222222222222222ULL, y1 = y & 0x2222222222222222ULL;
+     uint64_t x2 = x & 0x4444444444444444ULL, y2 = y & 0x4444444444444444ULL;
+     uint64_t x3 = x & 0x8888888888888888ULL, y3 = y & 0x8888888888888888ULL;
+     uint64_t z0 = (x0 * y0) ^ (x1 * y3) ^ (x2 * y2) ^ (x3 * y1);
+     uint64_t z1 = (x0 * y1) ^ (x1 * y0) ^ (x2 * y3) ^ (x3 * y2);
+     uint64_t z2 = (x0 * y2) ^ (x1 * y1) ^ (x2 * y0) ^ (x3 * y3);
+     uint64_t z3 = (x0 * y3) ^ (x1 * y2) ^ (x2 * y1) ^ (x3 * y0);
+     z0 &= 0x1111111111111111ULL;
+     z1 &= 0x2222222222222222ULL;
+     z2 &= 0x4444444444444444ULL;
+     z3 &= 0x8888888888888888ULL;
+     return (z0 | z1) | (z2 | z3);  */
+  unsigned int s;
+  for (s = 2; s <= 13; ++s)
+    if (MIN (prec0, prec1) <= s * ((1 << s) - 1)
+	|| MIN (prec, prec0 + prec1 - 1) <= s * (1 << s))
+      break;
+  /* S = 13 should handle up to _BitInt maximum 65535 (106483 bits).  */
+  gcc_assert (s <= 13);
+  rtx mask[13], x[13], y[13], t[13], r;
+  bool do_widen_mult = false;
+  if (mode != op_mode
+      && (convert_optab_handler (umul_widen_optab, mode, op_mode)
+	  != CODE_FOR_nothing))
+    do_widen_mult = true;
+  for (unsigned int i = 0; i < s; ++i)
+    {
+      mask[i]
+	= immed_wide_int_const (wi::bit_repeat (wide_int::from (1 << i, s,
+								UNSIGNED),
+						op_prec), op_mode);
+      if (CONST_INT_P (op0) && CONST_INT_P (mask[i]))
+	x[i] = gen_int_mode (INTVAL (op0) & INTVAL (mask[i]), op_mode);
+      else
+	x[i] = expand_binop (op_mode, and_optab, op0, mask[i], NULL_RTX, 1,
+			     olw);
+      if (mode != op_mode && !do_widen_mult)
+	x[i] = convert_modes (mode, op_mode, x[i], 1);
+      if (CONST_INT_P (op1) && CONST_INT_P (mask[i]))
+	y[i] = gen_int_mode (INTVAL (op1) & INTVAL (mask[i]), op_mode);
+      else
+	y[i] = expand_binop (op_mode, and_optab, op1, mask[i], NULL_RTX, 1,
+			     olw);
+      if (mode != op_mode && !do_widen_mult)
+	y[i] = convert_modes (mode, op_mode, y[i], 1);
+    }
+  for (unsigned int i = 0; i < s; ++i)
+    {
+      for (unsigned int j = 0; j < s; ++j)
+	{
+	  unsigned int k = (i + s - j) % s;
+	  if (do_widen_mult)
+	    t[j] = expand_widening_mult (mode, x[j], y[k], NULL_RTX, 1,
+					 umul_widen_optab);
+	  else
+	    t[j] = expand_binop (mode, smul_optab, x[j], y[k], NULL_RTX, 1,
+				 olw);
+	  if ((j & 1) == 1)
+	    {
+	      t[j - 1] = expand_binop (mode, xor_optab, t[j - 1], t[j],
+				       NULL_RTX, 1, olw);
+	      t[j] = NULL_RTX;
+	    }
+	  if ((j & 3) == 3)
+	    {
+	      t[j - 3] = expand_binop (mode, xor_optab, t[j - 3], t[j - 1],
+				       NULL_RTX, 1, olw);
+	      t[j - 1] = NULL_RTX;
+	    }
+	}
+      for (unsigned int j = 1; j < s; ++j)
+	if (t[j])
+	  t[0] = expand_binop (mode, xor_optab, t[0], t[j], NULL_RTX, 1, olw);
+      if (mode != op_mode)
+	mask[i]
+	  = immed_wide_int_const (wi::bit_repeat (wide_int::from (1 << i, s,
+								  UNSIGNED),
+						  prec), mode);
+      t[0] = expand_binop (mode, and_optab, t[0], mask[i], NULL_RTX, 1, olw);
+      if (i == 0)
+	r = t[0];
+      else
+	r = expand_binop (mode, ior_optab, r, t[0], NULL_RTX, 1, olw);
+    }
+  return r;
+}
+
+void
+expand_CLMUL (internal_fn, gcall *stmt)
+{
+  tree lhs = gimple_call_lhs (stmt);
+  if (lhs == NULL_TREE)
+    return;
+  tree arg0 = gimple_call_arg (stmt, 0);
+  tree arg1 = gimple_call_arg (stmt, 1);
+  scalar_int_mode mode = SCALAR_INT_TYPE_MODE (TREE_TYPE (arg0));
+  unsigned int prec0 = get_min_precision (arg0, UNSIGNED);
+  unsigned int prec1 = get_min_precision (arg1, UNSIGNED);
+  rtx op0 = expand_normal (arg0);
+  rtx op1 = expand_normal (arg1);
+  rtx res = expand_clmul (mode, mode, op0, op1, prec0, prec1);
+  if (TYPE_PRECISION (TREE_TYPE (arg0)) < GET_MODE_PRECISION (mode))
+    {
+      rtx mask
+	= immed_wide_int_const (wi::mask (TYPE_PRECISION (TREE_TYPE (arg0)),
+					  false,
+					  GET_MODE_PRECISION (mode)), mode);
+      res = expand_and (mode, res, mask, NULL_RTX);
+    }
+  rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
+  if (GET_CODE (target) == SUBREG && SUBREG_PROMOTED_VAR_P (target))
+    convert_move (SUBREG_REG (target), res, SUBREG_PROMOTED_SIGN (target));
+  else
+    emit_move_insn (target, res);
+}
+
+void
+expand_CLMUL_WIDEN (internal_fn, gcall *stmt)
+{
+  tree lhs = gimple_call_lhs (stmt);
+  if (lhs == NULL_TREE)
+    return;
+  tree arg0 = gimple_call_arg (stmt, 0);
+  tree arg1 = gimple_call_arg (stmt, 1);
+  scalar_int_mode mode = SCALAR_INT_TYPE_MODE (TREE_TYPE (arg0));
+  unsigned int prec0 = get_min_precision (arg0, UNSIGNED);
+  unsigned int prec1 = get_min_precision (arg1, UNSIGNED);
+  unsigned int prec = GET_MODE_PRECISION (mode);
+  unsigned int type_prec = TYPE_PRECISION (TREE_TYPE (arg0));
+  rtx op0 = expand_normal (arg0);
+  rtx op1 = expand_normal (arg1);
+  rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
+  rtx bitint_mask = NULL_RTX;
+  if (type_prec != prec)
+    bitint_mask
+      = immed_wide_int_const (wi::mask (type_prec, false, prec), mode);
+  if (prec0 + prec1 - 1 <= prec)
+    {
+      /* The whole product fits in MODE.  For a type narrower than MODE
+	 the bits above its precision are the high half.  */
+      rtx reslo = expand_clmul (mode, mode, op0, op1, prec0, prec1);
+      rtx reshi = const0_rtx;
+      if (prec0 + prec1 - 1 > type_prec)
+	reshi = expand_shift (RSHIFT_EXPR, mode, reslo, type_prec, NULL_RTX, 1);
+      if (bitint_mask)
+	reslo = expand_and (mode, reslo, bitint_mask, NULL_RTX);
+      write_complex_part (target, reslo, false, true);
+      write_complex_part (target, reshi, true, false);
+      return;
+    }
+  if (optab_handler (clmul_widen_optab, mode) != CODE_FOR_nothing
+      && type_prec == prec)
+    {
+      rtx_insn *start = get_last_insn ();
+      rtx reslo = gen_reg_rtx (mode);
+      rtx reshi = gen_reg_rtx (mode);
+      class expand_operand ops[4];
+      create_output_operand (&ops[0], reslo, mode);
+      create_output_operand (&ops[1], reshi, mode);
+      create_input_operand (&ops[2], op0, mode);
+      create_input_operand (&ops[3], op1, mode);
+      if (maybe_expand_insn (optab_handler (clmul_widen_optab, mode),
+			     4, ops))
+	{
+	  write_complex_part (target, reslo, false, true);
+	  write_complex_part (target, reshi, true, false);
+	  return;
+	}
+      delete_insns_since (start);
+    }
+  scalar_int_mode wmode;
+  if (GET_MODE_2XWIDER_MODE (mode).exists (&wmode)
+      && targetm.scalar_mode_supported_p (wmode))
+    {
+      rtx res = expand_clmul (wmode, mode, op0, op1, prec0, prec1);
+      rtx reslo = convert_modes (mode, wmode, res, 1);
+      if (bitint_mask)
+	reslo = expand_and (mode, reslo, bitint_mask, NULL_RTX);
+      write_complex_part (target, reslo, false, true);
+      rtx reshi = expand_shift (RSHIFT_EXPR, wmode, res, type_prec,
+				NULL_RTX, 1);
+      reshi = convert_modes (mode, wmode, reshi, 1);
+      write_complex_part (target, reshi, true, false);
+      return;
+    }
+  /* If we have native bitreverse in mode, fallback using:
+     uint64_t l = clmul (x, y);
+     uint64_t h = clmul (__builtin_bitreverseg (x),
+			 __builtin_bitreverseg (y));
+     return { l, __builtin_bitreverseg (h) >> 1 };  */
+  if (optab_handler (bitreverse_optab, mode) != CODE_FOR_nothing
+      || (prec == 2 * UNITS_PER_WORD
+	  && optab_handler (bitreverse_optab, word_mode) != CODE_FOR_nothing))
+    {
+      rtx reslo = expand_clmul (mode, mode, op0, op1, prec0, prec1);
+      if (bitint_mask)
+	reslo = expand_and (mode, reslo, bitint_mask, NULL_RTX);
+      write_complex_part (target, reslo, false, true);
+      rtx revx = expand_unop (mode, bitreverse_optab, op0, NULL_RTX, 1);
+      rtx revy = expand_unop (mode, bitreverse_optab, op1, NULL_RTX, 1);
+      rtx reshi = expand_clmul (mode, mode, revx, revy, prec, prec);
+      reshi = expand_unop (mode, bitreverse_optab, reshi, NULL_RTX, 1);
+      if (bitint_mask)
+	reshi = expand_and (mode, reshi, bitint_mask, NULL_RTX);
+      reshi = expand_shift (RSHIFT_EXPR, mode, reshi, 1, NULL_RTX, 1);
+      write_complex_part (target, reshi, true, false);
+      return;
+    }
+  /* Fallback to modified Karatsuba multiplication step
+     using 3x expand_clmul in mode.
+     For 64x64 -> 128bit CLMUL this would be:
+     uint64_t x0 = (uint32_t) x, x1 = (x >> 32);
+     uint64_t y0 = (uint32_t) y, y1 = (y >> 32);
+     uint64_t l = clmul (x0, y0);
+     uint64_t m = clmul (x0 ^ x1, y0 ^ y1);
+     uint64_t h = clmul (x1, y1);
+     m ^= l ^ h;
+     return { l ^ (m << 32), h ^ (m >> 32) };  */
+  unsigned int hprec = prec / 2;
+  rtx mask = immed_wide_int_const (wi::mask (hprec, false, prec), mode);
+  optab_methods olw = OPTAB_LIB_WIDEN;
+  rtx x0 = expand_binop (mode, and_optab, op0, mask, NULL_RTX, 1, olw);
+  rtx x1 = expand_shift (RSHIFT_EXPR, mode, op0, hprec, NULL_RTX, 1);
+  rtx y0 = expand_binop (mode, and_optab, op1, mask, NULL_RTX, 1, olw);
+  rtx y1 = expand_shift (RSHIFT_EXPR, mode, op1, hprec, NULL_RTX, 1);
+  rtx l = expand_clmul (mode, mode, x0, y0, hprec, hprec);
+  rtx t0 = expand_binop (mode, xor_optab, x0, x1, NULL_RTX, 1, olw);
+  rtx t1 = expand_binop (mode, xor_optab, y0, y1, NULL_RTX, 1, olw);
+  rtx m = expand_clmul (mode, mode, t0, t1, hprec, hprec);
+  rtx h;
+  if (prec0 <= hprec || prec1 <= hprec)
+    h = const0_rtx;
+  else
+    h = expand_clmul (mode, mode, x1, y1, MIN (hprec, prec0 - hprec),
+		      MIN (hprec, prec1 - hprec));
+  t0 = expand_binop (mode, xor_optab, l, h, NULL_RTX, 1, olw);
+  m = expand_binop (mode, xor_optab, m, t0, NULL_RTX, 1, olw);
+  t0 = expand_shift (LSHIFT_EXPR, mode, m, hprec, NULL_RTX, 1);
+  t1 = expand_shift (RSHIFT_EXPR, mode, m, hprec, NULL_RTX, 1);
+  rtx reslo = expand_binop (mode, xor_optab, l, t0, NULL_RTX, 1, olw);
+  if (bitint_mask)
+    {
+      rtx reslom = expand_and (mode, reslo, bitint_mask, NULL_RTX);
+      write_complex_part (target, reslom, false, true);
+      rtx reshi = expand_binop (mode, xor_optab, h, t1, NULL_RTX, 1, olw);
+      reshi = expand_shift (LSHIFT_EXPR, mode, reshi,
+			    prec - type_prec, NULL_RTX, 1);
+      reslo = expand_shift (RSHIFT_EXPR, mode, reslo, type_prec, NULL_RTX, 1);
+      reshi = expand_binop (mode, ior_optab, reshi, reslo, NULL_RTX, 1, olw);
+      reshi = expand_and (mode, reshi, bitint_mask, NULL_RTX);
+      write_complex_part (target, reshi, true, false);
+    }
+  else
+    {
+      write_complex_part (target, reslo, false, true);
+      rtx reshi = expand_binop (mode, xor_optab, h, t1, NULL_RTX, 1, olw);
+      write_complex_part (target, reshi, true, false);
     }
 }

@@ -20,6 +20,7 @@
 
 import difflib
 import os
+import posixpath
 import re
 import sys
 from collections import defaultdict
@@ -180,7 +181,8 @@ changelog_regex = re.compile(r'^(?:[fF]or +)?([a-z0-9+-/]*)ChangeLog:?')
 subject_pr_regex = re.compile(r'(^|\W)PR\s+(?P<component>[a-zA-Z0-9+-]+)/(?P<pr>\d{4,7})')
 subject_pr2_regex = re.compile(r'[(\[]PR\s*(?P<pr>\d{4,7})[)\]]')
 pr_regex = re.compile(r'\tPR (?P<component>[a-z0-9+-]+\/)?(?P<pr>[0-9]+)$')
-dr_regex = re.compile(r'\tDR ([0-9]+)$')
+# A C++ issue resolution (e.g. CWG 2337) or paper (e.g. P2038R7)
+dr_regex = re.compile(r'\t((DR|CWG|LWG) ([0-9]+)|([DP][0-9]+(R[0-9]+)?))$')
 star_prefix_regex = re.compile(r'\t\*(?P<spaces>\ *)(?P<content>.*)')
 end_of_location_regex = re.compile(r'[\[<(:]')
 item_empty_regex = re.compile(r'\t(\* \S+ )?\(\S+\):\s*$')
@@ -619,7 +621,7 @@ class GitCommit:
     def check_file_patterns(self):
         for entry in self.changelog_entries:
             for pattern in entry.file_patterns:
-                name = os.path.join(entry.folder, pattern)
+                name = posixpath.join(entry.folder, pattern)
                 if not [name.startswith(pr) for pr in wildcard_prefixes]:
                     msg = 'unsupported wildcard prefix'
                     self.errors.append(Error(msg, name))
@@ -706,14 +708,14 @@ class GitCommit:
             assert not entry.folder.endswith('/')
             for file in entry.files:
                 if not self.is_changelog_filename(file):
-                    item = os.path.join(entry.folder, file)
+                    item = posixpath.join(entry.folder, file)
                     if item in mentioned_files:
                         msg = 'same file specified multiple times'
                         self.errors.append(Error(msg, file))
                     else:
                         mentioned_files.add(item)
             for pattern in entry.file_patterns:
-                mentioned_patterns.append(os.path.join(entry.folder, pattern))
+                mentioned_patterns.append(posixpath.join(entry.folder, pattern))
 
         cand = [x[0] for x in self.info.modified_files
                 if not self.is_changelog_filename(x[0])]
@@ -786,7 +788,7 @@ class GitCommit:
     def check_for_correct_changelog(self):
         for entry in self.changelog_entries:
             for file in entry.files:
-                full_path = os.path.join(entry.folder, file)
+                full_path = posixpath.join(entry.folder, file)
                 changelog_location = self.get_changelog_by_path(full_path)
                 if changelog_location != entry.folder:
                     msg = 'wrong ChangeLog location "%s", should be "%s"'

@@ -98,6 +98,8 @@ target_triplet = @target@
 @LIBBACKTRACE_SUPPORTED_TRUE@@SANITIZER_SUPPORTED_TRUE@am__append_3 = libbacktrace
 @SANITIZER_SUPPORTED_TRUE@@TSAN_SUPPORTED_TRUE@am__append_4 = tsan
 @HWASAN_SUPPORTED_TRUE@@SANITIZER_SUPPORTED_TRUE@am__append_5 = hwasan
+@SANITIZER_SUPPORTED_TRUE@@USING_MAC_INTERPOSE_FALSE@am__append_6 = all-interception
+@LIBBACKTRACE_SUPPORTED_TRUE@@SANITIZER_SUPPORTED_TRUE@am__append_7 = all-libbacktrace
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/../config/acx.m4 \
@@ -370,6 +372,8 @@ nodist_saninclude_HEADERS = $(am__append_1)
 @SANITIZER_SUPPORTED_TRUE@SUBDIRS = sanitizer_common $(am__append_2) \
 @SANITIZER_SUPPORTED_TRUE@	$(am__append_3) lsan asan ubsan \
 @SANITIZER_SUPPORTED_TRUE@	$(am__append_4) $(am__append_5)
+@SANITIZER_SUPPORTED_TRUE@SANITIZER_BASE_DEPS = all-sanitizer_common \
+@SANITIZER_SUPPORTED_TRUE@	$(am__append_6) $(am__append_7)
 DIST_SUBDIRS = $(SUBDIRS)
 gcc_version := $(shell @get_gcc_base_ver@ $(top_srcdir)/../gcc/BASE-VER)
 
@@ -764,6 +768,22 @@ uninstall-am: uninstall-nodist_sanincludeHEADERS \
 
 .PRECIOUS: Makefile
 
+
+# Override all-recursive and explicitly define the dependency graph
+# to increase parallelism during the build.
+
+@SANITIZER_SUPPORTED_TRUE@all-sanitizer_common all-interception all-libbacktrace:
+@SANITIZER_SUPPORTED_TRUE@	+cd $(@:all-%=%) && $(MAKE) $(AM_MAKEFLAGS) all
+
+@SANITIZER_SUPPORTED_TRUE@all-lsan all-ubsan all-tsan: $(SANITIZER_BASE_DEPS)
+@SANITIZER_SUPPORTED_TRUE@	+cd $(@:all-%=%) && $(MAKE) $(AM_MAKEFLAGS) all
+
+@SANITIZER_SUPPORTED_TRUE@all-asan all-hwasan: $(SANITIZER_BASE_DEPS) all-lsan
+@SANITIZER_SUPPORTED_TRUE@	+cd $(@:all-%=%) && $(MAKE) $(AM_MAKEFLAGS) all
+
+@SANITIZER_SUPPORTED_TRUE@all-recursive: $(SUBDIRS:%=all-%)
+
+@SANITIZER_SUPPORTED_TRUE@.PHONY: $(SUBDIRS:%=all-%)
 
 # GNU Make needs to see an explicit $(MAKE) variable in the command it
 # runs to enable its job server during parallel builds.  Hence the

@@ -43,7 +43,7 @@ typedef struct {
   caf_shmem_condvar *triggers;
 } sync_t;
 
-typedef caf_shmem_mutex lock_t;
+typedef caf_shmem_mutex caf_shmem_lock_t;
 
 typedef int event_t;
 
@@ -51,7 +51,12 @@ void sync_init (sync_t *, shared_memory);
 
 void sync_init_supervisor (sync_t *, alloc *);
 
-void sync_all (void);
+/* Synchronize the images of the current team.  Returns false without
+   synchronizing when a stopped image is a member of the team.  TERMINATED,
+   when given, receives the number of images of the team that had terminated
+   when the images synchronized.  */
+
+bool sync_all (int *terminated);
 
 /* Prototype for circular dependency break.  */
 
@@ -60,7 +65,20 @@ typedef struct caf_shmem_team *caf_shmem_team_t;
 
 void sync_team (caf_shmem_team_t team);
 
-void sync_table (sync_t *, int *, int);
+/* Like sync_all for TEAM.  */
+
+bool sync_team_unless_stopped (caf_shmem_team_t team, int *terminated);
+
+/* Synchronize with the SIZE images in the array, or with the images of the
+   current team when SIZE is zero.  Returns true when an image of the set
+   terminated before the images synchronized.  */
+
+bool sync_table (sync_t *, int *, int);
+
+/* Set the status of IMAGE, which terminated, to stopped or failed, count it
+   and wake the images waiting in sync_table.  */
+
+void notify_image_terminated (sync_t *, int image, bool stopped);
 
 void lock_alloc_lock (sync_t *);
 

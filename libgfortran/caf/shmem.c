@@ -87,8 +87,10 @@ _gfortran_caf_init (int *argc, char ***argv)
 
   if (shared_memory_get_env ())
     {
-      /* This is the initialization of a worker.  */
-      _gfortran_caf_sync_all (NULL, NULL, 0);
+      /* This is the initialization of a worker.  Synchronize without the
+	 checks of the SYNC ALL statement: an image terminating right after
+	 this barrier is not an error condition here.  */
+      sync_all (NULL);
       return;
     }
 
@@ -174,13 +176,12 @@ _gfortran_caf_num_images (caf_team_t team, int32_t *team_number)
   while (cur)                                                                  \
     {                                                                          \
       if (cur->u.image_info->team_id == *team_number)                          \
-	return counter_barrier_get_count (&cur->u.image_info->image_count);    \
+	return cur->u.image_info->image_map_size;                              \
       cur = cur->parent;                                                       \
     }
 
   if (team)
-    return counter_barrier_get_count (
-      &((caf_shmem_team_t) team)->u.image_info->image_count);
+    return ((caf_shmem_team_t) team)->u.image_info->image_map_size;
 
   if (team_number)
     {
@@ -192,10 +193,18 @@ _gfortran_caf_num_images (caf_team_t team, int32_t *team_number)
       CHECK_TEAMS
     }
 
-  return counter_barrier_get_count (
-    &caf_current_team->u.image_info->image_count);
+  return caf_current_team->u.image_info->image_map_size;
 }
 
+/* Return A * B, or SIZE_MAX on overflow.  The allocator rejects SIZE_MAX,
+   so a saturated size makes the allocation fail through STAT=.  */
+
+static size_t
+mul_size_sat (size_t a, size_t b)
+{
+  size_t r;
+  return __builtin_mul_overflow (a, b, &r) ? SIZE_MAX : r;
+}
 
 void
 _gfortran_caf_register (size_t size, caf_register_t type, caf_token_t *token,
@@ -257,7 +266,7 @@ _gfortran_caf_register (size_t size, caf_register_t type, caf_token_t *token,
       break;
     case CAF_REGTYPE_EVENT_ALLOC:
     case CAF_REGTYPE_EVENT_STATIC:
-      size *= sizeof (void *);
+      size = mul_size_sat (size, sizeof (void *));
       break;
     default:
       break;
@@ -266,14 +275,16 @@ _gfortran_caf_register (size_t size, caf_register_t type, caf_token_t *token,
   if (type != CAF_REGTYPE_COARRAY_ALLOC_ALLOCATE_ONLY)
     *token = malloc (sizeof (struct caf_shmem_token));
 
-  size = alignto (size, sizeof (ptrdiff_t));
+  /* Saturate like mul_size_sat.  */
+  size = size > SIZE_MAX - sizeof (ptrdiff_t)
+	 ? SIZE_MAX : alignto (size, sizeof (ptrdiff_t));
   switch (type)
     {
     case CAF_REGTYPE_LOCK_STATIC:
     case CAF_REGTYPE_LOCK_ALLOC:
     case CAF_REGTYPE_CRITICAL:
       {
-	lock_t *addr;
+	caf_shmem_lock_t *addr;
 	bool created;
 	size_t alloc_size;
 
@@ -281,13 +292,14 @@ _gfortran_caf_register (size_t size, caf_register_t type, caf_token_t *token,
 #if defined(WIN32) || defined(__CYGWIN__)
 	/* On Windows mutexes are not an object stored in the shmem but
 	   identified by an id.  */
-	alloc_size = size * caf_current_team->u.image_info->image_count.count;
+	alloc_size = mul_size_sat (
+	  size, caf_current_team->u.image_info->image_count.count);
 #else
 	alloc_size = size;
 #endif
-	addr = alloc_get_memory_by_id_created (&local->ai,
-					       alloc_size * sizeof (lock_t),
-					       next_memid, &created);
+	addr = alloc_get_memory_by_id_created (
+	  &local->ai, mul_size_sat (alloc_size, sizeof (caf_shmem_lock_t)),
+	  next_memid, &created);
 
 	if (created)
 	  {
@@ -296,7 +308,7 @@ _gfortran_caf_register (size_t size, caf_register_t type, caf_token_t *token,
 	    for (size_t c = 0; c < alloc_size; ++c)
 	      initialize_shared_errorcheck_mutex (&addr[c]);
 	  }
-	size *= sizeof (lock_t);
+	size *= sizeof (caf_shmem_lock_t);
 
 	allocator_unlock (&local->ai.alloc);
 	mem = addr;
@@ -306,14 +318,13 @@ _gfortran_caf_register (size_t size, caf_register_t type, caf_token_t *token,
     case CAF_REGTYPE_EVENT_ALLOC:
       {
 	bool created;
+	size_t alloc_size = mul_size_sat (size, local->total_num_images);
 
 	allocator_lock (&local->ai.alloc);
-	mem = alloc_get_memory_by_id_created (
-	  &local->ai, size * caf_current_team->u.image_info->image_count.count,
-	  next_memid, &created);
+	mem = alloc_get_memory_by_id_created (&local->ai, alloc_size, next_memid,
+					      &created);
 	if (created)
-	  memset (mem, 0,
-		  size * caf_current_team->u.image_info->image_count.count);
+	  memset (mem, 0, alloc_size);
 	allocator_unlock (&local->ai.alloc);
       }
       break;
@@ -321,19 +332,24 @@ _gfortran_caf_register (size_t size, caf_register_t type, caf_token_t *token,
       mem = NULL;
       break;
     case CAF_REGTYPE_COARRAY_ALLOC_ALLOCATE_ONLY:
-      allocator_lock (&local->ai.alloc);
-      mem = SHMPTR_AS (void *, allocator_shared_malloc (&local->ai.alloc, size),
-		       &local->sm);
-      allocator_unlock (&local->ai.alloc);
+      {
+	shared_mem_ptr p;
+
+	allocator_lock (&local->ai.alloc);
+	p = allocator_shared_malloc (&local->ai.alloc, size);
+	allocator_unlock (&local->ai.alloc);
+	mem = SHMPTR_IS_NULL (p) ? NULL : SHMPTR_AS (void *, p, &local->sm);
+      }
       break;
     case CAF_REGTYPE_COARRAY_MAP_EXISTING:
       /* Computing the mem ptr is done above before the new token is allocated.
        */
       break;
     default:
-      mem = alloc_get_memory_by_id (
-	&local->ai, size * caf_current_team->u.image_info->image_count.count,
-	next_memid);
+      /* Each image's part is at its index among all images.  */
+      mem = alloc_get_memory_by_id (&local->ai,
+				    mul_size_sat (size, local->total_num_images),
+				    next_memid);
       break;
     }
 
@@ -346,7 +362,12 @@ _gfortran_caf_register (size_t size, caf_register_t type, caf_token_t *token,
 	 memory may be lost.  */
       if (mem)
 	alloc_free_memory_with_id (&local->ai, next_memid);
-      free (*token);
+      /* The token of a component was registered before; keep it.  */
+      if (type != CAF_REGTYPE_COARRAY_ALLOC_ALLOCATE_ONLY)
+	{
+	  free (*token);
+	  *token = NULL;
+	}
       caf_internal_error (alloc_fail_msg, stat, errmsg, errmsg_len);
       return;
     }
@@ -457,7 +478,7 @@ _gfortran_caf_deregister (caf_token_t *token, caf_deregister_t type, int *stat,
 	    ;
 	  if (!ca)
 	    caf_runtime_error (
-	      "Coarray token to be freeed is not in current team %d", type);
+	      "Coarray token to be freed is not in current team %d", type);
 	  /* Unhook found coarray_allocated node from list...  */
 	  pca->next = ca->next;
 	}
@@ -480,10 +501,18 @@ _gfortran_caf_deregister (caf_token_t *token, caf_deregister_t type, int *stat,
 void
 _gfortran_caf_sync_all (int *stat, char *errmsg, size_t errmsg_len)
 {
+  int terminated;
+
   __asm__ __volatile__ ("":::"memory");
-  HEALTH_CHECK (stat, errmsg, errmsg_len);
   CHECK_TEAM_INTEGRITY (caf_current_team);
-  sync_all ();
+  /* With a stopped image this only has the effect of SYNC MEMORY, with a
+     failed image the active images are synchronized; both are reported
+     (F2023 11.7.11).  An image terminating after the images synchronized
+     was not involved in the statement.  */
+  if (!sync_all (&terminated) || terminated)
+    HEALTH_CHECK (stat, errmsg, errmsg_len);
+  else if (stat)
+    *stat = 0;
 }
 
 
@@ -522,28 +551,11 @@ _gfortran_caf_sync_images (int count, int images[], int *stat, char *errmsg,
 	  if (images[c] > 0 && images[c] <= max_id)
 	    {
 	      mapped_images[c] = map[images[c] - 1];
-	      switch (this_image.supervisor->images[mapped_images[c]].status)
-		{
-		case IMAGE_SUCCESS:
-		  caf_internal_error ("SYNC IMAGES: Image %d is stopped", stat,
-				      errmsg, errmsg_len, images[c]);
-		  /* We can come here only, when stat is non-NULL.  */
-		  *stat = CAF_STAT_STOPPED_IMAGE;
-		  return;
-		case IMAGE_FAILED:
-		  caf_internal_error ("SYNC IMAGES: Image %d has failed", stat,
-				      errmsg, errmsg_len, images[c]);
-		  /* We can come here only, when stat is non-NULL.  */
-		  *stat = CAF_STAT_FAILED_IMAGE;
-		  return;
-		default:
-		  break;
-		}
 	      for (int i = 0; i < c; ++i)
 		if (mapped_images[c] == mapped_images[i])
 		  {
 		    caf_internal_error ("SYNC IMAGES: Duplicate image %d in "
-					"images at position %d and &d.",
+					"images at position %d and %d.",
 					stat, errmsg, errmsg_len, images[c],
 					i + 1, c + 1);
 		    /* There is no official error code for this, but 3 is what
@@ -564,11 +576,43 @@ _gfortran_caf_sync_images (int count, int images[], int *stat, char *errmsg,
     HEALTH_CHECK (stat, errmsg, errmsg_len);
 
   __asm__ __volatile__ ("" ::: "memory");
-  sync_table (&local->si, mapped_images, count);
-  HEALTH_CHECK (stat, errmsg, errmsg_len);
+  if (!sync_table (&local->si, mapped_images, count))
+    {
+      if (stat)
+	*stat = 0;
+    }
+  else if (count > 0)
+    check_health (mapped_images, count, stat, errmsg, errmsg_len);
+  else
+    HEALTH_CHECK (stat, errmsg, errmsg_len);
 }
 
 extern void _gfortran_report_exception (void);
+
+/* Tell the supervisor that this image terminated normally and drop it from
+   the barriers of its teams.  */
+
+static void
+mark_stopped (void)
+{
+  if (!this_image.supervisor || this_image.image_num < 0)
+    return;
+
+  if (this_image.supervisor->images[this_image.image_num].status == IMAGE_OK)
+    notify_image_terminated (&local->si, this_image.image_num, true);
+  leave_teams (true);
+}
+
+/* Tell the supervisor that this image error stopped, so that it can terminate
+   all other images.  */
+
+static void
+mark_error_stopped (void)
+{
+  if (this_image.supervisor && this_image.image_num >= 0)
+    this_image.supervisor->images[this_image.image_num].status
+      = IMAGE_ERROR_STOP;
+}
 
 void
 _gfortran_caf_stop_numeric (int stop_code, bool quiet)
@@ -578,6 +622,7 @@ _gfortran_caf_stop_numeric (int stop_code, bool quiet)
       _gfortran_report_exception ();
       fprintf (stderr, "STOP %d\n", stop_code);
     }
+  mark_stopped ();
   exit (stop_code);
 }
 
@@ -592,6 +637,7 @@ _gfortran_caf_stop_str (const char *string, size_t len, bool quiet)
 	fputc (*(string++), stderr);
       fputs ("\n", stderr);
     }
+  mark_stopped ();
   exit (0);
 }
 
@@ -607,6 +653,7 @@ _gfortran_caf_error_stop_str (const char *string, size_t len, bool quiet)
 	fputc (*(string++), stderr);
       fputs ("\n", stderr);
     }
+  mark_error_stopped ();
   exit (1);
 }
 
@@ -616,8 +663,8 @@ void
 _gfortran_caf_fail_image (void)
 {
   fputs ("IMAGE FAILED!\n", stderr);
-  this_image.supervisor->images[this_image.image_num].status = IMAGE_FAILED;
-  atomic_fetch_add (&this_image.supervisor->failed_images, 1);
+  notify_image_terminated (&local->si, this_image.image_num, false);
+  leave_teams (false);
   exit (0);
 }
 
@@ -632,7 +679,7 @@ _gfortran_caf_image_status (int image, caf_team_t *team)
   if (team)
     t = *(caf_shmem_team_t *) team;
 
-  if (image > t->u.image_info->image_count.count)
+  if (image > t->u.image_info->image_map_size)
     return CAF_STAT_STOPPED_IMAGE;
 
   image_index = t->u.image_info->image_map[image - 1];
@@ -739,6 +786,7 @@ _gfortran_caf_error_stop (int error, bool quiet)
       _gfortran_report_exception ();
       fprintf (stderr, "ERROR STOP %d\n", error);
     }
+  mark_error_stopped ();
   exit (error);
 }
 
@@ -804,6 +852,21 @@ check_map_team (int *remote_index, int *this_index, const int image_index,
   return check;
 }
 
+/* Report the outcome R of a collective through STAT and ERRMSG.  A
+   terminated image leaves the collective incomplete (F2023 16.6).  */
+
+static void
+report_collective (collsub_result r, int *stat, char *errmsg,
+		   size_t errmsg_len)
+{
+  if (r == COLLSUB_TERMINATED)
+    HEALTH_CHECK (stat, errmsg, errmsg_len);
+  else if (r == COLLSUB_NO_MEMORY)
+    caf_internal_error ("Shared memory exhausted; increase "
+			"GFORTRAN_SHARED_MEMORY_SIZE",
+			stat, errmsg, errmsg_len);
+}
+
 void
 _gfortran_caf_co_broadcast (gfc_descriptor_t *desc, int source_image, int *stat,
 			    char *errmsg __attribute__ ((unused)),
@@ -813,11 +876,15 @@ _gfortran_caf_co_broadcast (gfc_descriptor_t *desc, int source_image, int *stat,
   if (stat)
     *stat = 0;
 
+  if (HEALTH_CHECK (stat, errmsg, errmsg_len))
+    return;
+
   if (!check_map_team (&mapped_index, &this_image_index, source_image, NULL,
 		       NULL, stat))
     return;
 
-  collsub_broadcast_array (desc, mapped_index);
+  report_collective (collsub_broadcast_array (desc, mapped_index), stat,
+		     errmsg, errmsg_len);
 }
 
 #define GEN_OP(name, op, type)                                                 \
@@ -908,6 +975,9 @@ _gfortran_caf_co_sum (gfc_descriptor_t *desc, int result_image, int *stat,
   if (stat)
     *stat = 0;
 
+  if (HEALTH_CHECK (stat, errmsg, errmsg_len))
+    return;
+
   /* If result_image == 0 then allreduce is wanted, i.e. mapped_index = -1.  */
   if (result_image
       && !check_map_team (&mapped_index, &this_image_index, result_image, NULL,
@@ -916,7 +986,8 @@ _gfortran_caf_co_sum (gfc_descriptor_t *desc, int result_image, int *stat,
 
   SWITCH_TYPE_KIND (sum)
 
-  collsub_reduce_array (desc, mapped_index, opr, 0, 0);
+  report_collective (collsub_reduce_array (desc, mapped_index, opr, 0, 0),
+		     stat, errmsg, errmsg_len);
 }
 
 void
@@ -930,6 +1001,9 @@ _gfortran_caf_co_min (gfc_descriptor_t *desc, int result_image, int *stat,
 
   if (stat)
     *stat = 0;
+
+  if (HEALTH_CHECK (stat, errmsg, errmsg_len))
+    return;
   /* If result_image == 0 then allreduce is wanted, i.e. mapped_index = -1.  */
   if (result_image
       && !check_map_team (&mapped_index, &this_image_index, result_image, NULL,
@@ -938,7 +1012,8 @@ _gfortran_caf_co_min (gfc_descriptor_t *desc, int result_image, int *stat,
 
   SWITCH_TYPE_KIND (min)
 
-  collsub_reduce_array (desc, mapped_index, opr, 0, 0);
+  report_collective (collsub_reduce_array (desc, mapped_index, opr, 0, 0),
+		     stat, errmsg, errmsg_len);
 }
 
 void
@@ -952,6 +1027,9 @@ _gfortran_caf_co_max (gfc_descriptor_t *desc, int result_image, int *stat,
 
   if (stat)
     *stat = 0;
+
+  if (HEALTH_CHECK (stat, errmsg, errmsg_len))
+    return;
   /* If result_image == 0 then allreduce is wanted, i.e. mapped_index = -1.  */
   if (result_image
       && !check_map_team (&mapped_index, &this_image_index, result_image, NULL,
@@ -960,7 +1038,8 @@ _gfortran_caf_co_max (gfc_descriptor_t *desc, int result_image, int *stat,
 
   SWITCH_TYPE_KIND (max)
 
-  collsub_reduce_array (desc, mapped_index, opr, 0, 0);
+  report_collective (collsub_reduce_array (desc, mapped_index, opr, 0, 0),
+		     stat, errmsg, errmsg_len);
 }
 
 void
@@ -974,13 +1053,18 @@ _gfortran_caf_co_reduce (gfc_descriptor_t *desc, void *(*opr) (void *, void *),
   if (stat)
     *stat = 0;
 
+  if (HEALTH_CHECK (stat, errmsg, errmsg_len))
+    return;
+
   /* If result_image == 0 then allreduce is wanted, i.e. mapped_index = -1.  */
   if (result_image
       && !check_map_team (&mapped_index, &this_image_index, result_image, NULL,
 			  NULL, stat))
     return;
 
-  collsub_reduce_array (desc, mapped_index, opr, opr_flags, desc_len);
+  report_collective (collsub_reduce_array (desc, mapped_index, opr, opr_flags,
+					   desc_len),
+		     stat, errmsg, errmsg_len);
 }
 
 void
@@ -1503,7 +1587,7 @@ _gfortran_caf_lock (caf_token_t token, size_t index, int image_index,
   const size_t lock_index = index;
   (void) image_index; // Prevent unused warnings.
 #endif
-  lock_t *lock = &((lock_t *) MEMTOK (token))[lock_index];
+  caf_shmem_lock_t *lock = &((caf_shmem_lock_t *) MEMTOK (token))[lock_index];
   int res;
 
   res = acquired_lock ? caf_shmem_mutex_trylock (lock)
@@ -1547,7 +1631,7 @@ _gfortran_caf_unlock (caf_token_t token, size_t index, int image_index,
   const size_t lock_index = index;
   (void) image_index; // Prevent unused warnings.
 #endif
-  lock_t *lock = &((lock_t *) MEMTOK (token))[lock_index];
+  caf_shmem_lock_t *lock = &((caf_shmem_lock_t *) MEMTOK (token))[lock_index];
   int res;
 
   res = caf_shmem_mutex_unlock (lock);
@@ -1666,6 +1750,50 @@ _gfortran_caf_random_init (bool repeatable, bool image_distinct)
     }
 }
 
+/* The id of team TEAM_NO formed by the current FORM TEAM statement of the
+   current team.  All images forming that team get the same id, which no
+   other team has.  To be called with the allocator lock held, after counting
+   the statement.  Returns 0 when the shared memory is exhausted.  */
+
+static memid
+new_team_id (int team_no)
+{
+  struct shmem_image_info *info = caf_current_team->u.image_info;
+  struct new_team_id
+  {
+    int team_no;
+    memid id;
+  } *table;
+  int i;
+
+  if (SHMPTR_IS_NULL (info->new_teams))
+    {
+      info->new_teams
+	= allocator_shared_malloc (&local->ai.alloc, info->image_map_size
+						       * sizeof (*table));
+      if (SHMPTR_IS_NULL (info->new_teams))
+	return 0;
+      info->new_teams_gen = 0;
+    }
+  table = SHMPTR_AS (struct new_team_id *, info->new_teams, &local->sm);
+  /* The first image of a new FORM TEAM statement clears the ids of the
+     previous one; the images all passed its final barrier.  */
+  if (info->new_teams_gen != caf_current_team->teams_formed)
+    {
+      for (i = 0; i < info->image_map_size; ++i)
+	table[i].team_no = 0;
+      info->new_teams_gen = caf_current_team->teams_formed;
+    }
+  for (i = 0; i < info->image_map_size && table[i].team_no != 0; ++i)
+    if (table[i].team_no == team_no)
+      return table[i].id;
+  /* Each image forms one team, so the table has room for all of them.  */
+  assert (i < info->image_map_size);
+  table[i].team_no = team_no;
+  table[i].id = this_image.supervisor->next_team_id++;
+  return table[i].id;
+}
+
 void
 _gfortran_caf_form_team (int team_no, caf_team_t *team, int *new_index,
 			 int *stat, char *errmsg, size_t errmsg_len)
@@ -1679,14 +1807,10 @@ _gfortran_caf_form_team (int team_no, caf_team_t *team, int *new_index,
     = "The NEW_INDEX of FORM TEAMs has to be unique.";
   const char cannot_assign_index[]
     = "Can not assign new image index in FORM TEAM.";
-  static int image_size_shift = -1;
-  static int teams_count = 0;
   caf_shmem_team_t t;
   bool created;
-  memid tmemid;
+  memid id;
 
-  if (image_size_shift < 0)
-    image_size_shift = (int) round (log2 (local->total_num_images));
   if (stat)
     *stat = 0;
 
@@ -1694,7 +1818,7 @@ _gfortran_caf_form_team (int team_no, caf_team_t *team, int *new_index,
 
   if (new_index
       && (*new_index <= 0
-	  || *new_index > caf_current_team->u.image_info->image_count.count))
+	  || *new_index > caf_current_team->u.image_info->image_map_size))
     {
       caf_internal_error (new_index_out_of_range, stat, errmsg, errmsg_len);
       return;
@@ -1714,23 +1838,29 @@ _gfortran_caf_form_team (int team_no, caf_team_t *team, int *new_index,
   t = *((caf_shmem_team_t *) team);
 
   allocator_lock (&local->ai.alloc);
-  if (caf_current_team->team_no == -1)
-    tmemid = team_no + teams_count;
-  else
-    tmemid = (caf_current_team->u.image_info->lastmemid << image_size_shift)
-	     + team_no + teams_count;
-  ++teams_count;
+  ++caf_current_team->teams_formed;
+  id = new_team_id (team_no);
   *t = (struct caf_shmem_team) {
     caf_teams_formed,
     team_no,
     -1,
     0,
     NULL,
-    {alloc_get_memory_by_id_created (
-      &local->ai,
-      sizeof (struct shmem_image_info)
-	+ caf_current_team->u.image_info->image_count.count * sizeof (int),
-      -tmemid, &created)}};
+    {id ? alloc_get_memory_by_id_created (
+	    &local->ai,
+	    sizeof (struct shmem_image_info)
+	      + caf_current_team->u.image_info->image_map_size * sizeof (int),
+	    -id, &created)
+	: NULL},
+    0};
+  if (unlikely (t->u.image_info == NULL))
+    {
+      allocator_unlock (&local->ai.alloc);
+      free (t);
+      *team = NULL;
+      caf_internal_error (alloc_fail_msg, stat, errmsg, errmsg_len);
+      return;
+    }
 
   if (created)
     {
@@ -1741,10 +1871,11 @@ _gfortran_caf_form_team (int team_no, caf_team_t *team, int *new_index,
       t->u.image_info->team_id = team_no;
       t->u.image_info->image_map_size = 0;
       t->u.image_info->num_term_images = 0;
-      t->u.image_info->lastmemid = tmemid;
+      t->u.image_info->id = id;
+      t->u.image_info->new_teams = SHMPTR_NULL;
+      register_team (t);
       /* Initialize a freshly created image_map with -1.  */
-      for (int i = 0; i < caf_current_team->u.image_info->image_count.count;
-	   ++i)
+      for (int i = 0; i < caf_current_team->u.image_info->image_map_size; ++i)
 	t->u.image_info->image_map[i] = -1;
     }
   counter_barrier_init_add (&t->u.image_info->image_count, 1);
@@ -1787,7 +1918,7 @@ _gfortran_caf_form_team (int team_no, caf_team_t *team, int *new_index,
 	 New team: 1 1 1 2 2 2
       */
       im = caf_current_team->index * cnt
-	   / caf_current_team->u.image_info->image_count.count;
+	   / caf_current_team->u.image_info->image_map_size;
       /* Map our old index into the domain of the new team's size.  */
       do
 	{
@@ -1841,10 +1972,7 @@ _gfortran_caf_change_team (caf_team_t team, int *stat,
 
   t->parent = caf_current_team;
   t->parent_teams_last_active_memid = next_memid;
-  next_memid = (t->u.image_info->team_parent_id != -1
-		  ? (((memid) t->u.image_info->team_parent_id) << 48)
-		  : 0)
-	       | (((memid) t->u.image_info->team_id) << 32) | 1;
+  next_memid = (t->u.image_info->id << 32) | 1;
   caf_current_team = t;
   sync_team (caf_current_team);
 }
@@ -1853,26 +1981,31 @@ void
 _gfortran_caf_end_team (int *stat, char *errmsg, size_t errmsg_len)
 {
   caf_shmem_team_t t = caf_current_team;
-
-  if (stat)
-    *stat = 0;
+  int terminated;
 
   caf_current_team = caf_current_team->parent;
   next_memid = t->parent_teams_last_active_memid;
-  sync_team (t);
+  /* The active images synchronize even with a stopped image, unlike in
+     SYNC ALL (F2023 11.7.11).  */
+  counter_barrier_wait (&t->u.image_info->image_count, &terminated);
 
   for (struct coarray_allocated *ca = t->allocated; ca;)
     {
       struct coarray_allocated *nca = ca->next;
       _gfortran_caf_deregister ((caf_token_t *) &ca->token,
-				CAF_DEREGTYPE_COARRAY_DEALLOCATE_ONLY, stat,
-				errmsg, errmsg_len);
+				CAF_DEREGTYPE_COARRAY_DEALLOCATE_ONLY, NULL,
+				NULL, 0);
       free (ca);
       ca = nca;
     }
   t->allocated = NULL;
   t->parent = caf_teams_formed;
   caf_teams_formed = t;
+
+  if (terminated)
+    TEAM_HEALTH_CHECK (t, stat, errmsg, errmsg_len);
+  else if (stat)
+    *stat = 0;
 }
 
 void
@@ -1881,6 +2014,7 @@ _gfortran_caf_sync_team (caf_team_t team, int *stat, char *errmsg,
 {
   caf_shmem_team_t team_to_sync = (caf_shmem_team_t) team;
   caf_shmem_team_t active_team = caf_current_team;
+  int terminated;
 
   if (stat)
     *stat = 0;
@@ -1902,7 +2036,14 @@ _gfortran_caf_sync_team (caf_team_t team, int *stat, char *errmsg,
       return;
     }
 
-  sync_team (team_to_sync);
+  /* With a stopped image this only has the effect of SYNC MEMORY, with a
+     failed image the active images are synchronized; both are reported
+     (F2023 11.7.11).  An image terminating after the images synchronized
+     was not involved in the statement.  */
+  if (!sync_team_unless_stopped (team_to_sync, &terminated) || terminated)
+    TEAM_HEALTH_CHECK (team_to_sync, stat, errmsg, errmsg_len);
+  else if (stat)
+    *stat = 0;
 }
 
 int

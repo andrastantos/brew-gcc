@@ -55,6 +55,37 @@ GOMP_single_start (void)
 #endif
 }
 
+/* OMPT variant enabled by -fopenmp-ompt.  */
+
+bool
+GOMP_single_start_with_end (void)
+{
+#ifdef HAVE_SYNC_BUILTINS
+  struct gomp_thread *thr = gomp_thread ();
+  struct gomp_team *team = thr->ts.team;
+  unsigned long single_count;
+
+  if (__builtin_expect (team == NULL, 0))
+    return true;
+
+  single_count = thr->ts.single_count++;
+  return __sync_bool_compare_and_swap (&team->single_count, single_count,
+				       single_count + 1L);
+#else
+  bool ret = gomp_work_share_start (0);
+  if (ret)
+    gomp_work_share_init_done ();
+  gomp_work_share_end_nowait ();
+  return ret;
+#endif
+}
+
+/* Stub for OMPT callback enabled by -fopenmp-ompt.  */
+
+void
+GOMP_single_end (void)
+{}
+
 /* This routine is called when first encountering a SINGLE construct that
    does have a COPYPRIVATE clause.  Returns NULL if this is the thread
    that should execute the clause; otherwise the return value is pointer
@@ -69,7 +100,7 @@ GOMP_single_copy_start (void)
   void *ret;
 
   first = gomp_work_share_start (0);
-  
+
   if (first)
     {
       gomp_work_share_init_done ();
@@ -77,7 +108,7 @@ GOMP_single_copy_start (void)
     }
   else
     {
-      gomp_team_barrier_wait (&thr->ts.team->barrier);
+      gomp_team_barrier_wait (&thr->ts.team->barrier, thr->ts.team_id);
 
       ret = thr->ts.work_share->copyprivate;
       gomp_work_share_end_nowait ();
@@ -98,7 +129,7 @@ GOMP_single_copy_end (void *data)
   if (team != NULL)
     {
       thr->ts.work_share->copyprivate = data;
-      gomp_team_barrier_wait (&team->barrier);
+      gomp_team_barrier_wait (&team->barrier, thr->ts.team_id);
     }
 
   gomp_work_share_end_nowait ();

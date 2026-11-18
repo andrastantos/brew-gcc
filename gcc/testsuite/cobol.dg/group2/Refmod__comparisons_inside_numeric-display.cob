@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/Refmod__comparisons_inside_numeric-display.out" }
         identification division.
       * """"" (quotes reset the syntax highlighting

@@ -1034,7 +1034,7 @@ struct mips_cpu_info {
 				      && mips_isa_rev <= 5))		\
 				 && !TARGET_MIPS16)
 
-/* ISA has a three-operand multiplication instruction.  */
+/* ISA has a three-operand 64-bit multiplication instruction.  */
 #define ISA_HAS_DMUL3		(TARGET_64BIT				\
 				 && TARGET_OCTEON			\
 				 && !TARGET_MIPS16)
@@ -1705,10 +1705,6 @@ FP_ASM_SPEC "\
 /* FIXME.  LONG_LONG_ACCUM_TYPE_SIZE should be 128 bits, but GCC
    doesn't support 128-bit integers for MIPS32 currently.  */
 #define LONG_LONG_ACCUM_TYPE_SIZE (TARGET_64BIT ? 128 : 64)
-
-/* long double is not a fixed mode, but the idea is that, if we
-   support long double, we also want a 128-bit integer type.  */
-#define MAX_FIXED_MODE_SIZE MIPS_LONG_DOUBLE_TYPE_SIZE
 
 /* Width in bits of a pointer.  */
 #ifndef POINTER_SIZE
@@ -2986,7 +2982,7 @@ while (0)
 		...
 		.uleb128 foo-$LFBxxx
 
-   The .uleb128 requies $LFBxxx to match the FDE start address, which is
+   The .uleb128 requires $LFBxxx to match the FDE start address, which is
    likewise a byte pointer rather than an ISA-encoded address.
 
    At the time of writing, this hook is not used for the function end

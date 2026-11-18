@@ -137,7 +137,7 @@ AARCH64_CORE("a64fx", a64fx, a64fx, V8_2A,  (F16, SVE), a64fx, 0x46, 0x001, -1)
 AARCH64_CORE("fujitsu-monaka", fujitsu_monaka, cortexa57, V9_3A, (F16, FAMINMAX, FP8FMA, FP8DOT2, FP8DOT4, LS64, LUT, RNG, CRYPTO, SVE2_AES, SVE2_BITPERM, SVE2_SHA3, SVE2_SM4), fujitsu_monaka, 0x46, 0x003, -1)
 
 /* HiSilicon ('H') cores. */
-AARCH64_CORE("hip12", hip12, cortexa57, V8_7A, (F16, PROFILE, RNG, SVE2_BITPERM, SVE2_AES, SVE2_SM4, SVE2_SHA3, LS64, RCPC3), hip12, 0x48, 0xd06, -1)
+AARCH64_CORE("hip12", hip12, hip12, V8_7A, (F16, PROFILE, RNG, SVE2_BITPERM, SVE2_AES, SVE2_SM4, SVE2_SHA3, LS64, RCPC3), hip12, 0x48, 0xd06, -1)
 AARCH64_CORE("tsv110",  tsv110, tsv110, V8_2A,  (CRYPTO, F16), tsv110,   0x48, 0xd01, -1)
 
 /* ARMv8.3-A Architecture Processors.  */
@@ -217,7 +217,7 @@ AARCH64_CORE("cortex-a720",  cortexa720, cortexa57, V9_2A,  (SVE2_BITPERM, MEMTA
 AARCH64_CORE("cortex-a720ae",  cortexa720ae, cortexa57, V9_2A,  (SVE2_BITPERM, MEMTAG, PROFILE), neoversen2, 0x41, 0xd89, -1)
 AARCH64_CORE("cortex-a725",  cortexa725, cortexa57, V9_2A, (SVE2_BITPERM, MEMTAG, PROFILE), neoversen3, 0x41, 0xd87, -1)
 
-AARCH64_CORE("cortex-a320", cortexa320, cortexa53, V9_2A, (SVE2_BITPERM, MEMTAG), cortexa53, 0x41, 0xd8f, -1)
+AARCH64_CORE("cortex-a320", cortexa320, cortexa53, V9_2A, (SVE2_BITPERM, MEMTAG), cortexa320, 0x41, 0xd8f, -1)
 
 AARCH64_CORE("cortex-x2",  cortexx2, cortexa57, V9A,  (SVE2_BITPERM, MEMTAG, I8MM, BF16), neoversen2, 0x41, 0xd48, -1)
 
@@ -245,6 +245,7 @@ AARCH64_CORE("demeter", demeter, cortexa57, V9A, (I8MM, BF16, SVE2_BITPERM, RNG,
 
 /* NVIDIA ('N') cores. */
 AARCH64_CORE("olympus", olympus, cortexa57, V9_2A, (SVE2_BITPERM, RNG, LS64, MEMTAG, PROFILE, FAMINMAX, FP8FMA, FP8DOT2, FP8DOT4, LUT, SVE2_AES, SVE2_SHA3, SVE2_SM4), olympus, 0x4e, 0x10, -1)
+AARCH64_CORE("rigel", rigel, cortexa57, V9_2A, (SVE2_BITPERM, RNG, LS64, MEMTAG, PROFILE, FAMINMAX, FP8FMA, FP8DOT2, FP8DOT4, LUT, SVE2_AES, SVE2_SHA3, SVE2_SM4), olympus, 0x4e, 0x11, -1)
 
 /* Armv9-A big.LITTLE processors.  */
 AARCH64_CORE("gb10",  gb10, cortexa57, V9_2A,  (SVE2_BITPERM, SVE2_AES, SVE2_SHA3, SVE2_SM4, MEMTAG, PROFILE), cortexx925, 0x41, AARCH64_BIG_LITTLE (0xd85, 0xd87), -1)

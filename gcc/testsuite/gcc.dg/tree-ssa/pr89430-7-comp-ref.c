@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -ftree-cselim -fdump-tree-cselim-details" } */
+/* { dg-options "-O2 -ftree-cselim -fdump-tree-phiopt1-details" } */
 
 typedef union {
   int i;
@@ -14,4 +14,4 @@ int foo(U *u, int b, int i)
   return u->i;
 }
 
-/* { dg-final { scan-tree-dump "Conditional store replacement" "cselim" } } */
+/* { dg-final { scan-tree-dump "Conditional store replacement" "phiopt1" } } */

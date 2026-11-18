@@ -139,7 +139,7 @@ arm_mac_lane_pair_qualifiers[SIMD_MAX_BUILTIN_ARGS]
       qualifier_none, qualifier_lane_pair_index };
 #define MAC_LANE_PAIR_QUALIFIERS (arm_mac_lane_pair_qualifiers)
 
-/* unsigned T (unsigned T, unsigned T, unsigend T, lane index).  */
+/* unsigned T (unsigned T, unsigned T, unsigned T, lane index).  */
 static enum arm_type_qualifiers
 arm_umac_lane_qualifiers[SIMD_MAX_BUILTIN_ARGS]
   = { qualifier_unsigned, qualifier_unsigned, qualifier_unsigned,
@@ -153,7 +153,7 @@ arm_usmac_lane_quadtup_qualifiers[SIMD_MAX_BUILTIN_ARGS]
       qualifier_none, qualifier_lane_quadtup_index };
 #define USMAC_LANE_QUADTUP_QUALIFIERS (arm_usmac_lane_quadtup_qualifiers)
 
-/* T (T, T, unsigend T, lane index).  */
+/* T (T, T, unsigned T, lane index).  */
 static enum arm_type_qualifiers
 arm_sumac_lane_quadtup_qualifiers[SIMD_MAX_BUILTIN_ARGS]
   = { qualifier_none, qualifier_none, qualifier_none,
@@ -942,12 +942,14 @@ const char *arm_scalar_builtin_types[] = {
    "__simd" #S "_" #T "_t",		\
    #G "__simd" #S "_" #T "_t",		\
    NULL_TREE, NULL_TREE, M##mode, qualifier_##Q},
+extern GTY(()) struct arm_simd_type_info arm_simd_types[];
 struct arm_simd_type_info arm_simd_types [] = {
 #include "arm-simd-builtin-types.def"
 };
 #undef ENTRY
 
 /* The user-visible __fp16 type.  */
+extern GTY(()) tree arm_fp16_type_node;
 tree arm_fp16_type_node = NULL_TREE;
 
 /* Back-end node type for brain float (bfloat) types.  */

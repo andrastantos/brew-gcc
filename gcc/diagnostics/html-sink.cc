@@ -106,8 +106,6 @@ private:
 
    Implemented:
    - message text
-
-   Known limitations/missing functionality:
    - title for page
    - file/line/column
    - error vs warning
@@ -115,6 +113,9 @@ private:
    - rules
    - fix-it hints
    - paths
+
+   Known limitations/missing functionality:
+   - disclosure widgets for expanding/collapsing hierarchy
 */
 
 class html_builder
@@ -861,9 +862,9 @@ add_labelled_value (xml::printer &xp,
 		    bool quote_value)
 {
   xp.push_tag ("div", true);
-  xp.set_attr ("id", id);
+  xp.set_attr ("id", std::move (id));
   xp.push_tag ("span");
-  xp.add_text (label);
+  xp.add_text (std::move (label));
   xp.add_text (" ");
   xp.pop_tag ("span");
   xp.push_tag ("span");
@@ -1052,13 +1053,13 @@ html_builder::make_element_for_diagnostic (const diagnostic_info &diagnostic,
 
   // Add any option as a suffix to the message
 
-  label_text option_text = label_text::take
-    (m_context.make_option_name (diagnostic.m_option_id,
-				 orig_diag_kind, diagnostic.m_kind));
-  if (option_text.get ())
+  label_text option_text
+    = m_context.get_option_name (diagnostic.m_option_id,
+				 orig_diag_kind, diagnostic.m_kind);
+if (option_text.get ())
     {
-      label_text option_url = label_text::take
-	(m_context.make_option_url (diagnostic.m_option_id));
+      label_text option_url
+	= m_context.get_option_url (diagnostic.m_option_id);
 
       xp.add_text (" ");
       auto option_span = make_span ("gcc-option");

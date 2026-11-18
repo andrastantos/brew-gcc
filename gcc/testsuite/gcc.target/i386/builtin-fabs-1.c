@@ -1,7 +1,6 @@
 /* PR target/122323 */
 /* { dg-do compile } */
 /* { dg-options "-O2 -mno-avx -msse2" } */
-/* { dg-add-options check_function_bodies } */
 /* Keep labels and directives ('.cfi_startproc', '.cfi_endproc').  */
 /* { dg-final { check-function-bodies "**" "" "" { target { ! ia32 } } {^\t?\.} } } */
 
@@ -20,5 +19,4 @@ foo (float x)
   return -__builtin_fabsf (x);
 }
 
-/* { dg-final { scan-assembler-times ".long	0" 3 { target { ! ia32 } } } } */
-/* { dg-final { scan-assembler-times ".long	-2147483648" 1 { target { ! ia32 } } } } */
+/* { dg-final { scan-assembler-times {.long\s-2147483648[\n\r]+\s.long\s0[\n\r]+\s.long\s0[\n\r]+\s.long\s0} 1 { target { ! ia32 } } } } */

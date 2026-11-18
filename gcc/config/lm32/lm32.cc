@@ -64,7 +64,7 @@ struct lm32_frame_info
 };
 
 /* Prototypes for static functions.  */
-static rtx emit_add (rtx dest, rtx src0, rtx src1);
+static rtx_insn *emit_add (rtx dest, rtx src0, rtx src1);
 static void expand_save_restore (struct lm32_frame_info *info, int op);
 static void stack_adjust (HOST_WIDE_INT amount);
 static bool lm32_in_small_data_p (const_tree);
@@ -120,8 +120,6 @@ static HOST_WIDE_INT lm32_starting_frame_offset (void);
 #define TARGET_MAX_ANCHOR_OFFSET 0x7fff
 #undef TARGET_CAN_ELIMINATE
 #define TARGET_CAN_ELIMINATE lm32_can_eliminate
-#undef TARGET_LRA_P
-#define TARGET_LRA_P hook_bool_void_false
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P lm32_legitimate_address_p
 #undef TARGET_HARD_REGNO_MODE_OK
@@ -165,10 +163,10 @@ lm32_return_in_memory (tree type)
 
 /* Generate an emit a word sized add instruction.  */
 
-static rtx
+static rtx_insn *
 emit_add (rtx dest, rtx src0, rtx src1)
 {
-  rtx insn;
+  rtx_insn *insn;
   insn = emit_insn (gen_addsi3 (dest, src0, src1));
   return insn;
 }
@@ -310,7 +308,7 @@ expand_save_restore (struct lm32_frame_info *info, int op)
   unsigned int reg_save_mask = info->reg_save_mask;
   int regno;
   HOST_WIDE_INT offset;
-  rtx insn;
+  rtx_insn *insn;
 
   /* Callee saves are below locals and above outgoing arguments.  */
   offset = info->args_size + info->callee_size;
@@ -361,7 +359,7 @@ expand_save_restore (struct lm32_frame_info *info, int op)
 static void
 stack_adjust (HOST_WIDE_INT amount)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   if (!IN_RANGE (amount, -32776, 32768))
     {
@@ -389,7 +387,7 @@ stack_adjust (HOST_WIDE_INT amount)
 void
 lm32_expand_prologue (void)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   lm32_compute_frame_size (get_frame_size ());
 
@@ -469,7 +467,7 @@ lm32_compute_frame_size (int size)
   callee_size = 0;
   reg_save_mask = 0;
 
-  /* Build mask that actually determines which regsiters we save
+  /* Build mask that actually determines which registers we save
      and calculate size required to store them in the stack.  */
   for (regno = 1; regno < SP_REGNUM; regno++)
     {
@@ -797,12 +795,9 @@ lm32_build_builtin_va_list (void)
 static void
 lm32_builtin_va_start (tree valist, rtx nextarg)
 {
-  const CUMULATIVE_ARGS *cum;
   tree ap_field, ap_reg_field;
   tree ap, ap_reg;
-  tree t;
   int pretend_args_size = crtl->args.pretend_args_size;
-  cum = &crtl->args.info;
 
   ap_field = TYPE_FIELDS(TREE_TYPE (valist));
   ap = build3 (COMPONENT_REF, TREE_TYPE (ap_field), valist,

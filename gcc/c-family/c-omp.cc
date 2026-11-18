@@ -175,7 +175,9 @@ c_finish_omp_barrier (location_t loc)
   tree x;
 
   x = builtin_decl_explicit (BUILT_IN_GOMP_BARRIER);
-  x = build_call_expr_loc (loc, x, 0);
+  x = build_call_expr_loc (loc, x, 1,
+			   build_int_cst (integer_type_node,
+					  GOMP_BARRIER_EXPLICIT));
   add_stmt (x);
 }
 
@@ -3153,6 +3155,10 @@ c_omp_declare_simd_clauses_to_numbers (tree parms, tree clauses)
 
   for (c = clauses; c; c = OMP_CLAUSE_CHAIN (c))
     {
+      if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_SIMDLEN
+	  && OMP_CLAUSE_SIMDLEN_TYPE (c))
+	sorry_at (OMP_CLAUSE_LOCATION (c),
+		  "%<simdlen%> clause with %<scaled%> modifier");
       if (OMP_CLAUSE_CODE (c) != OMP_CLAUSE_SIMDLEN
 	  && OMP_CLAUSE_CODE (c) != OMP_CLAUSE_INBRANCH
 	  && OMP_CLAUSE_CODE (c) != OMP_CLAUSE_NOTINBRANCH)
@@ -4384,13 +4390,219 @@ remap_mapper_decl_1 (tree *tp, int *walk_subtrees, void *data)
   return NULL_TREE;
 }
 
-/* Instantiate a mapper MAPPER for expression EXPR, adding new clauses to
-   OUTLIST.  OUTER_KIND is the mapping kind to use if not already specified in
-   the mapper declaration.  */
+static enum gomp_map_kind
+omp_split_map_kind (enum gomp_map_kind op, bool *force_p, bool *always_p,
+		    bool *present_p)
+{
+  *force_p = *always_p = *present_p = false;
+
+  switch (op)
+    {
+    case GOMP_MAP_FORCE_ALLOC:
+    case GOMP_MAP_FORCE_TO:
+    case GOMP_MAP_FORCE_FROM:
+    case GOMP_MAP_FORCE_TOFROM:
+    case GOMP_MAP_FORCE_PRESENT:
+      *force_p = true;
+      break;
+    case GOMP_MAP_ALWAYS_TO:
+    case GOMP_MAP_ALWAYS_FROM:
+    case GOMP_MAP_ALWAYS_TOFROM:
+      *always_p = true;
+      break;
+    case GOMP_MAP_ALWAYS_PRESENT_TO:
+    case GOMP_MAP_ALWAYS_PRESENT_FROM:
+    case GOMP_MAP_ALWAYS_PRESENT_TOFROM:
+      *always_p = true;
+      /* Fallthrough.  */
+    case GOMP_MAP_PRESENT_ALLOC:
+    case GOMP_MAP_PRESENT_TO:
+    case GOMP_MAP_PRESENT_FROM:
+    case GOMP_MAP_PRESENT_TOFROM:
+      *present_p = true;
+      break;
+    default:
+      ;
+    }
+
+  switch (op)
+    {
+    case GOMP_MAP_ALLOC:
+    case GOMP_MAP_FORCE_ALLOC:
+    case GOMP_MAP_PRESENT_ALLOC:
+      return GOMP_MAP_ALLOC;
+    case GOMP_MAP_TO:
+    case GOMP_MAP_FORCE_TO:
+    case GOMP_MAP_ALWAYS_TO:
+    case GOMP_MAP_PRESENT_TO:
+    case GOMP_MAP_ALWAYS_PRESENT_TO:
+      return GOMP_MAP_TO;
+    case GOMP_MAP_FROM:
+    case GOMP_MAP_FORCE_FROM:
+    case GOMP_MAP_ALWAYS_FROM:
+    case GOMP_MAP_PRESENT_FROM:
+    case GOMP_MAP_ALWAYS_PRESENT_FROM:
+      return GOMP_MAP_FROM;
+    case GOMP_MAP_TOFROM:
+    case GOMP_MAP_FORCE_TOFROM:
+    case GOMP_MAP_ALWAYS_TOFROM:
+    case GOMP_MAP_PRESENT_TOFROM:
+    case GOMP_MAP_ALWAYS_PRESENT_TOFROM:
+      return GOMP_MAP_TOFROM;
+    default:
+      ;
+    }
+
+  return op;
+}
+
+static enum gomp_map_kind
+omp_join_map_kind (enum gomp_map_kind op, bool force_p, bool always_p,
+		   bool present_p)
+{
+  gcc_assert (!force_p || !(always_p || present_p));
+
+  switch (op)
+    {
+    case GOMP_MAP_ALLOC:
+      if (force_p)
+	return GOMP_MAP_FORCE_ALLOC;
+      else if (present_p)
+	return GOMP_MAP_PRESENT_ALLOC;
+      break;
+
+    case GOMP_MAP_TO:
+      if (force_p)
+	return GOMP_MAP_FORCE_TO;
+      else if (always_p && present_p)
+	return GOMP_MAP_ALWAYS_PRESENT_TO;
+      else if (always_p)
+	return GOMP_MAP_ALWAYS_TO;
+      else if (present_p)
+	return GOMP_MAP_PRESENT_TO;
+      break;
+
+    case GOMP_MAP_FROM:
+      if (force_p)
+	return GOMP_MAP_FORCE_FROM;
+      else if (always_p && present_p)
+	return GOMP_MAP_ALWAYS_PRESENT_FROM;
+      else if (always_p)
+	return GOMP_MAP_ALWAYS_FROM;
+      else if (present_p)
+	return GOMP_MAP_PRESENT_FROM;
+      break;
+
+    case GOMP_MAP_TOFROM:
+      if (force_p)
+	return GOMP_MAP_FORCE_TOFROM;
+      else if (always_p && present_p)
+	return GOMP_MAP_ALWAYS_PRESENT_TOFROM;
+      else if (always_p)
+	return GOMP_MAP_ALWAYS_TOFROM;
+      else if (present_p)
+	return GOMP_MAP_PRESENT_TOFROM;
+      break;
+
+    default:
+      ;
+    }
+
+  return op;
+}
+
+/* Map kind decay (OpenMP 5.2, 5.8.8 "declare mapper Directive").  Return the
+   map kind to use given MAPPER_KIND specified in the mapper and INVOKED_AS
+   specified on the clause that invokes the mapper.  See also
+   fortran/trans-openmp.cc:omp_map_decayed_kind.  */
+
+static enum gomp_map_kind
+omp_map_decayed_kind (enum gomp_map_kind mapper_kind,
+		      enum gomp_map_kind invoked_as, bool exit_p)
+{
+  if (invoked_as == GOMP_MAP_RELEASE || invoked_as == GOMP_MAP_DELETE)
+    return invoked_as;
+
+  bool m_force_p, m_always_p, m_present_p;
+  bool force_p, always_p, present_p;
+
+  mapper_kind = omp_split_map_kind (mapper_kind, &m_force_p, &m_always_p, &m_present_p);
+  invoked_as = omp_split_map_kind (invoked_as, &force_p, &always_p, &present_p);
+  gomp_map_kind decay_to;
+
+  switch (mapper_kind)
+    {
+    case GOMP_MAP_ALLOC:
+      if (exit_p && invoked_as == GOMP_MAP_FROM)
+	decay_to = GOMP_MAP_RELEASE;
+      else
+	decay_to = GOMP_MAP_ALLOC;
+      break;
+
+    case GOMP_MAP_TO:
+      if (invoked_as == GOMP_MAP_FROM)
+	decay_to = exit_p ? GOMP_MAP_RELEASE : GOMP_MAP_ALLOC;
+      else if (invoked_as == GOMP_MAP_ALLOC)
+	decay_to = GOMP_MAP_ALLOC;
+      else
+	decay_to = GOMP_MAP_TO;
+      break;
+
+    case GOMP_MAP_FROM:
+      if (invoked_as == GOMP_MAP_ALLOC || invoked_as == GOMP_MAP_TO)
+	decay_to = GOMP_MAP_ALLOC;
+      else
+	decay_to = GOMP_MAP_FROM;
+      break;
+
+    case GOMP_MAP_TOFROM:
+    case GOMP_MAP_UNSET:
+      decay_to = invoked_as;
+      break;
+
+    default:
+      gcc_unreachable ();
+    }
+
+  return omp_join_map_kind (decay_to, m_force_p | force_p,
+			    m_always_p | always_p, m_present_p | present_p);
+}
+
+/* Return a name to use for a "basic" map kind, e.g. as output from
+   omp_split_map_kind above.  */
+
+static const char *
+omp_basic_map_kind_name (enum gomp_map_kind kind)
+{
+  switch (kind)
+    {
+    case GOMP_MAP_ALLOC:
+      return "alloc";
+    case GOMP_MAP_TO:
+      return "to";
+    case GOMP_MAP_FROM:
+      return "from";
+    case GOMP_MAP_TOFROM:
+      return "tofrom";
+    case GOMP_MAP_RELEASE:
+      return "release";
+    case GOMP_MAP_DELETE:
+      return "delete";
+    default:
+      gcc_unreachable ();
+    }
+}
+
+/* Instantiate a mapper MAPPER for expression EXPR at location LOC,
+   adding new clauses to OUTLIST.  OUTER_KIND is the mapping kind
+   to use if not already specified in the mapper declaration; ORT
+   denotes the directive that uses the mapper.
+   The resulting OUTLIST is also returned by the function.  */
 
 static tree *
-omp_instantiate_mapper (tree *outlist, tree mapper, tree expr,
-			enum gomp_map_kind outer_kind)
+omp_instantiate_mapper (location_t loc, tree *outlist, tree mapper, tree expr,
+			enum gomp_map_kind outer_kind,
+			enum c_omp_region_type ort)
 {
   tree clauses = OMP_DECLARE_MAPPER_CLAUSES (mapper);
   tree dummy_var = OMP_DECLARE_MAPPER_DECL (mapper);
@@ -4421,7 +4633,6 @@ omp_instantiate_mapper (tree *outlist, tree mapper, tree expr,
 
       if (TREE_CODE (t) == OMP_ARRAY_SECTION)
 	{
-	  location_t loc = OMP_CLAUSE_LOCATION (c);
 	  tree t2 = lang_hooks.decls.omp_map_array_section (loc, t);
 
 	  if (t2 == t)
@@ -4447,8 +4658,14 @@ omp_instantiate_mapper (tree *outlist, tree mapper, tree expr,
 
       walk_tree (&unshared, remap_mapper_decl_1, &map_info, NULL);
 
-      if (OMP_CLAUSE_MAP_KIND (unshared) == GOMP_MAP_UNSET)
-	OMP_CLAUSE_SET_MAP_KIND (unshared, outer_kind);
+      OMP_CLAUSE_LOCATION (unshared) = loc;
+
+      enum gomp_map_kind decayed_kind
+	= omp_map_decayed_kind (clause_kind, outer_kind,
+				(ort & C_ORT_EXIT_DATA) != 0
+				|| (outer_kind == GOMP_MAP_FROM
+				    && (ort & C_ORT_UPDATE) != 0));
+      OMP_CLAUSE_SET_MAP_KIND (unshared, decayed_kind);
 
       type = TYPE_MAIN_VARIANT (type);
 
@@ -4465,11 +4682,8 @@ omp_instantiate_mapper (tree *outlist, tree mapper, tree expr,
 	    = lang_hooks.decls.omp_extract_mapper_directive (mapper_fn);
 	  if (nested_mapper != mapper)
 	    {
-	      if (clause_kind == GOMP_MAP_UNSET)
-		clause_kind = outer_kind;
-
-	      outlist = omp_instantiate_mapper (outlist, nested_mapper,
-						t, clause_kind);
+	      outlist = omp_instantiate_mapper (loc, outlist, nested_mapper,
+						t, outer_kind, ort);
 	      continue;
 	    }
 	}
@@ -4479,8 +4693,52 @@ omp_instantiate_mapper (tree *outlist, tree mapper, tree expr,
 	  continue;
 	}
 
-      *outlist = unshared;
-      outlist = &OMP_CLAUSE_CHAIN (unshared);
+      if (ort & C_ORT_UPDATE)
+	{
+	  bool force_p, always_p, present_p;
+	  decayed_kind
+	    = omp_split_map_kind (decayed_kind, &force_p, &always_p,
+				  &present_p);
+	  /* We don't expect to see these flags here.  */
+	  gcc_assert (!force_p && !always_p);
+	  /* For a "target update" operation, we want to turn the map node
+	     expanded from the mapper back into a OMP_CLAUSE_TO or
+	     OMP_CLAUSE_FROM node.  If we can do neither, emit a warning and
+	     drop the clause.  */
+	  switch (decayed_kind)
+	    {
+	    case GOMP_MAP_TO:
+	    case GOMP_MAP_FROM:
+	      {
+		tree xfer
+		  = build_omp_clause (loc, (decayed_kind == GOMP_MAP_TO
+					    ? OMP_CLAUSE_TO : OMP_CLAUSE_FROM));
+		OMP_CLAUSE_DECL (xfer) = OMP_CLAUSE_DECL (unshared);
+		OMP_CLAUSE_SIZE (xfer) = OMP_CLAUSE_SIZE (unshared);
+		/* For FROM/TO clauses, "present" is represented by a flag.
+		   Set it for the expanded clause here.  */
+		if (present_p)
+		  OMP_CLAUSE_MOTION_PRESENT (xfer) = 1;
+		*outlist = xfer;
+		outlist = &OMP_CLAUSE_CHAIN (xfer);
+	      }
+	      break;
+	    default:
+	      clause_kind
+		= omp_split_map_kind (clause_kind, &force_p, &always_p,
+				      &present_p);
+	      warning_at (loc, OPT_Wopenmp,
+			  "dropping %qs clause during mapper expansion "
+			  "in %<#pragma omp target update%>",
+			  omp_basic_map_kind_name (clause_kind));
+	      inform (OMP_CLAUSE_LOCATION (c), "for map clause here");
+	    }
+	}
+      else
+	{
+	  *outlist = unshared;
+	  outlist = &OMP_CLAUSE_CHAIN (unshared);
+	}
     }
 
   return outlist;
@@ -4491,24 +4749,32 @@ omp_instantiate_mapper (tree *outlist, tree mapper, tree expr,
    visible in the current parsing context.  */
 
 tree
-c_omp_instantiate_mappers (tree clauses)
+c_omp_instantiate_mappers (tree clauses, enum c_omp_region_type ort)
 {
   tree c, *pc, mapper_name = NULL_TREE;
 
   for (pc = &clauses, c = clauses; c; c = *pc)
     {
       bool using_mapper = false;
+      bool update_p = false, update_present_p = false;
 
       switch (OMP_CLAUSE_CODE (c))
 	{
+	case OMP_CLAUSE_TO:
+	case OMP_CLAUSE_FROM:
+	  update_p = true;
+	  if (OMP_CLAUSE_MOTION_PRESENT (c))
+	    update_present_p = true;
+	  /* Fallthrough.  */
 	case OMP_CLAUSE_MAP:
 	  {
 	    tree t = OMP_CLAUSE_DECL (c);
 	    tree type = NULL_TREE;
 	    bool nonunit_array_with_mapper = false;
 
-	    if (OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_PUSH_MAPPER_NAME
-		|| OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_POP_MAPPER_NAME)
+	    if (!update_p
+		&& (OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_PUSH_MAPPER_NAME
+		    || OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_POP_MAPPER_NAME))
 	      {
 		if (OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_PUSH_MAPPER_NAME)
 		  mapper_name = OMP_CLAUSE_DECL (c);
@@ -4545,9 +4811,22 @@ c_omp_instantiate_mappers (tree clauses)
 		continue;
 	      }
 
-	    enum gomp_map_kind kind = OMP_CLAUSE_MAP_KIND (c);
-	    if (kind == GOMP_MAP_UNSET)
-	      kind = GOMP_MAP_TOFROM;
+	    enum gomp_map_kind kind;
+	    if (update_p)
+	      {
+		if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_TO)
+		  kind = update_present_p ? GOMP_MAP_PRESENT_TO
+					  : GOMP_MAP_TO;
+		else
+		  kind = update_present_p ? GOMP_MAP_PRESENT_FROM
+					  : GOMP_MAP_FROM;
+	      }
+	    else
+	      {
+		kind = OMP_CLAUSE_MAP_KIND (c);
+		if (kind == GOMP_MAP_UNSET)
+		  kind = GOMP_MAP_TOFROM;
+	      }
 
 	    type = TYPE_MAIN_VARIANT (type);
 
@@ -4564,7 +4843,8 @@ c_omp_instantiate_mappers (tree clauses)
 	      {
 		tree mapper
 		  = lang_hooks.decls.omp_extract_mapper_directive (mapper_fn);
-		pc = omp_instantiate_mapper (pc, mapper, t, kind);
+		pc = omp_instantiate_mapper (OMP_CLAUSE_LOCATION (c),
+					     pc, mapper, t, kind, ort);
 		using_mapper = true;
 	      }
 	    else if (mapper_name)
@@ -4760,7 +5040,7 @@ c_omp_categorize_directive (const char *first, const char *second,
   return NULL;
 }
 
-/* Auxilliary helper function for c_omp_expand_variant_construct.  */
+/* Auxiliary helper function for c_omp_expand_variant_construct.  */
 
 static tree
 c_omp_expand_variant_construct_r (vec<struct omp_variant> &candidates,

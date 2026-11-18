@@ -1,3 +1,436 @@
+2026-11-09  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	* gm2-ici/M2Emit.mod: Removed.
+	* gm2-ici/README: Removed.
+	* gm2-ici/m2linemap.c: Removed.
+
+2026-11-04  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* gm2-libs/config-host.in: Replace AC_CONFIG_HEADER with AC_CONFIG_HEADERS.
+
+2026-10-26  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127991
+	* gm2-gcc/m2decl.cc (m2decl_DeclareKnownConstant): Build the
+	anonymous constant declaration without a name.
+
+2026-10-12  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* Make-lang.in: Do not makr m2.pod as .INTERMEDIATE but delete it
+	explicitly in clean targets.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* gm2-libs/config-host.in: Drop AC_HEADER_STDC.
+
+2026-10-09  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127794
+	* gm2-libs/M2Diagnostic.def (MemIncrLong): New procedure.
+	(MemDecrLong): Ditto.
+	(MemSetLong): Ditto.
+	(TotalHeapIncrLong): Ditto.
+	(TotalHeapDecrLong): Ditto.
+	* gm2-libs/M2Diagnostic.mod (MemIncrLong): New procedure.
+	(MemDecrLong): Ditto.
+	(MemSetLong): Ditto.
+	(TotalHeapIncrLong): Ditto.
+	(TotalHeapDecrLong): Ditto.
+	(MemIncr): Reimplement.
+	(MemDecr): Ditto.
+	(MemSet): Ditto.
+	(TotalHeapIncr): Ditto.
+	(TotalHeapDecr): Ditto.
+	* gm2-libs/LongStorage.def: New file.
+	* gm2-libs/LongStorage.mod: New file.
+	* gm2-libs/LongSysStorage.def: New file.
+	* gm2-libs/LongSysStorage.mod: New file.
+
+2026-09-29  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127657
+	* gm2-compiler/M2Quads.mod (BuildValFunction): Add filtering
+	spell check for unknown symbols.
+
+2026-09-26  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127622
+	* gm2-compiler/M2Base.mod (CheckCompatible): Rename t1 to left.
+	Rename t2 to right.
+	Add spellcheck hint format specifiers to unknown types.
+	* gm2-compiler/M2MetaError.mod (ConfigureFilter): New procedure.
+	(errorBlock): filterVar new field.
+	filterType new field.
+	filterConst new field.
+	(continuation): Add T V C filter modifiers.
+	(FilterOnType): New procedure.
+	(FilterOnVariable): Ditto.
+	(FilrerOnConst): Ditto.
+	(SpellHint): Call ConfigureFilter.
+	* gm2-compiler/M2StackSpell.def (FilterType): New procedure.
+	(FilterVariable): Ditto.
+	(FilrerConst): Ditto.
+	* gm2-compiler/M2StackSpell.mod (FilterKind): New type.
+	(FilterSet): Ditto.
+	(CurrentFilter): New variable.
+	(PushNameFilter): New procedure.
+	(PushCandidates): Pass PushNameFilter as callback.
+	(GetSpellHintFilter): New procedure.
+	(GetSpellHint): Reimplement.
+	(FilterType): New procedure.
+	(FilterVariable): Ditto.
+	(FilterConst): Ditto.
+	(Init): Initialize CurrentFilter.
+	* gm2-compiler/P3SymBuild.mod (P3StartBuildDefModule): Push base
+	module.
+	(P3EndBuildDefModule): Pop base module.
+	(P3StartBuildImpModule): Push base module.
+	(P3EndBuildImpModule): Pop base module.
+	(P3StartBuildProgModule): Push base module.
+	(P3EndBuildProgModule): Pop base module.
+	(StartBuildInnerModule): Push base module.
+	(EndBuildInnerModule): Pop base module.
+	* gm2-compiler/PCSymBuild.mod (PCEndBuildDefModule): Pop
+	base module.
+	(PCStartBuildImpModule): Push base module.
+	(PCEndBuildImpModule): Pop base module.
+	(PCStartBuildProgModule): Push base module.
+	(PCEndBuildProgModule): Pop base module.
+	(StartBuildInnerModule): Push base module.
+	(EndBuildInnerModule): Pop base module.
+
+2026-09-25  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127567
+	* gm2-compiler/P1SymBuild.mod (BuildImportInnerModule): Call
+	PutImported if sym is a defimp or module.
+	* gm2-compiler/SymbolConversion.def (Gcc2Mod): Correct parameter
+	name.
+	* gm2-compiler/SymbolConversion.mod (Gcc2Mod): Ditto.
+	* gm2-compiler/SymbolTable.mod (IsExternalModule): New procedure
+	function.
+	(AddSymToModuleScope): Only generate an error if the symbol is
+	not an external module.
+
+2026-09-22  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127554
+	* gm2-compiler/M2MetaError.mod (SpellHint): Allow error symbols to
+	be spell checked.
+	* gm2-compiler/M2Quads.mod (BuildConstructor): Generate a spelling
+	hint error message if the name is set and an error is seen.
+	(PopTntok): New procedure.
+	* gm2-compiler/PCBuild.bnf (CreateQualident): New procedure.
+	(PushQualident): Reimplement.
+	* gm2-compiler/PCSymBuild.mod (PCStartBuildDefModule): Push
+	module to spelling stack.
+	(PCStartBuildImpModule): Ditto.
+	(PCStartBuildInnerModule): Ditto.
+	(PCEndBuildDefModule): Pop top of spell stack.
+	(PCEndBuildImpModule): Ditto.
+	(PCEndBuildProgModule): Ditto.
+	(PCEndBuildInnerModule): Ditto.
+	(PCEndBuildProcedure): Ditto.
+	(PCBuildProcedureHeading): Ditto.
+	(PCEndBuildForward): Reimplement.
+
+2026-09-21  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127469
+	* gm2-compiler/M2Quads.mod (BuildConstructor): Check for
+	tok UnknownTokenNo and if not equal generate an error message
+	at tok stating the type is unknown.
+	* gm2-compiler/PCSymBuild.mod (WalkConvert): Check totype for
+	NulSym and if so return FALSE.
+
+2026-09-17  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/126174
+	* Make-lang.in (m2/gm2-libs.texi): Add test for
+	m2/gm2-libs-pim-common and create if necessary.
+	Add test for m2/gm2-libs-iso-common and create if necessary.
+	Add test for m2/gm2-libs-cor-common and create if necessary.
+	* tools-src/def2doc.py (Base_Libs): Change section heading name.
+	(library_classifications): Add PIM_Common, ISO_Common and
+	COR_Common.
+	(PIM_Common): New list.
+	(ISO_Common): New list.
+	(COR_Common): New list.
+	* gm2-libs-cor-common/README.texi: New file.
+	* gm2-libs-iso-common/README.texi: New file.
+	* gm2-libs-pim-common/README.texi: New file.
+
+2026-09-16  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/127359
+	* tools-src/makeSystem: Replace echo with printf equivalent.
+
+2026-09-11  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	* gm2-gcc/m2builtins.cc (define_builtin): Reimplement.
+	(do_define_builtin): New function.
+	(data_type_supported): Ditto.
+	(param_data_type_supported): Ditto.
+	(dump_builtin): Call dump_available if
+	param_data_type_supported.
+	* gm2-libs-iso-common/ComplexMath.def (arcsin): Replace
+	with template tag.
+	(arccos): Ditto.
+	(arctan): Ditto.
+	* gm2-libs-iso-common/ComplexMath.mod (arcsin): Replace
+	with template tag.
+	(arccos): Ditto.
+	(arctan): Ditto.
+	* gm2-libs-iso-common/LongComplexMath.def (arcsin): Replace
+	with template tag.
+	(arccos): Ditto.
+	(arctan): Ditto.
+	* gm2-libs-iso-common/LongComplexMath.mod (arcsin): Replace
+	with template tag.
+	(arccos): Ditto.
+	(arctan): Ditto.
+	* gm2-libs-iso-common/ShortComplexMath.def (arcsin): Replace
+	with template tag.
+	(arccos): Ditto.
+	(arctan): Ditto.
+	* gm2-libs-iso-common/ShortComplexMath.mod (arcsin): Replace
+	with template tag.
+	(arccos): Ditto.
+	(arctan): Ditto.
+	* gm2-libs-pim-common/Builtins.def (carcsinf): Replace
+	with template tag.
+	(carcsin): Ditto.
+	(carcsinl): Ditto.
+	(carccosf): Ditto.
+	(carccos): Ditto.
+	(carccosl): Ditto.
+	(carctanf): Ditto.
+	(carctan): Ditto.
+	(carctanl): Ditto.
+	* gm2-libs-pim-common/Builtins.mod: (carcsinf): Replace
+	with template tag.
+	(carcsin): Ditto.
+	(carcsinl): Ditto.
+	(carccosf): Ditto.
+	(carccos): Ditto.
+	(carccosl): Ditto.
+	(carctanf): Ditto.
+	(carctan): Ditto.
+	(carctanl): Ditto.
+	* gm2-libs-pim-common/cbuiltin.def (casinf): Replace
+	with template tag.
+	(casin): Ditto.
+	(casinl): Ditto.
+	(cacosf): Ditto.
+	(cacos): Ditto.
+	(cacosl): Ditto.
+	(catanf): Ditto.
+	(catan): Ditto.
+	(catanl): Ditto.
+	* gm2spec.cc (lang_specific_driver): Comment formatting.
+	* tools-src/mktargetsrc.py (do_output_mod_builtin): New
+	function.
+	(output_mod_builtin): Ditto.
+	(list_of_builtins): Add casin, casinf, casinl, cacos, cacosf,
+	cacosl, catan, catanf and catanl.
+
+2026-09-07  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/126847
+	* Make-lang.in (TEXILIBSRC): New define.
+	(m2/stage1/cc1gm2$(exeext)): Rewrite.
+	(m2/gm2-gcc/$(SRC_PREFIX)%.h): Add order-only dependancy.
+	(m2/gm2-libs-boot/M2RTS.o): Ditto.
+	(m2/gm2-libs-boot/%.o): Ditto.
+	(m2/gm2-libs-boot/$(SRC_PREFIX)%.h): Ditto.
+	(m2/gm2-libs-boot/RTintdummy.o): Ditto.
+	(m2/gm2-libs-boot/wrapc.o): Ditto.
+	(m2/gm2-libs-boot/UnixArgs.o): Ditto.
+	(m2/gm2-libs-boot/choosetemp.o): Ditto.
+	(m2/gm2-libs-boot/errno.o): Ditto.
+	(m2/gm2-libs-boot/dtoa.o): Ditto.
+	(m2/gm2-libs-boot/ldtoa.o): Ditto.
+	(m2/gm2-libs-boot/termios.o): Ditto.
+	(m2/gm2-libs-boot/SysExceptions.o): Ditto.
+	(m2/gm2-libs-boot/SysStorage.o): Ditto.
+	(m2/gm2-libs-boot/Selective.o): Ditto.
+	(m2/gm2-compiler-boot/M2GCCDeclare.o): Ditto.
+	(m2/gm2-compiler-boot/M2Error.o): Ditto.
+	(m2/gm2-compiler-boot/%.o): Ditto.
+	(m2/gm2-compiler-boot/$(SRC_PREFIX)%.h): Ditto.
+	(m2/gm2-compiler-boot/P0SyntaxCheck.c): Ditto.
+	(m2/gm2-compiler-boot/P0SyntaxCheck.o): Ditto.
+	(m2/gm2-compiler-boot/P1Build.c): Ditto.
+	(m2/gm2-compiler-boot/P1Build.o): Ditto.
+	(m2/gm2-compiler-boot/P2Build.c): Ditto.
+	(m2/gm2-compiler-boot/P2Build.o): Ditto.
+	(m2/gm2-compiler-boot/P3Build.c): Ditto.
+	(m2/gm2-compiler-boot/P3Build.o): Ditto.
+	(m2/gm2-compiler-boot/PCBuild.c): Ditto.
+	(m2/gm2-compiler-boot/PCBuild.o): Ditto.
+	(m2/gm2-compiler-boot/PHBuild.c): Ditto.
+	(m2/gm2-compiler-boot/PHBuild.o): Ditto.
+	(m2/gm2-compiler-boot/m2flex.o): Ditto.
+	(m2/gm2-libiberty/$(SRC_PREFIX)%.h): Ditto.
+	(m2/gm2-compiler/%.o): Ditto.
+	(m2/gm2-compiler/m2flex.o): Ditto.
+	(m2/gm2-libs/choosetemp.o): Ditto.
+	(m2/gm2-libs-boot/libgm2.a): Ditto.
+	(m2/gm2-compiler-boot/gm2.a): Ditto.
+
+2026-08-24  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	* Make-lang.in (GM2_FOR_TARGET_ESC): Remove.
+	(m2/gm2-libs/Builtins.def): Use "$(GM2_FOR_TARGET)" instead of
+	$(GM2_FOR_TARGET_ESC).
+	(m2/gm2-libs/Builtins.mod): Ditto.
+	(m2/gm2-libs/SYSTEM.def): Ditto.
+	(m2/gm2-libs-iso/SYSTEM.def): Ditto.
+
+2026-08-19  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/126911
+	* tools-src/mktargetsrc.py (safeRemove): New function.
+	(quietSystem): Call safeRemove for temporaryFile and
+	args.outputfile.
+
+2026-08-19  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/126911
+	* tools-src/mktargetsrc.py (quietSystem): Add temporaryFile
+	parameter.
+	Tidy up if result is non zero by removing temporaryFile
+	and args.outputfile.
+
+2026-08-12  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/125129
+	* Make-lang.in (escape_path): New define.
+	(GM2_FOR_TARGET_ESC): New define.
+	(RSTSRC): Remove.
+	(gm2-libs.texi-check): Rewrite without $(objdir).
+	(m2/gm2-libs.rst): Remove.
+	(gm2-ebnf.rst): Ditto.
+	(gm2-ebnf.rst-check): Ditto.
+	(SYSTEM-pim-texi-check): Ditto.
+	(m2/SYSTEM-pim.rst): Ditto.
+	(m2/SYSTEM-iso.texi): Rewrite without $(objdir).
+	(Builtins.texi-check): Rewrite specifying $(srcdir).
+	(m2/Builtins.rst): Remove.
+	(MC_ARGS): Add -I$(srcdir)/m2/gm2-libs-pim-common
+	and -I$(srcdir)/m2/mc-boot-ch.
+	(m2/mc-boot/$(SRC_PREFIX)%.o): Add -I$(srcdir)/m2/mc-boot-ch.
+	(m2/mc-boot-ch/$(SRC_PREFIX)%.o): Ditto.
+	(MC_BOOT_INCLUDES): New define.
+	(m2/gm2-libs-boot/UnixArgs.o): Add MC_BOOT_INCLUDES.
+	(m2/gm2-libs-boot/choosetemp.o): Ditto.
+	(m2/gm2-libs-boot/errno.o): Ditto.
+	(m2/gm2-libs-boot/dtoa.o): Ditto.
+	(m2/gm2-libs-boot/ldtoa.o): Ditto.
+	(m2/gm2-libs-boot/termios.o): Ditto.
+	(m2/gm2-libs-boot/SysExceptions.o): Ditto.
+	(m2/gm2-libs-boot/SysStorage.o): Ditto.
+	(m2/gm2-libs/Builtins.def): Rewrite.
+	(m2/gm2-libs/Builtins.mod): Ditto.
+	(m2/gm2-libs/SYSTEM.def): Ditto.
+	(m2/gm2-libs-iso/SYSTEM.def): Ditto.
+	(m2/gm2-libs-coroutines/SYSTEM.def): Ditto.
+	(m2/gm2-libs/%.o): Ditto.
+	* gm2-compiler/M2Options.def (SetDumpBuiltins): New procedure.
+	(GetDumpBuiltins): New procedure function.
+	* gm2-compiler/M2Options.mod (DumpBuiltinsFlag): New variable.
+	(SetDumpBuiltins): Implement new procedure.
+	(GetDumpBuiltins): Implement new procedure function.
+	* gm2-compiler/M2Quads.mod (BuildComponentValue): Removed unused
+	variable virtpos.
+	* gm2-gcc/m2builtins.cc (GM2_BUG_REPORT): Reformat.
+	(ASSERT): Ditto.
+	(ERROR): Ditto.
+	(dump_available): New funmction.
+	(define_builtin): Call dump_available if GetDumpBuiltins is set.
+	(dump_builtin): New function.
+	(m2builtins_init): Call dump_builtin.
+	* gm2-gcc/m2options.h (M2Options_SetDumpBuiltins): New prototype.
+	(M2Options_GetDumpBuiltins): Ditto.
+	* gm2-lang.cc (gm2_langhook_handle_option): Add OPT_fdump_builtins
+	case.
+	* gm2-libs-coroutines/SYSTEM.def: Move to...
+	* gm2-libs-cor-common/SYSTEM.def: ...here.
+	* gm2-libs-coroutines/SYSTEM.mod: Move to...
+	* gm2-libs-cor-common/SYSTEM.mod: ...here.
+	* gm2-libs-iso/ComplexMath.def: Move to...
+	* gm2-libs-iso-common/ComplexMath.def: ...here.
+	Add tags.
+	* gm2-libs-iso/ComplexMath.mod: Move to...
+	* gm2-libs-iso-common/ComplexMath.mod: ...here.
+	Add tags.
+	* gm2-libs-iso/LongComplexMath.def: Move to...
+	* gm2-libs-iso-common/LongComplexMath.def: ...here.
+	Add tags.
+	* gm2-libs-iso/LongComplexMath.mod: Move to...
+	* gm2-libs-iso-common/LongComplexMath.mod: ...here.
+	Add tags.
+	* gm2-libs-iso/SYSTEM.def: Move to...
+	* gm2-libs-iso-common/SYSTEM.def: ...here.
+	Add tags.
+	* gm2-libs-iso/SYSTEM.mod: Move to...
+	* gm2-libs-iso-common/SYSTEM.mod: ...here.
+	Add tags.
+	* gm2-libs-iso/ShortComplexMath.def: Move to...
+	* gm2-libs-iso-common/ShortComplexMath.def: ...here.
+	Add tags.
+	* gm2-libs-iso/ShortComplexMath.mod: Move to...
+	* gm2-libs-iso-common/ShortComplexMath.mod: ...here.
+	Add tags.
+	* gm2-libs/Builtins.def: Move to...
+	* gm2-libs-pim-common/Builtins.def: ...here.
+	Add tags.
+	* gm2-libs/Builtins.mod: Move to...
+	* gm2-libs-pim-common/Builtins.mod: ...here.
+	Add tags.
+	* gm2-libs/SYSTEM.def: Move to...
+	* gm2-libs-pim-common/SYSTEM.def: ...here.
+	Add tags.
+	* gm2-libs/SYSTEM.mod: Move to...
+	* gm2-libs-pim-common/SYSTEM.mod: ...here.
+	Add tags.
+	* gm2-libs/cbuiltin.def: Move to...
+	* gm2-libs-pim-common/cbuiltin.def: ...here.
+	Add tags.
+	* gm2-libs-min/SYSTEM.def: Add tags.
+	* lang.opt (fdump-builtins): Add.
+	* tools-src/def2doc.py: Modified to process tags.
+	* tools-src/makeSystem: Modified to reflect new tags.
+	* tools-src/mktargetsrc.py: New file.
+
+2026-07-10  Léo Hardt  <leom.hardt@inf.ufrgs.br>
+
+	* plugin/m2rte.cc: Removed unused extern bool
+	ggc_force_collect.
+
+2026-06-03  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/125512
+	* gm2-compiler/P3Build.bnf (SubDesignator): Rewrite to
+	include spell checking.
+
+2026-06-02  Gaius Mulley  <gaiusmod2@gmail.com>
+
+	PR modula2/125544
+	* gm2-libs-iso/Storage.def (REALLOCATE): Updated comment
+	describing new behavior.
+	* gm2-libs-iso/Storage.mod (REALLOCATE): Check addr
+	and call ALLOCATE if NIL else call lowerReallocate.
+	(lowerReallocate): New procedure.
+
+2026-05-19  Jakub Jelinek  <jakub@redhat.com>
+
+	PR other/125348
+	* gm2-compiler/M2GenGCC.mod (PerformLastForIterator): Fix diagnostic
+	typo, intemediate -> intermediate.
+
 2026-04-21  Gaius Mulley  <gaiusmod2@gmail.com>
 
 	PR modula2/120189

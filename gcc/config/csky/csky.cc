@@ -658,6 +658,9 @@ csky_default_logical_op_non_short_circuit (void)
 #undef	TARGET_CANNOT_COPY_INSN_P
 #define TARGET_CANNOT_COPY_INSN_P csky_cannot_copy_insn_p
 
+#undef	TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P csky_can_share_jump_table_p
+
 
 /******************************************************************
  *			Assembler Format			  *
@@ -959,7 +962,7 @@ push_csky_minipool_barrier (rtx_insn *insn, HOST_WIDE_INT address)
 /* Compute the size of a vector jump table.  */
 
 static HOST_WIDE_INT
-get_csky_jump_table_size (rtx insn)
+get_csky_jump_table_size (rtx_insn *insn)
 {
   /* ADDR_VECs only take room if read-only data does into the text
      section.  */
@@ -1160,7 +1163,7 @@ get_csky_barrier_cost (rtx_insn *insn)
      but at the moment, the basic block information seems to be
      corrupt by this stage of the compilation.  */
   int base_cost = 50;
-  rtx next = next_nonnote_insn (insn);
+  rtx_insn *next = next_nonnote_insn (insn);
 
   if (next != NULL && GET_CODE (next) == CODE_LABEL)
     base_cost -= 20;
@@ -1319,7 +1322,7 @@ print_csky_value (FILE *f, rtx x)
       return;
 
     case LABEL_REF:
-      fprintf (f, "L%d", INSN_UID (XEXP (x, 0)));
+      fprintf (f, "L%d", INSN_UID (label_ref_label (x)));
       return;
 
     case CONST:
@@ -1695,6 +1698,15 @@ csky_reorg (void)
 {
   if (TARGET_CONSTANT_POOL)
     csky_emit_constant_pools ();
+}
+
+/* Implement TARGET_CAN_SHARE_JUMP_TABLE_P.  The -mconstpool scan in
+   csky_emit_constant_pools expects every table to follow its jump.  */
+
+static bool
+csky_can_share_jump_table_p (rtx_insn *)
+{
+  return !TARGET_CONSTANT_POOL;
 }
 
 
@@ -3922,7 +3934,7 @@ csky_output_inline_const (machine_mode mode, rtx operands[])
      off to an lrw rather than calling this routine.  */
   gcc_assert (trick_type != IC_UNINLINABLE);
 
-  /* Operands: 0 = dst, 1 = load immedate., 2 = adjust immedate.  */
+  /* Operands: 0 = dst, 1 = load immediate., 2 = adjust immediate.  */
   out_operands[0] = operands[0];
   out_operands[1] = GEN_INT (x);
   if (trick_type != IC_SINGLE && trick_type != IC_APPEND_NOT)
@@ -5501,7 +5513,7 @@ expand_csky_stack_adjust (int offset)
    MASK for registers that should be annotated for DWARF2 frame unwind
    information.  */
 
-static rtx
+static rtx_insn *
 emit_csky_regs_push (unsigned long mask)
 {
   int num_regs = 0;
@@ -5597,17 +5609,17 @@ emit_csky_regs_push (unsigned long mask)
 	j++;
       }
 
-  par = emit_insn (par);
+  rtx_insn *insn = emit_insn (par);
 
   tmp = gen_rtx_SET (stack_pointer_rtx,
 		     plus_constant (Pmode, stack_pointer_rtx, -4 * num_regs));
   RTX_FRAME_RELATED_P (tmp) = 1;
   XVECEXP (dwarf, 0, 0) = tmp;
 
-  add_reg_note (par, REG_FRAME_RELATED_EXPR, dwarf);
-  RTX_FRAME_RELATED_P (par) = 1;
+  add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
+  RTX_FRAME_RELATED_P (insn) = 1;
 
-  return par;
+  return insn;
 }
 
 
@@ -5637,7 +5649,7 @@ emit_csky_regs_pop (unsigned long mask)
        (set (reg:SI 'first reg number')
 	    (unspec:SI [(mem)] UNSPEC_PUSHPOP_MULT),
      the rest elements is (use (reg:SI 'rest reg number')),
-     so the length should be number of register to be poped
+     so the length should be number of register to be popped
      plus one.  */
   par = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (num_regs + 1));
 
@@ -5743,8 +5755,9 @@ csky_expand_prologue (void)
 				       plus_constant (Pmode,
 						      stack_pointer_rtx,
 						      offset));
-		rtx insn = emit_insn (gen_movsi (dst,
-						 gen_rtx_REG (SImode, regno)));
+		rtx_insn *insn = emit_insn (gen_movsi (dst,
+						       gen_rtx_REG (SImode,
+								    regno)));
 		RTX_FRAME_RELATED_P (insn) = 1;
 		if (offset == stm_size)
 		  break;
@@ -5789,7 +5802,7 @@ csky_expand_prologue (void)
      "Function Prologue for PIC".  */
   if (flag_pic && (reg_mask & (1 << PIC_OFFSET_TABLE_REGNUM)))
     {
-      rtx l1 = gen_label_rtx ();
+      rtx_code_label *l1 = gen_label_rtx ();
       rtx grs_label = gen_rtx_LABEL_REF (SImode, l1);
       rtx reg_gb = gen_rtx_REG (SImode, PIC_OFFSET_TABLE_REGNUM);
       rtx reg_temp = gen_rtx_REG (SImode, 13);
@@ -6126,7 +6139,6 @@ csky_legitimize_pic_address (rtx orig, rtx reg, bool gotrel_p)
   if (GET_CODE (orig) == SYMBOL_REF || GET_CODE (orig) == LABEL_REF)
     {
       rtx pic_ref, address, rtx_tmp;
-      rtx insn;
       rtx pic_reg = gen_rtx_REG (SImode, PIC_OFFSET_TABLE_REGNUM);
       int subregs = 0;
 
@@ -6189,7 +6201,7 @@ csky_legitimize_pic_address (rtx orig, rtx reg, bool gotrel_p)
 	    }
 	}
 
-      insn = emit_move_insn (reg, pic_ref);
+      rtx_insn *insn = emit_move_insn (reg, pic_ref);
       /* Put a REG_EQUAL note on this insn,
 	 so that it can be optimized by loop.  */
       if (optimize_p)
@@ -7081,7 +7093,7 @@ csky_return_in_memory (const_tree type,
 
 /* Implement TARGET_DWARF_REGISTER_SPAN.
    Dwarf models VFP registers as  64-bit or 128-bit registers default.
-   GCC models tham as 32-bit registers, so we need to describe this to
+   GCC models them as 32-bit registers, so we need to describe this to
    the DWARF generation code.  Other registers can use the default.  */
 
 static rtx

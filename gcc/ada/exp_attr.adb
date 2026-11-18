@@ -131,20 +131,13 @@ package body Exp_Attr is
    --  Build a call to Disp_Get_Task_Id, passing Actual as actual parameter
 
    function Build_Record_VS_Func
-     (Attr       : Node_Id;
+     (N          : Node_Id;
       Formal_Typ : Entity_Id;
       Rec_Typ    : Entity_Id) return Entity_Id;
-   --  Validate the components, discriminants, and variants of a record type by
-   --  means of a function. Return the entity of the validation function. The
-   --  parameters are as follows:
-   --
-   --    * Attr - the 'Valid_Scalars attribute for which the function is
-   --      generated.
-   --
-   --    * Formal_Typ - the type of the generated function's only formal
-   --      parameter.
-   --
-   --    * Rec_Typ - the record type whose internals are to be validated
+   --  Insert before N the body of a function implementing the validation of
+   --  the components, discriminants, and variants of record type Rec_Type.
+   --  Formal_Typ is the type of the generated function's formal parameter.
+   --  Return the entity of the validation function.
 
    function Default_Streaming_Unavailable (Typ : Entity_Id) return Boolean;
    --  In most cases, references to unavailable streaming attributes
@@ -677,7 +670,7 @@ package body Exp_Attr is
    --------------------------
 
    function Build_Record_VS_Func
-     (Attr       : Node_Id;
+     (N          : Node_Id;
       Formal_Typ : Entity_Id;
       Rec_Typ    : Entity_Id) return Entity_Id
    is
@@ -688,7 +681,7 @@ package body Exp_Attr is
       --  NOTE: The routines within Build_Record_VS_Func are intentionally
       --  unnested to avoid deep indentation of code.
 
-      Loc : constant Source_Ptr := Sloc (Attr);
+      Loc : constant Source_Ptr := Sloc (N);
 
       procedure Validate_Component_List
         (Obj_Id    : Entity_Id;
@@ -714,6 +707,13 @@ package body Exp_Attr is
       --  Process component declarations or discriminant specifications in list
       --  Fields. Obj_Id denotes the entity of the validation parameter. All
       --  new code is added to list Stmts.
+
+      procedure Validate_Record
+        (Obj_Id : Entity_Id;
+         Typ    : Entity_Id;
+         Stmts  : in out List_Id);
+      --  Process record type Typ. Obj_Id denotes the entity of the validation
+      --  parameter. All new code is added to list Stmts.
 
       procedure Validate_Variant
         (Obj_Id : Entity_Id;
@@ -781,9 +781,12 @@ package body Exp_Attr is
          if Field_Nam in Name_uObject | Name_uParent | Name_uTag then
             null;
 
-         --  Do not process fields without any scalar components
+         --  Do not process fields without any scalar components, or whose type
+         --  is an unchecked union since we cannot know where they are.
 
-         elsif not Scalar_Part_Present (Field_Typ) then
+         elsif not Scalar_Part_Present (Field_Typ)
+           or else Is_Unchecked_Union (Field_Typ)
+         then
             null;
 
          --  Otherwise the field needs to be validated. Use Make_Identifier
@@ -852,13 +855,70 @@ package body Exp_Attr is
 
          if Present (Cond) then
             Append_New_To (Stmts,
-              Make_Implicit_If_Statement (Attr,
+              Make_Implicit_If_Statement (N,
                 Condition       => Cond,
                 Then_Statements => New_List (
                   Make_Simple_Return_Statement (Loc,
                     Expression => New_Occurrence_Of (Standard_False, Loc)))));
          end if;
       end Validate_Fields;
+
+      ---------------------
+      -- Validate_Record --
+      ---------------------
+
+      procedure Validate_Record
+        (Obj_Id : Entity_Id;
+         Typ    : Entity_Id;
+         Stmts  : in out List_Id)
+      is
+         Typ_Decl : constant Node_Id := Declaration_Node (Typ);
+         Typ_Def  : constant Node_Id := Type_Definition (Typ_Decl);
+
+         Comps   : Node_Id;
+         Typ_Ext : Node_Id;
+
+      begin
+         --  The components of a derived type are located in the extension part
+
+         if Nkind (Typ_Def) = N_Derived_Type_Definition then
+            Typ_Ext := Record_Extension_Part (Typ_Def);
+
+            if Present (Typ_Ext) then
+               Comps := Component_List (Typ_Ext);
+            else
+               Comps := Empty;
+            end if;
+
+         --  Otherwise the components are available in the definition
+
+         else
+            Comps := Component_List (Typ_Def);
+         end if;
+
+         --  Validate the discriminants
+
+         if not Is_Unchecked_Union (Typ) then
+            Validate_Fields
+              (Obj_Id => Obj_Id,
+               Fields => Discriminant_Specifications (Typ_Decl),
+               Stmts  => Stmts);
+         end if;
+
+         --  Validate the components and variant parts
+
+         Validate_Component_List
+           (Obj_Id    => Obj_Id,
+            Comp_List => Comps,
+            Stmts     => Stmts);
+
+         --  Recurse on the parent subtype, if any
+
+         if Present (Parent_Subtype (Typ)) then
+            Validate_Record
+              (Obj_Id, Validated_View (Parent_Subtype (Typ)), Stmts);
+         end if;
+      end Validate_Record;
 
       ----------------------
       -- Validate_Variant --
@@ -960,15 +1020,12 @@ package body Exp_Attr is
 
       --  Local variables
 
-      Func_Id  : constant Entity_Id := Make_Temporary (Loc, 'V',
-                                         Related_Node => Attr);
+      Func_Id  : constant Entity_Id :=
+                   Make_Temporary (Loc, 'V', Related_Node => N);
       Obj_Id   : constant Entity_Id := Make_Temporary (Loc, 'R');
-      Comps    : Node_Id;
-      Stmts    : List_Id;
-      Typ      : Entity_Id;
-      Typ_Decl : Node_Id;
-      Typ_Def  : Node_Id;
-      Typ_Ext  : Node_Id;
+
+      Stmts : List_Id;
+      Typ   : Entity_Id;
 
    --  Start of processing for Build_Record_VS_Func
 
@@ -979,26 +1036,6 @@ package body Exp_Attr is
 
       if Is_Class_Wide_Type (Typ) then
          Typ := Validated_View (Root_Type (Typ));
-      end if;
-
-      Typ_Decl := Declaration_Node (Typ);
-      Typ_Def  := Type_Definition (Typ_Decl);
-
-      --  The components of a derived type are located in the extension part
-
-      if Nkind (Typ_Def) = N_Derived_Type_Definition then
-         Typ_Ext := Record_Extension_Part (Typ_Def);
-
-         if Present (Typ_Ext) then
-            Comps := Component_List (Typ_Ext);
-         else
-            Comps := Empty;
-         end if;
-
-      --  Otherwise the components are available in the definition
-
-      else
-         Comps := Component_List (Typ_Def);
       end if;
 
       --  The code generated by this routine is as follows:
@@ -1039,21 +1076,7 @@ package body Exp_Attr is
 
       Stmts := No_List;
 
-      --  Validate the discriminants
-
-      if not Is_Unchecked_Union (Rec_Typ) then
-         Validate_Fields
-           (Obj_Id => Obj_Id,
-            Fields => Discriminant_Specifications (Typ_Decl),
-            Stmts  => Stmts);
-      end if;
-
-      --  Validate the components and variant parts
-
-      Validate_Component_List
-        (Obj_Id    => Obj_Id,
-         Comp_List => Comps,
-         Stmts     => Stmts);
+      Validate_Record (Obj_Id, Typ, Stmts);
 
       --  Generate:
       --    return True;
@@ -1076,7 +1099,7 @@ package body Exp_Attr is
          Set_Debug_Info_Off (Func_Id);
       end if;
 
-      Insert_Action (Attr,
+      Insert_Action (N,
         Make_Subprogram_Body (Loc,
           Specification =>
             Make_Function_Specification (Loc,
@@ -2062,7 +2085,44 @@ package body Exp_Attr is
          Subp     : out Entity_Id;
          Attr_Ref : Node_Id)
       is
+         type Spot_Kind is (None, Before, After, In_Empty_List);
+
+         type Spot (K : Spot_Kind := None) is record
+            case K is
+               when None =>
+                  null;
+
+               when Before | After =>
+                  N : Node_Id;
+
+               when In_Empty_List =>
+                  L     : List_Id;
+                  Scope : Scope_Kind_Id;
+            end case;
+         end record;
+         --  An object of type Spot represents a place where we can insert the
+         --  generated subprogram body. If K is Before, the place is right
+         --  before N. Similarly, if K is After, the place is right after N.
+         --  If K is In_Empty_List, L is an empty list and the place is inside
+         --  it; we additionally record the target scope in Scope because it
+         --  makes things more convenient.
+
          procedure Build;
+         --  Call Build_Type_Attr_Subprogram with appropriate parameters.
+
+         function Find_Insertion_Point_For_Ancestor
+           (Ancestor : Node_Id; Previous_Insertion_Point : Spot) return Spot;
+         --  Return the most appropriate insertion point that's at the same
+         --  depth as Ancestor, if one exists. Otherwise return a null spot.
+         --  Ancestor is an ancestor node of the node we want to call the
+         --  subprogram from. Previous_Insertion_Point is the latest insertion
+         --  point we found walking up the tree.
+
+         function Skip_Non_Source_Subps
+           (List : List_Id; Ancestor : Node_Id) return Spot;
+         --  Return the most appropriate place to insert the subprogram in List
+         --  (see comment inside body).
+
          procedure Build is
          begin
             Build_Type_Attr_Subprogram
@@ -2071,12 +2131,119 @@ package body Exp_Attr is
                Subp => Subp);
          end Build;
 
+         function Find_Insertion_Point_For_Ancestor
+           (Ancestor : Node_Id; Previous_Insertion_Point : Spot) return Spot
+         is
+            Ret : Spot := (K => None);
+         begin
+            if Is_List_Member (Ancestor) then
+               Ret :=
+                 Skip_Non_Source_Subps (List_Containing (Ancestor), Ancestor);
+
+               pragma Assert (Ret.K in Before | After);
+
+            --  A subprogram body usually occurs in a declaration list
+            --  (so we will take the preceding Is_List_Member = True path),
+            --  but not always. For a library unit subprogram, we want an
+            --  insertion point in the subprogram's declaration list
+            --  because later on we may need to see the inserted
+            --  declaration from within the declaration list. In the
+            --  preceding non-library-unit case, this visibility issue is
+            --  dealt with by choosing an insertion point outside of the
+            --  subprogram body, but that's not an option here. So if
+            --  Previous_Insertion_Point is a member of, for example, the
+            --  subprogram's statement list then it needs to be corrected.
+
+            elsif Nkind (Ancestor) = N_Subprogram_Body
+              and then Present (Declarations (Ancestor))
+              and then
+                (case Previous_Insertion_Point.K is
+                   when None           => True,
+                   when Before | After =>
+                     List_Containing (Previous_Insertion_Point.N)
+                     /= Declarations (Ancestor),
+                   when others         => False)
+              and then Nkind (Parent (Ancestor)) /= N_Subunit
+            then
+               Ret :=
+                 Skip_Non_Source_Subps (Declarations (Ancestor), Ancestor);
+
+               if Ret.K = In_Empty_List then
+                  Ret.Scope := Unique_Defining_Entity (Ancestor);
+               end if;
+
+               pragma Assert (Ret.K /= None);
+            end if;
+
+            return Ret;
+         end Find_Insertion_Point_For_Ancestor;
+
+         function Skip_Non_Source_Subps
+           (List : List_Id; Ancestor : Node_Id) return Spot
+         is
+            --  A hazard to avoid is use-before-definition
+            --  errors that can result when we have two of these
+            --  subprograms where one calls the other (e.g., given
+            --  Put_Image procedures for a composite type and
+            --  for a component type, the former will often call
+            --  the latter). At the time a subprogram is inserted,
+            --  we know that the one and only call to it is
+            --  somewhere in the subtree rooted at Ancestor.
+            --  So that placement constraint is easy to satisfy.
+            --  But if we construct another subprogram later and
+            --  if that second subprogram calls the first one,
+            --  then we need to be careful not to place the
+            --  second one ahead of the first one. That is the goal
+            --  of this loop. This may need to be revised if it turns
+            --  out that other stuff is being inserted on the list,
+            --  so that the "skip" loop terminates too early.
+
+            --  On the other hand, inserting things earlier might
+            --  offer more opportunities for sharing.
+            --  If Ancestor occurs in the statement list of a
+            --  subprogram body (ignore the HSS node for now),
+            --  then perhaps we should look for an insertion site
+            --  in the decl list of the subprogram body and only
+            --  look in the statement list if the decl list is empty.
+            --  Similarly if Ancestor occurs in the private decls list
+            --  for a package spec that has a non-empty visible
+            --  decls list. No examples where this would result in more
+            --  sharing and less duplication have been observed, so this
+            --  is just speculation.
+
+            Cursor : Node_Id := First (List);
+
+            Ret : Spot;
+         begin
+            if No (Cursor) then
+               --  We leave Scope to be initialized by the caller
+               return (K => In_Empty_List, L => List, Scope => <>);
+            end if;
+
+            Ret := (K => Before, N => Cursor);
+
+            while Cursor /= Ancestor
+              and then Nkind (Cursor) = N_Subprogram_Body
+              and then not Comes_From_Source (Cursor)
+            loop
+               Ret := (K => After, N => Cursor);
+               Next (Cursor);
+               exit when No (Cursor);
+            end loop;
+
+            return Ret;
+         end Skip_Non_Source_Subps;
+
+         --  Local variables
+
          Ancestor        : Node_Id := Attr_Ref;
-         Insertion_Scope : Entity_Id := Empty;
-         Insertion_Point : Node_Id := Empty;
-         Insert_Before   : Boolean := False;
+         Insertion_Scope : Entity_Id;
+         Insertion_Point : Spot := (K => None);
          First_Typ       : constant Entity_Id := First_Subtype (Typ);
          Typ_Comp_Unit   : Node_Id := Enclosing_Comp_Unit_Node (First_Typ);
+
+      --  Start of processing for Build_And_Insert_Type_Attr_Subp
+
       begin
          --  handle no-enclosing-comp-unit cases
          if No (Typ_Comp_Unit) then
@@ -2098,7 +2265,7 @@ package body Exp_Attr is
             --  we want to hoist to the same scope as First_Typ.
 
             Insertion_Scope := Scope (First_Typ);
-            Insertion_Point := Freeze_Node (First_Typ);
+            Insertion_Point := (K => After, N => Freeze_Node (First_Typ));
          else
             --  Typ is declared in a different unit, so
             --  hoist to library level.
@@ -2106,48 +2273,15 @@ package body Exp_Attr is
             pragma Assert (Is_Library_Level_Entity (First_Typ));
 
             while Present (Ancestor) loop
-               if Is_List_Member (Ancestor) then
-                  Insertion_Point := First (List_Containing (Ancestor));
-
-                  --  A hazard to avoid here is use-before-definition
-                  --  errors that can result when we have two of these
-                  --  subprograms where one calls the other (e.g., given
-                  --  Put_Image procedures for a composite type and
-                  --  for a component type, the former will often call
-                  --  the latter). At the time a subprogram is inserted,
-                  --  we know that the one and only call to it is
-                  --  somewhere in the subtree rooted at Ancestor.
-                  --  So that placement constraint is easy to satisfy.
-                  --  But if we construct another subprogram later and
-                  --  if that second subprogram calls the first one,
-                  --  then we need to be careful not to place the
-                  --  second one ahead of the first one. That is the goal
-                  --  of this loop. This may need to be revised if it turns
-                  --  out that other stuff is being inserted on the list,
-                  --  so that the loop terminates too early.
-
-                  --  On the other hand, it seems like inserting things
-                  --  earlier offers more opportunities for sharing.
-                  --  If Ancestor occurs in the statement list of a
-                  --  subprogram body (ignore the HSS node for now),
-                  --  then perhaps we should look for an insertion site
-                  --  in the decl list of the subprogram body and only
-                  --  look in the statement list if the decl list is empty.
-                  --  Similarly if Ancestor occors in the private decls list
-                  --  for a package spec that has a non-empty visible
-                  --  decls list. No examples where this would result in more
-                  --  sharing and less duplication have been observed, so this
-                  --  is just speculation.
-
-                  while Insertion_Point /= Ancestor
-                    and then Nkind (Insertion_Point) = N_Subprogram_Body
-                    and then not Comes_From_Source (Insertion_Point)
-                  loop
-                     Next (Insertion_Point);
-                  end loop;
-
-                  pragma Assert (Present (Insertion_Point));
-               end if;
+               declare
+                  Res : constant Spot :=
+                    Find_Insertion_Point_For_Ancestor
+                      (Ancestor, Insertion_Point);
+               begin
+                  if Res.K /= None then
+                     Insertion_Point := Res;
+                  end if;
+               end;
 
                if Nkind (Ancestor) = N_Subunit then
                   Ancestor := Corresponding_Stub (Ancestor);
@@ -2156,25 +2290,31 @@ package body Exp_Attr is
                end if;
             end loop;
 
-            if Present (Insertion_Point) then
-               Insert_Before := True;
-               Insertion_Scope :=
-                 Find_Enclosing_Scope (Insertion_Point);
-            end if;
+            Insertion_Scope :=
+              (case Insertion_Point.K is
+                 when None           => Empty,
+                 when Before | After =>
+                   Find_Enclosing_Scope (Insertion_Point.N),
+                 when In_Empty_List  => Insertion_Point.Scope);
          end if;
 
-         if Present (Insertion_Point)
-           and Present (Insertion_Scope)
-         then
+         if Insertion_Point.K /= None and Present (Insertion_Scope) then
             Push_Scope (Insertion_Scope);
             Build;
-            if Insert_Before then
-               Insert_Action
-                 (Insertion_Point, Ins_Action => Decl);
-            else
-               Insert_Action_After
-                 (Insertion_Point, Ins_Action => Decl);
-            end if;
+            case Insertion_Point.K is
+               when Before        =>
+                  Insert_Action (Insertion_Point.N, Ins_Action => Decl);
+
+               when After         =>
+                  Insert_Action_After (Insertion_Point.N, Ins_Action => Decl);
+
+               when In_Empty_List =>
+                  Append (Decl, To => Insertion_Point.L);
+                  Analyze (Decl);
+
+               when None          =>
+                  pragma Assert (False);
+            end case;
             Pop_Scope;
          else
             --  Hoisting was unsuccessful, so no need to
@@ -2233,6 +2373,8 @@ package body Exp_Attr is
          Formal_Typ : constant Entity_Id := Etype (Formal);
          Is_Written : constant Boolean   := Ekind (Formal) /= E_In_Parameter;
 
+         Call : Node_Id;
+
       begin
          --  The expansion depends on Item, the second actual, which is
          --  the object being streamed in or out.
@@ -2286,8 +2428,8 @@ package body Exp_Attr is
          --  operation is not inherited), we are all set, and can use the
          --  argument unchanged.
 
-         if not Is_Class_Wide_Type (Entity (Pref))
-           and then not Is_Class_Wide_Type (Etype (Item))
+         if not Is_Class_Wide_Type (Item_Typ)
+           and then not Is_Class_Wide_Type (Formal_Typ)
            and then Base_Type (Item_Typ) /= Base_Type (Formal_Typ)
          then
             --  Perform an unchecked conversion when either the argument or
@@ -2333,11 +2475,21 @@ package body Exp_Attr is
 
          --  And now rewrite the call
 
-         Rewrite (N,
-           Make_Procedure_Call_Statement (Loc,
-             Name                   => New_Occurrence_Of (Pname, Loc),
-             Parameter_Associations => Exprs));
+         Call := Make_Procedure_Call_Statement (Loc,
+           Name                   => New_Occurrence_Of (Pname, Loc),
+           Parameter_Associations => Exprs);
 
+         --  If the attribute has not been specified for a CW type, then we
+         --  must dispatch to the attribute of the specific type identified
+         --  by the tag of Item.
+
+         if Is_Class_Wide_Type (Entity (Pref))
+           and then Is_Dispatching_Operation (Pname)
+         then
+            Set_Controlling_Argument (Call, Item);
+         end if;
+
+         Rewrite (N, Call);
          Analyze (N);
       end Rewrite_Attribute_Proc_Call;
 
@@ -2461,9 +2613,7 @@ package body Exp_Attr is
                                 Name_Req => True)),
                           Attribute_Name => Name_Tag)),
 
-                    Right_Opnd =>
-                      Make_Integer_Literal (Loc,
-                        Type_Access_Level (P_Type))),
+                    Right_Opnd => Dynamic_Type_Access_Level (P_Type)),
 
                 Then_Statements =>
                   New_List (Make_Raise_Statement (Loc,
@@ -2998,7 +3148,8 @@ package body Exp_Attr is
                                 (Entity (Prefix (Enc_Object))))
               and then not No_Dynamic_Accessibility_Checks_Enabled (Enc_Object)
             then
-               Apply_Accessibility_Check (Prefix (Enc_Object), Typ, N);
+               Apply_Accessibility_Check_For_Conversion
+                 (Prefix (Enc_Object), Typ, N);
 
                --  Ada 2005 (AI-251): If the designated type is an interface we
                --  add an implicit conversion to force the displacement of the
@@ -3324,7 +3475,7 @@ package body Exp_Attr is
                   if Name_Buffer (J) = '.' then
                      Store_String_Chars ("__");
                   else
-                     Store_String_Char (Get_Char_Code (Name_Buffer (J)));
+                     Store_String_Char (Name_Buffer (J));
                   end if;
                end loop;
 
@@ -3552,6 +3703,25 @@ package body Exp_Attr is
             Rewrite (N,
               New_Occurrence_Of
                 (Extra_Constrained (Formal_Ent), Loc));
+
+         --  Extra formals are not created for Unchecked_Union parameters
+
+         elsif Present (Formal_Ent)
+           and then Ekind (Formal_Ent) /= E_In_Parameter
+           and then Is_Unchecked_Union (Base_Type (Etype (Formal_Ent)))
+         then
+            if Comes_From_Source (N) then
+               Error_Msg_N
+                 ("constraints cannot be determined for Unchecked_Union??", N);
+               Error_Msg_N
+                 ("\Program_Error will be raised for ''Constrained??", N);
+            end if;
+
+            Insert_Action (N,
+              Make_Raise_Program_Error (Loc,
+                Reason => PE_Unchecked_Union_Restriction));
+
+            Rewrite (N, New_Occurrence_Of (Boolean_Literals (False), Loc));
 
          --  If the prefix is an access to object, the attribute applies to
          --  the designated object, so rewrite with an explicit dereference.
@@ -4931,9 +5101,9 @@ package body Exp_Attr is
 
             --  Dispatching case with class-wide type
 
-            elsif Is_Class_Wide_Type (P_Type) then
+            elsif Is_Class_Wide_Type (U_Type) then
 
-               if Is_Mutably_Tagged_Type (P_Type) then
+               if Is_Mutably_Tagged_Type (U_Type) then
 
                   --  In mutably tagged case, rewrite
                   --    T'Class'Input (Strm)
@@ -4983,7 +5153,7 @@ package body Exp_Attr is
                end if;
 
                Read_Controlling_Tag (P_Type, Cntrl);
-               Fname := Find_Prim_Op (Root_Type (P_Type), TSS_Stream_Input);
+               Fname := Find_Prim_Op (U_Type, TSS_Stream_Input);
 
             --  For tagged types, use the primitive Input function
 
@@ -5352,6 +5522,9 @@ package body Exp_Attr is
       when Attribute_Loop_Entry =>
          Expand_Loop_Entry_Attribute (N);
 
+      when Attribute_At =>
+         Error_Msg_N ("expansion of attribute At is not yet supported", N);
+
       -------------
       -- Machine --
       -------------
@@ -5401,26 +5574,11 @@ package body Exp_Attr is
       when Attribute_Make =>
          declare
             Constructor_Params : List_Id := New_Copy_List (Expressions (N));
-            Constructor_Rhs    : Node_Id;
-            Result_Decl        : Node_Id;
-            Result_Id          : constant Entity_Id :=
-              Make_Temporary (Loc, 'D', N);
+
          begin
             if Is_Empty_List (Constructor_Params) then
                Constructor_Params := New_List;
             end if;
-
-            Result_Decl := Make_Object_Declaration (Loc,
-                             Defining_Identifier => Result_Id,
-                             Object_Definition   =>
-                               New_Occurrence_Of (Typ, Loc));
-
-            --  Suppress default initialization for result object.
-            --  Default init (except for tag, if tagged) will instead be
-            --  performed in the constructor procedure.
-
-            Mutate_Ekind (Result_Id, E_Variable);
-            Set_Suppress_Initialization (Result_Id);
 
             --  A call to the copy constructor can be a special case. Even if
             --  no copy constructor is declared (both explicitly by the user or
@@ -5430,44 +5588,167 @@ package body Exp_Attr is
             if Is_Copy_Constructor_Call (N)
               and then not Has_Copy_Constructor (Entity (Pref))
             then
-               if Nkind (First (Exprs)) = N_Parameter_Association
-               then
-                  Constructor_Rhs :=
-                    Relocate_Node (Explicit_Actual_Parameter (First (Exprs)));
+               if Nkind (First (Exprs)) = N_Parameter_Association then
+                  Rewrite (N,
+                    Relocate_Node
+                      (Explicit_Actual_Parameter (First (Exprs))));
                else
-                  Constructor_Rhs := Relocate_Node (First (Exprs));
+                  Rewrite (N, Relocate_Node (First (Exprs)));
                end if;
+
+               Analyze_And_Resolve (N, Typ);
 
             --  Otherwise build a prefixed-notation call
 
             else
                declare
-                  Constructor_Name : constant Node_Id :=
-                    Make_Selected_Component (Loc,
-                      Prefix        => New_Occurrence_Of (Result_Id, Loc),
-                      Selector_Name => Make_Identifier (Loc,
-                                         Direct_Attribute_Definition_Name
-                                           (Typ, Name_Constructor)));
                   Constructor_Call : Node_Id;
-               begin
-                  Set_Is_Prefixed_Call (Constructor_Name);
-                  Constructor_Call :=
-                    Make_Procedure_Call_Statement (Loc,
-                      Parameter_Associations => Constructor_Params,
-                      Name                   => Constructor_Name);
-                  Set_Is_Expanded_Constructor_Call (Constructor_Call, True);
+                  Constructor_Name : Node_Id;
+                  Result_Decl      : Node_Id;
+                  Result_Id        : Entity_Id;
 
-                  Constructor_Rhs :=
-                    Make_Expression_With_Actions (Loc,
-                      Actions => New_List (Result_Decl, Constructor_Call),
-                      Expression => New_Occurrence_Of (Result_Id, Loc));
+               begin
+                  --  Expand Lhs := T'Make (...) into:
+
+                  --    Lhs.<Type>_constructor_Att (...)
+
+                  if Nkind (Parent (N)) = N_Assignment_Statement then
+                     Constructor_Name :=
+                       Make_Selected_Component (Loc,
+                         Prefix        =>
+                           New_Copy_Tree (Name (Parent (N))),
+                         Selector_Name =>
+                           Make_Identifier (Loc,
+                             Direct_Attribute_Definition_Name (Typ,
+                               Name_Constructor)));
+
+                     Constructor_Call :=
+                       Make_Procedure_Call_Statement (Loc,
+                         Parameter_Associations => Constructor_Params,
+                         Name                   => Constructor_Name);
+
+                     Rewrite (Parent (N), Constructor_Call);
+                     Analyze (Parent (N));
+
+                  --  Expand Obj : <Type> := T'Make (...), where <Type> T is a
+                  --  limited type, into:
+
+                  --     Obj : <Type>;
+                  --     Obj.<Type>_constructor_Att (...)
+
+                  elsif Nkind (Parent (N)) = N_Object_Declaration
+                    and then Is_Limited_Type (Ptyp)
+                  then
+                     Result_Decl := Parent (N);
+                     Result_Id   := Defining_Identifier (Result_Decl);
+
+                     Set_Suppress_Initialization (Result_Id);
+
+                     --  For class-wide type object declarations we add a
+                     --  view conversion as the prefixed-call prefix so that
+                     --  analysis resolves to the specific type constructor.
+
+                     if Is_Class_Wide_Type (Etype (Result_Id)) then
+                        Constructor_Name :=
+                          Make_Selected_Component (Loc,
+                            Prefix        =>
+                              Make_Type_Conversion (Loc,
+                                Subtype_Mark =>
+                                  New_Occurrence_Of (Ptyp, Loc),
+                                Expression  =>
+                                  New_Occurrence_Of (Result_Id, Loc)),
+                            Selector_Name =>
+                              Make_Identifier (Loc,
+                                Direct_Attribute_Definition_Name (Typ,
+                                  Name_Constructor)));
+                     else
+                        Constructor_Name :=
+                          Make_Selected_Component (Loc,
+                            Prefix        =>
+                              New_Occurrence_Of (Result_Id, Loc),
+                            Selector_Name =>
+                              Make_Identifier (Loc,
+                                Direct_Attribute_Definition_Name (Typ,
+                                  Name_Constructor)));
+                     end if;
+
+                     Constructor_Call :=
+                       Make_Procedure_Call_Statement (Loc,
+                         Parameter_Associations => Constructor_Params,
+                         Name                   => Constructor_Name);
+
+                     --  Clear Comes_From_Source so that the expansion of the
+                     --  object declaration is not handled as a source-level
+                     --  construct and generates a redundant initialization
+                     --  call.
+
+                     Set_Comes_From_Source (Parent (N), False);
+
+                     Set_Has_Init_Expression (Parent (N), False);
+                     Set_Expression (Parent (N), Empty);
+                     Insert_After (Parent (N), Constructor_Call);
+
+                     declare
+                        Errors : constant Nat := Serious_Errors_Detected;
+
+                     begin
+                        Analyze (Constructor_Call);
+
+                        --  If the analysis of the call reported errors (for
+                        --  example, because of a missing argument in the
+                        --  source code) then prevent Analyze_Declarations
+                        --  from re-analyzing this call: Transform_Object_
+                        --  Operation modifies the actuals in place, and a
+                        --  second pass would produce spurious errors.
+
+                        if Serious_Errors_Detected > Errors then
+                           Set_Analyzed (Constructor_Call);
+                        end if;
+                     end;
+
+                  --  Expand T'Make (...) into:
+
+                  --    do
+                  --       tmp : <Type>;
+                  --       tmp.<Type>_constructor_Att (...)
+                  --    in tmp end
+
+                  else
+                     Result_Id := Make_Temporary (Loc, 'D', N);
+                     Mutate_Ekind (Result_Id, E_Variable);
+
+                     Result_Decl :=
+                       Make_Object_Declaration (Loc,
+                         Defining_Identifier => Result_Id,
+                         Object_Definition   => New_Occurrence_Of (Typ, Loc));
+                     Set_Suppress_Initialization (Result_Id);
+
+                     Constructor_Name :=
+                       Make_Selected_Component (Loc,
+                         Prefix        =>
+                           New_Occurrence_Of (Result_Id, Loc),
+                         Selector_Name =>
+                           Make_Identifier (Loc,
+                             Direct_Attribute_Definition_Name (Typ,
+                               Name_Constructor)));
+
+                     Constructor_Call :=
+                       Make_Procedure_Call_Statement (Loc,
+                         Parameter_Associations => Constructor_Params,
+                         Name                   => Constructor_Name);
+
+                     Rewrite (N,
+                       Make_Expression_With_Actions (Loc,
+                         Actions    =>
+                           New_List (Result_Decl, Constructor_Call),
+                         Expression =>
+                           New_Occurrence_Of (Result_Id, Loc)));
+
+                     Analyze_And_Resolve (N, Typ);
+                  end if;
                end;
             end if;
-
-            Rewrite (N, Constructor_Rhs);
          end;
-
-         Analyze_And_Resolve (N, Typ);
 
       --------------
       -- Mantissa --
@@ -6622,8 +6903,7 @@ package body Exp_Attr is
                end if;
 
             --  Tagged type case, use the primitive Put_Image function. Note
-            --  that this will dispatch in the class-wide case which is what we
-            --  want.
+            --  that this will dispatch in the class-wide case as required.
 
             elsif Is_Tagged_Type (U_Type) then
                Pname := Find_Optional_Prim_Op (U_Type, TSS_Put_Image);
@@ -7044,7 +7324,7 @@ package body Exp_Attr is
                end;
 
             --  Tagged type case, use the primitive Read function. Note that
-            --  this will dispatch in the class-wide case which is what we want
+            --  this will dispatch in the class-wide case as required.
 
             elsif Is_Tagged_Type (U_Type) then
 
@@ -8137,7 +8417,7 @@ package body Exp_Attr is
             begin
                Find_Fat_Info (PBtyp, Ftp, Pkg);
 
-               --  If the prefix is a reverse SSO component, or is possibly
+               --  If the prefix is a reverse SSO object, or is possibly
                --  unaligned, first create a temporary copy that is in
                --  native SSO, and properly aligned. Make it Volatile to
                --  prevent folding in the back-end. Note that we use an
@@ -8146,7 +8426,7 @@ package body Exp_Attr is
                --  that case it cannot be copied using a floating point
                --  register.
 
-               if In_Reverse_Storage_Order_Object (Pref)
+               if Is_Reverse_Storage_Order_Object (Pref)
                  or else Is_Possibly_Unaligned_Object (Pref)
                then
                   declare
@@ -8441,16 +8721,10 @@ package body Exp_Attr is
 
          Expr := Empty;
 
-         --  Attribute 'Valid_Scalars is not supported on private tagged types;
-         --  see a detailed explanation where this attribute is analyzed.
-
-         if Is_Private_Type (Ptyp) and then Is_Tagged_Type (Ptyp) then
-            null;
-
          --  Attribute 'Valid_Scalars evaluates to True when the type lacks
          --  scalars.
 
-         elsif not Scalar_Part_Present (Val_Typ) then
+         if not Scalar_Part_Present (Val_Typ) then
             null;
 
          --  Attribute 'Valid_Scalars is the same as attribute 'Valid when the
@@ -8495,7 +8769,7 @@ package body Exp_Attr is
                 Name                   =>
                   New_Occurrence_Of
                     (Build_Record_VS_Func
-                      (Attr       => N,
+                      (N          => N,
                        Formal_Typ => Ptyp,
                        Rec_Typ    => Val_Typ),
                     Loc),
@@ -8770,7 +9044,7 @@ package body Exp_Attr is
                end;
 
             --  Tagged type case, use the primitive Write function. Note that
-            --  this will dispatch in the class-wide case which is what we want
+            --  this will dispatch in the class-wide case as required.
 
             elsif Is_Tagged_Type (U_Type) then
 
@@ -8879,8 +9153,10 @@ package body Exp_Attr is
          | Attribute_Bit_Order
          | Attribute_Class
          | Attribute_Compiler_Version
+         | Attribute_Constant_Indexing
          | Attribute_Constructor
          | Attribute_Default_Bit_Order
+         | Attribute_Default_Iterator
          | Attribute_Default_Scalar_Storage_Order
          | Attribute_Definite
          | Attribute_Delta
@@ -8895,6 +9171,7 @@ package body Exp_Attr is
          | Attribute_Has_Access_Values
          | Attribute_Has_Discriminants
          | Attribute_Has_Tagged_Values
+         | Attribute_Integer_Literal
          | Attribute_Large
          | Attribute_Last_Valid
          | Attribute_Library_Level
@@ -8914,6 +9191,7 @@ package body Exp_Attr is
          | Attribute_Modulus
          | Attribute_Partition_ID
          | Attribute_Range
+         | Attribute_Real_Literal
          | Attribute_Restriction_Set
          | Attribute_Safe_Emax
          | Attribute_Safe_First
@@ -8927,6 +9205,7 @@ package body Exp_Attr is
          | Attribute_Small_Denominator
          | Attribute_Small_Numerator
          | Attribute_Storage_Unit
+         | Attribute_String_Literal
          | Attribute_Stub_Type
          | Attribute_Super
          | Attribute_System_Allocator_Alignment
@@ -8936,6 +9215,7 @@ package body Exp_Attr is
          | Attribute_Unconstrained_Array
          | Attribute_Universal_Literal_String
          | Attribute_Unsigned_Base_Range
+         | Attribute_Variable_Indexing
          | Attribute_Wchar_T_Size
          | Attribute_Word_Size
       =>

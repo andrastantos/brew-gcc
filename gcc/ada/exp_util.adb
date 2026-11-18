@@ -41,6 +41,7 @@ with Ghost;          use Ghost;
 with Inline;         use Inline;
 with Itypes;         use Itypes;
 with Lib;            use Lib;
+with Mutably_Tagged; use Mutably_Tagged;
 with Nlists;         use Nlists;
 with Nmake;          use Nmake;
 with Opt;            use Opt;
@@ -1008,24 +1009,30 @@ package body Exp_Util is
          --  Step 1: Construct all the actuals for the call to library routine
          --  Allocate_Any_Controlled / Deallocate_Any_Controlled.
 
+         Actuals := New_List;
+
          --  a) Storage pool
 
-         Actuals := New_List (New_Occurrence_Of (Pool_Id, Loc));
+         if not Use_Secondary_Stack_Pool then
+            Append_To (Actuals, New_Occurrence_Of (Pool_Id, Loc));
+         end if;
 
          if Is_Allocate then
 
             --  b) Subpool
 
-            Subpool := Subpool_Handle_Name (Expr);
+            if not Use_Secondary_Stack_Pool then
+               Subpool := Subpool_Handle_Name (Expr);
 
-            --  If a subpool is present it can be an arbitrary name, so make
-            --  the actual by copying the tree.
+               --  If a subpool is present it can be an arbitrary name, so make
+               --  the actual by copying the tree.
 
-            if Present (Subpool) then
-               Append_To
-                 (Actuals, New_Copy_Tree (Subpool, New_Scope => Proc_Id));
-            else
-               Append_To (Actuals, Make_Null (Loc));
+               if Present (Subpool) then
+                  Append_To
+                   (Actuals, New_Copy_Tree (Subpool, New_Scope => Proc_Id));
+               else
+                  Append_To (Actuals, Make_Null (Loc));
+               end if;
             end if;
 
             --  c) Finalization collection
@@ -1059,7 +1066,9 @@ package body Exp_Util is
                             New_Occurrence_Of (Ptr_Coll_Id, Loc),
                           Attribute_Name => Name_Unrestricted_Access))));
 
-            Append_To (Actuals, New_Occurrence_Of (Fin_Coll_Id, Loc));
+            if not Use_Secondary_Stack_Pool then
+               Append_To (Actuals, New_Occurrence_Of (Fin_Coll_Id, Loc));
+            end if;
          end if;
 
          --  d) Address
@@ -1342,7 +1351,7 @@ package body Exp_Util is
 
          --  h) On_Subpool
 
-         if Is_Allocate then
+         if Is_Allocate and then not Use_Secondary_Stack_Pool then
             Append_To (Actuals,
               New_Occurrence_Of (Boolean_Literals (Present (Subpool)), Loc));
          end if;
@@ -1352,7 +1361,9 @@ package body Exp_Util is
 
          --  Select the proper routine to call
 
-         if Is_Allocate then
+         if Use_Secondary_Stack_Pool then
+            Proc_To_Call := RTE (RE_SS_Allocate_Any_Controlled);
+         elsif Is_Allocate then
             Proc_To_Call := RTE (RE_Allocate_Any_Controlled);
          else
             Proc_To_Call := RTE (RE_Deallocate_Any_Controlled);
@@ -1799,6 +1810,133 @@ package body Exp_Util is
       Map_Formals (Par_Subp, Subp);
       Replace_Condition_Entities (Pragma_Or_Expr);
    end Build_Class_Wide_Expression;
+
+   --------------------------------
+   -- Build_Component_Assignment --
+   --------------------------------
+
+   function Build_Component_Assignment
+     (Loc                : Source_Ptr;
+      Prefix             : Node_Id;
+      Prefix_Type        : Entity_Id;
+      Proc_Id            : Entity_Id;
+      Component_Id       : Entity_Id;
+      Default_Expr       : Node_Id;
+      Is_Incomplete : Boolean := False) return List_Id
+   is
+      Default_Loc : constant Source_Ptr := Sloc (Default_Expr);
+      Typ         : constant Entity_Id :=
+        Underlying_Type (Etype (Component_Id));
+
+      Exp   : Node_Id;
+      Exp_Q : Node_Id;
+      Lhs   : Node_Id;
+      Res   : List_Id;
+
+   begin
+      Lhs :=
+        Make_Selected_Component (Default_Loc,
+          Prefix        => Prefix,
+          Selector_Name => New_Occurrence_Of (Component_Id, Default_Loc));
+      Set_Assignment_OK (Lhs);
+
+      --  Take copy of Default to ensure that later copies of this component
+      --  declaration in derived types see the original tree, not a node
+      --  rewritten during expansion. If the copy contains itypes, the scope of
+      --  the new itypes is the type being built.
+
+      declare
+         Map : Elist_Id := No_Elist;
+
+      begin
+         if Is_Incomplete then
+            --  Map the type to the first formal in order to handle "current
+            --  instance" references.
+
+            Map := New_Elmt_List
+                     (Elmt1 => Prefix_Type,
+                      Elmt2 => Defining_Identifier (First
+                                (Parameter_Specifications
+                                   (Parent (Proc_Id)))));
+
+            --  If the type has an incomplete view, a current instance may have
+            --  an incomplete type. In that case, it must also be replaced by
+            --  the formal of the current procedure.
+
+            if Present (Incomplete_View (Prefix_Type)) then
+               Append_Elmt (
+                 N  => Incomplete_View (Prefix_Type),
+                 To => Map);
+               Append_Elmt (
+                 N  => Defining_Identifier
+                         (First
+                           (Parameter_Specifications
+                             (Parent (Proc_Id)))),
+                 To => Map);
+            end if;
+         end if;
+
+         Exp := New_Copy_Tree (Default_Expr, New_Scope => Proc_Id, Map => Map);
+      end;
+
+      Res := New_List (
+        Make_Assignment_Statement (Loc,
+          Name       => Lhs,
+          Expression => Exp));
+
+      Exp_Q := Unqualify (Exp);
+
+      --  Adjust the component if controlled, except if the expression is an
+      --  aggregate that will be expanded inline (but note that the case of
+      --  container aggregates does require component adjustment), or else a
+      --  function call whose result is adjusted in the called function.
+      --  Note that, when we don't inhibit component adjustment, the tag will
+      --  be automatically inserted by Make_Tag_Ctrl_Assignment in the tagged
+      --  case. Otherwise, we have to generate a tag assignment here.
+
+      if Needs_Finalization (Typ)
+        and then (Nkind (Exp_Q) not in N_Aggregate | N_Extension_Aggregate
+                   or else Is_Container_Aggregate (Exp_Q))
+        and then not Is_Build_In_Place_Function_Call (Exp)
+        and then not (Back_End_Return_Slot
+                       and then Nkind (Exp) = N_Function_Call)
+      then
+         Set_No_Finalize_Actions (First (Res));
+
+      else
+         Set_No_Ctrl_Actions (First (Res));
+
+         --  Adjust the tag if tagged because of possible view conversions
+
+         if Is_Tagged_Type (Typ)
+           and then Tagged_Type_Expansion
+           and then Nkind (Exp_Q) /= N_Raise_Expression
+         then
+            declare
+               Utyp : Entity_Id := Underlying_Type (Typ);
+
+            begin
+               --  Get the relevant type for Make_Tag_Assignment_From_Type,
+               --  which, for concurrent types is the corresponding record.
+
+               if Ekind (Utyp) in E_Protected_Type | E_Task_Type then
+                  Utyp := Corresponding_Record_Type (Utyp);
+               end if;
+
+               Append_To (Res,
+                 Make_Tag_Assignment_From_Type (Default_Loc,
+                   New_Copy_Tree (Lhs, New_Scope => Proc_Id),
+                   Utyp));
+            end;
+         end if;
+      end if;
+
+      return Res;
+
+   exception
+      when RE_Not_Available =>
+         return Empty_List;
+   end Build_Component_Assignment;
 
    --------------------
    -- Build_DIC_Call --
@@ -5962,7 +6100,7 @@ package body Exp_Util is
             --  generate the proper actual subtype for it.
 
             if Nkind (Exp) = N_Selected_Component
-              and then Within_Init_Proc
+              and then Inside_Init_Proc
             then
                declare
                   Decl : constant Node_Id :=
@@ -6175,7 +6313,8 @@ package body Exp_Util is
 
    function Finalize_Address (Typ : Entity_Id) return Entity_Id is
       Btyp : constant Entity_Id := Base_Type (Typ);
-      Utyp : Entity_Id := Typ;
+      Utyp : Entity_Id :=
+               Get_Corresponding_Mutably_Tagged_Type_If_Present (Typ);
 
    begin
       --  Handle protected class-wide or task class-wide types
@@ -6266,7 +6405,7 @@ package body Exp_Util is
          return Empty;
       end if;
 
-      return Find_Optional_Prim_Op (T, Op_Name);
+      return Find_Optional_Prim_Op (T, Op_Name, Controlled_Op => True);
    end Find_Controlled_Prim_Op;
 
    ------------------------
@@ -6702,7 +6841,7 @@ package body Exp_Util is
       --  early return if we have no more statements or they have been
       --  rewritten, which means that they were in the source code.
 
-      elsif No (Stmt) or else Original_Node (Stmt) /= Stmt then
+      elsif No (Stmt) or else Is_Rewrite_Substitution (Stmt) then
          return Last_Init;
 
       --  In all other cases the initialization calls follow the related
@@ -6920,11 +7059,13 @@ package body Exp_Util is
    ---------------------------
 
    function Find_Optional_Prim_Op
-     (T : Entity_Id; Name : Name_Id) return Entity_Id
+     (T             : Entity_Id;
+      Name          : Name_Id;
+      Controlled_Op : Boolean := False) return Entity_Id
    is
+      Op   : Entity_Id;
       Prim : Elmt_Id;
       Typ  : Entity_Id := T;
-      Op   : Entity_Id;
 
    begin
       if Is_Class_Wide_Type (Typ) then
@@ -6946,14 +7087,23 @@ package body Exp_Util is
          Op := Node (Prim);
 
          --  We can retrieve primitive operations by name if it is an internal
-         --  name. For equality we must check that both of its operands have
-         --  the same type, to avoid confusion with user-defined equalities
-         --  than may have a asymmetric signature.
+         --  name. For equality, we must check that both of its operands have
+         --  the same type, to avoid confusion with user-defined equalities,
+         --  which may have an asymmetric signature. For controlled operations,
+         --  we check that the primitive is a procedure with a single In Out
+         --  parameter of a non-access type.
 
          exit when Chars (Op) = Name
            and then
              (Name /= Name_Op_Eq
-               or else Etype (First_Formal (Op)) = Etype (Last_Formal (Op)));
+               or else Etype (First_Formal (Op)) = Etype (Last_Formal (Op)))
+           and then
+             (not Controlled_Op
+               or else
+                 (Ekind (Op) = E_Procedure
+                   and then Ekind (First_Formal (Op)) = E_In_Out_Parameter
+                   and then not Is_Access_Type (Etype (First_Formal (Op)))
+                   and then No (Next_Formal (First_Formal (Op)))));
 
          Next_Elmt (Prim);
       end loop;
@@ -7078,15 +7228,6 @@ package body Exp_Util is
    begin
       if Is_Concurrent_Type (Typ) then
          Typ := Corresponding_Record_Type (Typ);
-      end if;
-
-      --  Since restriction violations are not considered serious errors, the
-      --  expander remains active, but may leave the corresponding record type
-      --  malformed. In such cases, component _object is not available so do
-      --  not look for it.
-
-      if not Analyzed (Typ) then
-         return Empty;
       end if;
 
       Comp := First_Component (Typ);
@@ -7274,13 +7415,15 @@ package body Exp_Util is
 
          if Present (Scope (Scope (Ent))) then
             Internal_Full_Qualified_Name (Scope (Ent));
-            Store_String_Char (Get_Char_Code ('.'));
+            Store_String_Char ('.');
          end if;
 
          --  Every entity should have a name except some expanded blocks
          --  don't bother about those.
 
          if Chars (Ent) = No_Name then
+            pragma Assert (Ekind (Ent) = E_Block);
+            pragma Assert (No (Scope (Ent)));
             return;
          end if;
 
@@ -7292,14 +7435,14 @@ package body Exp_Util is
          return;
       end Internal_Full_Qualified_Name;
 
-   --  Start of processing for Full_Qualified_Name
+   --  Start of processing for Full_Qualified_Name_String
 
    begin
       Start_String;
       Internal_Full_Qualified_Name (E);
 
       if Append_NUL then
-         Store_String_Char (Get_Char_Code (ASCII.NUL));
+         Store_String_Char (ASCII.NUL);
       end if;
 
       return End_String;
@@ -8955,6 +9098,41 @@ package body Exp_Util is
         and then Expansion_Delayed (Unqual_N);
    end Is_Delayed_Conditional_Expression;
 
+   --------------------------------
+   -- Is_Distributable_Declaration --
+   --------------------------------
+
+   function Is_Distributable_Declaration (N : Node_Id) return Boolean is
+      Obj_Def : Node_Id;
+
+   begin
+      if Nkind (N) /= N_Object_Declaration then
+         return False;
+      end if;
+
+      Obj_Def := Object_Definition (N);
+
+      --  Current limitation: distribution is not implemented for CW types,
+      --  except for return objects which always live on the secondary stack.
+
+      if Is_Entity_Name (Obj_Def)
+        and then (Is_Class_Wide_Type (Entity (Obj_Def))
+                   and then not Is_Return_Object (Defining_Identifier (N)))
+      then
+         return False;
+      end if;
+
+      --  The declaration of a variable of an unconstrained definite nonlimited
+      --  subtype cannot be distributed because the variable is mutable and the
+      --  expansion of 'Constrained must statically return False for it.
+
+      return Constant_Present (N)
+        or else not Is_Entity_Name (Obj_Def)
+        or else Is_Constrained (Entity (Obj_Def))
+        or else not Is_Definite_Subtype (Entity (Obj_Def))
+        or else Is_Inherently_Limited_Type (Entity (Obj_Def));
+   end Is_Distributable_Declaration;
+
    --------------------------------------------------
    -- Is_Expanded_Class_Wide_Interface_Object_Decl --
    --------------------------------------------------
@@ -10555,10 +10733,10 @@ package body Exp_Util is
       end if;
 
       --  Set Is_Class_Wide_Equivalent_Type very early to trigger the special
-      --  treatment for this type. In particular, even though _parent's type
+      --  treatment for this type. In particular, even though _Parent's type
       --  is a controlled type or contains controlled components, we do not
-      --  want to set Has_Controlled_Component on it to avoid making it gain
-      --  an unwanted _controller component.
+      --  want to set Has_Controlled_Component on the equivalent type because
+      --  we do not want to build internal controlled primitives for it.
 
       Set_Is_Class_Wide_Equivalent_Type (Equiv_Type);
 
@@ -12415,7 +12593,15 @@ package body Exp_Util is
               and then Is_Entity_Name (Name (Init_Call))
               and then Entity (Name (Init_Call)) = Init_Proc
             then
-               return Init_Call;
+               declare
+                  Act : constant Node_Id :=
+                    Unqual_Conv (First (Parameter_Associations (Init_Call)));
+
+               begin
+                  if Is_Entity_Name (Act) and then Entity (Act) = Var then
+                     return Init_Call;
+                  end if;
+               end;
             end if;
 
             Next (Init_Call);
@@ -12745,7 +12931,16 @@ package body Exp_Util is
                    or else Nkind (Prefix (Exp)) /= N_Aggregate)
         and then not Is_Name_Reference (Prefix (Exp))
       then
-         Remove_Side_Effects (Prefix (Exp), Name_Req, Variable_Ref);
+         Remove_Side_Effects
+           (Exp                => Prefix (Exp),
+            Name_Req           => Name_Req,
+            Renaming_Req       => Renaming_Req,
+            Variable_Ref       => False,
+            Related_Id         => Related_Id,
+            Is_Low_Bound       => False,
+            Is_High_Bound      => False,
+            Discr_Number       => 0,
+            Check_Side_Effects => Check_Side_Effects);
          goto Leave;
 
       --  If this is an elementary or a small not-by-reference record type, and
@@ -12847,7 +13042,16 @@ package body Exp_Util is
       elsif Nkind (Exp) = N_Unchecked_Type_Conversion
         and then Nkind (Expression (Exp)) = N_Explicit_Dereference
       then
-         Remove_Side_Effects (Expression (Exp), Name_Req, Variable_Ref);
+         Remove_Side_Effects
+           (Exp                => Expression (Exp),
+            Name_Req           => Name_Req,
+            Renaming_Req       => Renaming_Req,
+            Variable_Ref       => Variable_Ref,
+            Related_Id         => Related_Id,
+            Is_Low_Bound       => Is_Low_Bound,
+            Is_High_Bound      => Is_High_Bound,
+            Discr_Number       => Discr_Number,
+            Check_Side_Effects => Check_Side_Effects);
          goto Leave;
 
       --  If this is a type conversion, leave the type conversion and remove
@@ -12860,7 +13064,16 @@ package body Exp_Util is
       elsif Nkind (Exp) = N_Type_Conversion
         and then Etype (Expression (Exp)) /= Universal_Integer
       then
-         Remove_Side_Effects (Expression (Exp), Name_Req, Variable_Ref);
+         Remove_Side_Effects
+           (Exp                => Expression (Exp),
+            Name_Req           => Name_Req,
+            Renaming_Req       => Renaming_Req,
+            Variable_Ref       => Variable_Ref,
+            Related_Id         => Related_Id,
+            Is_Low_Bound       => Is_Low_Bound,
+            Is_High_Bound      => Is_High_Bound,
+            Discr_Number       => Discr_Number,
+            Check_Side_Effects => Check_Side_Effects);
          goto Leave;
 
       --  If this is an unchecked conversion that Gigi can't handle, make
@@ -12941,7 +13154,16 @@ package body Exp_Util is
         and then Nkind (Prefix (Exp)) = N_Function_Call
         and then Is_Array_Type (Und_Typ)
       then
-         Remove_Side_Effects (Prefix (Exp), Name_Req, Variable_Ref);
+         Remove_Side_Effects
+           (Exp                => Prefix (Exp),
+            Name_Req           => Name_Req,
+            Renaming_Req       => Renaming_Req,
+            Variable_Ref       => Variable_Ref,
+            Related_Id         => Related_Id,
+            Is_Low_Bound       => Is_Low_Bound,
+            Is_High_Bound      => Is_High_Bound,
+            Discr_Number       => Discr_Number,
+            Check_Side_Effects => Check_Side_Effects);
          goto Leave;
 
       --  Otherwise we generate a reference to the expression
@@ -13808,7 +14030,7 @@ package body Exp_Util is
       --  We do not analyze this renaming declaration, because all its
       --  components have already been analyzed, and if we were to go
       --  ahead and analyze it, we would in effect be trying to generate
-      --  another declaration of X, which won't do.
+      --  another declaration of Def_Id, which won't do.
 
       Set_Renamed_Object (Def_Id, Nam);
       Set_Analyzed (N);

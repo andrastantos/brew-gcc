@@ -25,7 +25,7 @@
 AC_INIT(package-unused, version-unused,,libgm2)
 AC_CONFIG_SRCDIR(Makefile.am)
 # AC_CONFIG_MACRO_DIR([config])
-AC_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS([config.h])
 
 libtool_VERSION=21:0:0
 AC_SUBST(libtool_VERSION)
@@ -36,15 +36,12 @@ GCC_NO_EXECUTABLES
 
 AC_USE_SYSTEM_EXTENSIONS
 
-# Do not delete or change the following two lines.  For why, see
-# http://gcc.gnu.org/ml/libstdc++/2003-07/msg00451.html
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_TARGET
 target_alias=${target_alias-$host_alias}
-AC_SUBST(target_alias)
 
 if test "$build" != "$host"; then
   # We are being configured with some form of cross compiler.
-  GLIBCXX_IS_NATIVE=false
+  GLIBGM2_IS_NATIVE=false
   case "$host","$target" in
     # Darwin crosses can use the host system's libraries and headers,
     # because of the fat library support.  Of course, it must be the
@@ -55,7 +52,7 @@ if test "$build" != "$host"; then
 	hostos=`echo $host | sed 's/.*-darwin/darwin/'`
 	targetos=`echo $target | sed 's/.*-darwin/darwin/'`
 	if test $hostos = $targetos || test $targetos = darwin ; then
-	  GLIBCXX_IS_NATIVE=true
+	  GLIBGM2_IS_NATIVE=true
 	fi
 	;;
 
@@ -64,18 +61,18 @@ if test "$build" != "$host"; then
 	;;
   esac
 else
-  GLIBCXX_IS_NATIVE=true
+  GLIBGM2_IS_NATIVE=true
 fi
 
 # Runs configure.host, and assorted other critical bits.  Sets
 # up critical shell variables.
-GLIBCXX_CONFIGURE
+GLIBGM2_CONFIGURE
 
 # For gettimeofday support.
-GLIBCXX_CHECK_GETTIMEOFDAY
+GLIBGM2_CHECK_GETTIMEOFDAY
 
 # For clock_gettime, nanosleep and sched_yield support.
-GLIBCXX_ENABLE_LIBSTDCXX_TIME
+GLIBGM2_ENABLE_LIBSTDCXX_TIME
 
 AM_INIT_AUTOMAKE([1.15.1 no-define foreign no-dist -Wall -Wno-portability])
 
@@ -86,7 +83,6 @@ AC_ARG_WITH(cross-host,
 [  --with-cross-host=HOST           Configuring with a cross compiler])
 
 # Checks for header files.
-AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIME
 
@@ -174,21 +170,6 @@ else
 fi)
 AC_SUBST(slibdir)
 
-# Command-line options.
-# Very limited version of AC_MAINTAINER_MODE.
-AC_ARG_ENABLE([maintainer-mode],
-  [AC_HELP_STRING([--enable-maintainer-mode],
-                 [enable make rules and dependencies not useful (and
-                  sometimes confusing) to the casual installer])],
-  [case ${enable_maintainer_mode} in
-     yes) MAINT='' ;;
-     no) MAINT='#' ;;
-     *) AC_MSG_ERROR([--enable-maintainer-mode must be yes or no]) ;;
-   esac
-   maintainer_mode=${enableval}],
-  [MAINT='#'])
-AC_SUBST([MAINT])dnl
-
 toolexecdir=no
 toolexeclibdir=no
 
@@ -255,12 +236,11 @@ AC_CHECK_TOOL(RANLIB, ranlib, ranlib-not-found-in-path-error)
 AC_PROG_MAKE_SET
 AC_PROG_INSTALL
 
-AM_PROG_LIBTOOL
-LT_INIT
-AC_LIBTOOL_DLOPEN
+LT_INIT([dlopen])
 
 AM_CONDITIONAL([ENABLE_DARWIN_AT_RPATH], [test x$enable_darwin_at_rpath = xyes])
-
+AC_PYTHON_INTERPRETER([>= '3.0'])
+AM_CONDITIONAL([HAVE_PYTHON_INTERPRETER], [test x$ax_python_interpreter_found = xyes])
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
 
@@ -290,7 +270,7 @@ if (test "$ac_cv_struct_tm_gmtoff" = "yes"); then
   AC_DEFINE(HAVE_TM_TM_GMTOFF, 1, [Define if struct tm has a tm_gmtoff field.])
 fi
 
-AC_LANG_C
+AC_LANG([C])
 # Check the compiler.
 # The same as in boehm-gc and libstdc++. Have to borrow it from there.
 # We must force CC to /not/ be precious variables; otherwise
@@ -303,6 +283,8 @@ AC_PROG_CC
 m4_rename_force([real_PRECIOUS],[_AC_ARG_VAR_PRECIOUS])
 
 AC_SUBST(CFLAGS)
+GCC_PICFLAG
+AC_SUBST([PICFLAG])
 
 AC_DEFUN([GM2_UNDEF],[
   $as_echo "#undef HAVE_$1" >>confdefs.h
@@ -437,7 +419,7 @@ AC_SUBST(GM2_FOR_TARGET)
 
 # Now we check the target as long as it is a supported host.
 # For some embedded targets we choose minimal runtime system which is
-# just enough to satisfy the linker targetting raw metal.
+# just enough to satisfy the linker targeting raw metal.
 if test x${M2_HOST_OS} != xunknown; then
 AC_MSG_NOTICE([m2 library building for target ${target}])
 case "$target" in
@@ -490,7 +472,7 @@ else
    GM2_MSG_RESULT([m2 front end will build PIM libraries:],[BUILD_PIMLIB])
    GM2_MSG_RESULT([m2 front end will build ISO libraries:],[BUILD_ISOLIB])
    GM2_MSG_RESULT([m2 front end will build coroutine libraries:],[BUILD_CORLIB])
-   GM2_MSG_RESULT([m2 front end will build Logitech compatability libraries:],[BUILD_LOGLIB])
+   GM2_MSG_RESULT([m2 front end will build Logitech compatibility libraries:],[BUILD_LOGLIB])
 fi
 
 AM_CONDITIONAL([BUILD_PIMLIB], [test x$BUILD_PIMLIB = xtrue])
@@ -505,7 +487,7 @@ GCC_BASE_VER
 AC_CONFIG_SRCDIR([Makefile.am])
 AC_CONFIG_FILES([Makefile])
 
-AC_CONFIG_FILES(AC_FOREACH([DIR], [libm2min libm2pim libm2iso libm2cor libm2log], [DIR/Makefile ]),
+AC_CONFIG_FILES(m4_foreach_w([DIR], [libm2min libm2pim libm2iso libm2cor libm2log], [DIR/Makefile ]),
  [ cat > vpsed$$ << \_EOF
 s!`test -f '$<' || echo '$(srcdir)/'`!!
 _EOF

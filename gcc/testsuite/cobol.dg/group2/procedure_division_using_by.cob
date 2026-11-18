@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        id division.
       *> IBM is PERMISSIVE and allows PROGRAM-ID without a terminating
       *> period. ISO 2014 does not. IBM's behaviors are part of a

@@ -537,7 +537,7 @@ instrument_builtin_call (gimple_stmt_iterator *gsi)
 	      args[j] = gimple_call_arg (stmt, j);
 	    for (; j < 2; j++)
 	      args[j] = NULL_TREE;
-	    args[num] = build_int_cst (NULL_TREE,
+	    args[num] = build_int_cst (integer_type_node,
 				       tsan_atomic_table[i].action
 				       != add_acquire
 				       ? MEMMODEL_SEQ_CST
@@ -616,9 +616,9 @@ instrument_builtin_call (gimple_stmt_iterator *gsi)
 	    lhs = gimple_call_lhs (stmt);
 	    update_gimple_call (gsi, decl, 5, args[0],
 				build_fold_addr_expr (t), args[2],
-				build_int_cst (NULL_TREE,
+				build_int_cst (integer_type_node,
 					       MEMMODEL_SEQ_CST),
-				build_int_cst (NULL_TREE,
+				build_int_cst (integer_type_node,
 					       MEMMODEL_SEQ_CST));
 	    maybe_clean_or_replace_eh_stmt (stmt, gsi_stmt (*gsi));
 	    if (tsan_atomic_table[i].action == val_cas && lhs)
@@ -644,7 +644,7 @@ instrument_builtin_call (gimple_stmt_iterator *gsi)
 	    t = TREE_VALUE (TREE_CHAIN (t));
 	    update_gimple_call (gsi, decl, 3, gimple_call_arg (stmt, 0),
 				build_int_cst (t, 0),
-				build_int_cst (NULL_TREE,
+				build_int_cst (integer_type_node,
 					       MEMMODEL_RELEASE));
 	    maybe_clean_or_replace_eh_stmt (stmt, gsi_stmt (*gsi));
 	    return;

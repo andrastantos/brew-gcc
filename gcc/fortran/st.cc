@@ -221,6 +221,9 @@ gfc_free_statement (gfc_code *p)
     case EXEC_OACC_ENTER_DATA:
     case EXEC_OACC_EXIT_DATA:
     case EXEC_OACC_ROUTINE:
+    case EXEC_OACC_INIT:
+    case EXEC_OACC_SHUTDOWN:
+    case EXEC_OACC_SET:
     case EXEC_OMP_ALLOCATE:
     case EXEC_OMP_ALLOCATORS:
     case EXEC_OMP_ASSUME:
@@ -299,7 +302,7 @@ gfc_free_statement (gfc_code *p)
       break;
 
     case EXEC_OMP_FLUSH:
-      gfc_free_omp_namelist (p->ext.omp_namelist, false, false, false, false);
+      gfc_free_omp_namelist (p->ext.omp_namelist, OMP_LIST_NONE);
       break;
 
     case EXEC_OMP_BARRIER:
@@ -365,4 +368,92 @@ gfc_free_association_list (gfc_association_list* assoc)
 
   gfc_free_association_list (assoc->next);
   free (assoc);
+}
+
+
+/* Function to generate IF (ALLOCATED(expr)) DEALLOCATE(expr)  */
+
+static gfc_code *
+get_guarded_dealloc (gfc_namespace *ns, gfc_expr *expr)
+{
+  gfc_code *dealloc = gfc_get_code (EXEC_IF);
+  dealloc->block = gfc_get_code (EXEC_IF);
+#define ALLOCATED dealloc->block->expr1
+  ALLOCATED = gfc_get_expr ();
+  ALLOCATED->expr_type = EXPR_FUNCTION;
+  ALLOCATED->where = gfc_current_locus;
+  gfc_find_sym_tree ("allocated", ns, 1, &ALLOCATED->symtree);
+  if (!ALLOCATED->symtree)
+    {
+      gfc_get_sym_tree ("allocated", ns, &ALLOCATED->symtree, false);
+      gfc_commit_symbol (ALLOCATED->symtree->n.sym);
+    }
+  ALLOCATED->symtree->n.sym->attr.flavor = FL_PROCEDURE;
+  ALLOCATED->symtree->n.sym->attr.intrinsic = 1;
+  ALLOCATED->symtree->n.sym->result = ALLOCATED->symtree->n.sym;
+  ALLOCATED->ts.type = BT_LOGICAL;
+  ALLOCATED->ts.kind = gfc_default_logical_kind;
+  ALLOCATED->value.function.isym
+			= gfc_intrinsic_function_by_id (GFC_ISYM_ALLOCATED);
+  ALLOCATED->value.function.actual = gfc_get_actual_arglist ();
+  ALLOCATED->value.function.actual->expr = gfc_copy_expr (expr);
+#undef ALLOCATED
+  dealloc->block->next = gfc_get_code (EXEC_DEALLOCATE);
+  dealloc->block->next->ext.alloc.list = gfc_get_alloc ();
+  dealloc->block->next->ext.alloc.list->expr = gfc_copy_expr (expr);
+  return dealloc;
+}
+
+
+/* F2018(11.1.5.2): Insert code to deallocate coarrays, allocated within a team
+   block. This uses the previous function to effect a guarded deallocation of
+   allocated coarray expressions. These are gathered in gfc_match_allocate and
+   stashed in team_allocs.  */
+
+void
+deallocate_allocated_coarrays (vec<gfc_expr *> *team_allocs)
+{
+  gfc_code *dealloc, **prev;
+  gfc_ref *ref, *aref = NULL;
+  int i;
+
+  for (gfc_expr *e : *team_allocs)
+    {
+      if (!e)
+	continue;
+
+      /* Get the last array_ref right.  */
+      for (ref = e->ref; ref; ref = ref->next)
+	if (ref->type == REF_ARRAY)
+	  aref = ref;
+
+      if (aref->u.ar.as->rank)
+	{
+	  aref->u.ar.type = AR_FULL;
+	  aref->u.ar.dimen = aref->u.ar.as->rank;
+	  for (i = 0; i < aref->u.ar.dimen; i++)
+	    {
+	      aref->u.ar.dimen_type[i] = DIMEN_RANGE;
+
+	      if (aref->u.ar.start[i]) gfc_free_expr (aref->u.ar.start[i]);
+	      if (aref->u.ar.end[i]) gfc_free_expr (aref->u.ar.end[i]);
+	      if (aref->u.ar.stride[i]) gfc_free_expr (aref->u.ar.stride[i]);
+	      aref->u.ar.start[i] = aref->u.ar.end[i] = aref->u.ar.stride[i] = NULL;
+	    }
+	}
+
+      for (i = aref->u.ar.as->rank;
+	   i < aref->u.ar.as->rank + aref->u.ar.as->corank; i++)
+	 aref->u.ar.dimen_type[i] = DIMEN_THIS_IMAGE;
+
+      /* Insert the deallocation code before the END TEAM statement.  */
+      for (prev = &gfc_current_ns->code; *prev; prev = &(*prev)->next)
+	if ((*prev)->op == EXEC_END_TEAM)
+	  break;
+      dealloc = get_guarded_dealloc (gfc_current_ns, e);
+      dealloc->next = *prev;
+      *prev = dealloc;
+      gfc_free_expr (e);
+      e = NULL;
+    }
 }

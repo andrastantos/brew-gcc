@@ -24,6 +24,7 @@
 #include "backend.h"
 #include "tree.h"
 #include "gimple.h"
+#include "fold-const.h"
 #include "alloc-pool.h"
 #include "cgraph.h"
 #include "diagnostic.h"
@@ -31,7 +32,10 @@
 #include "options.h"
 #include "gimple-range.h"
 #include "attribs.h"
+#include "symbol-summary.h"
+#include "lto-streamer.h"
 #include "attr-callback.h"
+#include "callback-info.h"
 
 /* Returns a callback attribute with callback index FN_IDX, and ARG_COUNT
    arguments specified by VA_ARGS.  */
@@ -54,7 +58,7 @@ callback_build_attr (unsigned fn_idx, unsigned arg_count...)
   cblist
     = tree_cons (NULL_TREE, build_int_cst (integer_type_node, fn_idx), cblist);
   tree attr
-    = tree_cons (get_identifier (CALLBACK_ATTR_IDENT), cblist, NULL_TREE);
+    = tree_cons (get_identifier ("callback_only"), cblist, NULL_TREE);
   return attr;
 }
 
@@ -87,7 +91,7 @@ callback_special_case_attr (tree decl)
 bool
 callback_edge_callee_has_attr (cgraph_edge *e)
 {
-  return lookup_attribute (CALLBACK_ATTR_IDENT,
+  return lookup_attribute ("callback_only",
 			   DECL_ATTRIBUTES (e->callee->decl))
 	 || callback_is_special_cased (e->callee->decl, e->call_stmt);
 }
@@ -113,15 +117,16 @@ callback_fetch_attr_by_edge (cgraph_edge *e, cgraph_edge *carrying)
   if (callback_is_special_cased (carrying->callee->decl, e->call_stmt))
     return callback_special_case_attr (carrying->callee->decl);
 
-  tree cb_attr = lookup_attribute (CALLBACK_ATTR_IDENT,
+  tree cb_attr = lookup_attribute ("callback_only",
 				   DECL_ATTRIBUTES (carrying->callee->decl));
   gcc_checking_assert (cb_attr);
+  callback_info *ci = callback_info_sum->get (e);
   tree res = NULL_TREE;
   for (; cb_attr;
-       cb_attr = lookup_attribute (CALLBACK_ATTR_IDENT, TREE_CHAIN (cb_attr)))
+       cb_attr = lookup_attribute ("callback_only", TREE_CHAIN (cb_attr)))
     {
-      unsigned id = callback_get_fn_index (cb_attr);
-      if (id == e->callback_id)
+      unsigned fn_idx = callback_get_fn_index (cb_attr);
+      if (fn_idx == ci->get_id ())
 	{
 	  res = cb_attr;
 	  break;
@@ -131,15 +136,11 @@ callback_fetch_attr_by_edge (cgraph_edge *e, cgraph_edge *carrying)
   return res;
 }
 
-/* Given an instance of callback attribute, return the 0-base indices
-   of arguments passed to the callback.  For a callback function taking
-   n parameters, returns a vector of n indices of their values in the parameter
-   list of it's caller.  Indices with unknown positions contain -1.  */
+/* Returns the argument mapping from the dispatching function to the callback
+   function parsed from the attribute.  */
 auto_vec<int>
-callback_get_arg_mapping (cgraph_edge *e, cgraph_edge *carrying)
+callback_get_arg_mapping_from_attr (tree attr)
 {
-  tree attr = callback_fetch_attr_by_edge (e, carrying);
-  gcc_checking_assert (attr);
   tree args = TREE_VALUE (attr);
   auto_vec<int> res;
   tree it;
@@ -150,200 +151,12 @@ callback_get_arg_mapping (cgraph_edge *e, cgraph_edge *carrying)
     {
       int idx = TREE_INT_CST_LOW (TREE_VALUE (it));
       /* Subtract 1 to account for 1-based indexing.  If the value is unknown,
-	 use constant -1 instead.  */
-      idx = idx == CB_UNKNOWN_POS ? -1 : idx - 1;
+	 use ARG_MAPPING_UNKNOWN_IDX instead.  */
+      idx = idx == CB_UNKNOWN_POS ? ARG_MAPPING_UNKNOWN_IDX : idx - 1;
       res.safe_push (idx);
     }
 
   return res;
-}
-
-/* For a callback pair, returns the 0-based index of the address of
-   E's callee in the argument list of CARRYING's callee decl.  */
-int
-callback_fetch_fn_position (cgraph_edge *e, cgraph_edge *carrying)
-{
-  tree attr = callback_fetch_attr_by_edge (e, carrying);
-  return callback_get_fn_index (attr);
-}
-
-/* Returns the element at index idx in the list or NULL_TREE if
-   the list isn't long enough.  NULL_TREE is used as the endpoint.  */
-static tree
-get_nth_list_elem (tree list, unsigned idx)
-{
-  tree res = NULL_TREE;
-  unsigned i = 0;
-  tree it;
-  for (it = list; it != NULL_TREE; it = TREE_CHAIN (it), i++)
-    {
-      if (i == idx)
-	{
-	  res = TREE_VALUE (it);
-	  break;
-	}
-    }
-  return res;
-}
-
-/* Handle a "callback" attribute; arguments as in
-   struct attribute_spec.handler.  */
-tree
-handle_callback_attribute (tree *node, tree name, tree args,
-			   int ARG_UNUSED (flags), bool *no_add_attrs)
-{
-  tree decl = *node;
-  if (TREE_CODE (decl) != FUNCTION_DECL)
-    {
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"%qE attribute can only be used on functions", name);
-      *no_add_attrs = true;
-    }
-
-  tree cb_fn_idx_node = TREE_VALUE (args);
-  if (TREE_CODE (cb_fn_idx_node) != INTEGER_CST)
-    {
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"argument specifying callback function position is not an "
-		"integer constant");
-      *no_add_attrs = true;
-      return NULL_TREE;
-    }
-  /* We have to use the function type for validation, as
-     DECL_ARGUMENTS returns NULL at this point.  */
-  int callback_fn_idx = TREE_INT_CST_LOW (cb_fn_idx_node);
-  tree decl_type_args = TYPE_ARG_TYPES (TREE_TYPE (decl));
-  tree it;
-  int decl_nargs = list_length (decl_type_args);
-  for (it = decl_type_args; it != NULL_TREE; it = TREE_CHAIN (it))
-    if (it == void_list_node)
-      {
-	--decl_nargs;
-	break;
-      }
-  if (callback_fn_idx == CB_UNKNOWN_POS)
-    {
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"callback function position cannot be marked as unknown");
-      *no_add_attrs = true;
-      return NULL_TREE;
-    }
-  --callback_fn_idx;
-  if (callback_fn_idx >= decl_nargs)
-    {
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"callback function position out of range");
-      *no_add_attrs = true;
-      return NULL_TREE;
-    }
-
-  /* Search for the type of the callback function
-     in parameters of the original function.  */
-  tree cfn = get_nth_list_elem (decl_type_args, callback_fn_idx);
-  if (cfn == NULL_TREE)
-    {
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"could not retrieve callback function from arguments");
-      *no_add_attrs = true;
-      return NULL_TREE;
-    }
-  tree cfn_pointee_type = TREE_TYPE (cfn);
-  if (TREE_CODE (cfn) != POINTER_TYPE
-      || TREE_CODE (cfn_pointee_type) != FUNCTION_TYPE)
-    {
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"argument no. %d is not an address of a function",
-		callback_fn_idx + 1);
-      *no_add_attrs = true;
-      return NULL_TREE;
-    }
-
-  tree type_args = TYPE_ARG_TYPES (cfn_pointee_type);
-  /* Compare the length of the list of argument indices
-     and the real number of parameters the callback takes.  */
-  unsigned cfn_nargs = list_length (TREE_CHAIN (args));
-  unsigned type_nargs = list_length (type_args);
-  for (it = type_args; it != NULL_TREE; it = TREE_CHAIN (it))
-    if (it == void_list_node)
-      {
-	--type_nargs;
-	break;
-      }
-  if (cfn_nargs != type_nargs)
-    {
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"argument number mismatch, %d expected, got %d", type_nargs,
-		cfn_nargs);
-      *no_add_attrs = true;
-      return NULL_TREE;
-    }
-
-  unsigned curr = 0;
-  tree cfn_it;
-  /* Validate type compatibility of the arguments passed
-     from caller function to callback.  "it" is used to step
-     through the parameters of the caller, "cfn_it" is
-     stepping through the parameters of the callback.  */
-  for (it = type_args, cfn_it = TREE_CHAIN (args); curr < type_nargs;
-       it = TREE_CHAIN (it), cfn_it = TREE_CHAIN (cfn_it), curr++)
-    {
-      if (TREE_CODE (TREE_VALUE (cfn_it)) != INTEGER_CST)
-	{
-	  error_at (DECL_SOURCE_LOCATION (decl),
-		    "argument no. %d is not an integer constant", curr + 1);
-	  *no_add_attrs = true;
-	  continue;
-	}
-
-      int arg_idx = TREE_INT_CST_LOW (TREE_VALUE (cfn_it));
-
-      /* No need to check for type compatibility,
-	 if we don't know what we are passing.  */
-      if (arg_idx == CB_UNKNOWN_POS)
-	continue;
-
-      arg_idx -= 1;
-      /* Report an error if the position is out of bounds,
-	 but we can still check the rest of the arguments.  */
-      if (arg_idx >= decl_nargs)
-	{
-	  error_at (DECL_SOURCE_LOCATION (decl),
-		    "callback argument index %d is out of range", arg_idx + 1);
-	  *no_add_attrs = true;
-	  continue;
-	}
-
-      tree arg_type = get_nth_list_elem (decl_type_args, arg_idx);
-      tree expected_type = TREE_VALUE (it);
-      /* Check the type of the value we are about to pass ("arg_type")
-	 for compatibility with the actual type the callback function
-	 expects ("expected_type").  */
-      if (!types_compatible_p (expected_type, arg_type))
-	{
-	  error_at (DECL_SOURCE_LOCATION (decl),
-		    "argument type at index %d is not compatible with callback "
-		    "argument type at index %d",
-		    arg_idx + 1, curr + 1);
-	  *no_add_attrs = true;
-	  continue;
-	}
-    }
-
-  /* Check that the decl does not already have a callback attribute describing
-     the same argument.  */
-  it = lookup_attribute (CALLBACK_ATTR_IDENT, DECL_ATTRIBUTES (decl));
-  for (; it; it = lookup_attribute (CALLBACK_ATTR_IDENT, TREE_CHAIN (it)))
-    if (callback_get_fn_index (it) == callback_fn_idx)
-      {
-	error_at (DECL_SOURCE_LOCATION (decl),
-		  "function declaration has multiple callback attributes "
-		  "describing argument no. %d",
-		  callback_fn_idx + 1);
-	*no_add_attrs = true;
-	break;
-      }
-
-  return NULL_TREE;
 }
 
 /* Returns TRUE if E is considered useful in the callgraph, FALSE otherwise.  If
@@ -353,19 +166,8 @@ bool
 callback_edge_useful_p (cgraph_edge *e)
 {
   gcc_checking_assert (e->callback);
-  /* If the edge is pointing towards a clone, it is useful.  */
-  if (e->callee->clone_of)
-    return true;
-
-  /* If the callee has been produced by icf, the edge is useful, as it will be
-     used to for the redirection.  */
-  if (e->callee->icf_merged)
-    return true;
-
-  /* In case some future pass redirects edges, it should be added as a case
-     here.  */
-
-  return false;
+  callback_info *ci = callback_info_sum->get (e);
+  return ci->redirected;
 }
 
 /* Returns the number of arguments the callback function described by ATTR
@@ -381,4 +183,17 @@ callback_num_args (tree attr)
   for (it = TREE_CHAIN (args); it != NULL_TREE; it = TREE_CHAIN (it), ++res)
     ;
   return res;
+}
+
+/* Redirect call statement of E to the callee of E.  Used in
+   cgraph_edge::redirect_call_stmt_to_callee.  Edge E must be a callback
+   edge.  */
+void
+callback_redirect_edge (cgraph_edge *e)
+{
+  callback_info *ci = callback_info_sum->get (e);
+  tree previous_arg = gimple_call_arg (e->call_stmt, ci->fn_idx);
+  location_t loc = EXPR_LOCATION (previous_arg);
+  tree new_addr = build_fold_addr_expr_loc (loc, e->callee->decl);
+  gimple_call_set_arg (e->call_stmt, ci->fn_idx, new_addr);
 }

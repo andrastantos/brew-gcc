@@ -55,8 +55,8 @@ def skip_warning(filename, message):
             # made default or removed:
             'ipa-strub.cc': ['-Wunused-but-set-variable'],
             'insn-modes.cc': ['-Wshift-count-overflow'],
-            'insn-emit.cc': ['-Wtautological-compare'],
-            'insn-attrtab.cc': ['-Wparentheses-equality'],
+            'insn-emit': ['-Wtautological-compare'],
+            'insn-attrtab': ['-Wparentheses-equality'],
             'omp-builtins.def': ['-Wc++11-narrowing'],
             'wide-int.h': ['-Wnontrivial-memcall'],
             'i386.md': ['-Wparentheses-equality', '-Wtautological-compare',

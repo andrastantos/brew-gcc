@@ -411,85 +411,85 @@ struct c_declspecs {
   enum c_storage_class storage_class;
   /* Any type specifier keyword used such as "int", not reflecting
      modifiers such as "short", or cts_none if none.  */
-  ENUM_BITFIELD (c_typespec_keyword) typespec_word : 8;
+  enum c_typespec_keyword typespec_word : 8;
   /* The kind of type specifier if one has been seen, ctsk_none
      otherwise.  */
-  ENUM_BITFIELD (c_typespec_kind) typespec_kind : 4;
-  ENUM_BITFIELD (c_declspec_il) declspec_il : 3;
+  enum c_typespec_kind typespec_kind : 4;
+  enum c_declspec_il declspec_il : 3;
   /* Whether any expressions in typeof specifiers may appear in
      constant expressions.  */
-  BOOL_BITFIELD expr_const_operands : 1;
+  bool expr_const_operands : 1;
   /* Whether any declaration specifiers have been seen at all.  */
-  BOOL_BITFIELD declspecs_seen_p : 1;
+  bool declspecs_seen_p : 1;
   /* Whether any declaration specifiers other than standard attributes
      have been seen at all.  If only standard attributes have been
      seen, this is an attribute-declaration.  */
-  BOOL_BITFIELD non_std_attrs_seen_p : 1;
+  bool non_std_attrs_seen_p : 1;
   /* Whether something other than a storage class specifier or
      attribute has been seen.  This is used to warn for the
      obsolescent usage of storage class specifiers other than at the
      start of the list.  (Doing this properly would require function
      specifiers to be handled separately from storage class
      specifiers.)  */
-  BOOL_BITFIELD non_sc_seen_p : 1;
+  bool non_sc_seen_p : 1;
   /* Whether the type is specified by a typedef or typeof name.  */
-  BOOL_BITFIELD typedef_p : 1;
+  bool typedef_p : 1;
   /* Whether the type is explicitly "signed" or specified by a typedef
      whose type is explicitly "signed".  */
-  BOOL_BITFIELD explicit_signed_p : 1;
+  bool explicit_signed_p : 1;
   /* Whether the specifiers include a deprecated typedef.  */
-  BOOL_BITFIELD deprecated_p : 1;
+  bool deprecated_p : 1;
   /* Whether the specifiers include an unavailable typedef.  */
-  BOOL_BITFIELD unavailable_p : 1;
+  bool unavailable_p : 1;
   /* Whether the type defaulted to "int" because there were no type
      specifiers.  */
-  BOOL_BITFIELD default_int_p : 1;
+  bool default_int_p : 1;
   /* Whether "long" was specified.  */
-  BOOL_BITFIELD long_p : 1;
+  bool long_p : 1;
   /* Whether "long" was specified more than once.  */
-  BOOL_BITFIELD long_long_p : 1;
+  bool long_long_p : 1;
   /* Whether "short" was specified.  */
-  BOOL_BITFIELD short_p : 1;
+  bool short_p : 1;
   /* Whether "signed" was specified.  */
-  BOOL_BITFIELD signed_p : 1;
+  bool signed_p : 1;
   /* Whether "unsigned" was specified.  */
-  BOOL_BITFIELD unsigned_p : 1;
+  bool unsigned_p : 1;
   /* Whether "complex" was specified.  */
-  BOOL_BITFIELD complex_p : 1;
+  bool complex_p : 1;
   /* Whether "inline" was specified.  */
-  BOOL_BITFIELD inline_p : 1;
-  /* Whether "_Noreturn" was speciied.  */
-  BOOL_BITFIELD noreturn_p : 1;
+  bool inline_p : 1;
+  /* Whether "_Noreturn" was specified.  */
+  bool noreturn_p : 1;
   /* Whether "__thread" or "_Thread_local" was specified.  */
-  BOOL_BITFIELD thread_p : 1;
+  bool thread_p : 1;
   /* Whether "__thread" rather than "_Thread_local" was specified.  */
-  BOOL_BITFIELD thread_gnu_p : 1;
+  bool thread_gnu_p : 1;
   /* Whether "const" was specified.  */
-  BOOL_BITFIELD const_p : 1;
+  bool const_p : 1;
   /* Whether "volatile" was specified.  */
-  BOOL_BITFIELD volatile_p : 1;
+  bool volatile_p : 1;
   /* Whether "restrict" was specified.  */
-  BOOL_BITFIELD restrict_p : 1;
+  bool restrict_p : 1;
   /* Whether "_Atomic" was specified.  */
-  BOOL_BITFIELD atomic_p : 1;
+  bool atomic_p : 1;
   /* Whether "_Sat" was specified.  */
-  BOOL_BITFIELD saturating_p : 1;
+  bool saturating_p : 1;
   /* Whether any alignment specifier (even with zero alignment) was
      specified.  */
-  BOOL_BITFIELD alignas_p : 1;
+  bool alignas_p : 1;
   /* Whether an enum type specifier (": specifier-qualifier-list") was
      specified other than in a definition of that enum (if so, this is
      invalid unless it is an empty declaration "enum identifier
      enum-type-specifier;", but such an empty declaration is valid in
      C23 when "enum identifier;" would not be).  */
-  BOOL_BITFIELD enum_type_specifier_ref_p : 1;
+  bool enum_type_specifier_ref_p : 1;
   /* Whether "auto" was specified in C23 (or later) mode and means the
      type is to be deduced from an initializer, or would mean that if
      no type specifier appears later in these declaration
      specifiers.  */
-  BOOL_BITFIELD c23_auto_p : 1;
+  bool c23_auto_p : 1;
   /* Whether "constexpr" was specified.  */
-  BOOL_BITFIELD constexpr_p : 1;
+  bool constexpr_p : 1;
   /* The address space that the declaration belongs to.  */
   addr_space_t address_space;
 };
@@ -534,13 +534,13 @@ struct c_arg_info {
      ignored.  */
   tree pending_sizes;
   /* True when these arguments had [*].  */
-  BOOL_BITFIELD had_vla_unspec : 1;
+  bool had_vla_unspec : 1;
   /* True when the arguments are a (...) prototype.  */
-  BOOL_BITFIELD no_named_args_stdarg_p : 1;
+  bool no_named_args_stdarg_p : 1;
   /* True when empty parentheses have been interpreted as (void) in C23 or
      later.  This is only for use by -Wtraditional and is no longer needed if
      -Wtraditional is removed.  */
-  BOOL_BITFIELD c23_empty_parens : 1;
+  bool c23_empty_parens : 1;
 };
 
 /* A declarator.  */
@@ -567,16 +567,16 @@ struct c_declarator {
       /* The array dimension, or NULL for [] and [*].  */
       tree dimen;
       /* The qualifiers inside [].  */
-      int quals;
+      qualifier_set quals;
       /* The attributes (currently ignored) inside [].  */
       tree attrs;
       /* Whether [static] was used.  */
-      BOOL_BITFIELD static_p : 1;
+      bool static_p : 1;
       /* Whether [*] was used.  */
-      BOOL_BITFIELD vla_unspec_p : 1;
+      bool vla_unspec_p : 1;
     } array;
     /* For pointers, the qualifiers on the pointer type.  */
-    int pointer_quals;
+    qualifier_set pointer_quals;
     /* For attributes.  */
     tree attrs;
   } u;
@@ -685,7 +685,7 @@ extern void record_inline_static (location_t, tree, tree,
 				  enum c_inline_static_type);
 extern void c_init_decl_processing (void);
 extern void c_print_identifier (FILE *, tree, int);
-extern int quals_from_declspecs (const struct c_declspecs *);
+extern qualifier_set quals_from_declspecs (const struct c_declspecs *);
 extern struct c_declarator *build_array_declarator (location_t, tree,
     						    struct c_declspecs *,
 						    bool, bool);
@@ -786,6 +786,7 @@ extern void c_initialize_diagnostics (diagnostics::context *);
 extern bool c_var_mod_p (tree x, tree fn);
 extern alias_set_type c_get_alias_set (tree);
 extern int c_type_dwarf_attribute (const_tree, int);
+extern tree c_enum_underlying_base_type (const_tree);
 
 /* in c-typeck.cc */
 extern int in_alignof;
@@ -845,17 +846,17 @@ c_type_unspecified_p (tree t)
 	 && integer_zerop (TREE_OPERAND (TYPE_MAX_VALUE (TYPE_DOMAIN (t)), 1));
 }
 
+extern bool zero_length_array_type_p (const_tree type);
 extern bool char_type_p (tree);
 extern tree c_type_tag (const_tree t);
 extern tree c_objc_common_truthvalue_conversion (location_t, tree,
 						 tree = integer_type_node);
 extern tree require_complete_type (location_t, tree);
 extern bool same_translation_unit_p (const_tree, const_tree);
-extern int comptypes (tree, tree);
+extern bool comptypes (tree, tree);
 extern bool comptypes_same_p (tree, tree);
 extern bool comptypes_equiv_p (tree, tree);
-extern int comptypes_check_different_types (tree, tree, bool *);
-extern int comptypes_check_enum_int (tree, tree, bool *);
+extern bool comptypes_check_enum_int (tree, tree, bool *);
 extern bool c_mark_addressable (tree, bool = false, bool = false);
 extern void c_incomplete_type_error (location_t, const_tree, const_tree);
 extern tree c_type_promotes_to (tree);
@@ -890,7 +891,7 @@ extern struct c_expr parser_build_unary_op (location_t, enum tree_code,
     					    struct c_expr);
 extern struct c_expr parser_build_binary_op (location_t,
     					     enum tree_code, struct c_expr,
-					     struct c_expr);
+					     struct c_expr, tree);
 extern tree build_conditional_expr (location_t, tree, bool, tree, tree,
 				    location_t, tree, tree, location_t);
 extern tree build_compound_expr (location_t, tree, tree);
@@ -960,6 +961,7 @@ extern tree c_build_type_attribute_variant (tree ntype, tree attrs);
 extern tree c_build_pointer_type (tree type);
 extern tree c_build_array_type (tree type, tree domain);
 extern tree c_build_array_type_unspecified (tree type);
+extern tree c_build_array_type_zero_size (tree type);
 extern tree c_build_function_type (tree type, tree args, bool no = false);
 extern tree c_build_pointer_type_for_mode (tree type, machine_mode mode, bool m);
 
@@ -1009,7 +1011,6 @@ extern tree c_check_omp_declare_reduction_r (tree *, int *, void *);
 extern tree c_omp_mapper_id (tree);
 extern tree c_omp_mapper_decl (tree);
 extern void c_omp_scan_mapper_bindings (location_t, tree *, tree);
-extern tree c_omp_instantiate_mappers (tree);
 extern bool c_check_in_current_scope (tree);
 extern void c_pushtag (location_t, tree, tree);
 extern void c_bind (location_t, tree, bool);

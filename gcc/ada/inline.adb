@@ -46,10 +46,10 @@ with Sem_Ch10;       use Sem_Ch10;
 with Sem_Ch12;       use Sem_Ch12;
 with Sem_Prag;       use Sem_Prag;
 with Sem_Res;        use Sem_Res;
-with Sem_Util;       use Sem_Util;
 with Sinfo.Nodes;    use Sinfo.Nodes;
 with Sinfo.Utils;    use Sinfo.Utils;
 with Sinput;         use Sinput;
+with Sinput.L;       use Sinput.L;
 with Snames;         use Snames;
 with Stand;          use Stand;
 with Table;
@@ -310,6 +310,7 @@ package body Inline is
    --    Depends
    --    Exceptional_Cases
    --    Exit_Cases
+   --    Modifies
    --    Postcondition
    --    Precondition
    --    Program_Exit
@@ -1428,7 +1429,7 @@ package body Inline is
            and then not Same_Type (Etype (F), Etype (A))
            and then
              (Is_By_Reference_Type (Etype (A))
-               or else Is_Limited_Type (Etype (A)))
+              or else Is_Limited_Type (Etype (A)))
          then
             return False;
          end if;
@@ -1476,6 +1477,11 @@ package body Inline is
       --  with an address clause, which could become illegal in SPARK after
       --  inlining, if the address clause mentions a constant view of a mutable
       --  object at call site.
+
+      function Has_Formal_Of_UU_Type
+        (Id : Entity_Id) return Boolean;
+      --  Returns true if the subprogram has at least one formal parameter of
+      --  an unchecked conversion type.
 
       function Has_Formal_Or_Result_Of_Deep_Type
         (Id : Entity_Id) return Boolean;
@@ -1580,6 +1586,35 @@ package body Inline is
          return Check_All_Constants_With_Address_Clause
            (Body_Node) = Abandon;
       end Has_Constant_With_Address_Clause;
+
+      ---------------------------
+      -- Has_Formal_Of_UU_Type --
+      ---------------------------
+
+      function Has_Formal_Of_UU_Type
+        (Id : Entity_Id) return Boolean
+      is
+         Subp_Id    : constant Entity_Id := Ultimate_Alias (Id);
+         Formal     : Entity_Id;
+         Formal_Typ : Entity_Id;
+
+      begin
+         --  Inspect all parameters of the subprogram looking for a formal
+         --  of an unchecked union type.
+
+         Formal := First_Formal (Subp_Id);
+         while Present (Formal) loop
+            Formal_Typ := Etype (Formal);
+
+            if Is_Unchecked_Union (Formal_Typ) then
+               return True;
+            end if;
+
+            Next_Formal (Formal);
+         end loop;
+
+         return False;
+      end Has_Formal_Of_UU_Type;
 
       ---------------------------------------
       -- Has_Formal_Or_Result_Of_Deep_Type --
@@ -2066,6 +2101,14 @@ package body Inline is
       elsif Has_Formal_Or_Result_Of_Deep_Type (Id) then
          return False;
 
+      --  Do not inline calls if a parameter has an uncked union type as
+      --  inlining might cause an object to have inferrable discriminants
+      --  while it would not be the case without inlining, resulting in
+      --  checks for UU restrictions being missed.
+
+      elsif Has_Formal_Of_UU_Type (Id) then
+         return False;
+
       --  Do not inline subprograms which may be traversal functions. Such
       --  inlining introduces temporary variables of named access type for
       --  which assignments are move instead of borrow/observe, possibly
@@ -2119,7 +2162,6 @@ package body Inline is
       Suppress_Info : Boolean := False)
    is
       Inline_Prefix : constant String := "cannot inline";
-
       function Starts_With (S, Prefix : String) return Boolean is
         (S (S'First .. S'First + Prefix'Length - 1) = Prefix);
 
@@ -2165,7 +2207,8 @@ package body Inline is
          elsif GNATprove_Mode then
             Set_Is_Inlined_Always (Subp, False);
 
-            if Debug_Flag_Underscore_F and not Suppress_Info then
+            if GNATprove_Inline_Failure_Msg and not Suppress_Info
+            then
                Error_Msg_NE (Msg, N, Subp);
             end if;
 
@@ -3284,27 +3327,6 @@ package body Inline is
                    Expression          => New_A);
 
             else
-               --  In GNATprove mode, make an explicit copy of input
-               --  parameters when formal and actual types differ, to make
-               --  sure any check on the type conversion will be issued.
-               --  The legality of the copy is ensured by calling first
-               --  Call_Can_Be_Inlined_In_GNATprove_Mode.
-
-               if GNATprove_Mode
-                 and then Ekind (F) /= E_Out_Parameter
-                 and then not Same_Type (Etype (F), Etype (A))
-               then
-                  pragma Assert (not Is_By_Reference_Type (Etype (A)));
-                  pragma Assert (not Is_Limited_Type (Etype (A)));
-
-                  Append_To (Decls,
-                    Make_Object_Declaration (Loc,
-                      Defining_Identifier => Make_Temporary (Loc, 'C'),
-                      Constant_Present    => True,
-                      Object_Definition   => New_Occurrence_Of (Temp_Typ, Loc),
-                      Expression          => New_Copy_Tree (New_A)));
-               end if;
-
                Decl :=
                  Make_Object_Renaming_Declaration (Loc,
                    Defining_Identifier => Temp,
@@ -4673,15 +4695,34 @@ package body Inline is
 
    procedure Inline_Static_Function_Call (N : Node_Id; Subp : Entity_Id) is
 
+      Decls        : constant List_Id := New_List;
+      Func_Expr    : constant Node_Id :=
+        Expression_Of_Expression_Function (Subp);
+      Expr_Copy    : constant Node_Id := New_Copy_Tree (Func_Expr);
+      S_Adjustment : Sloc_Adjustment;
+
+      function Adjust_Node (Nod : Node_Id) return Traverse_Result;
+      --  Update the child node with the instantiation adjustment information
+      --  for error messages and mark the node as not coming from source to
+      --  avoid spurious resolution errors in inlined code.
+
       function Replace_Formal (N : Node_Id) return Traverse_Result;
       --  Replace each occurrence of a formal with the
       --  corresponding actual, using the mapping created
       --  by Establish_Actual_Mapping_For_Inlined_Call.
 
-      function Reset_Sloc (Nod : Node_Id) return Traverse_Result;
-      --  Reset the Sloc of a node to that of the call itself, so that errors
-      --  will be flagged on the call to the static expression function itself
-      --  rather than on the expression of the function's declaration.
+      -----------------
+      -- Adjust_Node --
+      -----------------
+
+      function Adjust_Node (Nod : Node_Id) return Traverse_Result is
+      begin
+         Adjust_Instantiation_Sloc (Nod, S_Adjustment);
+         Set_Comes_From_Source (Nod, False);
+         return OK;
+      end Adjust_Node;
+
+      procedure Adjust_Nodes is new Traverse_Proc (Adjust_Node);
 
       --------------------
       -- Replace_Formal --
@@ -4717,82 +4758,67 @@ package body Inline is
 
       procedure Replace_Formals is new Traverse_Proc (Replace_Formal);
 
-      ------------------
-      -- Process_Sloc --
-      ------------------
-
-      function Reset_Sloc (Nod : Node_Id) return Traverse_Result is
-      begin
-         Set_Sloc (Nod, Sloc (N));
-         Set_Comes_From_Source (Nod, False);
-
-         return OK;
-      end Reset_Sloc;
-
-      procedure Reset_Slocs is new Traverse_Proc (Reset_Sloc);
-
    --  Start of processing for Inline_Static_Function_Call
 
    begin
-      pragma Assert (Is_Static_Function_Call (N));
+      --  Register the call in the list of inlined calls
 
-      declare
-         Decls     : constant List_Id := New_List;
-         Func_Expr : constant Node_Id :=
-                       Expression_Of_Expression_Function (Subp);
-         Expr_Copy : constant Node_Id := New_Copy_Tree (Func_Expr);
+      Append_New_Elmt (N, To => Inlined_Calls);
 
-      begin
-         --  Create a mapping from formals to actuals, also creating temps in
-         --  Decls, when needed, to hold the actuals.
+      --  Create a mapping from formals to actuals, also creating temps in
+      --  Decls, when needed, to hold the actuals.
 
-         Establish_Actual_Mapping_For_Inlined_Call (N, Subp, Decls, Func_Expr);
+      Establish_Actual_Mapping_For_Inlined_Call (N, Subp, Decls, Func_Expr);
 
-         --  Ensure that the copy has the same parent as the call (this seems
-         --  to matter when GNATprove_Mode is set and there are nested static
-         --  calls; prevents blowups in Insert_Actions, though it's not clear
-         --  exactly why this is needed???).
+      --  Calculate the Adjustment for the inlined call
 
-         Set_Parent (Expr_Copy, Parent (N));
+      Create_Instantiation_Source
+        (N, Subp, S_Adjustment, Inlined_Body => True);
 
-         Insert_Actions (N, Decls);
+      --  Ensure that the copy has the same parent as the call (this seems
+      --  to matter when GNATprove_Mode is set and there are nested static
+      --  calls; prevents blowups in Insert_Actions, though it's not clear
+      --  exactly why this is needed???).
 
-         --  Now substitute actuals for their corresponding formal references
-         --  within the expression.
+      Set_Parent (Expr_Copy, Parent (N));
 
-         Replace_Formals (Expr_Copy);
+      Insert_Actions (N, Decls);
 
-         Reset_Slocs (Expr_Copy);
+      --  Now substitute actuals for their corresponding formal references
+      --  within the expression.
 
-         --  Apply a qualified expression with the function's result subtype,
-         --  to ensure that we check the expression against any constraint
-         --  or predicate, which will cause the call to be illegal if the
-         --  folded expression doesn't satisfy them. (The predicate case
-         --  might not get checked if the subtype hasn't been frozen yet,
-         --  which can happen if this static expression happens to be what
-         --  causes the freezing, because Has_Static_Predicate doesn't get
-         --  set on the subtype until it's frozen and Build_Predicates is
-         --  called. It's not clear how to address this case. ???)
+      Replace_Formals (Expr_Copy);
 
-         Rewrite (Expr_Copy,
-           Make_Qualified_Expression (Sloc (Expr_Copy),
-             Subtype_Mark =>
-               New_Occurrence_Of (Etype (N), Sloc (Expr_Copy)),
-             Expression =>
-               Relocate_Node (Expr_Copy)));
+      Adjust_Nodes (Expr_Copy);
 
-         Set_Etype (Expr_Copy, Etype (N));
+      --  Apply a qualified expression with the function's result subtype,
+      --  to ensure that we check the expression against any constraint
+      --  or predicate, which will cause the call to be illegal if the
+      --  folded expression doesn't satisfy them. (The predicate case
+      --  might not get checked if the subtype hasn't been frozen yet,
+      --  which can happen if this static expression happens to be what
+      --  causes the freezing, because Has_Static_Predicate doesn't get
+      --  set on the subtype until it's frozen and Build_Predicates is
+      --  called. It's not clear how to address this case. ???)
 
-         Analyze_And_Resolve (Expr_Copy, Etype (N));
+      Rewrite
+        (Expr_Copy,
+         Make_Qualified_Expression
+           (Sloc         => Sloc (Expr_Copy),
+            Subtype_Mark => New_Occurrence_Of (Etype (N), Sloc (Expr_Copy)),
+            Expression   => Relocate_Node (Expr_Copy)));
 
-         --  Finally rewrite the function call as the folded static result
+      Set_Etype (Expr_Copy, Etype (N));
 
-         Rewrite (N, Expr_Copy);
+      Analyze_And_Resolve (Expr_Copy, Etype (N));
 
-         --  Cleanup mapping between formals and actuals for other expansions
+      --  Finally rewrite the function call as the folded static result
 
-         Reset_Actual_Mapping_For_Inlined_Call (Subp);
-      end;
+      Rewrite (N, Expr_Copy);
+
+      --  Cleanup mapping between formals and actuals for other expansions
+
+      Reset_Actual_Mapping_For_Inlined_Call (Subp);
    end Inline_Static_Function_Call;
 
    ------------------------
@@ -5184,6 +5210,7 @@ package body Inline is
                                         | Name_Depends
                                         | Name_Exceptional_Cases
                                         | Name_Exit_Cases
+                                        | Name_Modifies
                                         | Name_Postcondition
                                         | Name_Precondition
                                         | Name_Program_Exit

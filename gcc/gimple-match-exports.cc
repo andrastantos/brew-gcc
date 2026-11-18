@@ -266,10 +266,12 @@ build_call_internal (internal_fn fn, gimple_match_op *res_op)
 	    case IFN_FFS:
 	    case IFN_POPCOUNT:
 	    case IFN_PARITY:
-	      /* For these 6 builtins large/huge _BitInt operand is ok
+	    case IFN_BSWAP:
+	    case IFN_BITREVERSE:
+	      /* For these 8 builtins large/huge _BitInt operand is ok
 		 before bitint lowering pass.  */
 	      if (res_op->num_ops >= 1
-		  && TREE_CODE (TREE_TYPE (res_op->ops[0])) == BITINT_TYPE
+		  && BITINT_TYPE_P (TREE_TYPE (res_op->ops[0]))
 		  && (TYPE_PRECISION (TREE_TYPE (res_op->ops[0]))
 		      > MAX_FIXED_MODE_SIZE)
 		  && cfun
@@ -415,7 +417,7 @@ try_conditional_simplification (internal_fn ifn, gimple_match_op *res_op,
 
   unsigned int num_ops = res_op->num_ops;
   /* num_cond_ops = 2 for COND_ADD (MASK and ELSE)
-     wheras num_cond_ops = 4 for COND_LEN_ADD (MASK, ELSE, LEN and BIAS).  */
+     whereas num_cond_ops = 4 for COND_LEN_ADD (MASK, ELSE, LEN and BIAS).  */
   unsigned int num_cond_ops = len_index < 0 ? 2 : 4;
   tree else_value
     = len_index < 0 ? res_op->ops[num_ops - 1] : res_op->ops[num_ops - 3];
@@ -1410,4 +1412,251 @@ get_conditional_internal_fn (code_helper code, tree type)
     return get_conditional_internal_fn (tree_code (code));
   auto cfn = combined_fn (code);
   return get_conditional_internal_fn (associated_internal_fn (cfn, type));
+}
+
+/* Find the operand which is different between ARG0_OP and ARG1_OP.
+   Returns the operand num where the difference is.
+   Set NEWARG0 and NEWARG1 from the different argument.
+   Returns -1 if none is found.
+   If ARG0_OP/ARG1_OP is commutative also try swapping the
+   two commutative operands and return the operand number where
+   the difference happens in ARG0_OP. */
+
+int
+find_different_opnum (const gimple_match_op &arg0_op,
+		      const gimple_match_op &arg1_op,
+		      tree *new_arg0, tree *new_arg1)
+{
+  unsigned opnum = -1;
+  unsigned first;
+  first = first_commutative_argument (arg1_op.code, arg1_op.type);
+  for (unsigned i = 0; i < arg0_op.num_ops; i++)
+    {
+      if (!operand_equal_for_phi_arg_p (arg0_op.ops[i],
+					arg1_op.ops[i]))
+	{
+	  /* Can handle only one non equal operand. */
+	  if (opnum != -1u)
+	    {
+	      /* Though if opnum is right before i and opnum is equal
+		 to the first communtative argument, handle communtative
+		 specially. */
+	      if (i == opnum + 1 && opnum == first)
+		goto commutative;
+	      return -1;
+	    }
+	  opnum = i;
+	}
+  }
+  /* If all operands are equal only do this is there was single
+     operand.  */
+  if (opnum == -1u)
+    {
+      if (arg0_op.num_ops != 1)
+	return -1;
+      opnum = 0;
+    }
+  *new_arg0 = arg0_op.ops[opnum];
+  *new_arg1 = arg1_op.ops[opnum];
+  return opnum;
+
+/* Handle commutative operations. */
+commutative:
+  gcc_assert (first != -1u);
+
+  /* Check the rest of the arguments to make sure they are the same. */
+  for (unsigned i = first + 2; i < arg0_op.num_ops; i++)
+    if (!operand_equal_for_phi_arg_p (arg0_op.ops[i],
+				      arg1_op.ops[i]))
+      return -1;
+
+  /* If the arg0[first+1] and arg1[first] are the same
+     then the one which is different is arg0[first] and arg1[first+1]
+     return first since this is based on arg0.  */
+  if (operand_equal_for_phi_arg_p (arg0_op.ops[first + 1],
+				   arg1_op.ops[first]))
+    {
+       *new_arg0 = arg0_op.ops[first];
+       *new_arg1 = arg1_op.ops[first + 1];
+       return first;
+    }
+  /* If the arg0[first] and arg1[first+1] are the same
+     then the one which is different is arg0[first+1] and arg1[first]
+     return first+1 since this is based on arg0.  */
+  if (operand_equal_for_phi_arg_p (arg0_op.ops[first],
+				   arg1_op.ops[first + 1]))
+    {
+       *new_arg0 = arg0_op.ops[first + 1];
+       *new_arg1 = arg1_op.ops[first];
+       return first + 1;
+    }
+  return -1;
+}
+
+/* Returns true if CFN requires a constant at ARGNO argument. */
+
+static bool
+fn_arg_must_be_const_p (combined_fn cfn, int argno)
+{
+  gcc_checking_assert (argno >= 0);
+  internal_fn ifn;
+  if (internal_fn_p (cfn))
+    {
+      ifn = as_internal_fn (cfn);
+      if (argno == 2
+	  && (ifn == IFN_CRC || ifn == IFN_CRC_REV))
+	return true;
+      if (argno == 1
+	  && (ifn == IFN_CLZ || ifn == IFN_CTZ))
+	return true;
+      if (ifn == IFN_BUILTIN_EXPECT)
+	return true;
+     return false;
+  }
+  switch (as_builtin_fn (cfn))
+    {
+    case BUILT_IN_CRC8_DATA8:
+    case BUILT_IN_CRC16_DATA8:
+    case BUILT_IN_CRC16_DATA16:
+    case BUILT_IN_CRC32_DATA8:
+    case BUILT_IN_CRC32_DATA16:
+    case BUILT_IN_CRC32_DATA32:
+    case BUILT_IN_CRC64_DATA8:
+    case BUILT_IN_CRC64_DATA16:
+    case BUILT_IN_CRC64_DATA32:
+    case BUILT_IN_CRC64_DATA64:
+    case BUILT_IN_REV_CRC8_DATA8:
+    case BUILT_IN_REV_CRC16_DATA8:
+    case BUILT_IN_REV_CRC16_DATA16:
+    case BUILT_IN_REV_CRC32_DATA8:
+    case BUILT_IN_REV_CRC32_DATA16:
+    case BUILT_IN_REV_CRC32_DATA32:
+    case BUILT_IN_REV_CRC64_DATA8:
+    case BUILT_IN_REV_CRC64_DATA16:
+    case BUILT_IN_REV_CRC64_DATA32:
+    case BUILT_IN_REV_CRC64_DATA64:
+      return argno == 2;
+    case BUILT_IN_OBJECT_SIZE:
+      return argno == 1;
+    case BUILT_IN_PREFETCH:
+      return argno != 0;
+    case BUILT_IN_FRAME_ADDRESS:
+      return true;
+    case BUILT_IN_EXPECT_WITH_PROBABILITY:
+    case BUILT_IN_EXPECT:
+      return true;
+    default:
+      return false;
+    }
+  return false;
+}
+
+/* Returns true if the array ARGS (size NUM_ARGS) are all ssa names.  */
+static bool
+all_ssa_names_p (tree *args, size_t num_args)
+{
+  for (size_t i = 0; i < num_args; i++)
+    if (TREE_CODE (args[i]) != SSA_NAME)
+      return false;
+  return true;
+}
+
+/* Some factoring of operations including some builtins need
+   to be stop from happening in some cases.  factor_operation_ok
+   returns true when the factoring is ok for CODE where OPNUM is
+   operand was and the ARGS are the operands of the
+   original operation.  DIVCONSTOK says if an integer division with
+   a constant is ok to be factored out.  PTRPLUSCONSTOK says if a
+   POINTER_PLUS_EXPR can be factored out. When opnum < 0, args
+   is allowed to be null.  */
+
+bool
+factor_operation_ok (code_helper code, int opnum,
+		     tree *args, location_t *locs, size_t num_args,
+		     bool divconstok, bool ptrplusconstok)
+{
+  bool all_ssa_names = opnum < 0 ? true : all_ssa_names_p (args, num_args);
+
+  if (code.is_fn_code ()
+      && code.is_internal_fn ())
+    switch (internal_fn (code))
+      {
+	/* For these internal functions, gimple_location is an implicit
+	   parameter, which will be used explicitly after expansion.
+	   Merging these statements may cause confusing line numbers in
+	   sanitizer messages.  */
+      case IFN_UBSAN_NULL:
+      case IFN_UBSAN_BOUNDS:
+      case IFN_UBSAN_VPTR:
+      case IFN_UBSAN_CHECK_ADD:
+      case IFN_UBSAN_CHECK_SUB:
+      case IFN_UBSAN_CHECK_MUL:
+      case IFN_UBSAN_OBJECT_SIZE:
+      case IFN_UBSAN_PTR:
+      case IFN_ASAN_CHECK:
+	for (size_t i = 1; i < num_args; i++)
+	  if (locs[0] != locs[i])
+	    return false;
+	break;
+      default: ;
+      }
+
+  /* If this was a division and the operand is the divisor
+     and either divisor was a constant, don't factor out
+     the division; dividing by an explicit constant can be
+     expanded better than without an constant.
+     FIXME: maybe isel could undo this case.  */
+  if (!all_ssa_names
+      && !divconstok
+      && int_divide_or_mod_p (code)
+      && opnum == 1)
+    return false;
+
+  /* For early phiopt, don't factor out constants for pointer plus.
+     BOS pass does not like that factoring.  */
+  if (!all_ssa_names
+      && !ptrplusconstok && code == POINTER_PLUS_EXPR
+      && opnum == 1)
+    return false;
+
+  /* BIT_FIELD_REF can't factor out operand 1 and 2.
+     While BIT_INSERT_EXPR can't be factored out for operand 2.
+     These operands require constants. */
+  if (!all_ssa_names
+      && code == BIT_FIELD_REF
+      && (opnum == 1 || opnum == 2))
+    return false;
+
+  if (!all_ssa_names
+      && code == BIT_INSERT_EXPR
+      && opnum == 2)
+    return false;
+
+  /* It is not profitability to factor out vec_perm with
+     constant masks (operand 2).  The target might not support it
+     and that might be invalid to do as such. Also with constants
+     masks, the number of elements of the mask type does not need
+     to match the number of elements of other operands and can be
+     arbitrary integral vector type so factoring that out can't work.
+     Note in the case where one mask is a constant and the other is not,
+     the check for compatible types will reject the case the
+     constant mask has the incompatible type.  */
+  if (!all_ssa_names
+      && code == VEC_PERM_EXPR && opnum == 2)
+    return false;
+
+  // The types are need to be compatible.
+  if (opnum >= 0)
+    {
+      for (size_t i = 1; i < num_args; i++)
+	if (!types_compatible_p (TREE_TYPE (args[0]), TREE_TYPE (args[1])))
+	  return false;
+    }
+
+  // Some builtins should not be factored out with constants being involved.
+  if (!all_ssa_names && code.is_fn_code ()
+      && fn_arg_must_be_const_p (combined_fn (code), opnum))
+    return false;
+
+  return true;
 }

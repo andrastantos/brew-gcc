@@ -12,6 +12,10 @@
 #include <stdio.h>
 #include "tree-vect.h"
 
+#if defined(__APPLE__) && !defined(MAP_ANONYMOUS)
+#define MAP_ANONYMOUS MAP_ANON
+#endif
+
 #define MMAP_SIZE 0x20000
 #define ADDRESS 0x1122000000
 

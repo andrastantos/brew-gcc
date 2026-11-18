@@ -513,86 +513,66 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline void
     _Sp_counted_ptr<nullptr_t, _S_atomic>::_M_dispose() noexcept { }
 
-  // FIXME: once __has_cpp_attribute(__no_unique_address__)) is true for
-  // all supported compilers we can greatly simplify _Sp_ebo_helper.
+#if ! __has_cpp_attribute(__no_unique_address__)
+#error "support for [[__no_unique_address__]] attribute is required"
+#endif
+
+#if ! _GLIBCXX_INLINE_VERSION
   // N.B. unconditionally applying the attribute could change layout for
   // final types, which currently cannot use EBO so have a unique address.
-
-  template<int _Nm, typename _Tp,
-	   bool __use_ebo = !__is_final(_Tp) && __is_empty(_Tp)>
+  template<typename _Tp, bool = !__is_final(_Tp) && __is_empty(_Tp)>
     struct _Sp_ebo_helper;
+#else
+  template<typename _Tp, bool = true>
+    struct _Sp_ebo_helper;
+#endif
 
-  /// Specialization using EBO.
-  template<int _Nm, typename _Tp>
-    struct _Sp_ebo_helper<_Nm, _Tp, true> : private _Tp
+  /// Specialization using [[no_unique_address]].
+  template<typename _Tp>
+    struct _Sp_ebo_helper<_Tp, true>
     {
-      explicit _Sp_ebo_helper(const _Tp& __tp) : _Tp(__tp) { }
-      explicit _Sp_ebo_helper(_Tp&& __tp) : _Tp(std::move(__tp)) { }
-
-      static _Tp&
-      _S_get(_Sp_ebo_helper& __eboh) { return static_cast<_Tp&>(__eboh); }
+      [[__no_unique_address__]] _Tp _M_obj;
     };
 
-  /// Specialization not using EBO.
-  template<int _Nm, typename _Tp>
-    struct _Sp_ebo_helper<_Nm, _Tp, false>
+#if ! _GLIBCXX_INLINE_VERSION
+  /// Specialization not using [[no_unique_address]].
+  template<typename _Tp>
+    struct _Sp_ebo_helper<_Tp, false>
     {
-      explicit _Sp_ebo_helper(const _Tp& __tp) : _M_tp(__tp) { }
-      explicit _Sp_ebo_helper(_Tp&& __tp) : _M_tp(std::move(__tp)) { }
-
-      static _Tp&
-      _S_get(_Sp_ebo_helper& __eboh)
-      { return __eboh._M_tp; }
-
-    private:
-      _Tp _M_tp;
+      _Tp _M_obj;
     };
+#endif
 
   // Support for custom deleter and/or allocator
   template<typename _Ptr, typename _Deleter, typename _Alloc, _Lock_policy _Lp>
     class _Sp_counted_deleter final : public _Sp_counted_base<_Lp>
     {
-      class _Impl : _Sp_ebo_helper<0, _Deleter>, _Sp_ebo_helper<1, _Alloc>
-      {
-	typedef _Sp_ebo_helper<0, _Deleter>	_Del_base;
-	typedef _Sp_ebo_helper<1, _Alloc>	_Alloc_base;
-
-      public:
-	_Impl(_Ptr __p, _Deleter __d, const _Alloc& __a) noexcept
-	: _Del_base(std::move(__d)), _Alloc_base(__a), _M_ptr(__p)
-	{ }
-
-	_Deleter& _M_del() noexcept { return _Del_base::_S_get(*this); }
-	_Alloc& _M_alloc() noexcept { return _Alloc_base::_S_get(*this); }
-
-	_Ptr _M_ptr;
-      };
-
     public:
       using __allocator_type = __alloc_rebind<_Alloc, _Sp_counted_deleter>;
 
       // __d(__p) must not throw.
       _Sp_counted_deleter(_Ptr __p, _Deleter __d) noexcept
-      : _M_impl(__p, std::move(__d), _Alloc()) { }
+      : _M_del{std::move(__d)}, _M_alloc{}, _M_ptr(__p) { }
 
       // __d(__p) must not throw.
       _Sp_counted_deleter(_Ptr __p, _Deleter __d, const _Alloc& __a) noexcept
-      : _M_impl(__p, std::move(__d), __a) { }
+      : _M_del{std::move(__d)}, _M_alloc{__a}, _M_ptr(__p) { }
 
 #pragma GCC diagnostic push // PR tree-optimization/122197
 #pragma GCC diagnostic ignored "-Wfree-nonheap-object"
+#pragma GCC diagnostic ignored "-Warray-bounds"
   template<typename> class auto_ptr;
       ~_Sp_counted_deleter() noexcept { }
-#pragma GCC diagnostic pop
 
       virtual void
       _M_dispose() noexcept
-      { _M_impl._M_del()(_M_impl._M_ptr); }
+      { _M_del._M_obj(_M_ptr); }
+#pragma GCC diagnostic pop
 
       virtual void
       _M_destroy() noexcept
       {
-	__allocator_type __a(_M_impl._M_alloc());
+	__allocator_type __a(_M_alloc._M_obj);
 	__allocated_ptr<__allocator_type> __guard_ptr{ __a, this };
 	this->~_Sp_counted_deleter();
       }
@@ -603,19 +583,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #if __cpp_rtti
 	// _GLIBCXX_RESOLVE_LIB_DEFECTS
 	// 2400. shared_ptr's get_deleter() should use addressof()
-        return __ti == typeid(_Deleter)
-	  ? std::__addressof(_M_impl._M_del())
-	  : nullptr;
-#else
-        return nullptr;
+	if (__ti == typeid(_Deleter))
+	  return std::__addressof(_M_del._M_obj);
 #endif
+	return nullptr;
       }
 
     private:
 #ifdef __glibcxx_out_ptr
       template<typename, typename, typename...> friend class out_ptr_t;
 #endif
-      _Impl _M_impl;
+
+      [[__no_unique_address__]] _Sp_ebo_helper<_Deleter> _M_del;
+      [[__no_unique_address__]] _Sp_ebo_helper<_Alloc>   _M_alloc;
+      _Ptr _M_ptr;
     };
 
   // helpers for make_shared / allocate_shared
@@ -645,25 +626,13 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _Tp, typename _Alloc, _Lock_policy _Lp>
     class _Sp_counted_ptr_inplace final : public _Sp_counted_base<_Lp>
     {
-      class _Impl : _Sp_ebo_helper<0, _Alloc>
-      {
-	typedef _Sp_ebo_helper<0, _Alloc>	_A_base;
-
-      public:
-	explicit _Impl(_Alloc __a) noexcept : _A_base(__a) { }
-
-	_Alloc& _M_alloc() noexcept { return _A_base::_S_get(*this); }
-
-	__gnu_cxx::__aligned_buffer<__remove_cv_t<_Tp>> _M_storage;
-      };
-
     public:
       using __allocator_type = __alloc_rebind<_Alloc, _Sp_counted_ptr_inplace>;
 
       // Alloc parameter is not a reference so doesn't alias anything in __args
       template<typename... _Args>
 	_Sp_counted_ptr_inplace(_Alloc __a, _Args&&... __args)
-	: _M_impl(__a)
+	: _M_alloc{__a}
 	{
 	  // _GLIBCXX_RESOLVE_LIB_DEFECTS
 	  // 2070.  allocate_shared should use allocator_traits<A>::construct
@@ -674,19 +643,19 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #pragma GCC diagnostic push // PR tree-optimization/122197
 #pragma GCC diagnostic ignored "-Warray-bounds"
       ~_Sp_counted_ptr_inplace() noexcept { }
-#pragma GCC diagnostic pop
 
       virtual void
       _M_dispose() noexcept
       {
-	allocator_traits<_Alloc>::destroy(_M_impl._M_alloc(), _M_ptr());
+	allocator_traits<_Alloc>::destroy(_M_alloc._M_obj, _M_ptr());
       }
+#pragma GCC diagnostic pop
 
       // Override because the allocator needs to know the dynamic type
       virtual void
       _M_destroy() noexcept
       {
-	__allocator_type __a(_M_impl._M_alloc());
+	__allocator_type __a(_M_alloc._M_obj);
 	__allocated_ptr<__allocator_type> __guard_ptr{ __a, this };
 	this->~_Sp_counted_ptr_inplace();
       }
@@ -716,9 +685,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       }
 
       __remove_cv_t<_Tp>*
-      _M_ptr() noexcept { return _M_impl._M_storage._M_ptr(); }
+      _M_ptr() noexcept { return _M_storage._M_ptr(); }
 
-      _Impl _M_impl;
+      [[__no_unique_address__]] _Sp_ebo_helper<_Alloc> _M_alloc;
+      __gnu_cxx::__aligned_buffer<__remove_cv_t<_Tp>> _M_storage;
     };
 
 #ifdef __glibcxx_smart_ptr_for_overwrite // C++ >= 20 && HOSTED
@@ -727,14 +697,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // Partial specialization used for make_shared_for_overwrite<non-array>().
   // This partial specialization is used when the allocator's value type
   // is the special _Sp_overwrite_tag type.
-#if __cpp_concepts
   template<typename _Tp, typename _Alloc, _Lock_policy _Lp>
     requires is_same_v<typename _Alloc::value_type, _Sp_overwrite_tag>
     class _Sp_counted_ptr_inplace<_Tp, _Alloc, _Lp> final
-#else
-  template<typename _Tp, template<typename> class _Alloc, _Lock_policy _Lp>
-    class _Sp_counted_ptr_inplace<_Tp, _Alloc<_Sp_overwrite_tag>, _Lp> final
-#endif
     : public _Sp_counted_base<_Lp>
     {
       [[no_unique_address]] _Alloc _M_alloc;
@@ -927,7 +892,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static constexpr size_t
       _S_tail()
       {
-	// The array elemenent type.
+	// The array element type.
 	using _Tp = typename allocator_traits<_Alloc>::value_type;
 
 	// The space needed to store a _Sp_counted_array object.
@@ -1539,6 +1504,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       template<typename _Yp, typename _Del>
 	using _UniqAssignable = _UniqCompatible<_Yp, _Del, __shared_ptr&>;
 
+      // Constraint for well-formedness of deleter expression d(p):
+      template<typename _Deleter, typename _Up>
+	using _ValidDeleter = __enable_if_t<
+	  __is_invocable<_Deleter&, _Up&>::value>;
+
     public:
 
 #if __cplusplus > 201402L
@@ -1559,24 +1529,21 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  _M_enable_shared_from_this_with(__p);
 	}
 
-      template<typename _Yp, typename _Deleter, typename = _SafeConv<_Yp>>
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 4110. shared_ptr(nullptr_t, Deleter) is overconstrained, breaking some
+      //       sensible deleters
+
+      template<typename _Yp, typename _Deleter, typename = _SafeConv<_Yp>,
+	       typename = _ValidDeleter<_Deleter, _Yp*>>
 	__shared_ptr(_Yp* __p, _Deleter __d)
 	: _M_ptr(__p), _M_refcount(__p, std::move(__d))
-	{
-	  static_assert(__is_invocable<_Deleter&, _Yp*&>::value,
-	      "deleter expression d(p) is well-formed");
-	  _M_enable_shared_from_this_with(__p);
-	}
+	{ _M_enable_shared_from_this_with(__p); }
 
       template<typename _Yp, typename _Deleter, typename _Alloc,
-	       typename = _SafeConv<_Yp>>
+	       typename = _SafeConv<_Yp>, typename = _ValidDeleter<_Deleter, _Yp*>>
 	__shared_ptr(_Yp* __p, _Deleter __d, _Alloc __a)
 	: _M_ptr(__p), _M_refcount(__p, std::move(__d), std::move(__a))
-	{
-	  static_assert(__is_invocable<_Deleter&, _Yp*&>::value,
-	      "deleter expression d(p) is well-formed");
-	  _M_enable_shared_from_this_with(__p);
-	}
+	{ _M_enable_shared_from_this_with(__p); }
 
       template<typename _Deleter>
 	__shared_ptr(nullptr_t __p, _Deleter __d)
@@ -1739,12 +1706,22 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       template<typename _Yp, typename _Deleter>
 	_SafeConv<_Yp>
 	reset(_Yp* __p, _Deleter __d)
-	{ __shared_ptr(__p, std::move(__d)).swap(*this); }
+	{
+	  static_assert(__is_invocable<_Deleter&, _Yp*&>::value,
+	    "deleter expression d(p) is well-formed");
+
+	  __shared_ptr(__p, std::move(__d)).swap(*this);
+	}
 
       template<typename _Yp, typename _Deleter, typename _Alloc>
 	_SafeConv<_Yp>
 	reset(_Yp* __p, _Deleter __d, _Alloc __a)
-        { __shared_ptr(__p, std::move(__d), std::move(__a)).swap(*this); }
+	{
+	  static_assert(__is_invocable<_Deleter&, _Yp*&>::value,
+	    "deleter expression d(p) is well-formed");
+
+	  __shared_ptr(__p, std::move(__d), std::move(__a)).swap(*this);
+	}
 
       /// Return the stored pointer.
       element_type*

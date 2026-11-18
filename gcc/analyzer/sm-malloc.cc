@@ -364,22 +364,19 @@ public:
   state_machine::state_t
   get_default_state (const svalue *sval) const final override
   {
-    if (tree cst = sval->maybe_get_constant ())
+    if (sval->all_zeroes_p ())
+      return m_null;
+    if (auto *sym_ptr = sval->maybe_get_symbolic_pointer ())
       {
-	if (zerop (cst))
-	  return m_null;
-      }
-    if (const region_svalue *ptr = sval->dyn_cast_region_svalue ())
-      {
-	const region *reg = ptr->get_pointee ();
-	switch (reg->get_memory_space ())
+	const region &reg = sym_ptr->get_base_region ();
+	switch (reg.get_memory_space ())
 	  {
 	  default:
 	    break;
-	  case MEMSPACE_CODE:
-	  case MEMSPACE_GLOBALS:
-	  case MEMSPACE_STACK:
-	  case MEMSPACE_READONLY_DATA:
+	  case memory_space::code:
+	  case memory_space::globals:
+	  case memory_space::stack:
+	  case memory_space::read_only_data:
 	    return m_non_heap;
 	  }
       }
@@ -1219,7 +1216,7 @@ public:
   /* Implementation of pending_diagnostic::supercedes_p for
      null-deref.
 
-     We want null-deref to supercede use-of-unitialized-value,
+     We want null-deref to supercede use-of-uninitialized-value,
      so that if we have these at the same stmt, we don't emit
      a use-of-uninitialized, just the null-deref.  */
 
@@ -1394,7 +1391,7 @@ public:
   /* Implementation of pending_diagnostic::supercedes_p for
      use_after_free.
 
-     We want use-after-free to supercede use-of-unitialized-value,
+     We want use-after-free to supercede use-of-uninitialized-value,
      so that if we have these at the same stmt, we don't emit
      a use-of-uninitialized, just the use-after-free.
      (this is because we fully purge information about freed
@@ -1528,17 +1525,17 @@ public:
     switch (get_memory_space ())
       {
       default:
-      case MEMSPACE_HEAP:
+      case memory_space::heap:
 	gcc_unreachable ();
-      case MEMSPACE_UNKNOWN:
-      case MEMSPACE_CODE:
-      case MEMSPACE_GLOBALS:
-      case MEMSPACE_READONLY_DATA:
+      case memory_space::unknown:
+      case memory_space::code:
+      case memory_space::globals:
+      case memory_space::read_only_data:
 	return ctxt.warn ("%qs of %qE which points to memory"
 			  " not on the heap",
 			  m_funcname, m_arg);
 	break;
-      case MEMSPACE_STACK:
+      case memory_space::stack:
 	return ctxt.warn ("%qs of %qE which points to memory"
 			  " on the stack",
 			  m_funcname, m_arg);
@@ -1569,12 +1566,13 @@ public:
   }
 
 private:
-  enum memory_space get_memory_space () const
+  memory_space
+  get_memory_space () const
   {
     if (m_freed_reg)
       return m_freed_reg->get_memory_space ();
     else
-      return MEMSPACE_UNKNOWN;
+      return memory_space::unknown;
   }
 
   const region *m_freed_reg;
@@ -1633,7 +1631,7 @@ public:
 	return false;
       }
 
-    /* Reject the warning if the check occurs within a macro defintion.
+    /* Reject the warning if the check occurs within a macro definition.
        This avoids false positives for such code as:
 
 	#define throw_error \
@@ -2810,9 +2808,10 @@ add_state_to_state_graph (analyzer_state_graph &out_state_graph,
 			  const svalue &sval,
 			  state_machine::state_t state) const
 {
-  if (const region *reg = sval.maybe_get_region ())
+  if (auto *sym_ptr = sval.maybe_get_symbolic_pointer ())
     {
-      auto &reg_node = out_state_graph.get_or_create_state_node (*reg);
+      const region &reg = sym_ptr->get_base_region ();
+      auto &reg_node = out_state_graph.get_or_create_state_node (reg);
       auto alloc_state = as_a_allocation_state (state);
       gcc_assert (alloc_state);
 

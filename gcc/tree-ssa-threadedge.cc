@@ -22,6 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "system.h"
 #include "coretypes.h"
 #include "backend.h"
+#include "cfghooks.h"
 #include "tree.h"
 #include "gimple.h"
 #include "predict.h"
@@ -500,17 +501,10 @@ jump_threader::simplify_control_stmt_condition_1
   gimple_cond_set_lhs (dummy_cond, op0);
   gimple_cond_set_rhs (dummy_cond, op1);
 
-  /* We absolutely do not care about any type conversions
-     we only care about a zero/nonzero value.  */
-  fold_defer_overflow_warnings ();
-
   tree res = fold_binary (cond_code, boolean_type_node, op0, op1);
   if (res)
     while (CONVERT_EXPR_P (res))
       res = TREE_OPERAND (res, 0);
-
-  fold_undefer_overflow_warnings ((res && is_gimple_min_invariant (res)),
-				  stmt, WARN_STRICT_OVERFLOW_CONDITIONAL);
 
   /* If we have not simplified the condition down to an invariant,
      then use the pass specific callback to simplify the condition.  */
@@ -658,7 +652,7 @@ propagate_threaded_block_debug_into (basic_block dest, basic_block src)
     fewvars.release ();
 }
 
-/* See if TAKEN_EDGE->dest is a threadable block with no side effecs (ie, it
+/* See if TAKEN_EDGE->dest is a threadable block with no side effects (ie, it
    need not be duplicated as part of the CFG/SSA updating process).
 
    If it is threadable, add it to PATH and VISITED and recurse, ultimately
@@ -906,12 +900,30 @@ jump_threader::thread_through_normal_block (vec<jump_thread_edge *> *path,
 
    Return true if E is (P0,X) or (P1,X)  */
 
-bool
+static bool
 edge_forwards_cmp_to_conditional_jump_through_empty_bb_p (edge e)
 {
-  /* See if there is only one stmt which is gcond.  */
   gcond *gs;
-  if (!(gs = safe_dyn_cast<gcond *> (last_and_only_stmt (e->dest))))
+  gphi *phi;
+  return (cond_on_phi_p (e->dest, &gs, &phi)
+	  && phi_arg_from_cmp_p (phi, e));
+}
+
+/* Return true if BB contains only a conditional jump on a PHI
+   defined in it, compared against 0 or 1:
+
+     <bb 5>:
+     # t_1 = PHI <t_9(3), t_6(4)>
+     if (t_1 != 0)
+
+   The conditional and the PHI are returned in *COND_OUT and
+   *PHI_OUT.  */
+
+bool
+cond_on_phi_p (basic_block bb, gcond **cond_out, gphi **phi_out)
+{
+  gcond *gs;
+  if (!(gs = safe_dyn_cast<gcond *> (last_and_only_stmt (bb))))
     return false;
 
   /* See if gcond's cond is "(phi !=/== 0/1)" in the basic block.  */
@@ -923,10 +935,28 @@ edge_forwards_cmp_to_conditional_jump_through_empty_bb_p (edge e)
       || (!integer_onep (rhs) && !integer_zerop (rhs)))
     return false;
   gphi *phi = dyn_cast <gphi *> (SSA_NAME_DEF_STMT (cond));
-  if (phi == NULL || gimple_bb (phi) != e->dest)
+  if (phi == NULL || gimple_bb (phi) != bb)
     return false;
 
-  /* Check if phi's incoming value is CMP.  */
+  *cond_out = gs;
+  *phi_out = phi;
+  return true;
+}
+
+/* Return true if PHI's incoming value on edge E is a single-use
+   comparison, possibly through a single-use conversion:
+
+     <bb 3>:
+     t_9 = a < b;
+     goto <bb 5>;
+
+     <bb 5>:
+     # t_1 = PHI <t_9(3), ...>
+*/
+
+bool
+phi_arg_from_cmp_p (gphi *phi, edge e)
+{
   gassign *def;
   tree value = PHI_ARG_DEF_FROM_EDGE (phi, e);
   if (TREE_CODE (value) != SSA_NAME
@@ -1017,12 +1047,11 @@ jump_threader::thread_across_edge (edge e)
 
     /* If E->dest has abnormal outgoing edges, then there's no guarantee
        we can safely redirect any of the edges.  Just punt those cases.  */
-    FOR_EACH_EDGE (taken_edge, ei, e->dest->succs)
-      if (taken_edge->flags & EDGE_COMPLEX)
-	{
-	  m_state->pop ();
-	  return;
-	}
+    if (!can_duplicate_block_on_edge_p (e))
+      {
+	m_state->pop ();
+	return;
+      }
 
     /* Look at each successor of E->dest to see if we can thread through it.  */
     FOR_EACH_EDGE (taken_edge, ei, e->dest->succs)

@@ -38,6 +38,9 @@ typedef struct
 
   /* Section prefix, e.g. ".progmem1.data"  */
   const char *section_name;
+
+  /* Value for Tag_GNU_AVR_VTABLE_AS (4) is 1 + id.  */
+  int gnu_attr_val;
 } avr_addrspace_t;
 
 extern const avr_addrspace_t avr_addrspace[];
@@ -321,10 +324,6 @@ enum reg_class {
 
 #define RETURN_ADDR_RTX(count, tem) avr_return_addr_rtx (count, tem)
 
-/* Don't use Push rounding. expr.cc: emit_single_push_insn is broken
-   for POST_DEC targets (PR27386).  */
-/*#define PUSH_ROUNDING(NPUSHED) (NPUSHED)*/
-
 typedef struct avr_args
 {
   /* # Registers available for passing */
@@ -499,7 +498,7 @@ extern const char *avr_no_devlib (int, const char**);
   { "no-devlib", avr_no_devlib },                       \
   { "device-specs-file", avr_devicespecs_file },
 
-/* Driver self specs has lmited functionality w.r.t. '%s' for dynamic specs.
+/* Driver self specs has limited functionality w.r.t. '%s' for dynamic specs.
    Apply '%s' to a static string to inflate the file (directory) name which
    is used to diagnose problems with reading the specs file.  */
 
@@ -586,7 +585,7 @@ struct GTY(()) machine_function
     bool yes;
     /* 'true' if this function is allowed to use "*gasisr" insns. */
     bool maybe;
-    /* The register numer as printed by the Done chunk.  */
+    /* The register number as printed by the Done chunk.  */
     int regno;
   } gasisr;
 
@@ -603,7 +602,11 @@ struct GTY(()) machine_function
 };
 
 /* AVR does not round pushes, but the existence of this macro is
-   required in order for pushes to be generated.  */
+   required in order for pushes to be generated.
+   This macro was removed for PR27386 and then later re-added when
+   push insns were introduced.  Push insns can work around broken
+   argument setup in expr.cc that doesn't work properly for
+   STACK_GROWS_DOWNWARDS + POST_DEC push, see PR127098.  */
 #define PUSH_ROUNDING(X)	(X)
 
 /* Define prototype here to avoid build warning.  Some files using

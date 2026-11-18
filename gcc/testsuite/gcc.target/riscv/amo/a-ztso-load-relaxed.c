@@ -2,6 +2,7 @@
 /* Verify that load mappings match the PSABI doc's recommended mapping.  */
 /* { dg-options "-O3" } */
 /* { dg-add-options riscv_ztso } */
+/* { dg-remove-options riscv_zalasr } */
 /* { dg-skip-if "" { *-*-* } { "-g" "-flto"} } */
 /* { dg-final { check-function-bodies "**" "" } } */
 
@@ -29,7 +30,7 @@ void atomic_load_int_relaxed (int* bar, int* baz)
 
 /*
 ** atomic_load_short_relaxed:
-**	lh\t[atx][0-9]+,0\(a0\)
+**	(lh|lhu)\t[atx][0-9]+,0\(a0\)
 **	sh\t[atx][0-9]+,0\(a1\)
 **	ret
 */

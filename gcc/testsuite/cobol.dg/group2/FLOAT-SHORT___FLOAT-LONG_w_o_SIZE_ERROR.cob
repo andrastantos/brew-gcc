@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/FLOAT-SHORT___FLOAT-LONG_w_o_SIZE_ERROR.out" }
 
        IDENTIFICATION DIVISION.

@@ -133,7 +133,7 @@ static int var_num = 1;
 
 /* What sort of matrix we are dealing with when inlining MATMUL.  */
 
-enum matrix_case { none=0, A2B2, A2B1, A1B2, A2B2T, A2TB2, A2TB2T };
+enum matrix_case { none=0, A2B2, A2B1, A1B2, A2B2T, A2TB2, A2TB2T, A2TB1 };
 
 /* Keep track of the number of expressions we have inserted so far
    using create_var.  */
@@ -835,7 +835,10 @@ create_var (gfc_expr * e, const char *vname)
       else if (e->expr_type == EXPR_VARIABLE
 	       && e->symtree->n.sym->ts.type == BT_CHARACTER
 	       && e->ts.u.cl->length)
-	symbol->ts.u.cl->length = get_len_call (gfc_copy_expr (e));
+	{
+	  symbol->ts.u.cl->length = get_len_call (gfc_copy_expr (e));
+	  symbol->ts.deferred = 0;
+	}
       else
 	{
 	  symbol->attr.allocatable = 1;
@@ -849,6 +852,7 @@ create_var (gfc_expr * e, const char *vname)
   symbol->attr.referenced = 1;
   symbol->attr.dimension = e->rank > 0;
   symbol->attr.fe_temp = 1;
+  symbol->attr.automatic = 1;
   gfc_commit_symbol (symbol);
 
   result = gfc_get_expr ();
@@ -1808,7 +1812,7 @@ combine_array_constructor (gfc_expr *e)
   /* This might be an expanded constructor with very many constant values. If
      we perform the operation here, we might end up with a long compile time
      and actually longer execution time, so a length bound is in order here.
-     If the constructor constains something which is not a constant, it did
+     If the constructor contains something which is not a constant, it did
      not come from an expansion, so leave it alone.  */
 
 #define CONSTR_LEN_MAX 4
@@ -2597,7 +2601,7 @@ doloop_code (gfc_code **c, int *walk_subtrees ATTRIBUTE_UNUSED,
 
       f = gfc_sym_get_dummy_args (co->resolved_sym);
 
-      /* Withot a formal arglist, there is only unknown INTENT,
+      /* Without a formal arglist, there is only unknown INTENT,
 	 which we don't check for.  */
       if (f == NULL)
 	break;
@@ -2777,6 +2781,9 @@ inner_loop_may_be_skipped (int loop_index, gfc_symbol *outer_sym, mpz_t outer_va
       if (loop == NULL || loop->ext.iterator == NULL || loop->ext.iterator->var == NULL)
 	return true;
 
+      if (loop->ext.iterator->var->symtree->n.sym->ts.type != BT_INTEGER)
+	return true;
+
       if (!evaluate_loop_bound (loop->ext.iterator->step, outer_sym, outer_val, do_step))
 	return true;
 
@@ -2787,9 +2794,17 @@ inner_loop_may_be_skipped (int loop_index, gfc_symbol *outer_sym, mpz_t outer_va
 	  return true;
 	}
 
-      if (!evaluate_loop_bound (loop->ext.iterator->start, outer_sym, outer_val, do_start)
-	  || !evaluate_loop_bound (loop->ext.iterator->end, outer_sym, outer_val, do_end))
+      if (!evaluate_loop_bound (loop->ext.iterator->start, outer_sym, outer_val,
+				do_start))
 	{
+	  mpz_clear (do_step);
+	  return true;
+	}
+
+      if (!evaluate_loop_bound (loop->ext.iterator->end, outer_sym, outer_val,
+				do_end))
+	{
+	  mpz_clear (do_start);
 	  mpz_clear (do_step);
 	  return true;
 	}
@@ -3115,7 +3130,7 @@ doloop_warn (gfc_namespace *ns)
     }
 }
 
-/* This selction deals with inlining calls to MATMUL.  */
+/* This section deals with inlining calls to MATMUL.  */
 
 /* Replace calls to matmul outside of straight assignments with a temporary
    variable so that later inlining will work.  */
@@ -3515,7 +3530,7 @@ matmul_lhs_realloc (gfc_expr *c, gfc_expr *a, gfc_expr *b,
 
   /* c comes in as a full ref.  Change it into a copy and make it into an
      element ref so it has the right form for ALLOCATE.  In the same
-     switch statement, also generate the size comparison for the secod IF
+     switch statement, also generate the size comparison for the second IF
      statement.  */
 
   ar->type = AR_ELEMENT;
@@ -3563,6 +3578,13 @@ matmul_lhs_realloc (gfc_expr *c, gfc_expr *a, gfc_expr *b,
 
     case A2B1:
       ar->start[0] = get_array_inq_function (GFC_ISYM_SIZE, a, 1);
+      cond = build_logical_expr (INTRINSIC_NE,
+				 get_array_inq_function (GFC_ISYM_SIZE, c, 1),
+				 get_array_inq_function (GFC_ISYM_SIZE, a, 1));
+      break;
+
+    case A2TB1:
+      ar->start[0] = get_array_inq_function (GFC_ISYM_SIZE, a, 2);
       cond = build_logical_expr (INTRINSIC_NE,
 				 get_array_inq_function (GFC_ISYM_SIZE, c, 1),
 				 get_array_inq_function (GFC_ISYM_SIZE, a, 2));
@@ -3808,6 +3830,7 @@ create_do_loop (gfc_expr *start, gfc_expr *end, gfc_expr *step, locus *where,
   symbol->attr.referenced = 1;
   symbol->attr.dimension = 0;
   symbol->attr.fe_temp = 1;
+  symbol->attr.automatic = 1;
   gfc_commit_symbol (symbol);
 
   i = gfc_get_expr ();
@@ -4217,6 +4240,8 @@ inline_matmul_assign (gfc_code **c, int *walk_subtrees,
 	{
 	  if (matrix_b->rank == 2 && !transpose_b)
 	    m_case = A2TB2;
+	  else if (matrix_b->rank == 1)
+	    m_case = A2TB1;
 	}
       else
 	{
@@ -4366,6 +4391,23 @@ inline_matmul_assign (gfc_code **c, int *walk_subtrees,
 	      c1 = get_array_inq_function (GFC_ISYM_SIZE, expr1, 1);
 	      a1 = get_array_inq_function (GFC_ISYM_SIZE, matrix_a, 1);
 	      test = runtime_error_ne (c1, a1, C_ERROR_1);
+	      *next_code_point = test;
+	      next_code_point = &test->next;
+	    }
+	  break;
+
+	case A2TB1:
+	  b1 = get_array_inq_function (GFC_ISYM_SIZE, matrix_b, 1);
+	  a1 = get_array_inq_function (GFC_ISYM_SIZE, matrix_a, 1);
+	  test = runtime_error_ne (b1, a1, B_ERROR_1);
+	  *next_code_point = test;
+	  next_code_point = &test->next;
+
+	  if (!realloc_c)
+	    {
+	      c1 = get_array_inq_function (GFC_ISYM_SIZE, expr1, 1);
+	      a2 = get_array_inq_function (GFC_ISYM_SIZE, matrix_a, 2);
+	      test = runtime_error_ne (c1, a2, C_ERROR_1);
 	      *next_code_point = test;
 	      next_code_point = &test->next;
 	    }
@@ -4610,6 +4652,40 @@ inline_matmul_assign (gfc_code **c, int *walk_subtrees,
       ascalar = scalarized_expr (matrix_a, list, 2);
 
       list[0] = var_1;
+      bscalar = scalarized_expr (matrix_b, list, 1);
+
+      break;
+
+    case A2TB1:
+
+      /* Ordering here is
+	   do i=1,size(a,2)
+	     do j=1,size(b,1)
+	       c(i) = c(i) + a(j,i) * b(j)
+	     end do
+	   end do
+      where i is var_1 and j is var_2.  */
+
+      u1 = get_size_m1 (matrix_a, 2);
+      u2 = get_size_m1 (matrix_b, 1);
+
+      do_1 = create_do_loop (gfc_copy_expr (zero), u1, NULL, &co->loc, ns);
+      do_2 = create_do_loop (gfc_copy_expr (zero), u2, NULL, &co->loc, ns);
+
+      do_1->block->next = do_2;
+      do_2->block->next = assign_matmul;
+
+      var_1 = do_1->ext.iterator->var;
+      var_2 = do_2->ext.iterator->var;
+
+      list[0] = var_1;
+      cscalar = scalarized_expr (co->expr1, list, 1);
+
+      list[0] = var_2;
+      list[1] = var_1;
+      ascalar = scalarized_expr (matrix_a, list, 2);
+
+      list[0] = var_2;
       bscalar = scalarized_expr (matrix_b, list, 1);
 
       break;
@@ -5304,8 +5380,14 @@ gfc_expr_walker (gfc_expr **e, walk_expr_fn_t exprfn, void *data)
 	      WALK_SUBEXPR (a->expr);
 	    break;
 
-	  case EXPR_STRUCTURE:
 	  case EXPR_ARRAY:
+	    if ((*e)->ts.type == BT_CHARACTER)
+	      WALK_SUBEXPR ((*e)->ts.u.cl->length);
+
+	    gcc_fallthrough ();
+
+	  case EXPR_STRUCTURE:
+
 	    for (c = gfc_constructor_first ((*e)->value.constructor); c;
 		 c = gfc_constructor_next (c))
 	      {
@@ -5478,6 +5560,11 @@ gfc_code_walker (gfc_code **c, walk_code_fn_t codefn, walk_expr_fn_t exprfn,
 	      continue;
 
 	    case EXEC_ALLOCATE:
+	      if (co->ext.alloc.ts.type == BT_CHARACTER)
+		WALK_SUBEXPR (co->ext.alloc.ts.u.cl->length);
+
+	      gcc_fallthrough();
+
 	    case EXEC_DEALLOCATE:
 	      {
 		gfc_alloc *a;
@@ -5696,14 +5783,10 @@ gfc_code_walker (gfc_code **c, walk_code_fn_t codefn, walk_expr_fn_t exprfn,
 		  for (idx = 0; idx < OMP_IF_LAST; idx++)
 		    WALK_SUBEXPR (co->ext.omp_clauses->if_exprs[idx]);
 		  WALK_SUBEXPR (co->ext.omp_clauses->final_expr);
-		  WALK_SUBEXPR (co->ext.omp_clauses->num_threads);
 		  WALK_SUBEXPR (co->ext.omp_clauses->chunk_size);
 		  WALK_SUBEXPR (co->ext.omp_clauses->safelen_expr);
 		  WALK_SUBEXPR (co->ext.omp_clauses->simdlen_expr);
-		  WALK_SUBEXPR (co->ext.omp_clauses->num_teams_lower);
-		  WALK_SUBEXPR (co->ext.omp_clauses->num_teams_upper);
 		  WALK_SUBEXPR (co->ext.omp_clauses->device);
-		  WALK_SUBEXPR (co->ext.omp_clauses->thread_limit);
 		  WALK_SUBEXPR (co->ext.omp_clauses->dist_chunk_size);
 		  WALK_SUBEXPR (co->ext.omp_clauses->grainsize);
 		  WALK_SUBEXPR (co->ext.omp_clauses->hint);
@@ -5713,12 +5796,29 @@ gfc_code_walker (gfc_code **c, walk_code_fn_t codefn, walk_expr_fn_t exprfn,
 		  WALK_SUBEXPR (co->ext.omp_clauses->dyn_groupprivate);
 		  WALK_SUBEXPR (co->ext.omp_clauses->novariants);
 		  WALK_SUBEXPR (co->ext.omp_clauses->nocontext);
+		  gfc_expr_list *el = co->ext.omp_clauses->num_teams_list;
+		  for ( ; el; el = el->next)
+		    WALK_SUBEXPR (el->expr);
+		  el = co->ext.omp_clauses->thread_limit_list;
+		  for ( ; el; el = el->next)
+		    WALK_SUBEXPR (el->expr);
+		  el = co->ext.omp_clauses->num_threads_list;
+		  for ( ; el; el = el->next)
+		    WALK_SUBEXPR (el->expr);
 		  for (idx = 0; idx < ARRAY_SIZE (list_types); idx++)
 		    for (n = co->ext.omp_clauses->lists[list_types[idx]];
 			 n; n = n->next)
 		      WALK_SUBEXPR (n->expr);
 		}
 	      break;
+
+	    case EXEC_OACC_INIT:
+	    case EXEC_OACC_SHUTDOWN:
+	    case EXEC_OACC_SET:
+	      if (co->ext.omp_clauses)
+		WALK_SUBEXPR (co->ext.omp_clauses->device_num_expr);
+	      break;
+
 	    default:
 	      break;
 	    }
@@ -5882,6 +5982,9 @@ check_against_globals (gfc_symbol *sym)
   if (sym->attr.if_source != IFSRC_IFBODY || sym->attr.flavor != FL_PROCEDURE
       || sym->attr.generic || sym->error || sym->attr.abstract
       || sym->attr.dummy)
+    return;
+
+  if (sym->error)
     return;
 
   if (sym->binding_label)

@@ -45,7 +45,7 @@
         to the current statement list.
 
         Your best bet is to simply emulate the code here to create the type_decl
-        for each structure, and then just use gg_declare_variable() to create the
+        for each structure, and then just use gg_define_variable() to create the
         storage when you need it.
 
         Learning from the code in genapi.c is your best bet.
@@ -55,6 +55,8 @@
 #include "cobol-system.h"
 #include "coretypes.h"
 #include "tree.h"
+#include "stringpool.h"
+#include "stor-layout.h"
 #include "../../libgcobol/ec.h"
 #include "../../libgcobol/common-defs.h"
 #include "util.h"
@@ -87,7 +89,7 @@ member(tree var, const char *member_name)
     }
 
 tree
-member(cbl_field_t *var, const char *member_name)
+member(const cbl_field_t *var, const char *member_name)
     {
     return gg_struct_field_ref(var->var_decl_node, member_name);
     }
@@ -156,11 +158,69 @@ tree cblc_field_p_type_node;
 tree cblc_field_pp_type_node;
 tree cblc_file_type_node;
 tree cblc_file_p_type_node;
+tree cblc_file_pp_type_node;
 tree cblc_goto_type_node;
+tree cblc_referlet_type_node;
+tree cblc_refer_type_node;
 
 // The following functions return type_decl nodes for the various structures
 
 static tree
+create_structure_type(const char *type_name)
+  {
+  tree record_type = make_node (RECORD_TYPE);
+  tree type_decl = build_decl (UNKNOWN_LOCATION,
+                               TYPE_DECL,
+                               get_identifier (type_name),
+                               record_type);
+  TYPE_NAME (record_type) = type_decl;
+  TYPE_STUB_DECL (record_type) = type_decl;
+  DECL_ARTIFICIAL (type_decl) = 1;
+  return record_type;
+  }
+
+static void
+get_structure_type_decl(tree record_type, ...)
+  {
+  va_list ap;
+  va_start (ap, record_type);
+
+  tree first = NULL_TREE;
+  tree *link = &first;
+
+  for (;;)
+    {
+    tree arg_type = va_arg (ap, tree);
+    if (!arg_type)
+      {
+      break;
+      }
+
+    const char *member_name = va_arg (ap, const char *);
+
+    tree member_decl = build_decl (UNKNOWN_LOCATION,
+                                   FIELD_DECL,
+                                   get_identifier (member_name),
+                                   arg_type);
+
+    DECL_CONTEXT (member_decl) = record_type;
+    DECL_CHAIN (member_decl) = NULL_TREE;
+    *link = member_decl;
+    link = &DECL_CHAIN (member_decl);
+    }
+  va_end (ap);
+
+  TYPE_FIELDS (record_type) = first;
+
+  layout_type (record_type);
+
+  gcc_assert (TREE_CODE (record_type) == RECORD_TYPE);
+  gcc_assert (TYPE_NAME (record_type));
+  gcc_assert (TREE_CODE (TYPE_NAME (record_type)) == TYPE_DECL);
+  gcc_assert (TREE_TYPE (TYPE_NAME (record_type)) == record_type);
+  }
+
+static void
 create_cblc_field_t()
     {
     /*
@@ -178,50 +238,58 @@ create_cblc_field_t()
         size_t occurs_upper;        // non-zero for a table
         uint64_t attr;              // See cbl_field_attr_t
         signed char type;           // A one-byte copy of cbl_field_type_t
-        signed char level;          // This variable's level in the naming heirarchy
+        signed char level;          // This variable's level in the naming hierarchy
         signed char digits;         // Digits specified in PIC string; e.g. 5 for 99v999
         signed char rdigits;        // Digits to the right of the decimal point. 3 for 99v999
         cbl_encoding_t  encoding;   // Same as cbl_field_t::codeset::encoding
         int             alphabet;   // Same as cbl_field_t::codeset::language
         } cblc_field_t;
     */
-    tree retval = gg_get_structure_type_decl("cblc_field_t",
-                                              UCHAR_P, "data",
-                                              SIZE_T,  "capacity",
-                                              SIZE_T,  "allocated",
-                                              SIZE_T,  "offset",
-                                              CHAR_P,  "name",
-                                              CHAR_P,  "picture",
-                                              CHAR_P,  "initial",
-                                              CHAR_P,  "parent",
-                                              SIZE_T,  "occurs_lower",
-                                              SIZE_T,  "occurs_upper",
-                                              ULONGLONG, "attr",
-                                              SCHAR,   "type",
-                                              SCHAR,   "level",
-                                              SCHAR,   "digits",
-                                              SCHAR,   "rdigits",
-                                              INT,     "encoding",
-                                              INT,     "alphabet",
-                                              NULL_TREE);
-    return retval;
+    cblc_field_type_node    = create_structure_type ("cblc_field_t");
+    cblc_field_p_type_node  = build_pointer_type(cblc_field_type_node);
+    cblc_field_pp_type_node = build_pointer_type(cblc_field_p_type_node);
+  
+    get_structure_type_decl( cblc_field_type_node,
+                                UCHAR_P, "data",
+                                SIZE_T,  "capacity",
+                                SIZE_T,  "allocated",
+                                SIZE_T,  "offset",
+                                CHAR_P,  "name",
+                                CHAR_P,  "picture",
+                                CHAR_P,  "initial",
+                                cblc_field_p_type_node,  "parent",
+                                SIZE_T,  "occurs_lower",
+                                SIZE_T,  "occurs_upper",
+                                UINT64, "attr",
+                                SCHAR,   "type",
+                                SCHAR,   "level",
+                                SCHAR,   "digits",
+                                SCHAR,   "rdigits",
+                                INT,     "encoding",
+                                INT,     "alphabet",
+                                NULL_TREE);
     }
 
-static tree
+static void
 create_cblc_file_t()
     {
     // When doing FILE I/O, you need the cblc_file_t structure
 
     /*
-typedef struct cblc_file_t*
+typedef struct cblc_file_t
     {
+    // This structure must match the code in structs.cc
     char                *name;             // This is the name of the structure; might be the name of an environment variable
-    uint64_t             symbol_index;     // The symbol table index of the related cbl_file_t structure
+    size_t               symbol_table_index;  // of the related cbl_field_t structure
     char                *filename;         // The name of the file to be opened
     FILE                *file_pointer;     // The FILE *pointer
+    size_t               file_fpos;        // Calculated file position
+    char                *buffer;           // read buffer
+    size_t               buffer_pos;       // next character from the buffer
+    size_t               buffer_len;       // number of characters in the buffer
     cblc_field_t        *default_record;   // The record_area
-    size_t               record_area_min;  // The size of the smallest 01 record in the FD, in characters
-    size_t               record_area_max;  // The size of the largest  01 record in the FD, in characters
+    size_t               record_area_min;  // The size of the smallest 01 record in the FD
+    size_t               record_area_max;  // The size of the largest  01 record in the FD
     cblc_field_t       **keys;             // For relative and indexed files.  The first is the primary key. Null-terminated.
     int                 *key_numbers;      // One per key -- each key has a number. This table is key_number + 1
     int                 *uniques;          // One per key
@@ -240,53 +308,100 @@ typedef struct cblc_file_t*
     int                  errnum;           // most recent errno; can't reuse "errno" as the name
     file_status_t        io_status;        // See 2014 standard, section 9.1.12
     int                  padding;          // Actually a char
-    cbl_char_t           delimiter;        // ends a record; defaults to '\n'.
-    int                  stride();         // width of a character
+    uint32_t             delimiter;        // This is four bytes in encoding order.
+    int                  stride;           // Width of a character
     int                  flags;            // cblc_file_flags_t
-    int                  recent_char;      // This is the most recent char sent to the file
+    uint32_t             recent_char;      // This is the most recent char sent to the file
     int                  recent_key;
-    cblc_file_prior_op_t prior_op;
-    int                  encoding;         // Actually cbl_encoding_t
+    cblc_file_prior_op_t prior_op;         // run-time type is INT
+    cbl_encoding_t       encoding;         // We assume size int
     int                  alphabet;         // Actually cbl_encoding_t
-    int                  dummy             // We need an even number of INT
     } cblc_file_t;
     */
-    tree retval = gg_get_structure_type_decl("cblc_file_t",
-                                             CHAR_P,    "name",
-                                             ULONGLONG, "symbol_table_index",
-                                             CHAR_P,    "filename",
-                                             FILE_P,    "file_pointer",
-                                             cblc_field_p_type_node, "default_record",
-                                             SIZE_T,    "record_area_min",
-                                             SIZE_T,    "record_area_max",
-                                             build_pointer_type(cblc_field_p_type_node), "keys",
-                                             build_pointer_type(INT),"key_numbers",
-                                             build_pointer_type(INT),"uniques",
-                                             cblc_field_p_type_node, "password",
-                                             cblc_field_p_type_node, "status",
-                                             cblc_field_p_type_node, "user_status",
-                                             cblc_field_p_type_node, "vsam_status",
-                                             cblc_field_p_type_node, "record_length",
-                                             VOID_P,                 "supplemental",
-                                             VOID_P,                 "implementation",
-                                             SIZE_T,    "reserve",
-                                             LONG,      "prior_read_location",
-                                             INT,       "org",
-                                             INT,       "access",
-                                             INT,       "mode_char",
-                                             INT,       "errnum",
-                                             INT,       "io_status",
-                                             INT,       "padding",
-                                             UINT,      "delimiter",
-                                             INT,       "stride",
-                                             INT,       "flags",
-                                             UINT,      "recent_char",
-                                             INT,       "recent_key",
-                                             INT,       "prior_op",
-                                             INT,       "encoding", // Actually cbl_encoding_t
-                                             INT,       "alphabet",
-                                             NULL_TREE);
-    return retval;
+    cblc_file_type_node    = create_structure_type ("cblc_file_t");
+    cblc_file_p_type_node  = build_pointer_type(cblc_file_type_node);
+    cblc_file_pp_type_node = build_pointer_type(cblc_file_p_type_node);
+
+    get_structure_type_decl(cblc_file_type_node,
+                            CHAR_P,    "name",
+                            UINT64, "symbol_table_index",
+                            CHAR_P,    "filename",
+                            FILE_P,    "file_pointer",
+                            SIZE_T,    "file_fpos",
+                            CHAR_P,    "buffer",
+                            SIZE_T,    "buffer_pos",
+                            SIZE_T,    "buffer_len",
+                            cblc_field_p_type_node, "default_record",
+                            SIZE_T,    "record_area_min",
+                            SIZE_T,    "record_area_max",
+                            cblc_field_pp_type_node, "keys",
+                            build_pointer_type(INT),"key_numbers",
+                            build_pointer_type(INT),"uniques",
+                            cblc_field_p_type_node, "password",
+                            cblc_field_p_type_node, "status",
+                            cblc_field_p_type_node, "user_status",
+                            cblc_field_p_type_node, "vsam_status",
+                            cblc_field_p_type_node, "record_length",
+                            VOID_P,                 "supplemental",
+                            VOID_P,                 "implementation",
+                            SIZE_T,    "reserve",
+                            LONG,      "prior_read_location",
+                            INT,       "org",
+                            INT,       "access",
+                            INT,       "mode_char",
+                            INT,       "errnum",
+                            INT,       "io_status",
+                            INT,       "padding",
+                            UINT,      "delimiter",
+                            INT,       "stride",
+                            INT,       "flags",
+                            UINT,      "recent_char",
+                            INT,       "recent_key",
+                            INT,       "prior_op",
+                            INT,       "encoding", // Actually cbl_encoding_t
+                            INT,       "alphabet",
+                            NULL_TREE);
+    }
+
+static void
+create_referlet_t()
+    {
+    /*
+      typedef struct cblc_referlet_t
+          {
+          cblc_field_t        *field;
+          size_t               offset;
+          size_t               size;
+          } cblc_referlet_t;
+    */
+    cblc_referlet_type_node = create_structure_type ("cblc_referlet_type_node");
+
+    get_structure_type_decl(cblc_referlet_type_node,
+                            cblc_field_p_type_node, "field",
+                            SIZE_T,                 "offset",
+                            SIZE_T,                 "size",
+                            NULL_TREE);
+    }
+
+static void
+create_refer_t()
+    {
+    /*
+      typedef struct cblc_refer_t
+          {
+          cblc_field_t        *field;
+          size_t               offset;
+          size_t               size;
+          int                  flags;
+          } cblc_refer_t;
+    */
+    cblc_refer_type_node    = create_structure_type ("cblc_refer_t");
+    get_structure_type_decl(cblc_refer_type_node,
+                            cblc_field_p_type_node, "field",
+                            SIZE_T,                 "offset",
+                            SIZE_T,                 "size",
+                            INT,                    "flags",
+                            NULL_TREE);
     }
 
 void
@@ -296,11 +411,10 @@ create_our_type_nodes()
     if( just_once )
         {
         just_once = false;
-        cblc_field_type_node              = create_cblc_field_t();
-        cblc_field_p_type_node            = build_pointer_type(cblc_field_type_node);
-        cblc_field_pp_type_node           = build_pointer_type(cblc_field_p_type_node);
-        cblc_file_type_node               = create_cblc_file_t();
-        cblc_file_p_type_node             = build_pointer_type(cblc_file_type_node);
+        create_cblc_field_t();
+        create_cblc_file_t();
+        create_referlet_t();
+        create_refer_t();
         }
     }
 

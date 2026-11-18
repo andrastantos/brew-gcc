@@ -491,6 +491,13 @@ package Sem_Util is
    --  Gather the entities of all abstract states and objects declared in the
    --  body state space of package body Body_Id.
 
+   procedure Collect_Constructors
+     (Typ            : Entity_Id;
+      Callable_Ctors : out Elist_Id;
+      Abstract_Ctors : out Elist_Id);
+   --  Collect in a single pass all non-hidden constructors of Typ in two
+   --  lists: Callable_Ctors (non-abstract) and Abstract_Ctors.
+
    procedure Collect_Interfaces
      (T               : Entity_Id;
       Ifaces_List     : out Elist_Id;
@@ -711,7 +718,7 @@ package Sem_Util is
 
    function Denotes_Same_Object (A1, A2 : Node_Id) return Boolean;
    --  Detect suspicious overlapping between actuals in a call, when both are
-   --  writable (RM 2012 6.4.1(6.4/3)).
+   --  writable (RM 2012 6.4.1(6.5/3)).
 
    function Denotes_Same_Prefix (A1, A2 : Node_Id) return Boolean;
    --  Functions to detect suspicious overlapping between actuals in a call,
@@ -1295,6 +1302,11 @@ package Sem_Util is
    --  has not yet been rewritten as a package declaration, and the entity has
    --  to be retrieved from the Instance_Spec of the unit.
 
+   function Get_Pool_Object_Or_Dereference (Pool : Entity_Id)
+     return Node_Or_Entity_Id;
+   --  Return the entity or dereference of which Pool is a part, if it exists.
+   --  Otherwise return Empty.
+
    function Get_Pragma_Id (N : Node_Id) return Pragma_Id;
    pragma Inline (Get_Pragma_Id);
    --  Obtains the Pragma_Id from Pragma_Name_Unmapped (N)
@@ -1621,10 +1633,6 @@ package Sem_Util is
    function Has_Prefix (N : Node_Id) return Boolean;
    --  Return True if N has attribute Prefix
 
-   function Has_Private_Component (Type_Id : Entity_Id) return Boolean;
-   --  Check if a type has a (sub)component of a private type that has not
-   --  yet received a full declaration.
-
    function Has_Relaxed_Initialization (E : Entity_Id) return Boolean;
    --  Returns True iff entity E is subject to the Relaxed_Initialization
    --  aspect. Entity E can be either type, variable, constant, subprogram or
@@ -1759,10 +1767,6 @@ package Sem_Util is
    --  the return value and have its accessibility level tied to that of the
    --  result of the enclosing function.
 
-   function In_Reverse_Storage_Order_Object (N : Node_Id) return Boolean;
-   --  Returns True if N denotes a component or subcomponent in a record or
-   --  array that has Reverse_Storage_Order.
-
    function In_Same_Declarative_Part
      (Context : Node_Id;
       N       : Node_Id) return Boolean;
@@ -1881,7 +1885,7 @@ package Sem_Util is
    --  pragma Initialize_Scalars or by the binder. Return an expression created
    --  at source location Loc, which denotes the invalid value.
 
-   function Is_Access_Subprogram_Wrapper (E : Entity_Id) return Boolean;
+   function Is_Access_To_Subprogram_Wrapper (E : Entity_Id) return Boolean;
    --  True if E is the constructed wrapper for an access_to_subprogram
    --  type with Pre/Postconditions.
 
@@ -1932,6 +1936,11 @@ package Sem_Util is
 
    function Is_Attribute_Result (N : Node_Id) return Boolean;
    --  Determine whether node N denotes attribute 'Result
+
+   function Is_Direct_Attribute_Subp_Name (Nam : Name_Id) return Boolean;
+   --  Determine whether Nam has the proper form for being the name of
+   --  a direct attribute definition subprogram (basically the function
+   --  tests that the name string includes an apostrophe).
 
    function Is_Direct_Attribute_Subp_Spec (N : Node_Id) return Boolean;
    --  Determine whether N denotes a direct attribute definition subprogram
@@ -2161,7 +2170,7 @@ package Sem_Util is
    function Is_Expression_Function_Or_Completion
      (Subp : Entity_Id) return Boolean;
    --  Determine whether subprogram [body] Subp denotes an expression function
-   --  or is completed by an expression function body.
+   --  or is completed by an expression function.
 
    function Is_Extended_Precision_Floating_Point_Type
      (E : Entity_Id) return Boolean;
@@ -2258,6 +2267,23 @@ package Sem_Util is
    function Is_In_Context_Clause (N : Node_Id) return Boolean;
    --  Returns True if N appears within the context clause of a unit, and False
    --  for any other placement.
+
+   function Not_Fully_Declared_Part
+      (Type_Id : Entity_Id) return Entity_Id;
+   --  Given a type, returns the reason it is not "completely defined".
+   --  We say that a type is "completely defined" at a place that is after
+   --  its full type definition (if it has one) and after all of its
+   --  subcomponent types are completely defined (RM 3.11.1 (8)).
+   --  If the return value is not Empty, Type_Id is incompletely defined
+   --  and the returned value points to the responsible subcomponent.
+   --
+   --  Used to enforce the rules on type freezing (RM 13.14), which require
+   --  that a type must be completely defined before it is frozen.
+
+   function Is_Incompletely_Defined (Type_Id : Entity_Id) return Boolean;
+   --  Returns True iff Type_Id is incompletely defined. See RM 3.11.1 (8) for
+   --  the definition of "completely defined". Note that "incompletely defined"
+   --  is also used in the Ada RM, for example in RM 12.5.1 (1/5).
 
    function Is_Independent_Object (N : Node_Id) return Boolean;
    --  Determine whether arbitrary node N denotes a reference to an independent
@@ -2394,7 +2420,8 @@ package Sem_Util is
 
    function Is_Partially_Initialized_Type
      (Typ              : Entity_Id;
-      Include_Implicit : Boolean := True) return Boolean;
+      Include_Implicit : Boolean := True;
+      Predicate_Check  : Boolean := False) return Boolean;
    --  Typ is a type entity. This function returns true if this type is partly
    --  initialized, meaning that an object of the type is at least partly
    --  initialized (in particular in the record case, that at least one
@@ -2408,6 +2435,10 @@ package Sem_Util is
    --  access values not explicitly initialized will return True. Otherwise
    --  if Include_Implicit is False, these cases do not count as making the
    --  type be partially initialized.
+   --  Predicate_Check indicates that this function has been invoked to
+   --  determine if a predicate check for Typ is needed. In this context
+   --  discriminants of record types are counted as making the type be
+   --  partially initialized, and Include_Implicit must be False.
 
    function Is_Potentially_Unevaluated (N : Node_Id) return Boolean;
    --  Predicate to implement definition given in RM 2012 6.1.1 (20/3)
@@ -2465,6 +2496,11 @@ package Sem_Util is
 
    function Is_Renamed_Entry (Proc_Nam : Entity_Id) return Boolean;
    --  Return True if Proc_Nam is a procedure renaming of an entry
+
+   function Is_Reverse_Storage_Order_Object (N : Node_Id) return Boolean;
+   --  Return True if N denotes an elementary component of an array or record
+   --  that has Reverse_Storage_Order set, or an unchecked conversion to an
+   --  elementary type of such an array or record.
 
    function Is_Reversible_Iterator (Typ : Entity_Id) return Boolean;
    --  AI05-0139-2: Check whether Typ is derived from the predefined interface
@@ -2539,6 +2575,7 @@ package Sem_Util is
    --    Exit_Cases
    --    Extensions_Visible
    --    Global
+   --    Modifies
    --    Post
    --    Post_Class
    --    Postcondition
@@ -3035,6 +3072,17 @@ package Sem_Util is
    --  of the corresponding formal entity, otherwise returns Empty. Also
    --  handles the case of references to renamings of formals.
 
+   function Partially_Visible_Part (Type_Id : Entity_Id) return Entity_Id;
+   --  If Type_Id is currently only partially visible, return Type_Id.
+   --  Otherwise, if there exist any subcomponents of Type_Id whose types are
+   --  currently only partially visible, returns the type of one such
+   --  subcomponent. Otherwise returns Empty. Used to enforce the rules on
+   --  visibility of operations on composite types, that depend on the full
+   --  view of the subcomponent types.
+   --
+   --  We say that a type is "partially visible" when it has a partial view
+   --  that is currently visible but no full view that is currently visible.
+
    function Policy_In_Effect
      (Policy : Name_Id;
       Level  : Name_Id := No_Name)
@@ -3087,13 +3135,6 @@ package Sem_Util is
    --  with a special name to avoid being overridden (i.e. return true in case
    --  of entities with names "nameP" and "name" or vice versa).
 
-   function Private_Component (Type_Id : Entity_Id) return Entity_Id;
-   --  Returns some private component (if any) of the given Type_Id.
-   --  Used to enforce the rules on visibility of operations on composite
-   --  types, that depend on the full view of the component type. For a
-   --  record type there may be several such components, we just return
-   --  the first one.
-
    procedure Process_End_Label
      (N   : Node_Id;
       Typ : Character;
@@ -3144,6 +3185,16 @@ package Sem_Util is
       From_Typ : Entity_Id);
    --  Inherit predicate functions and Has_Predicates flag from type From_Typ.
    --  Typ is the destination type.
+
+   function First_Component_Declaration (Typ : Entity_Id) return Node_Id;
+   --  Return the first non-pragma component declaration among the
+   --  non-inherited (own) components of record type Typ, or Empty when Typ
+   --  has no own component list or that list is empty. For a derived record
+   --  type the own components are those of the record extension part; for a
+   --  non-derived record type they are those of its type definition. Iterate
+   --  over the remaining own component declarations with Next_Non_Pragma. The
+   --  caller must ensure that Typ is a record type and Parent (Typ) is an
+   --  N_Full_Type_Declaration.
 
    procedure Record_Possible_Part_Of_Reference
      (Var_Id : Entity_Id;
@@ -3554,7 +3605,7 @@ package Sem_Util is
    --  Obtain the "validated view" of arbitrary type Typ which is suitable for
    --  verification by attribute 'Valid_Scalars. This view is the type itself
    --  or its full view or nonlimited view, while stripping away concurrency,
-   --  derivations, and privacy.
+   --  untagged derivation, and privacy.
 
    function Visible_Ancestors (Typ : Entity_Id) return Elist_Id;
    --  [Ada 2012:AI-0125-1]: Collect all the visible parents and progenitors
@@ -3562,9 +3613,6 @@ package Sem_Util is
    --  of private parents and progenitors is available then it is used to
    --  generate the list of visible ancestors; otherwise their partial
    --  view is added to the resulting list.
-
-   function Within_Init_Proc return Boolean;
-   --  Determines if Current_Scope is within an init proc
 
    function Within_Protected_Type (E : Entity_Id) return Boolean;
    --  Returns True if entity E is declared within a protected type

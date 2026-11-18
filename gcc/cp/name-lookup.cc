@@ -550,8 +550,8 @@ vec<tree, va_heap, vl_embed> *name_lookup::shared_scopes;
 /* Currently active lookup.  */
 name_lookup *name_lookup::active;
 
-/* Name lookup is recursive, becase ADL can cause template
-   instatiation.  This is of course a rare event, so we optimize for
+/* Name lookup is recursive, because ADL can cause template
+   instantiation.  This is of course a rare event, so we optimize for
    it not happening.  When we discover an active name-lookup, which
    must be an ADL lookup,  we need to unmark the marked scopes and also
    unmark the lookup we might have been accumulating.  */
@@ -580,7 +580,8 @@ name_lookup::preserve_state ()
 	    }
 	}
 
-      tentative = previous->tentative;
+      /* We deliberately avoid instantiation during tentative ADL.  */
+      gcc_checking_assert (!previous->tentative);
 
       /* Unmark the outer partial lookup.  */
       if (previous->deduping)
@@ -681,7 +682,7 @@ name_lookup::ambiguous (tree thing, tree current)
   return current;
 }
 
-/* FNS is a new overload set to add to the exising set.  */
+/* FNS is a new overload set to add to the existing set.  */
 
 void
 name_lookup::add_overload (tree fns)
@@ -1569,13 +1570,6 @@ name_lookup::adl_type (tree type)
       adl_type (TYPE_PTRMEM_POINTED_TO_TYPE (type));
       return;
     }
-  else if (REFLECTION_TYPE_P (type))
-    {
-      /* The namespace std::meta is an associated namespace of
-	 std::meta::info.  */
-      adl_namespace (std_meta_node);
-      return;
-    }
 
   switch (TREE_CODE (type))
     {
@@ -1616,6 +1610,13 @@ name_lookup::adl_type (tree type)
 
     case TYPE_PACK_EXPANSION:
       adl_type (PACK_EXPANSION_PATTERN (type));
+      return;
+
+    case OPAQUE_TYPE:
+      if (REFLECTION_TYPE_P (type))
+	/* The namespace std::meta is an associated namespace of
+	   std::meta::info.  */
+	adl_namespace (std_meta_node);
       return;
 
     default:
@@ -3668,7 +3669,7 @@ static void
 set_decl_context_in_fn (tree ctx, tree decl)
 {
   if (TREE_CODE (decl) == FUNCTION_DECL
-      || (VAR_P (decl) && DECL_EXTERNAL (decl)))
+      || (VAR_P (decl) && DECL_THIS_EXTERN (decl)))
     /* Make sure local externs are marked as such.  OMP UDRs really
        are nested functions.  */
     gcc_checking_assert (DECL_LOCAL_DECL_P (decl)
@@ -3692,15 +3693,13 @@ push_local_extern_decl_alias (tree decl)
 {
   if (flag_reflection)
     {
-      if (lookup_attribute ("internal ", "annotation ",
-			    DECL_ATTRIBUTES (decl)))
+      if (lookup_annotation (DECL_ATTRIBUTES (decl)))
 	error_at (DECL_SOURCE_LOCATION (decl),
 		  "annotation applied to block scope extern %qD",
 		  decl);
       if (TREE_CODE (decl) == FUNCTION_DECL)
 	for (tree arg = DECL_ARGUMENTS (decl); arg; arg = DECL_CHAIN (arg))
-	  if (lookup_attribute ("internal ", "annotation ",
-				DECL_ATTRIBUTES (arg)))
+	  if (lookup_annotation (DECL_ATTRIBUTES (arg)))
 	    error_at (DECL_SOURCE_LOCATION (arg),
 		      "annotation applied to parameter %qD of block scope "
 		      "extern", arg);
@@ -4072,7 +4071,7 @@ pushdecl (tree decl, bool hiding)
 	  for (ovl_iterator iter (oldi); iter; ++iter)
 	    if (iter.using_p ())
 	      ; /* Ignore using decls here.  */
-	    else if (iter.hidden_p ()
+	    else if (DECL_IS_UNDECLARED_BUILTIN (*iter)
 		     && TREE_CODE (*iter) == FUNCTION_DECL
 		     && DECL_LANG_SPECIFIC (*iter)
 		     && DECL_MODULE_IMPORT_P (*iter))
@@ -4238,7 +4237,7 @@ pushdecl (tree decl, bool hiding)
 		  if (level->kind != sk_namespace
 		      && !instantiating_current_function_p ())
 		    /* This is a locally defined typedef in a function that
-		       is not a template instantation, record it to implement
+		       is not a template instantiation, record it to implement
 		       -Wunused-local-typedefs.  */
 		    record_locally_defined_typedef (decl);
 		}
@@ -5488,12 +5487,8 @@ check_can_export_using_decl (tree binding)
     not_tmpl = TYPE_NAME (DECL_CONTEXT (not_tmpl));
 
   /* If the using decl is exported, the things it refers to must
-     have external linkage.  decl_linkage returns lk_external for
-     module linkage so also check for attachment.  */
-  if (linkage != lk_external
-      || (DECL_LANG_SPECIFIC (not_tmpl)
-	  && DECL_MODULE_ATTACH_P (not_tmpl)
-	  && !DECL_MODULE_EXPORT_P (not_tmpl)))
+     have external linkage.  */
+  if (linkage != lk_external)
     {
       auto_diagnostic_group d;
       bool diag = true;
@@ -6993,10 +6988,12 @@ push_using_decl_bindings (tree name, tree value)
   push_using_decl_bindings (nullptr, name, value);
 }
 
-/* Process a using declaration in non-class scope.  */
+/* Process a using declaration in non-class scope.  TYPENAME_P is true if
+   the using decl had the typename keyword; this is important to record for
+   a block-scope using declaration with a dependent scope (using a splice).  */
 
 void
-finish_nonmember_using_decl (tree scope, tree name)
+finish_nonmember_using_decl (tree scope, tree name, bool typename_p/*=false*/)
 {
   gcc_checking_assert (current_binding_level->kind != sk_class);
 
@@ -7008,6 +7005,9 @@ finish_nonmember_using_decl (tree scope, tree name)
   tree using_decl = lookup_using_decl (scope, lookup);
   if (!using_decl)
     return;
+
+  if (typename_p)
+    USING_DECL_TYPENAME_P (using_decl) = true;
 
   /* Emit debug info.  */
   if (!processing_template_decl)
@@ -7504,7 +7504,7 @@ suggest_alternatives_for_1 (location_t location, tree name,
    Search through all available namespaces and generate a suggestion and/or
    a deferred diagnostic that lists possible candidate(s).
 
-   This is similiar to suggest_alternatives_for, but doesn't fallback to
+   This is similar to suggest_alternatives_for, but doesn't fallback to
    the other approaches used by that function.  */
 
 name_hint
@@ -7560,6 +7560,8 @@ get_cxx_dialect_name (enum cxx_dialect dialect)
       return "C++23";
     case cxx26:
       return "C++26";
+    case cxx29:
+      return "C++29";
     }
 }
 
@@ -7818,7 +7820,7 @@ maybe_add_fuzzy_decl (auto_vec<tree> &vec, tree decl)
   return true;
 }
 
-/* Examing the namespace binding BINDING, and add at most one instance
+/* Examine the namespace binding BINDING, and add at most one instance
    of the name, if it contains a visible entity of interest.  Return
    true if we added something.  */
 
@@ -8490,7 +8492,7 @@ lookup_elaborated_type (tree name, TAG_how how)
 	     typedef struct C {} C;
 	   correctly.  */
 
-	if (tree type = strip_using_decl (iter->type))
+	if (tree type = iter->type)
 	  {
 	    if (qualify_lookup (type, LOOK_want::TYPE)
 		&& (how != TAG_how::CURRENT_ONLY
@@ -8506,7 +8508,7 @@ lookup_elaborated_type (tree name, TAG_how how)
 	  }
 	else
 	  {
-	    tree value = strip_using_decl (iter->value);
+	    tree value = iter->value;
 	    if (qualify_lookup (value, LOOK_want::TYPE)
 		&& (how != TAG_how::CURRENT_ONLY
 		    || !INHERITED_VALUE_BINDING_P (iter)))
@@ -8546,7 +8548,7 @@ lookup_elaborated_type (tree name, TAG_how how)
       if (bind)
 	{
 	  /* If this is the kind of thing we're looking for, we're done.  */
-	  if (tree type = strip_using_decl (MAYBE_STAT_TYPE (bind)))
+	  if (tree type = MAYBE_STAT_TYPE (bind))
 	    {
 	      if (how != TAG_how::HIDDEN_FRIEND)
 		/* No longer hidden.  */
@@ -8554,7 +8556,7 @@ lookup_elaborated_type (tree name, TAG_how how)
 
 	      return type;
 	    }
-	  else if (tree decl = strip_using_decl (MAYBE_STAT_DECL (bind)))
+	  else if (tree decl = MAYBE_STAT_DECL (bind))
 	    {
 	      if (qualify_lookup (decl, LOOK_want::TYPE))
 		{
@@ -8635,30 +8637,14 @@ lookup_elaborated_type (tree name, TAG_how how)
 		  }
 
 		if (type && qualify_lookup (type, LOOK_want::TYPE))
-		  return strip_using_decl (type);
+		  return type;
 
 		if (bind && qualify_lookup (bind, LOOK_want::TYPE))
-		  return strip_using_decl (bind);
+		  return bind;
 	      }
 
-	  if (!module_purview_p ())
-	    {
-	      /* We're in the global module, perhaps there's a tag
-		 there?  */
-
-	      /* FIXME: In general we should probably merge global module
-		 classes in check_module_override rather than here, but for
-		 GCC14 let's just fix lazy declarations of __class_type_info in
-		 build_dynamic_cast_1.  */
-	      if (current_namespace == abi_node)
-		{
-		  tree g = (BINDING_VECTOR_CLUSTER (*slot, 0)
-			    .slots[BINDING_SLOT_GLOBAL]);
-		  for (ovl_iterator iter (g); iter; ++iter)
-		    if (qualify_lookup (*iter, LOOK_want::TYPE))
-		      return *iter;
-		}
-	    }
+	  /* We'll find mergeable types in check_module_override when we try to
+	     push a new one, no need to handle them specially here.  */
 	}
     }
 
@@ -8814,10 +8800,18 @@ pushtag (tree name, tree type, TAG_how how)
       DECL_CONTEXT (tdef) = FROB_CONTEXT (context);
       set_originating_module (tdef);
 
+      /* Set TREE_PUBLIC now for built-in warnings and module merging.  */
+      if (TREE_CODE (context) == NAMESPACE_DECL
+	  && TREE_PUBLIC (context))
+	TREE_PUBLIC (tdef) = 1;
+
       decl = maybe_process_template_type_declaration
 	(type, how == TAG_how::HIDDEN_FRIEND, b);
       if (decl == error_mark_node)
 	return decl;
+      if (TREE_TYPE (decl) != type)
+	/* Found an imported version of the same type.  */
+	return TREE_TYPE (decl);
 
       if (b->kind == sk_class)
 	{
@@ -8847,6 +8841,9 @@ pushtag (tree name, tree type, TAG_how how)
 	    (decl, b, /*hiding=*/(how == TAG_how::HIDDEN_FRIEND));
 	  if (decl == error_mark_node)
 	    return decl;
+	  if (TREE_TYPE (decl) != type)
+	    /* Found an imported version of the same type.  */
+	    return TREE_TYPE (decl);
 
 	  if (DECL_CONTEXT (decl) == std_node
 	      && init_list_identifier == DECL_NAME (TYPE_NAME (type))
@@ -9072,6 +9069,7 @@ push_to_top_level (void)
   s->need_pop_function_context = need_pop;
   s->function_decl = current_function_decl;
   s->unevaluated_operand = cp_unevaluated_operand;
+  s->unevaluated_typeid_cutoff = cp_unevaluated_typeid_cutoff;
   s->inhibit_evaluation_warnings = c_inhibit_evaluation_warnings;
   s->suppress_location_wrappers = suppress_location_wrappers;
   s->x_stmt_tree.stmts_are_full_exprs_p = true;
@@ -9083,6 +9081,7 @@ push_to_top_level (void)
   current_namespace = global_namespace;
   push_class_stack ();
   cp_unevaluated_operand = 0;
+  cp_unevaluated_typeid_cutoff = 0;
   c_inhibit_evaluation_warnings = 0;
   suppress_location_wrappers = 0;
 }
@@ -9115,6 +9114,7 @@ pop_from_top_level (void)
     pop_function_context ();
   current_function_decl = s->function_decl;
   cp_unevaluated_operand = s->unevaluated_operand;
+  cp_unevaluated_typeid_cutoff = s->unevaluated_typeid_cutoff;
   c_inhibit_evaluation_warnings = s->inhibit_evaluation_warnings;
   suppress_location_wrappers = s->suppress_location_wrappers;
 
@@ -9132,6 +9132,7 @@ namespace {
 struct local_state_t
 {
   int cp_unevaluated_operand;
+  int cp_unevaluated_typeid_cutoff;
   int c_inhibit_evaluation_warnings;
   int cp_noexcept_operand_;
   bool has_cfun;
@@ -9142,6 +9143,8 @@ struct local_state_t
     local_state_t s;
     s.cp_unevaluated_operand = ::cp_unevaluated_operand;
     ::cp_unevaluated_operand = 0;
+    s.cp_unevaluated_typeid_cutoff = ::cp_unevaluated_typeid_cutoff;
+    ::cp_unevaluated_typeid_cutoff = 0;
     s.c_inhibit_evaluation_warnings = ::c_inhibit_evaluation_warnings;
     ::c_inhibit_evaluation_warnings = 0;
     s.cp_noexcept_operand_ = ::cp_noexcept_operand;
@@ -9156,6 +9159,7 @@ struct local_state_t
   restore () const
   {
     ::cp_unevaluated_operand = this->cp_unevaluated_operand;
+    ::cp_unevaluated_typeid_cutoff = this->cp_unevaluated_typeid_cutoff;
     ::c_inhibit_evaluation_warnings = this->c_inhibit_evaluation_warnings;
     ::cp_noexcept_operand = this->cp_noexcept_operand_;
     if (this->has_cfun)

@@ -600,8 +600,7 @@ gen_split (const md_rtx_info &info, FILE *file)
     if (*p == '/')
       fn = p + 1;
 
-  fprintf (file, "  if (dump_file)\n");
-  fprintf (file, "    fprintf (dump_file, \"Splitting with gen_%s_%d (%s:%d)\\n\");\n",
+  fprintf (file, "  note_split (\"gen_%s_%d (%s:%d)\");\n",
 	  name, info.index, fn, info.loc.lineno);
 
   fprintf (file, "  start_sequence ();\n");
@@ -878,15 +877,14 @@ from the machine description file `md'.  */\n\n");
   fprintf (file, "#include \"target.h\"\n\n");
 }
 
-auto_vec<FILE *, 10> output_files;
+auto_vec<generator_output, 10> output_files;
 
 static bool
 handle_arg (const char *arg)
 {
   if (arg[1] == 'O')
     {
-      FILE *file = fopen (&arg[2], "w");
-      output_files.safe_push (file);
+      add_generator_output (output_files, &arg[2], true);
       return true;
     }
   return false;
@@ -910,13 +908,13 @@ main (int argc, const char **argv)
   md_rtx_info info;
 
   if (output_files.is_empty ())
-    output_files.safe_push (stdout);
+    add_generator_output (output_files, NULL, true);
+  open_generator_outputs (output_files);
 
-  for (auto f : output_files)
-    print_header (f);
+  for (const generator_output &output : output_files)
+    print_header (output.file);
 
   FILE *file = NULL;
-  unsigned file_idx;
 
   /* Read the machine description.  */
   while (read_md_rtx (&info))
@@ -941,7 +939,7 @@ main (int argc, const char **argv)
 
   for (auto &info : queue)
     {
-      file = choose_output (output_files, file_idx);
+      file = choose_output (output_files);
 
       fprintf (file, "/* %s:%d */\n", info.loc.filename, info.loc.lineno);
       switch (GET_CODE (info.def))
@@ -964,24 +962,24 @@ main (int argc, const char **argv)
 	}
     }
 
-  file = choose_output (output_files, file_idx);
+  file = choose_output (output_files);
 
   /* Write out the routines to add CLOBBERs to a pattern and say whether they
      clobber a hard reg.  */
   output_add_clobbers (file);
   output_added_clobbers_hard_reg_p (file);
 
+  /* Spread these over the output files too.  Emitting them all into
+     whichever file happened to be current leaves that one much bigger than
+     the rest, which is the opposite of what splitting is for.  */
   for (overloaded_name *oname = rtx_reader_ptr->get_overloads ();
        oname; oname = oname->next)
     {
+      file = choose_output (output_files);
       handle_overloaded_code_for (oname, file);
       handle_overloaded_gen (oname, file);
     }
 
-  int ret = SUCCESS_EXIT_CODE;
-  for (FILE *f : output_files)
-    if (fclose (f) != 0)
-      ret = FATAL_EXIT_CODE;
-
-  return ret;
+  return (close_generator_outputs (output_files)
+	  ? SUCCESS_EXIT_CODE : FATAL_EXIT_CODE);
 }

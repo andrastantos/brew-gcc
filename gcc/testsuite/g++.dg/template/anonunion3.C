@@ -4,7 +4,7 @@
 extern "C" int printf (const char *, ...);
 
 template<typename T> static char const * f(T *t) {
- T u(*t);
+ T u(*t);			// { dg-error "declaration of variable 'u' with anonymous union type 'main\\\(\\\)::<unnamed union>'" }
  u.x = "hello world";
  printf("%s\n", u.x);
  return "initialized";

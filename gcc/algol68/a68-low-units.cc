@@ -148,7 +148,7 @@ a68_lower_identifier (NODE_T *p, LOW_CTX_T ctx)
 	}
 
       /* If the identifier refers to a FUNCTION_DECL, this means the
-	 declaration was made by a procecure-identity-dclaration or a
+	 declaration was made by a procedure-identity-dclaration or a
 	 proc-identity-declaration of a formal hole.  The applied identifier in
 	 that case refers to the address of the corresponding function.  */
       if (TREE_CODE (id_decl) == FUNCTION_DECL)
@@ -208,7 +208,10 @@ a68_lower_string_denotation (NODE_T *p, LOW_CTX_T ctx ATTRIBUTE_UNUSED)
 		  longety, bits denotation;
 		  shortety, int denotation;
 		  shortety, real denotation;
-		  shortety, bits denotation.
+		  shortety, bits denotation;
+		  word symbol, int denotation;
+		  word symbol, real denotation;
+		  word symbol, bits denotation.
 
    Denotations lower into GENERIC cst expressions.  */
 
@@ -239,13 +242,16 @@ a68_lower_denotation (NODE_T *p, LOW_CTX_T ctx)
 	   || moid == M_LONG_INT
 	   || moid == M_LONG_LONG_INT
 	   || moid == M_SHORT_INT
-	   || moid == M_SHORT_SHORT_INT)
+	   || moid == M_SHORT_SHORT_INT
+	   || moid == M_WORD_INT)
     {
       /* SIZETY INT */
       tree type;
       char *end;
       NODE_T *s = NO_NODE;
-      if (IS (SUB (p), LONGETY) || IS (SUB (p), SHORTETY))
+      if (IS (SUB (p), LONGETY)
+	  || IS (SUB (p), SHORTETY)
+	  || IS (SUB (p), FIXETY))
 	s = NEXT (SUB (p));
       else
 	s = SUB (p);
@@ -274,14 +280,17 @@ a68_lower_denotation (NODE_T *p, LOW_CTX_T ctx)
       || moid == M_LONG_BITS
       || moid == M_LONG_LONG_BITS
       || moid == M_SHORT_BITS
-      || moid == M_SHORT_SHORT_BITS)
+      || moid == M_SHORT_SHORT_BITS
+      || moid == M_WORD_BITS)
     {
       /* SIZETY BITS */
 
       tree type;
       char *end;
       NODE_T *s = NO_NODE;
-      if (IS (SUB (p), LONGETY) || IS (SUB (p), SHORTETY))
+      if (IS (SUB (p), LONGETY)
+	  || IS (SUB (p), SHORTETY)
+	  || IS (SUB (p), FIXETY))
 	s = NEXT (SUB (p));
       else
 	s = SUB (p);
@@ -301,27 +310,39 @@ a68_lower_denotation (NODE_T *p, LOW_CTX_T ctx)
 #else
       uint64_t val = strtoull (end, &end, radix);
 #endif
-      gcc_assert (errno == 0 && end[0] == '\0');
+      gcc_assert (end[0] == '\0');
+      uint64_t max_positive = uint64_t (wi::max_value (type).to_uhwi ());
+      if (errno == ERANGE || val > max_positive)
+	{
+	  a68_moid_format_token m (moid);
+	  a68_error (s, "denotation is too large for %e", &m);
+	}
+
       return build_int_cst (type, val);
     }
   else if (moid == M_REAL
 	   || moid == M_LONG_REAL
-	   || moid == M_LONG_LONG_REAL)
+	   || moid == M_LONG_LONG_REAL
+	   || moid == M_WORD_REAL)
     {
       /* SIZETY REAL */
       tree type;
       NODE_T *s = NO_NODE;
-      if (IS (SUB (p), LONGETY) || IS (SUB (p), SHORTETY))
+      if (IS (SUB (p), LONGETY)
+	  || IS (SUB (p), SHORTETY)
+	  || IS (SUB (p), FIXETY))
 	s = NEXT (SUB (p));
       else
 	s = SUB (p);
 
       if (moid == M_REAL)
-	type = float_type_node;
+	type = a68_real_type;
       else if (moid == M_LONG_REAL)
-	type = double_type_node;
+	type = a68_long_real_type;
       else if (moid == M_LONG_LONG_REAL)
-	type = long_double_type_node;
+	type = a68_long_long_real_type;
+      else if (moid == M_WORD_REAL)
+	type = a68_word_real_type;
       else
 	gcc_unreachable ();
 
@@ -405,7 +426,7 @@ a68_lower_identity_relation (NODE_T *p, LOW_CTX_T ctx)
     gcc_unreachable ();
 
   return fold_build2_loc (a68_get_node_location (p),
-			  code, boolean_type_node, op1, op2);
+			  code, a68_bool_type, op1, op2);
 }
 
 /* Lower AND_FUNCTION and OR_FUNCTION.
@@ -438,7 +459,7 @@ a68_lower_logic_function (NODE_T *p, LOW_CTX_T ctx)
     gcc_unreachable ();
 
   return fold_build2_loc (a68_get_node_location (p),
-			  code, boolean_type_node, op1, op2);
+			  code, a68_bool_type, op1, op2);
 }
 
 /* Lower a primary.
@@ -1017,6 +1038,9 @@ a68_lower_formula (NODE_T *p, LOW_CTX_T ctx)
 	  tree op = a68_lower_tree (NEXT (SUB (p)), ctx);
 	  tree arg2 = a68_lower_tree (NEXT (NEXT (SUB (p))), ctx);
 
+	  arg1 = a68_consolidate_ref (MOID (SUB (p)), arg1);
+	  arg2 = a68_consolidate_ref (MOID (NEXT (NEXT (SUB (p)))), arg2);
+
 	  if (POINTER_TYPE_P (TREE_TYPE (op)))
 	    op = fold_build1 (INDIRECT_REF,
 			      TREE_TYPE (TREE_TYPE (op)),
@@ -1049,6 +1073,7 @@ a68_lower_monadic_formula (NODE_T *p, LOW_CTX_T ctx)
       tree op = a68_lower_tree (SUB (p), ctx);
       tree secondary = a68_lower_tree (NEXT (SUB (p)), ctx);
 
+      secondary = a68_consolidate_ref (MOID (NEXT (SUB (p))), secondary);
       if (POINTER_TYPE_P (TREE_TYPE (op)))
 	op = fold_build1 (INDIRECT_REF, TREE_TYPE (TREE_TYPE (op)), op);
       return build_call_expr_loc (a68_get_node_location (p), op, 1, secondary);
@@ -1129,8 +1154,7 @@ collect_call_arguments (NODE_T *p, vec<tree, va_gc> *args, LOW_CTX_T ctx)
 	  /* In Algol 68 parameters are passed via an identity declaration, so
 	     this must implement same semantics.  */
 	  tree arg = a68_lower_tree (p, ctx);
-	  if (HAS_ROWS (MOID (p)))
-	    arg = a68_low_dup (arg);
+	  arg = a68_low_dup (arg);
 	  arg = a68_consolidate_ref (MOID (p), arg);
 	  args->quick_push (arg);
 	}

@@ -22,9 +22,13 @@
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
+#include "bitmap.h"
+#include "function.h"
 #include "tm.h"
 #include "rtl.h"
 #include "tree.h"
+#include "value-range.h"
+#include "vr-values.h"
 #include "realmpfr.h"
 #include "dfp.h"
 
@@ -395,6 +399,7 @@ cmp_significand_0 (const REAL_VALUE_TYPE *a)
 static inline void
 set_significand_bit (REAL_VALUE_TYPE *r, unsigned int n)
 {
+  gcc_checking_assert (n < SIGNIFICAND_BITS);
   r->sig[n / HOST_BITS_PER_LONG]
     |= (unsigned long)1 << (n % HOST_BITS_PER_LONG);
 }
@@ -404,6 +409,7 @@ set_significand_bit (REAL_VALUE_TYPE *r, unsigned int n)
 static inline void
 clear_significand_bit (REAL_VALUE_TYPE *r, unsigned int n)
 {
+  gcc_checking_assert (n < SIGNIFICAND_BITS);
   r->sig[n / HOST_BITS_PER_LONG]
     &= ~((unsigned long)1 << (n % HOST_BITS_PER_LONG));
 }
@@ -416,6 +422,7 @@ test_significand_bit (REAL_VALUE_TYPE *r, unsigned int n)
   /* ??? Compiler bug here if we return this expression directly.
      The conversion to bool strips the "&1" and we wind up testing
      e.g. 2 != 0 -> true.  Seen in gcc version 3.2 20020520.  */
+  gcc_checking_assert (n < SIGNIFICAND_BITS);
   int t = (r->sig[n / HOST_BITS_PER_LONG] >> (n % HOST_BITS_PER_LONG)) & 1;
   return t;
 }
@@ -427,6 +434,7 @@ clear_significand_below (REAL_VALUE_TYPE *r, unsigned int n)
 {
   int i, w = n / HOST_BITS_PER_LONG;
 
+  gcc_checking_assert (n <= SIGNIFICAND_BITS);
   for (i = 0; i < w; ++i)
     r->sig[i] = 0;
 
@@ -3186,7 +3194,7 @@ const struct real_format motorola_single_format =
       - Denormals can be represented, but are treated as +0.0 when
 	used as an operand and are never generated as a result.
       - -0.0 can be represented, but a zero result is always +0.0.
-      - the only supported rounding mode is trunction (towards zero).  */
+      - the only supported rounding mode is truncation (towards zero).  */
 const struct real_format spu_single_format =
   {
     encode_ieee_single,
@@ -5319,15 +5327,55 @@ real_copysign (REAL_VALUE_TYPE *r, const REAL_VALUE_TYPE *x)
 }
 
 /* Check whether the real constant value given is an integer.
-   Returns false for signaling NaN.  */
+   Returns false for sNaN, qNaN, +Inf, -Inf and -0.0.  */
 
 bool
 real_isinteger (const REAL_VALUE_TYPE *c, format_helper fmt)
 {
-  REAL_VALUE_TYPE cint;
+  switch (c->cl)
+    {
+    case rvc_zero:
+      if (c->sign)
+	return false;
+      return true;
 
-  real_trunc (&cint, fmt, c);
-  return real_identical (c, &cint);
+    case rvc_inf:
+    case rvc_nan:
+      return false;
+
+    case rvc_normal:
+      break;
+    }
+
+  if (c->decimal)
+    {
+      REAL_VALUE_TYPE cint;
+      decimal_do_fix_trunc (&cint, c);
+      if (fmt)
+	decimal_real_convert (&cint, fmt, &cint);
+      return real_identical (c, &cint);
+    }
+
+  int e = REAL_EXP (c);
+  if (e <= 0)
+    return false;
+  if (e >= SIGNIFICAND_BITS)
+    return true;
+  unsigned int n = SIGNIFICAND_BITS - e;
+  int w = n / HOST_BITS_PER_LONG;
+  int i;
+  for (i = 0; i < w; ++i)
+    if (c->sig[i] != 0)
+      return false;
+
+  unsigned int t = n % HOST_BITS_PER_LONG;
+  if (t != 0)
+    {
+      unsigned long mask = ((unsigned long)1 << t) - 1;
+      if ((c->sig[w] & mask) != 0)
+	return false;
+    }
+  return true;
 }
 
 /* Check whether C is an integer that fits in a HOST_WIDE_INT,
@@ -5336,8 +5384,23 @@ real_isinteger (const REAL_VALUE_TYPE *c, format_helper fmt)
 bool
 real_isinteger (const REAL_VALUE_TYPE *c, HOST_WIDE_INT *int_out)
 {
-  REAL_VALUE_TYPE cint;
+  switch (c->cl)
+    {
+    case rvc_zero:
+      if (c->sign)
+	return false;
+      *int_out = 0;
+      return true;
 
+    case rvc_inf:
+    case rvc_nan:
+      return false;
+
+    case rvc_normal:
+      break;
+    }
+
+  REAL_VALUE_TYPE cint;
   HOST_WIDE_INT n = real_to_integer (c);
   real_from_integer (&cint, VOIDmode, n, SIGNED);
   if (real_identical (c, &cint))
@@ -5346,6 +5409,49 @@ real_isinteger (const REAL_VALUE_TYPE *c, HOST_WIDE_INT *int_out)
       return true;
     }
   return false;
+}
+
+/* Check whether C is an odd integer.  */
+
+bool
+real_isoddinteger (const REAL_VALUE_TYPE *c, format_helper fmt)
+{
+  if (c->cl != rvc_normal)
+    return false;
+
+  if (c->decimal)
+    {
+      /* Step 1. c is not an integer if c != trunc (c).  */
+      REAL_VALUE_TYPE cint;
+      decimal_do_fix_trunc (&cint, c);
+      if (fmt)
+	decimal_real_convert (&cint, fmt, &cint);
+      if (real_identical (c, &cint))
+	return false;
+
+      /* Step 2. t = c / 2.  */
+      cint.uexp--;
+
+      /* Step 3. c is an odd integer if t != trunc (t).  */
+      REAL_VALUE_TYPE hint;
+      decimal_do_fix_trunc (&hint, &cint);
+      if (fmt)
+	decimal_real_convert (&hint, fmt, &hint);
+      return !real_identical (&cint, &hint);
+    }
+
+  int e = REAL_EXP (c);
+  if (e <= 0 || e > SIGNIFICAND_BITS)
+    return false;
+  unsigned int n = SIGNIFICAND_BITS - e;
+  int w = n / HOST_BITS_PER_LONG;
+  int i;
+  for (i = 0; i < w; ++i)
+    if (c->sig[i] != 0)
+      return false;
+  unsigned int t = n % HOST_BITS_PER_LONG;
+  unsigned long mask = (unsigned long)1 << t;
+  return (c->sig[w] & (mask|(mask-1))) == mask;
 }
 
 /* Calculate nextafter (X, Y) or nexttoward (X, Y).  Return true if
@@ -5510,6 +5616,26 @@ bool format_helper::can_represent_integral_type_p (tree type) const
      only one mantissa bit.  */
   bool signed_p = TYPE_SIGN (type) == SIGNED;
   return TYPE_PRECISION (type) - signed_p <= significand_size (*this);
+}
+
+/* True if all values in integer range *VR can be represented by this
+   floating-point type exactly.  */
+
+bool
+format_helper::can_represent_range_value_p (const irange *vr) const
+{
+  gcc_assert (!decimal_p ());
+
+  if (vr->undefined_p () || vr->varying_p ())
+    return false;
+
+  tree type = vr->type ();
+  unsigned precision = significand_size (*this);
+
+  if (TYPE_SIGN (type) == SIGNED)
+    precision++;
+
+  return range_fits_type_p (vr, precision, TYPE_SIGN (type));
 }
 
 /* True if mode M has a NaN representation and

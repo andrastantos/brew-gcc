@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/37-digit_Initialization_of_fundamental_types.out" }
         identification      division.
         program-id.         prog.
@@ -9,7 +10,7 @@
         01 foo3 pic 9(30).9(7)        value 123456789012345678901234567890.1234567.
         01 foo4 pic 9(30)v9(7) binary value 123456789012345678901234567890.1234567.
         01 foo5 pic 9(30)v9(7) comp-5 value 123456789012345678901234567890.1234567.
-        01 foo6 pic 9(30)v9(7) binary-double 
+        01 foo6 pic 9(30)v9(7) *> was binary-double
                                       value 123456789012345678901234567890.1234567.
         procedure           division.
         display foo1

@@ -108,15 +108,22 @@
    enum from avr.h (or designated initialized must be used).  */
 const avr_addrspace_t avr_addrspace[ADDR_SPACE_COUNT] =
 {
-  { ADDR_SPACE_RAM,  0, 2, "", 0, nullptr },
-  { ADDR_SPACE_FLASH,  1, 2, "__flash",   0, ".progmem.data" },
-  { ADDR_SPACE_FLASH1, 1, 2, "__flash1",  1, ".progmem1.data" },
-  { ADDR_SPACE_FLASH2, 1, 2, "__flash2",  2, ".progmem2.data" },
-  { ADDR_SPACE_FLASH3, 1, 2, "__flash3",  3, ".progmem3.data" },
-  { ADDR_SPACE_FLASH4, 1, 2, "__flash4",  4, ".progmem4.data" },
-  { ADDR_SPACE_FLASH5, 1, 2, "__flash5",  5, ".progmem5.data" },
-  { ADDR_SPACE_FLASHX, 1, 3, "__flashx",  0, ".progmemx.data" },
-  { ADDR_SPACE_MEMX, 1, 3, "__memx",  0, ".progmemx.data" },
+  { ADDR_SPACE_RAM,  0, 2, "", 0, nullptr, Val_GNU_AVR_VTABLE_RAM },
+  { ADDR_SPACE_FLASH,  1, 2, "__flash",  0, ".progmem.data",
+					    Val_GNU_AVR_VTABLE_FLASH },
+  { ADDR_SPACE_FLASH1, 1, 2, "__flash1", 1, ".progmem1.data",
+					    Val_GNU_AVR_VTABLE_FLASH1 },
+  { ADDR_SPACE_FLASH2, 1, 2, "__flash2", 2, ".progmem2.data",
+					    Val_GNU_AVR_VTABLE_FLASH2 },
+  { ADDR_SPACE_FLASH3, 1, 2, "__flash3", 3, ".progmem3.data",
+					    Val_GNU_AVR_VTABLE_FLASH3 },
+  { ADDR_SPACE_FLASH4, 1, 2, "__flash4", 4, ".progmem4.data",
+					    Val_GNU_AVR_VTABLE_FLASH4 },
+  { ADDR_SPACE_FLASH5, 1, 2, "__flash5", 5, ".progmem5.data",
+					    Val_GNU_AVR_VTABLE_FLASH5 },
+  { ADDR_SPACE_FLASHX, 1, 3, "__flashx", 0, ".progmemx.data",
+					    Val_GNU_AVR_VTABLE_FLASHX },
+  { ADDR_SPACE_MEMX, 1, 3, "__memx", 0, ".progmemx.data", -1 },
 };
 
 
@@ -249,10 +256,18 @@ bool avr_need_clear_bss_p = false;
 bool avr_need_copy_data_p = false;
 bool avr_has_rodata_p = false;
 
-/* To track if we satisfy __call_main from AVR-LibC.  */
-bool avr_no_call_main_p = false;
+/* Features used by the target code that are affected by the chosen ABI.
+   Output as .gnu_attribute in order to guarantee that only compatible
+   objects files are linked together.
+      Notice that for the latter two cases, there are loop holes like
+   sizeof(double).  Just mapping -mdouble=X to a .gnu_attribute *,X
+   would be too strict since libgcc may reuse a multilib provided it
+   doesn't depend on -m[long-]double.  */
+bool avr_uses_vtable_p = false;
+static bool avr_uses_double_p = false;
+static bool avr_uses_long_double_p = false;
 
-/* Counts how often pass avr-fuse-add has been executed.  Is is kept in
+/* Counts how often pass avr-fuse-add has been executed.  It is kept in
    sync with cfun->machine->n_avr_fuse_add_executed and serves as an
    insn condition for shift insn splitters.  */
 int n_avr_fuse_add_executed = 0;
@@ -289,7 +304,7 @@ static_assert (8 * sizeof (decltype (section_common::flags))
 	       "section_common::flags is too narrow");
 
 
-/* Transform UP into lowercase and write the result to LO.
+/* Transform UP to lowercase and write the result to LO.
    You must provide enough space for LO.  Return LO.  */
 
 static char *
@@ -578,7 +593,7 @@ avr_option_override (void)
     flag_delete_null_pointer_checks = 0;
 
   /* PR ipa/92606: Inter-procedural analysis optimizes data across
-     address-spaces and PROGMEM.  As of v14, the PROGMEM part is
+     address-spaces and PROGMEM.  As of GCC 16, the PROGMEM part is
      still not fixed (and there is still no target hook as proposed
      in PR92932).  Just disable respective bogus optimization.  */
   flag_ipa_icf_variables = 0;
@@ -599,7 +614,7 @@ avr_option_override (void)
   if (!avr_set_core_architecture ())
     return;
 
-  /* Sould be set by avr-common.cc */
+  /* Should be set by avr-common.cc */
   gcc_assert (avropt_long_double >= avropt_double && avropt_double >= 32);
 
   /* RAM addresses of some SFRs common to all devices in respective arch. */
@@ -897,7 +912,7 @@ avr_noblock_function_p (tree func)
 }
 
 /* Return 1 if FUNC is a function that has a "ATTR_NAME" attribute
-   (and perhaps also "ATTR_NAME(num)" attributes.  Return -1 if FUNC has
+   (and perhaps also "ATTR_NAME(num)" attributes).  Return -1 if FUNC has
    "ATTR_NAME(num)" attribute(s) but no "ATTR_NAME" attribute.
    When no form of ATTR_NAME is present, return 0.  */
 
@@ -921,7 +936,7 @@ avr_interrupt_signal_function (tree func, const char *attr_name)
 
 
 /* Return 1 if FUNC is an interrupt function that has an "interrupt" attribute
-   (and perhaps also "interrupt(num)" attributes.  Return -1 if FUNC has
+   (and perhaps also "interrupt(num)" attributes).  Return -1 if FUNC has
    "interrupt(num)" attribute(s) but no "interrupt" attribute.  */
 
 static int
@@ -932,7 +947,7 @@ avr_interrupt_function (tree func)
 
 
 /* Return 1 if FUNC is a signal function that has a "signal" attribute
-   (and perhaps also "signal(num)" attributes.  Return -1 if FUNC has
+   (and perhaps also "signal(num)" attributes).  Return -1 if FUNC has
    "signal(num)" attribute(s) but no "signal" attribute.  */
 
 static int
@@ -971,7 +986,7 @@ avr_no_gccisr_function_p (tree func)
 
 
 /* Implement `TARGET_CAN_INLINE_P'.  */
-/* Some options like -mgas_isr_prologues depend on optimization level,
+/* Some options like -mgas-isr-prologues depend on optimization level,
    and the inliner might think that due to different options, inlining
    is not permitted; see PR104327.  */
 
@@ -984,7 +999,7 @@ avr_can_inline_p (tree /* caller */, tree /* callee */)
 
 
 /* Implement `TARGET_SET_CURRENT_FUNCTION'.  */
-/* Sanity cheching for above function attributes.  */
+/* Sanity checking for above function attributes.  */
 
 static void
 avr_set_current_function (tree decl)
@@ -1342,6 +1357,12 @@ avr_simple_epilogue (void)
 static int
 sequent_regs_live (void)
 {
+  // Behave according to avr_regs_to_save().
+  if (TREE_THIS_VOLATILE (current_function_decl)
+      || cfun->machine->is_OS_task
+      || cfun->machine->is_OS_main)
+    return 0;
+
   int live_seq = 0;
   int cur_seq = 0;
 
@@ -1521,12 +1542,16 @@ avr_prologue_setup_frame (HOST_WIDE_INT size, HARD_REG_SET set)
 		   && size < size_max
 		   && live_seq
 		   && !isr_p
-		   && !cfun->machine->is_OS_task
-		   && !cfun->machine->is_OS_main
 		   && !AVR_TINY);
 
+  // Small frame sizes can be realized by RCALL . + PUSH tmp_reg.  Get the
+  // respective insn count, and only use prologue_saves when it is profitable.
+  const int pc_size = AVR_2_BYTE_PC ? 2 : 3;
+  const int n_insns = 2 + live_seq + size / pc_size + size % pc_size;
+  const int n_mini_insns = 5 + AVR_HAVE_JMP_CALL;
+
   if (minimize
-      && (frame_pointer_needed
+      && ((frame_pointer_needed && n_mini_insns < n_insns)
 	  || avr_outgoing_args_size () > 8
 	  || (AVR_2_BYTE_PC && live_seq > 6)
 	  || live_seq > 7))
@@ -2047,8 +2072,6 @@ avr_expand_epilogue (bool sibcall_p)
   bool minimize = (TARGET_CALL_PROLOGUES
 		   && live_seq
 		   && !isr_p
-		   && !cfun->machine->is_OS_task
-		   && !cfun->machine->is_OS_main
 		   && !AVR_TINY);
 
   if (minimize
@@ -2175,7 +2198,7 @@ avr_expand_epilogue (bool sibcall_p)
   if (isr_p)
     {
       /* Restore RAMPZ/Y/X/D using tmp_reg as scratch.
-	 The conditions to restore them must be tha same as in prologue.  */
+	 The conditions to restore them must be the same as in prologue.  */
 
       if (AVR_HAVE_RAMPZ
 	  && TEST_HARD_REG_BIT (set, REG_Z)
@@ -2537,7 +2560,7 @@ avr_cond_string (rtx_code code, bool cc_overflow_unusable)
 
 
 /* Return true if rtx X is a CONST or SYMBOL_REF with progmem.
-   This must be used for AVR_TINY only because on other cores
+   This must be used for AVR_TINY only, because on other cores
    the flash memory is not visible in the RAM address range and
    cannot be read by, say,  LD instruction.  */
 
@@ -2855,7 +2878,7 @@ avr_print_operand (FILE *file, rtx x, int code)
 	      fprintf (stderr, "\n");
 	    }
 	}
-      /* Use normal symbol for direct address no linker trampoline needed */
+      /* Use normal symbol for direct address, no linker trampoline needed */
       output_addr_const (file, x);
     }
   else if (CONST_FIXED_P (x))
@@ -2896,7 +2919,7 @@ avr_print_operand (FILE *file, rtx x, int code)
 
 
 /* Implement `TARGET_USE_BY_PIECES_INFRASTRUCTURE_P'.  */
-/* Prefer sequence of loads/stores for moves of size upto
+/* Prefer sequence of loads/stores for moves of size up to
    two - two pairs of load/store instructions are always better
    than the 5 instruction sequence for a loop (1 instruction
    for loop counter setup, and 4 for the body of the loop). */
@@ -2926,7 +2949,7 @@ int
 avr_jump_mode (rtx x, rtx_insn *insn, int extra)
 {
   int dest_addr = INSN_ADDRESSES (INSN_UID (GET_CODE (x) == LABEL_REF
-					    ? XEXP (x, 0) : x));
+					    ? label_ref_label (x) : x));
   int cur_addr = INSN_ADDRESSES (INSN_UID (insn));
   int jump_distance = cur_addr - dest_addr;
 
@@ -3113,7 +3136,7 @@ avr_init_cumulative_args (CUMULATIVE_ARGS *cum, tree fntype, rtx libname,
   if (!libname && stdarg_p (fntype))
     cum->nregs = 0;
 
-  /* Assume the calle may be tail called */
+  /* Assume the callee may be tail called */
 
   cfun->machine->sibcall_fails = false;
 }
@@ -3461,10 +3484,10 @@ _reg_unused_after (rtx_insn *insn, rtx reg, bool look_at_insn)
 	    return false;
 	}
 
-      if (code == CALL_INSN)
+      if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	{
 	  rtx tem;
-	  for (tem = CALL_INSN_FUNCTION_USAGE (insn); tem; tem = XEXP (tem, 1))
+	  for (tem = CALL_INSN_FUNCTION_USAGE (call); tem; tem = XEXP (tem, 1))
 	    if (GET_CODE (XEXP (tem, 0)) == USE
 		&& REG_P (XEXP (XEXP (tem, 0), 0))
 		&& reg_overlap_mentioned_p (reg, XEXP (XEXP (tem, 0), 0)))
@@ -3498,7 +3521,7 @@ reg_unused_after (rtx_insn *insn, rtx reg)
 
 /* Return true when REGNO is set by INSN but not used by the following code.
    The difference to reg_unused_after() is that reg_unused_after() returns
-   true for the entire result even when the result *IS* being used atfer.  */
+   true for the entire result even when the result *IS* being used after.  */
 
 static bool
 avr_result_regno_unused_p (rtx_insn *insn, unsigned regno)
@@ -3698,7 +3721,7 @@ avr_out_lpm_no_lpmx (rtx_insn *insn, rtx *xop, int *plen)
 }
 
 
-/* If PLEN == NULL: Ouput instructions to load a value from a memory location
+/* If PLEN == NULL: Output instructions to load a value from a memory location
    OP[1] in AS1 to register OP[0].
    If PLEN != 0 set *PLEN to the length in words of the instruction sequence.
    Return "".  */
@@ -3955,7 +3978,7 @@ avr_out_fload (rtx_insn * /*insn*/, rtx *xop, int *plen)
    LEN == NULL: output instructions.
    LEN != NULL: set *LEN to the length of the instruction sequence
 		(in words) printed with LEN = NULL.
-   If CLEAR_P is true, OP[0] had been cleard to Zero already.
+   If CLEAR_P is true, OP[0] has already been cleard to Zero.
    If CLEAR_P is false, nothing is known about OP[0].
 
    The effect on cc0 is as follows:
@@ -4129,8 +4152,7 @@ output_reload_in_const (rtx *op, rtx clobber_reg, int *len, bool clear_p)
 	  continue;
 	}
 
-      /* Use T flag or INC to manage powers of 2 if we have
-	 no clobber reg.  */
+      /* Use T flag or INC for powers of 2 if we have no clobber reg.  */
 
       if (NULL_RTX == clobber_reg
 	  && single_one_operand (xval, QImode))
@@ -4578,8 +4600,7 @@ out_movhi_r_mr (rtx_insn *insn, rtx op[], int *plen)
 	}
 
       /* This is a paranoid case. LEGITIMIZE_RELOAD_ADDRESS must exclude
-	 it but I have this situation with extremal
-	 optimization options.  */
+	 it but I have this situation with extremal optimization options.  */
 
       if (reg_base == REG_X)
 	{
@@ -6017,7 +6038,7 @@ out_movhi_mr_r (rtx_insn *insn, rtx op[], int *plen)
 
   /* "volatile" forces writing high-byte first (no-xmega) resp.
      low-byte first (xmega) even if less efficient, for correct
-     operation with 16-bit I/O registers like.  */
+     operation with 16-bit I/O registers.  */
 
   if (AVR_XMEGA)
     return avr_out_movhi_mr_r_xmega (insn, op, plen);
@@ -6167,7 +6188,7 @@ avr_out_set_some (rtx_insn *insn, rtx *xop, int *plen)
   scratch = REG_P (xop[1]) ? xop[1] : NULL_RTX;
   oldval = NULL_RTX;
 
-  /* There are 3 ways to get a scratch, starting withe the most preferred ones:
+  /* There are 3 ways to get a scratch, starting with the most preferred ones:
      1) avr_find_unused_d_reg() need not to be restored, and it takes care
 	of fixed regs.  This is an unlikely case, e.g. with -fno-peephole2.
      2) "set_some" provides a scratch register with a known content.
@@ -6253,7 +6274,7 @@ avr_out_set_some (rtx_insn *insn, rtx *xop, int *plen)
    [2] is the regno of a GPR, and
    [3] is the mode size of that GPR.  All SETs [5]... of PARA will set
        bytes of that GPR, but in many cases not all of them.
-   [4]  In a clobber of REG_CC.
+   [4] is a clobber of REG_CC.
    [5] [6] [7] [8]  SETs of an 8-bit register to a const_int value, where
        all destinations are sub-bytes of [2].  Element [5] is mandatory,
        and the following elements are optional.  */
@@ -6303,7 +6324,7 @@ avr_frame_pointer_required_p (void)
 
 
 /* Returns the condition of the branch following INSN, where INSN is some
-   comparison.  If the next insn is not a branch or the condition code set
+   comparison.  If the next insn is not a branch, or the condition code set
    by INSN might be used by more insns than the next one, return UNKNOWN.
    For now, just look at the next insn, which misses some opportunities like
    following jumps.  */
@@ -6544,6 +6565,100 @@ avr_out_cmp_lsr (rtx_insn *insn, rtx *xop, int *plen)
 }
 
 
+/* Helper for `avr_out_compare' that compares in the EQ/NE case,
+   and that permutes the sub-regs of the compare register.
+   XREG is the reg to compare against const_int XVAL.
+   Return TRUE iff the comparison has been carried out.  */
+
+static bool
+avr_out_perm_compare_eqne (rtx_insn *insn, rtx *xop, int *plen,
+			   rtx xreg, rtx xval)
+{
+  // Number of bytes to compare.
+  const int n_bytes = GET_MODE_SIZE (GET_MODE (xreg));
+
+  // Comparisons == and != may change the order in which the sub-bytes are
+  // being compared.  Start with the high 16 bits so we can use SBIW.
+
+  if (n_bytes == 4
+      && AVR_HAVE_ADIW
+      && REGNO (xreg) >= REG_22
+      && (xval == const0_rtx
+	  || (IN_RANGE (avr_int16 (xval, 2), 0, 63)
+	      && reg_unused_after (insn, xreg))))
+    {
+      xop[2] = avr_word (xval, 2);
+      avr_asm_len ("sbiw %C0,%2"      CR_TAB
+		   "sbci %B0,hi8(%1)" CR_TAB
+		   "sbci %A0,lo8(%1)", xop, plen, 3);
+      return true;
+    }
+
+  // Similarly, we may reorder the bytes when byte 0 compares against 0.
+  // Just use CPC 0 so that the CPI is not wasted on 0.
+
+  if (n_bytes >= 2
+      && END_REGNO (xreg) > REG_16
+      && INTVAL (xval) != 0
+      && avr_uint8 (xval, 0) == 0
+      // Only do this when we may /not/ clobber xreg, since in
+      // the clobber case we have SBCI at our disposal.
+      && !reg_unused_after (insn, xreg))
+    {
+      int n = 0;
+      rtx yop[8 /*n_bytes*/][3];
+
+      // First do the xval8[i] that are != 0.
+      // Start with the MSB to cover cases like SI:14.
+      for (int i = n_bytes - 1; i >= 0; --i)
+	if (avr_uint8 (xval, i) != 0)
+	  {
+	    rtx xval8 = avr_byte (xval, i);
+	    yop[n][0] = avr_byte (xreg, i);
+	    yop[n][1] = xval8;
+	    yop[n][2] = NULL_RTX;
+
+	    if (n == 0)
+	      {
+		if (REGNO (yop[n][0]) < REG_16)
+		  return false;
+		avr_asm_len ("cpi %0,%1", yop[n], plen, 1);
+	      }
+	    else
+	      {
+		rtx &v8reg = yop[n][2];
+		// When we already saw xval8, we can use the respective
+		// reg instead.  This works as we are comparing EQ / NE.
+		for (int k = 0; k < n && !v8reg; ++k)
+		  if (INTVAL (xval8) == INTVAL (yop[k][1]))
+		    v8reg = yop[k][0];
+
+		// If we see xval8 for the 1st time, we must use the scratch.
+		if (!v8reg)
+		  {
+		    v8reg = xop[2];
+		    avr_asm_len ("ldi %2,%1", yop[n], plen, 1);
+		  }
+
+		avr_asm_len ("cpc %0,%2", yop[n], plen, 1);
+	      }
+	    n += 1;
+	  }
+
+      gcc_assert (IN_RANGE (n, 1, n_bytes - 1));
+
+      // Finally do the remaining xval[i] that are 0.
+      for (int i = 0; i < n_bytes; ++i)
+	if (avr_uint8 (xval, i) == 0)
+	  avr_asm_len ("cpc %0,__zero_reg__",
+		       &all_regs_rtx[REGNO (xreg) + i], plen, 1);
+      return true;
+    }
+
+  return false;
+}
+
+
 /* Output compare instruction
 
       compare (XOP[0], XOP[1])
@@ -6587,7 +6702,7 @@ avr_out_compare (rtx_insn *insn, rtx *xop, int *plen)
   const rtx_code cond = compare_condition (insn);
   const bool eqne_p = cond == EQ || cond == NE;
 
-  /* Comparisons == +/-1 and != +/-1 can be done similar to camparing
+  /* Comparisons == +/-1 and != +/-1 can be done similar to comparing
      against 0 by ORing the bytes.  This is one instruction shorter.
      Notice that 64-bit comparisons are always against reg:ALL8 18 (ACC_A)
      and therefore don't use this.  */
@@ -6622,22 +6737,10 @@ avr_out_compare (rtx_insn *insn, rtx *xop, int *plen)
 	}
     }
 
-  /* Comparisons == and != may change the order in which the sub-bytes are
-     being compared.  Start with the high 16 bits so we can use SBIW.  */
-
-  if (n_bytes == 4
-      && eqne_p
-      && AVR_HAVE_ADIW
-      && REGNO (xreg) >= REG_22
-      && (xval == const0_rtx
-	  || (IN_RANGE (avr_int16 (xval, 2), 0, 63)
-	      && reg_unused_after (insn, xreg))))
-    {
-      xop[2] = avr_word (xval, 2);
-      return avr_asm_len ("sbiw %C0,%2"      CR_TAB
-			  "sbci %B0,hi8(%1)" CR_TAB
-			  "sbci %A0,lo8(%1)", xop, plen, 3);
-    }
+  if (eqne_p
+      // Comparisons == and != may change the order of the sub-bytes.
+      && avr_out_perm_compare_eqne (insn, xop, plen, xreg, xval))
+    return "";
 
   bool changed[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 
@@ -8673,7 +8776,7 @@ avr_out_plus_ext (rtx_insn *insn, rtx *yop, int *plen)
     ? "sbci %0,0"            CR_TAB  "sbrc %1,7"  CR_TAB  "inc %0"
     : "sbc %0,__zero_reg__"  CR_TAB  "sbrc %1,7"  CR_TAB  "inc %0";
 
-  // A register that containts 8 copies of $1.msb.
+  // A register that contains 8 copies of $1.msb.
   rtx ext_reg = ext == ZERO_EXTEND ? zero_reg_rtx : NULL_RTX;
 
   if (plen)
@@ -8824,9 +8927,9 @@ avr_out_add_msb (rtx_insn *insn, rtx *yop, rtx_code cmp, int *plen)
 
       XOP[0] = XOP[0] +/- XOP[2]
 
-   If PLEN == NULL, print assembler instructions to perform the operation;
-   otherwise, set *PLEN to the length of the instruction sequence (in words)
-   printed with PLEN == NULL.  XOP[3] is an 8-bit scratch register or NULL_RTX.
+   XOP[3] is an 8-bit scratch register or NULL_RTX.
+   If PLEN == NULL output the instructions.
+   If PLEN != NULL set *PLEN to the length of the sequence in words.
 
    CODE_SAT == UNKNOWN: Perform ordinary, non-saturating operation.
    CODE_SAT != UNKNOWN: Perform operation and saturate according to CODE_SAT.
@@ -8925,6 +9028,22 @@ avr_out_plus_1 (rtx xinsn, rtx *xop, int *plen, rtx_code code,
 
   if (xval == const0_rtx)
     return;
+
+  // Adding +/-1 to a lower reg doesn't need a scratch.
+
+  if (IN_RANGE (n_bytes, 2, 4)
+      && code_sat == UNKNOWN
+      && (xval == const1_rtx || xval == constm1_rtx)
+      && ! test_hard_reg_class (LD_REGS, xop[0]))
+    {
+      avr_asm_len ("sec", nullptr, plen, 1);
+
+      for (auto r = REGNO (xop[0]); r < REGNO (xop[0]) + n_bytes; ++r)
+	avr_asm_len (xval == const1_rtx
+		     ? "adc %0,__zero_reg__"
+		     : "sbc %0,__zero_reg__", &all_regs_rtx[r], plen, 1);
+      return;
+    }
 
   if (MINUS == code)
     xval = simplify_unary_operation (NEG, imode, xval, imode);
@@ -9316,7 +9435,7 @@ avr_out_plus_1 (rtx xinsn, rtx *xop, int *plen, rtx_code code,
       XOP[0] = XOP[0] +/- XOP[2]
 
    This is a helper for the function below.  The only insns that need this
-   are additions/subtraction for pointer modes, i.e. HImode and PSImode.  */
+   are additions/subtractions for pointer modes, i.e. HImode and PSImode.  */
 
 static const char *
 avr_out_plus_symbol (rtx *xop, rtx_code code, int *plen)
@@ -9721,16 +9840,16 @@ avr_len_op8_set_ZN (rtx_code code, rtx *xop)
 }
 
 
-/* Output bit operation (IOR, AND, XOR) with register XOP[0] and compile
-   time constant XOP[2]:
+/* Output bit operation (IOR, AND, XOR) with register XOP[0] and compile-time
+   constant XOP[2]:
 
       XOP[0] = XOP[0] <op> XOP[2]
 
-   and return "".  If PLEN == NULL, print assembler instructions to perform the
-   operation; otherwise, set *PLEN to the length of the instruction sequence
-   (in words) printed with PLEN == NULL.  XOP[3] is either an 8-bit clobber
-   register or SCRATCH if no clobber register is needed for the operation.
-   XINSN is an INSN_P or a pattern of an insn.  */
+   XOP[3] is either an 8-bit clobber register or SCRATCH if no clobber
+   register is needed for the operation  XINSN is an INSN_P or a pattern
+   of an insn.  Return "".
+   If PLEN == NULL output the instructions.
+   If PLEN != NULL set *PLEN to the length of the sequence in words.  */
 
 const char *
 avr_out_bitop (rtx xinsn, rtx *xop, int *plen)
@@ -9747,7 +9866,7 @@ avr_out_bitop (rtx xinsn, rtx *xop, int *plen)
   /* Number of bytes to operate on.  */
   int n_bytes = GET_MODE_SIZE (mode);
 
-  /* Value of T-flag (0 or 1) or -1 if unknow.  */
+  /* Value of T-flag (0 or 1) or -1 if unknown.  */
   int set_t = -1;
 
   /* Value (0..0xff) held in clobber register op[3] or -1 if unknown.  */
@@ -9934,9 +10053,8 @@ avr_emit_xior_with_shift (rtx_insn *insn, rtx *xop, int bitoff)
 
 
 /* Output sign extension from XOP[1] to XOP[0] and return "".
-   If PLEN == NULL, print assembler instructions to perform the operation;
-   otherwise, set *PLEN to the length of the instruction sequence (in words)
-   as printed with PLEN == NULL.  */
+   If PLEN == NULL output the instructions.
+   If PLEN != NULL set *PLEN to the length of the sequence in words.  */
 
 const char *
 avr_out_sign_extend (rtx_insn *insn, rtx *xop, int *plen)
@@ -10389,15 +10507,15 @@ avr_out_extr_not (rtx_insn * /* insn */, rtx op[], int *plen)
 }
 
 
-/* Outputs instructions needed for fixed point type conversion.
-   This includes converting between any fixed point type, as well
+/* Outputs instructions needed for fixed-point type conversion.
+   This includes converting between any fixed-point type, as well
    as converting to any integer type.  Conversion between integer
    types is not supported.
 
    Converting signed fractional types requires a bit shift if converting
    to or from any unsigned fractional type because the decimal place is
    shifted by 1 bit.  When the destination is a signed fractional, the sign
-   is stored in either the carry or T bit.  */
+   is stored in either the carry or the T bit.  */
 
 const char *
 avr_out_fract (rtx_insn *insn, rtx operands[], bool intsigned, int *plen)
@@ -10544,7 +10662,7 @@ avr_out_fract (rtx_insn *insn, rtx operands[], bool intsigned, int *plen)
 	{
 	  avr_asm_len ("clr __tmp_reg__" CR_TAB
 		       "sbrc %1,0"       CR_TAB
-		       "dec __tmp_reg__", xop, plen, 1);
+		       "dec __tmp_reg__", xop, plen, 3);
 	  sn = src.regno;
 	  if (sn < s0)
 	    {
@@ -10559,7 +10677,7 @@ avr_out_fract (rtx_insn *insn, rtx operands[], bool intsigned, int *plen)
 	    avr_asm_len ("clt"                CR_TAB
 			 "bld __tmp_reg__,7"  CR_TAB
 			 "adc %0,__tmp_reg__",
-			 &all_regs_rtx[s0], plen, 1);
+			 &all_regs_rtx[s0], plen, 3);
 	  else
 	    avr_asm_len ("lsr __tmp_reg" CR_TAB
 			 "add %0,__tmp_reg__",
@@ -10694,7 +10812,7 @@ avr_out_fract (rtx_insn *insn, rtx operands[], bool intsigned, int *plen)
 	    {
 	      /* We are going to override the MSB.  If we shift right,
 		 store the MSB in the Carry flag.  This is only needed if
-		 we don't sign-extend becaue with sign-extension the MSB
+		 we don't sign-extend because with sign-extension the MSB
 		 (the sign) will be produced by the sign extension.  */
 
 	      avr_asm_len ("lsr %0", &all_regs_rtx[src_msb], plen, 1);
@@ -10758,8 +10876,8 @@ avr_out_fract (rtx_insn *insn, rtx operands[], bool intsigned, int *plen)
 	  xop[2] = all_regs_rtx[s0];
 	  if (!lsb_in_tmp_reg && !MAY_CLOBBER (s0))
 	    avr_asm_len ("mov __tmp_reg__,%2", xop, plen, 1);
-	  avr_asm_len ("tst %0" CR_TAB "brpl 0f",
-		       &all_regs_rtx[src.regno_msb], plen, 2);
+	  avr_asm_len ("tst %0" CR_TAB
+		       "brpl 0f", &all_regs_rtx[src.regno_msb], plen, 2);
 	  if (!lsb_in_tmp_reg)
 	    {
 	      unsigned sn = src.regno;
@@ -10987,7 +11105,7 @@ avr_out_round (rtx_insn * /*insn*/, rtx *xop, int *plen)
 }
 
 
-/* Create RTL split patterns for byte sized rotate expressions.  This
+/* Create RTL split patterns for byte-sized rotate expressions.  This
    produces a series of move instructions and considers overlap situations.
    Overlapping non-HImode operands need a scratch register.  */
 
@@ -11134,8 +11252,257 @@ avr_rotate_bytes (rtx operands[])
 }
 
 
+/* Read a non-negative decimal number from a string starting at START.
+   Set *END to one position past the last digit of the number.  */
+
+static int
+avr_read_number (const char *start, const char **end)
+{
+  int num = 0;
+  for (*end = start; **end >= '0' && **end <= '9'; ++(*end))
+    num = 10 * num + **end - '0';
+
+  return num;
+}
+
+
+/* Return the sum over all [[len=<words>]] annotations in inline asm INSN.
+   TPL is the asm template, N_XOP the number of operands, or -1 when the
+   asm has no operands (not even zero operands).  XOP[] are these operands.
+   LOC is the location of the asm, and DEFAULT_LEN is the code length
+   in words as determined by the middle end from the number of logical and
+   physical line breaks in TPL.
+
+   When an invalid %-reference or an unrecognized [[len=... is found,
+   then return -1.  Otherwise, return the sum over all [[len=<words>]]
+   annotations, where:
+
+   <words> = nl
+	The number of lines in the code template.
+	This is half the default size.
+
+   <words> = [0-9]+
+	Specifies a non-negative decimal integer.
+
+   <words> = %[0-9]+
+   <words> = %[<name>]   # Already resolved to %[0-9]+ by the middle end.
+	Refers to the respective asm operand, which must be CONST_INT.
+
+   <words> = lds
+   <words> = sts
+	Specifies the length of a LDS or STS instruction, i.e.
+	1 word if AVR_TINY, and 2 words otherwise.
+
+   <words> = %~
+   <words> = %~call
+   <words> = %~jmp
+	Specifies the length of a %~call resp. %~jmp instruction, i.e.
+	2 words if AVR_HAVE_JMP_CALL, and 1 word otherwise.
+
+   In order to observe the assigned lengths, see -fdump-rtl-shorten or the
+   asm output with -mlog=insn_addresses.  */
+
+static int
+avr_length_of_asm (rtx_insn *insn, int default_len, const char *tpl,
+		   int n_xop, rtx *xop, location_t loc)
+{
+  const char *const len_begin = "[[len=";
+  const char *const len_end = "]]";
+  const char *pos = strstr (tpl, len_begin);
+  int len = 0;
+
+  if (! pos)
+    return -1;
+
+  avr_dump ("\n;;; Calculating length of asm insn (default=%d, warn=%d):\n"
+	    "%r\n", default_len, avropt_warn_asmlen_notes, insn);
+
+  for (; pos; pos = strstr (pos, len_begin))
+    {
+      const char *const pos_begin = pos;
+      const char *const pos_end = strstr (pos, len_end);
+
+      pos += strlen (len_begin);
+      const bool percent_p = pos[0] == '%' && pos[1] != '~';
+      int inc = -1;
+
+      if (startswith (pos, "%~")
+	  // %-resolution only applies to asm with operands.
+	  && n_xop >= 0)
+	{
+	  // "%~" specifies the length of %~jmp / %~call.
+	  inc = AVR_HAVE_JMP_CALL ? 2 : 1;
+	  pos += 2;
+
+	  // Allow an optional suffix of "jmp" or "call".
+	  if (startswith (pos, "jmp"))
+	    pos += 3;
+	  else if (startswith (pos, "call"))
+	    pos += 4;
+	}
+      else if (startswith (pos, "nl"))
+	{
+	  // "nl" denotes the number of lines in the code template,
+	  // which is half of the default length.
+	  inc = asm_str_count (tpl);
+	  pos += 2;
+	}
+      else if (startswith (pos, "lds")
+	       || startswith (pos, "sts"))
+	{
+	  // "lds" specifies the length of LDS or STS.
+	  inc = AVR_TINY ? 1 : 2;
+	  pos += 3;
+	}
+      else if (! percent_p
+	       // %-resolution only applies to asm with operands.
+	       || n_xop >= 0)
+	{
+	  // A plain decimal number <num>, or %<num> to refer to the
+	  // <num>-th asm operand.  Notice that the middle end has already
+	  // resolved named operand references like %[name] to the respective
+	  // operand number (provided such a named operand exists).
+	  pos += percent_p;
+	  const char *end;
+	  const int num = avr_read_number (pos, &end);
+	  inc = end > pos ? num : -1;
+	  pos = end;
+	}
+
+      /* Prepare a code quote so we have it handy in maybe diagnostics.  */
+
+      // Only show the gist of an unrecognized annotation.
+      // Recognized notes are short, so show only the relevant
+      // part and display the rest as ...'s.
+      const char *dots = "...";
+      const size_t l_pos_begin = strlen (pos_begin);
+      const size_t l_pos = pos_end ? pos_end - pos_begin : l_pos_begin;
+      const size_t l_show = pos - pos_begin + 5;
+      char *msg = XALLOCAVEC (char, 1 + strlen (tpl) + strlen (dots));
+      strcpy (msg, pos_begin);
+      if (l_pos > l_show + 2 * strlen (dots))
+	{
+	  msg[l_show] = '\0';
+	  strcat (msg, dots);
+	  if (pos_end)
+	    strncat (msg, pos_end - 4, 4);
+	}
+      else if (pos_end)
+	msg[l_pos] = '\0';
+      if (pos_end)
+	strcat (msg, len_end);
+
+      /* Now use inc or diagnose a problem.  */
+
+      if (inc >= 0 && pos == pos_end)
+	{
+	  pos += strlen (len_end);
+
+	  avr_dump (";;; len = %s + %s%d",
+		    len ? "len" : "0", percent_p ? "%" : "", inc);
+	  if (percent_p)
+	    {
+	      // Map inc to the value of the inc-th asm operand,
+	      // which must be CONST_INT.
+
+	      if (inc >= n_xop)
+		{
+		  // For asm with >= 0 operands, the middle end will issue
+		  // an error message.
+		  avr_dump ("\n;;; Ignored: op %d does not exist\n\n", inc);
+		  return -1;
+		}
+	      if (! CONST_INT_P (xop[inc]))
+		{
+		  avr_dump ("\n;;; Ignored: op %d is not CONST_INT\n\n", inc);
+		  warning_at (loc, OPT_Wasm_len_notes, "%<asm%> len annotation"
+			      " ignored: operand %d is not a compile-time"
+			      " integer constant: %qs", inc, msg);
+		  return -1;
+		}
+	      inc = UINTVAL (xop[inc]) > 1000000 ? 1000000 : INTVAL (xop[inc]);
+	      avr_dump (" = %s + %d", len ? "len" : "0", inc);
+	    } // %
+
+	  len += inc;
+	  avr_dump (" = %d\n", len);
+	}
+      else // inc < 0 || pos != pos_end
+	{
+	  // FIXME: Diagnosing is void in LTO mode, except when compiled
+	  // with `-ffat-lto-objects' (in which case cc1[plus] is diagnosing,
+	  // not lto1).
+	  if (pos_end)
+	    {
+	      avr_dump (";;; Ignored: %s\n\n", msg);
+	      warning_at (loc, OPT_Wasm_len_notes, "%<asm%> len annotation"
+			  " ignored: %qs", msg);
+	    }
+	  else
+	    {
+	      avr_dump (";;; Ignored (no %s): %s\n\n", len_end, msg);
+	      warning_at (loc, OPT_Wasm_len_notes, "%<asm%> len annotation"
+			  " ignored: misses closing %qs: %qs", len_end, msg);
+	    }
+	  return -1;
+	}
+    }
+  avr_dump ("\n");
+
+  return len;
+}
+
+
+/* A helper for the function below.  Recognize [[len=<words>]] annotations
+   in the inline asm template of INSN, so the user can specify the length
+   of an asm.  This can solve two problems:
+
+   - Cases where the expanded asm is longer than determined from the number
+     of physical and logical line breaks.  Such cases can lead to errors
+     when a jump that uses a too optimistic jump offset is crossing an asm.
+
+   - Better code generation for jumps that are crossing an asm.  The default
+     length of an asm is (1 + NL) * 2 words, where NL denotes the sum of
+     physical and logical line breaks.  However, almost all AVR instructions
+     occupy only one 16-bit word.
+
+   LEN is the length in units of 16-bit words as determined by the middle end.
+   When no annotation has been found or a diagnostic occurred, return -1.  */
+
+static int
+avr_maybe_length_of_asm (rtx_insn *insn, int len)
+{
+  if (avropt_asmlen_notes
+      && NONDEBUG_INSN_P (insn))
+    {
+      rtx body = PATTERN (insn);
+
+      if (asm_noperands (body) >= 0)
+	{
+	  // An `asm' construct with operands.
+
+	  location_t loc;
+	  int n_ops = asm_noperands (body);
+	  rtx *ops = XALLOCAVEC (rtx, n_ops);
+	  const char *tpl = decode_asm_operands (body, ops, NULL, NULL, NULL,
+						 &loc);
+	  return avr_length_of_asm (insn, len, tpl, n_ops, ops, loc);
+	}
+      else if (GET_CODE (body) == ASM_INPUT)
+	{
+	  // An `asm' construct without operands.
+
+	  return avr_length_of_asm (insn, len, XSTR (body, 0), -1, nullptr,
+				    ASM_INPUT_SOURCE_LOCATION (body));
+	}
+    }
+
+  return -1;
+}
+
+
 /* Worker function for `ADJUST_INSN_LENGTH'.  */
-/* Modifies the length assigned to instruction INSN
+/* Modifies the length assigned to instruction INSN.
    LEN is the initially computed length of the insn.  */
 
 int
@@ -11154,9 +11521,14 @@ avr_adjust_insn_length (rtx_insn *insn, int len)
      It is easier to state this in an insn attribute "adjust_len" than
      to clutter up code here...  */
 
-  if (!NONDEBUG_INSN_P (insn) || recog_memoized (insn) == -1)
+  if (!NONDEBUG_INSN_P (insn))
+    return len;
+
+  if (recog_memoized (insn) == -1)
     {
-      return len;
+      // Let the user specify the length of the asm with [[len=<words>]]'s.
+      const int len_asm = avr_maybe_length_of_asm (insn, len);
+      return len_asm < 0 ? len : len_asm;
     }
 
   /* Read from insn attribute "adjust_len" if/how length is to be adjusted.  */
@@ -11241,6 +11613,7 @@ avr_adjust_insn_length (rtx_insn *insn, int len)
     case ADJUST_LEN_ADD_GE0: avr_out_add_msb (insn, op, GE, &len); break;
     case ADJUST_LEN_ADD_LT0: avr_out_add_msb (insn, op, LT, &len); break;
 
+    case ADJUST_LEN_DELAY_LOOP: avr_out_delay_loop (insn, op, &len); break;
     case ADJUST_LEN_INSV_NOTBIT: avr_out_insert_notbit (insn, op, &len); break;
 
     default:
@@ -11606,7 +11979,8 @@ avr_addr_space_for_artificial_rodata (tree /*type*/,
 {
   return avr_rodata_in_flash_p ()
     ? ADDR_SPACE_GENERIC
-    : avropt_n_flash > 1 ? ADDR_SPACE_FLASHX : ADDR_SPACE_FLASH;
+    : ((addr_space_t) (avropt_n_flash > 1
+		       ? ADDR_SPACE_FLASHX : ADDR_SPACE_FLASH));
 }
 
 
@@ -11649,11 +12023,7 @@ avr_progmem_p (tree decl, tree attributes)
       != lookup_attribute ("progmem", attributes))
     return -1;
 
-  tree a = decl;
-
-  do
-    a = TREE_TYPE (a);
-  while (TREE_CODE (a) == ARRAY_TYPE);
+  tree a = strip_array_types (TREE_TYPE (decl));
 
   if (a == error_mark_node)
     return 0;
@@ -11684,8 +12054,7 @@ avr_decl_absdata_p (tree decl, tree attributes)
 static addr_space_t
 avr_nonconst_pointer_addrspace (tree typ)
 {
-  while (ARRAY_TYPE == TREE_CODE (typ))
-    typ = TREE_TYPE (typ);
+  typ = strip_array_types (typ);
 
   if (POINTER_TYPE_P (typ))
     {
@@ -11698,8 +12067,7 @@ avr_nonconst_pointer_addrspace (tree typ)
 
       /* "Ordinary" pointers... */
 
-      while (TREE_CODE (target) == ARRAY_TYPE)
-	target = TREE_TYPE (target);
+      target = strip_array_types (target);
 
       /* Pointers to non-generic address space must be const.  */
 
@@ -11733,9 +12101,6 @@ avr_pgm_check_var_decl (tree node)
   addr_space_t as = ADDR_SPACE_GENERIC;
 
   gcc_assert (as == 0);
-
-  if (avr_log.progmem)
-    avr_edump ("%?: %t\n", node);
 
   switch (TREE_CODE (node))
     {
@@ -11839,6 +12204,10 @@ avr_attrs_section_name (tree attrs)
 static void
 avr_insert_attributes (tree node, tree *attributes)
 {
+  if (avr_log.insert_attributes)
+    if (TREE_CODE (node) != FUNCTION_DECL || !fndecl_built_in_p (node))
+      avr_edump ("%?:\n%N\n", node);
+
   if (VAR_P (node)
       && ! TREE_STATIC (node)
       && ! DECL_EXTERNAL (node))
@@ -11906,7 +12275,9 @@ avr_insert_attributes (tree node, tree *attributes)
 	      *attributes = tree_cons (get_identifier ("section"),
 				       arg, *attributes);
 	    }
-	  avr_no_call_main_p = true;
+	  if (!lookup_attribute ("used", *attributes))
+	    *attributes = tree_cons (get_identifier ("used"),
+				     NULL_TREE, *attributes);
 	}
     } // -mno-call-main
 #endif // AVR-LibC
@@ -11920,14 +12291,10 @@ avr_insert_attributes (tree node, tree *attributes)
       && (TREE_STATIC (node) || DECL_EXTERNAL (node))
       && avr_progmem_p (node, *attributes))
     {
-      tree node0 = node;
-
       /* For C++, we have to peel arrays in order to get correct
 	 determination of readonlyness.  */
 
-      do
-	node0 = TREE_TYPE (node0);
-      while (TREE_CODE (node0) == ARRAY_TYPE);
+      tree node0 = strip_array_types (TREE_TYPE (node));
 
       if (error_mark_node == node0)
 	return;
@@ -12102,7 +12469,7 @@ static void
 avr_asm_named_section (const char *name, unsigned int flags, tree decl)
 {
   if (flags & AVR_SECTION_PROGMEM
-      // Only use section .progmem*.data if there is no attribute section.
+      // Only use section .progmem*.data if there is no attribute "section".
       && ! (decl
 	    && DECL_SECTION_NAME (decl)
 	    && symtab_node::get (decl)
@@ -12201,9 +12568,7 @@ avr_decl_maybe_lds_p (tree node)
 
   // C++ requires peeling arrays.
 
-  do
-    node = TREE_TYPE (node);
-  while (ARRAY_TYPE == TREE_CODE (node));
+  node = strip_array_types (TREE_TYPE (node));
 
   return (node != error_mark_node
 	  && !TYPE_READONLY (node));
@@ -12291,7 +12656,7 @@ avr_encode_section_info (tree decl, rtx rtl, int new_decl_p)
 	SYMBOL_REF_FLAGS (sym) |= SYMBOL_FLAG_IO;
       /* If we have an (io) address attribute specification, but the variable
 	 is external, treat the address as only a tentative definition
-	 to be used to determine if an io port is in the lower range, but
+	 to be used to determine if an I/O port is in the lower range, but
 	 don't use the exact value for constant propagation.  */
       if (addr_attr && !DECL_EXTERNAL (decl))
 	SYMBOL_REF_FLAGS (sym) |= SYMBOL_FLAG_ADDRESS;
@@ -12448,6 +12813,41 @@ avr_file_start (void)
 }
 
 
+/* Scan TYP for the occurence of [long] double, and set `avr_uses_double_p'
+   and `avr_uses_long_double_p' accordingly.  This is used by avr_file_end()
+   and also by the avr_pass_has gimple pass.
+   walk_tree() doesn't quite fit the puropse, so cook our own.  */
+
+void
+avr_find_double (tree typ, hash_set<tree> *pset)
+{
+  if (typ == NULL_TREE
+      || typ == error_mark_node
+      || pset->add (typ))
+    return;
+
+  if (POINTER_TYPE_P (typ))
+    return avr_find_double (TREE_TYPE (typ), pset);
+
+  if (TREE_CODE (typ) == ARRAY_TYPE)
+    return avr_find_double (strip_array_types (typ), pset);
+
+  if (RECORD_OR_UNION_TYPE_P (typ))
+    {
+      for (tree fld = TYPE_FIELDS (typ); fld; fld = DECL_CHAIN (fld))
+	if (TREE_CODE (fld) == FIELD_DECL)
+	  avr_find_double (TREE_TYPE (fld), pset);
+      return;
+    }
+
+  if (VECTOR_FLOAT_TYPE_P (typ) || COMPLEX_FLOAT_TYPE_P (typ))
+    typ = TREE_TYPE (typ);
+
+  avr_uses_double_p |= TYPE_MAIN_VARIANT (typ) == double_type_node;
+  avr_uses_long_double_p |= TYPE_MAIN_VARIANT (typ) == long_double_type_node;
+}
+
+
 /* Implement `TARGET_ASM_FILE_END'.  */
 /* Outputs to the stdio stream FILE some
    appropriate text to go at the end of an assembler file.  */
@@ -12468,20 +12868,44 @@ avr_file_end (void)
   if (avr_need_clear_bss_p)
     fputs (".global __do_clear_bss\n", asm_out_file);
 
-  /* Don't let __call_main call main() and exit().
-     Defining this symbol will keep the code from being pulled
-     in from lib<mcu>.a as requested by AVR-LibC's gcrt1.S.
-     We invoke main() by other means: putting it in .init9.  */
+#ifdef HAVE_AS_AVR_GNU_ATTRIBUTE
+  /* Output .gnu_attribute to tag object files with aspects of the ABI. */
 
-  if (avr_no_call_main_p)
-    fputs (".global __call_main\n"
-	   "__call_main = 0\n", asm_out_file);
+  hash_set<tree> hset;
+  varpool_node *vnode;
+
+  FOR_EACH_VARIABLE (vnode)
+    {
+      const char *id = IDENTIFIER_POINTER (DECL_NAME (vnode->decl));
+      avr_uses_vtable_p |= startswith (id, "_ZTV"); // vtable
+      avr_uses_vtable_p |= startswith (id, "_ZTT"); // vtable table
+
+      avr_find_double (TREE_TYPE (vnode->decl), &hset);
+    }
+
+  // .gnu_attribute 4: The named address space for C++ virtual tables.
+  if (avr_uses_vtable_p)
+    fprintf (asm_out_file, ".gnu_attribute %d,%d\n",
+	     Tag_GNU_AVR_VTABLE_AS, Val_GNU_AVR_VTABLE_RAM);
+
+  // .gnu_attribute 8: The bitsize of double, or 0 if not used.
+  if (avr_uses_double_p)
+    fprintf (asm_out_file, ".gnu_attribute %d,%d\n",
+	     Tag_GNU_AVR_BITS_DOUBLE,
+	     (int) (CHAR_BIT * int_size_in_bytes (double_type_node)));
+
+  // .gnu_attribute 12: The bitsize of long double, or 0 if not used.
+  if (avr_uses_long_double_p)
+    fprintf (asm_out_file, ".gnu_attribute %d,%d\n",
+	     Tag_GNU_AVR_BITS_LONG_DOUBLE,
+	     (int) (CHAR_BIT * int_size_in_bytes (long_double_type_node)));
+#endif // HAVE_AS_AVR_GNU_ATTRIBUTE
 }
 
 
 /* Worker function for `ADJUST_REG_ALLOC_ORDER'.  */
 /* Choose the order in which to allocate hard registers for
-   pseudo-registers local to a basic block.
+   pseudo registers local to a basic block.
 
    Store the desired register order in the array `reg_alloc_order'.
    Element 0 should be the register to allocate first; element 1, the
@@ -12543,7 +12967,7 @@ avr_adjust_reg_alloc_order (void)
     };
 
   /* Select specific register allocation order.
-     Tiny Core (ATtiny4/5/9/10/20/40) devices have only 16 registers,
+     AVRrc Reduced Core devices have only 16 registers,
      so different allocation order should be used.  */
 
   const int *order = (TARGET_ORDER_1 ? (AVR_TINY ? tiny_order_1 : order_1)
@@ -12593,7 +13017,7 @@ avr_mul_highpart_cost (rtx x, int)
       // This is the wider mode.
       machine_mode mode = GET_MODE (x);
 
-      // The middle-end might still have PR81444, i.e. it is calling the cost
+      // The middle end might still have PR81444, i.e. it is calling the cost
       // functions with strange modes.  Fix this now by also considering
       // PSImode (should actually be SImode instead).
       if (HImode == mode || PSImode == mode || SImode == mode)
@@ -14141,7 +14565,7 @@ bool
 jump_over_one_insn_p (rtx_insn *insn, rtx dest)
 {
   int uid = INSN_UID (GET_CODE (dest) == LABEL_REF
-		      ? XEXP (dest, 0)
+		      ? label_ref_label (dest)
 		      : dest);
   int jump_addr = INSN_ADDRESSES (INSN_UID (insn));
   int dest_addr = INSN_ADDRESSES (uid);
@@ -14317,13 +14741,9 @@ avr_regno_mode_code_ok_for_base_p (int regno, machine_mode /*mode*/,
 /* Reload the constant OP[1] into the HI register OP[0].
    CLOBBER_REG is a QI clobber reg needed to move vast majority of consts
    into a NO_LD_REGS register.  If CLOBBER_REG is NULL_RTX we either don't
-   need a clobber reg or have to cook one up.
-
-   PLEN == NULL: Output instructions.
-   PLEN != NULL: Output nothing.  Set *PLEN to number of words occupied
-		 by the insns printed.
-
-   Return "".  */
+   need a clobber reg or have to cook one up.  Return "".
+   PLEN != 0: Set *PLEN to the code length in words. Don't output anything.
+   PLEN == 0: Output instructions.  */
 
 const char *
 output_reload_inhi (rtx *op, rtx clobber_reg, int *plen)
@@ -14336,14 +14756,9 @@ output_reload_inhi (rtx *op, rtx clobber_reg, int *plen)
 /* Reload a SI or SF compile time constant OP[1] into the register OP[0].
    CLOBBER_REG is a QI clobber reg needed to move vast majority of consts
    into a NO_LD_REGS register.  If CLOBBER_REG is NULL_RTX we either don't
-   need a clobber reg or have to cook one up.
-
-   LEN == NULL: Output instructions.
-
-   LEN != NULL: Output nothing.  Set *LEN to number of words occupied
-		by the insns printed.
-
-   Return "".  */
+   need a clobber reg or have to cook one up.  Return "".
+   LEN != 0: Set *LEN to the code length in words. Don't output anything.
+   LEN == 0: Output instructions.  */
 
 const char *
 output_reload_insisf (rtx *op, rtx clobber_reg, int *len)
@@ -14412,7 +14827,7 @@ avr_out_reload_inpsi (rtx *op, rtx clobber_reg, int *len)
    work as expected, cf. PR71151, and we do *NOT* want the table to be
    in .rodata, hence setting JUMP_TABLES_IN_TEXT_SECTION = 0 is of limited
    use; and setting it to 1 attributes table lengths to branch offsets...
-   Moreover, fincal.c keeps switching section before each table entry
+   Moreover, final.cc keeps switching section before each table entry
    which we find too fragile as to rely on section caching.  */
 
 void
@@ -14422,7 +14837,7 @@ avr_output_addr_vec (rtx_insn *labl, rtx table)
 
   // AVR-SD: On functional safety devices, each executed instruction must
   // be followed by a valid opcode.  This is because instruction validation
-  // runs at fetch and decode for the next instruction and while the 2-stage
+  // runs at fetch-and-decode for the next instruction and while the 2-stage
   // pipeline is executing the current one.  There is no multilib option for
   // these devices, so take all multilib variants that contain AVR-SD.
   const bool maybe_sd = (AVR_HAVE_JMP_CALL
@@ -14495,7 +14910,7 @@ avr_output_addr_vec (rtx_insn *labl, rtx table)
 
   for (int idx = 0; idx < vlen; idx++)
     {
-      int value = CODE_LABEL_NUMBER (XEXP (XVECEXP (table, 0, idx), 0));
+      int value = CODE_LABEL_NUMBER (label_ref_label (XVECEXP (table, 0, idx)));
 
       if (AVR_HAVE_JMP_CALL)
 	fprintf (stream, "\t.word gs(.L%d)\n", value);
@@ -14530,8 +14945,8 @@ avr_conditional_register_usage (void)
 	15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
       };
 
-      /* Set R0-R17 as fixed registers. Reset R0-R17 in call used register list
-	 - R0-R15 are not available in Tiny Core devices
+      /* Set R0-R17 as fixed registers. Reset R0-R17 in call-used register list
+	 - R0-R15 are not available in Reduced Core devices
 	 - R16 and R17 are fixed registers.  */
 
       for (size_t i = REG_0; i <= REG_17;  i++)
@@ -14540,16 +14955,14 @@ avr_conditional_register_usage (void)
 	  call_used_regs[i] = 1;
 	}
 
-      /* Set R18 to R21 as callee saved registers
-	 - R18, R19, R20 and R21 are the callee saved registers in
-	   Tiny Core devices  */
+      /* R18 and R19 are the callee-saved registers in Reduced Core devices  */
 
       for (size_t i = REG_18; i <= LAST_CALLEE_SAVED_REG; i++)
 	{
 	  call_used_regs[i] = 0;
 	}
 
-      /* Update register allocation order for Tiny Core devices */
+      /* Update register allocation order for Reduced Core devices */
 
       for (size_t i = 0; i < ARRAY_SIZE (tiny_reg_alloc_order); i++)
 	{
@@ -14763,7 +15176,7 @@ avr_emit_skip_pixop (rtx_code pix, rtx dest, rtx op0, rtx op1,
   emit_move_insn (dest, op0);
 
   // Skip if bits.bitno <eqne> bitno.
-  rtx xlabel = gen_label_rtx ();
+  rtx_code_label *xlabel = gen_label_rtx ();
   rtx zerox = gen_rtx_ZERO_EXTRACT (QImode, bits, const1_rtx, GEN_INT (bitno));
   rtx cond = gen_rtx_fmt_ee (eqne, VOIDmode, zerox, const0_rtx);
   emit (gen_sbrx_branchqi_split (cond, bits, const0_rtx, xlabel));
@@ -14808,7 +15221,7 @@ avr_emit_skip_clear (rtx dest, rtx src, rtx_code eqne, rtx bits, int bitno)
   emit_move_insn (dest, src);
 
   // Skip if bits.bitno <eqne> bitno.
-  rtx xlabel = gen_label_rtx ();
+  rtx_code_label *xlabel = gen_label_rtx ();
   rtx zerox = gen_rtx_ZERO_EXTRACT (QImode, bits, const1_rtx, GEN_INT (bitno));
   rtx cond = gen_rtx_fmt_ee (eqne, VOIDmode, zerox, const0_rtx);
   emit (gen_sbrx_branchqi_split (cond, bits, const0_rtx, xlabel));
@@ -14848,9 +15261,9 @@ avr_return_in_memory (const_tree type, const_tree /*fntype*/)
   HOST_WIDE_INT size = int_size_in_bytes (type);
   HOST_WIDE_INT ret_size_limit = AVR_TINY ? 4 : 8;
 
-  /* In avr, there are 8 return registers. But, for Tiny Core
-     (ATtiny4/5/9/10/20/40) devices, only 4 registers are available.
-     Return true if size is unknown or greater than the limit.  */
+  /* In AVR, there are 8 return registers. But, for the Reduced Core,
+     only 4 registers are available.  Return true if size is unknown or
+     greater than the limit.  */
 
   return size == -1 || size > ret_size_limit;
 }
@@ -15040,7 +15453,7 @@ avr_addr_space_convert (rtx src, tree type_old, tree type_new)
 	sym = XEXP (sym, 0);
 
       /* Look at symbol flags:  avr_encode_section_info set the flags
-	 also if attribute progmem was seen so that we get the right
+	 also if attribute progmem was seen, so that we get the right
 	 promotion for, e.g. PSTR-like strings that reside in generic space
 	 but are located in flash.  In that case we patch the incoming
 	 address space.  */
@@ -15086,18 +15499,7 @@ avr_addr_space_convert (rtx src, tree type_old, tree type_new)
 }
 
 
-/* Implement `TARGET_ADDR_SPACE_SUBSET_P'.  */
-
-static bool
-avr_addr_space_subset_p (addr_space_t /*subset*/, addr_space_t /*superset*/)
-{
-  /* Allow any kind of pointer mess.  */
-
-  return true;
-}
-
-
-/* Helps the next function.  */
+/* Helps the next two functions.  */
 
 static bool
 avr_addr_space_contains (addr_space_t super, addr_space_t sub)
@@ -15106,6 +15508,17 @@ avr_addr_space_contains (addr_space_t super, addr_space_t sub)
 	  || super == ADDR_SPACE_MEMX
 	  || (super == ADDR_SPACE_FLASHX
 	      && sub != ADDR_SPACE_MEMX && ! ADDR_SPACE_GENERIC_P (sub)));
+}
+
+
+/* Implement `TARGET_ADDR_SPACE_SUBSET_P'.  */
+
+static bool
+avr_addr_space_subset_p (addr_space_t subset, addr_space_t superset)
+{
+  // Allow any kind of pointer casts with -mno-strict-addr-space-subsets.
+  return (!avropt_strict_addr_space_subsets
+	  || avr_addr_space_contains (superset, subset));
 }
 
 
@@ -15135,8 +15548,7 @@ avr_convert_to_type (tree type, tree expr)
 
 	    under the assumption that an explicit casts means that the user
 	    knows what he is doing, e.g. interface with PSTR or old style
-	    code with progmem and pgm_read_xxx.
-  */
+	    code with progmem and pgm_read_xxx.  */
 
   if (avropt_warn_addr_space_convert
       && expr != error_mark_node
@@ -15201,7 +15613,7 @@ avr_legitimate_combined_insn (rtx_insn *insn)
 }
 
 
-/* PR63633: The middle-end might come up with hard regs as input operands.
+/* PR63633: The middle end might come up with hard regs as input operands.
 
    RMASK is a bit mask representing a subset of hard registers R0...R31:
    Rn is an element of that set iff bit n of RMASK is set.
@@ -15268,7 +15680,7 @@ avr_move_fixed_operands (rtx *op, rtx *hreg, unsigned mask)
 }
 
 
-/* PR63633: The middle-end might come up with hard regs as output operands.
+/* PR63633: The middle end might come up with hard regs as output operands.
 
    GEN is a sequence generating function like gen_mulsi3 with 3 operands OP[].
    RMASK is a bit mask representing a subset of hard registers R0...R31:
@@ -15357,7 +15769,7 @@ avr_nonzero_bits_lsr_operands_p (rtx_code code, rtx *op)
    XOP[2]  # Bytes to copy
 
    Return TRUE  if the expansion is accomplished.
-   Return FALSE if the operand compination is not supported.  */
+   Return FALSE if the operand combination is not supported.  */
 
 bool
 avr_emit_cpymemhi (rtx *xop)
@@ -15571,62 +15983,138 @@ static void
 avr_expand_delay_cycles (rtx operands0)
 {
   unsigned HOST_WIDE_INT cycles = UINTVAL (operands0) & GET_MODE_MASK (SImode);
-  unsigned HOST_WIDE_INT cycles_used;
-  unsigned HOST_WIDE_INT loop_count;
+  rtx memv = avr_mem_clobber ();
 
-  if (IN_RANGE (cycles, 83886082, 0xFFFFFFFF))
+  if (cycles <= 6)
     {
-      loop_count = ((cycles - 9) / 6) + 1;
-      cycles_used = ((loop_count - 1) * 6) + 9;
-      emit_insn (gen_delay_cycles_4 (gen_int_mode (loop_count, SImode),
-				     avr_mem_clobber ()));
-      cycles -= cycles_used;
+      // No loop needed, a sequence of NOPs will do it.
+    }
+  // Including LDIs, an N-byte loop takes
+  //
+  //    N + loop_count * (N + 2) - 1  cycles
+  //
+  // where loop_count denotes the start value of the N-byte loop counter.
+  // The maximum value that can be loaded into loop_count is  2^{8 * N},
+  // where the maximum value is realized by loop_count = 0.
+  // Up to  N + 2 - 1  cycles can be added by trailing NOPs without
+  // impeding the loop_count calculation, so that we arrive at a
+  // condition of
+  //
+  //    cycles < ((N + 2) << (8 * N)) + 2 * N + 1
+  //
+  // for the maximal delay that can be achieved with an N-byte loop.
+  else if (cycles < (3u << 8) + 0 + 3)
+    {
+      uint64_t loop_count = cycles / 3;
+      cycles -= 3 * loop_count;
+      emit_insn (gen_delay_cycles_1 (gen_int_mode (loop_count, QImode), memv));
+    }
+  else if (cycles < (4u << 16) + 1 + 4)
+    {
+      uint64_t loop_count = (cycles - 1) / 4;
+      cycles -= 4 * loop_count + 1;
+      emit_insn (gen_delay_cycles_2 (gen_int_mode (loop_count, HImode), memv));
+    }
+  else if (cycles < (5u << 24) + 2 + 5)
+    {
+      uint64_t loop_count = (cycles - 2) / 5;
+      cycles -= 5 * loop_count + 2;
+      emit_insn (gen_delay_cycles_3 (gen_int_mode (loop_count, SImode), memv));
+    }
+  else if (cycles < ((uint64_t) 6u << 32) + 3 + 6)
+    {
+      uint64_t loop_count = (cycles - 3) / 6;
+      cycles -= 6 * loop_count + 3;
+      emit_insn (gen_delay_cycles_4 (gen_int_mode (loop_count, SImode), memv));
     }
 
-  if (IN_RANGE (cycles, 262145, 83886081))
-    {
-      loop_count = ((cycles - 7) / 5) + 1;
-      if (loop_count > 0xFFFFFF)
-	loop_count = 0xFFFFFF;
-      cycles_used = ((loop_count - 1) * 5) + 7;
-      emit_insn (gen_delay_cycles_3 (gen_int_mode (loop_count, SImode),
-				     avr_mem_clobber ()));
-      cycles -= cycles_used;
-    }
-
-  if (IN_RANGE (cycles, 768, 262144))
-    {
-      loop_count = ((cycles - 5) / 4) + 1;
-      if (loop_count > 0xFFFF)
-	loop_count = 0xFFFF;
-      cycles_used = ((loop_count - 1) * 4) + 5;
-      emit_insn (gen_delay_cycles_2 (gen_int_mode (loop_count, HImode),
-				     avr_mem_clobber ()));
-      cycles -= cycles_used;
-    }
-
-  if (IN_RANGE (cycles, 6, 767))
-    {
-      loop_count = cycles / 3;
-      if (loop_count > 255)
-	loop_count = 255;
-      cycles_used = loop_count * 3;
-      emit_insn (gen_delay_cycles_1 (gen_int_mode (loop_count, QImode),
-				     avr_mem_clobber ()));
-      cycles -= cycles_used;
-    }
-
-  while (cycles >= 2)
-    {
-      emit_insn (gen_nopv (GEN_INT (2)));
-      cycles -= 2;
-    }
+  for (; cycles >= 2; cycles -= 2)
+    emit_insn (gen_nopv (GEN_INT (2)));
 
   if (cycles == 1)
+    emit_insn (gen_nopv (GEN_INT (1)));
+}
+
+
+/* Output a delay loop generated by __builtin_avr_delay_cycles.
+   XOP[0] is the loop count.  A loop count of 0 represents a power of 2.
+   XOP[1] is a volatile memory tag and unused here.
+   XOP[2]... are QImode scratch regs >= R16.
+   INSN is a PARALLEL with an UNSPECV_DELAY_CYCLES as its first element.
+   The 2nd element of that unspecv is a CONST_INT specifying the number
+   of loop bytes.   Returns "".
+   PLEN != 0: Set *PLEN to the code length in words.  Don't output anything.
+   PLEN == 0: Output instructions.  */
+
+const char *
+avr_out_delay_loop (rtx_insn *insn, rtx *xop, int *plen)
+{
+  rtx xunspecv = XVECEXP (PATTERN (insn), 0, 0);
+  rtx xbytes = XVECEXP (xunspecv, 0, 1);
+  gcc_assert (XINT (xunspecv, 1) == UNSPECV_DELAY_CYCLES);
+  const int n_bytes = INTVAL (xbytes);
+
+  // Gather the scratch regs until rmask's bits represent all of them.
+  unsigned rmask = 0;
+  for (int i = 2; popcount_hwi (rmask) < n_bytes; ++i)
+    for (auto regno = REGNO (xop[i]); regno < END_REGNO (xop[i]); ++regno)
+      rmask |= 1u << regno;
+
+  // Set xregs[] to the scratch regs such that SBIW becomes more likely.
+  rtx xregs[4];
+
+  // Go search a reg that can do SBIW.
+  bool sbiw_p = false;
+  for (int regno = REG_24; regno < REG_32; regno += 2)
+    if (AVR_HAVE_ADIW && (3 & (rmask >> regno)) == 3)
+      {
+	rmask &= ~(3u << regno);
+	xregs[0] = all_regs_rtx[regno];
+	xregs[1] = all_regs_rtx[regno + 1];
+	sbiw_p = true;
+	break;
+      }
+
+  // Also gather the remaining regs into xregs[].
+  for (int i = 2 * sbiw_p; rmask != 0; ++i)
     {
-      emit_insn (gen_nopv (GEN_INT (1)));
-      cycles--;
+      gcc_assert (i < n_bytes);
+      const int regno = ctz_hwi (rmask);
+      xregs[i] = all_regs_rtx[regno];
+      rmask &= ~(1u << regno);
     }
+
+  // Now we have all the information needed for instruction output.
+
+  if (plen)
+    *plen = 0;
+
+  // Print the number of cycles consumed by the LDIs and the loop.
+  if (flag_verbose_asm || flag_print_asm_name)
+    {
+      const auto n_loops = xop[0] == const0_rtx
+	? (unsigned HOST_WIDE_INT) 1 << (8 * n_bytes)
+	: UINTVAL (xop[0]);
+      const uint64_t n_cycles = n_bytes + n_loops * (2 + n_bytes) - 1;
+      rtx xcycles = gen_int_mode (n_cycles, DImode);
+      avr_asm_len (";; cycles = %0", &xcycles, plen, 0);
+    }
+
+  // Load the loop count into them scratch regs.
+  for (int i = 0; i < n_bytes; ++i)
+    {
+      rtx op[2] = { xregs[i], avr_byte (xop[0], i) };
+      avr_asm_len ("ldi %0,%1", op, plen, 1);
+    }
+
+  // Loop body: xregs[] -= 1.
+  avr_asm_len (sbiw_p
+	       ? "1: sbiw %0,1"
+	       : "1: subi %0,1", xregs, plen, 1);
+  for (int i = 1 + sbiw_p; i < n_bytes; ++i)
+    avr_asm_len ("sbci %0,0", &xregs[i], plen, 1);
+
+  return avr_asm_len ("brne 1b", xop, plen, 1);
 }
 
 
@@ -15800,7 +16288,7 @@ avr_map_decompose (unsigned int f, const avr_map_op_t *g, bool val_const_p)
 
   /* Step 2:  Compute the cost of the operations.
      The overall cost of doing an operation prior to the insertion is
-      the cost of the insertion plus the cost of the operation.  */
+     the cost of the insertion plus the cost of the operation.  */
 
   /* Step 2a:  Compute cost of F o G^-1  */
 
@@ -16034,7 +16522,7 @@ avr_ftype_strlen (addr_space_t as)
 {
   tree const_AS_char_node
     = build_qualified_type (char_type_node,
-			    TYPE_QUAL_CONST | ENCODE_QUAL_ADDR_SPACE (as));
+			    qualifier_set {TYPE_QUAL_CONST, as});
   tree const_AS_ptr_type_node
     = build_pointer_type_for_mode (const_AS_char_node,
 				   avr_addr_space_pointer_mode (as), false);
@@ -16091,8 +16579,7 @@ avr_init_builtins (void)
 
   tree const_memx_void_node
     = build_qualified_type (void_type_node,
-			    TYPE_QUAL_CONST
-			    | ENCODE_QUAL_ADDR_SPACE (ADDR_SPACE_MEMX));
+			    qualifier_set {TYPE_QUAL_CONST, ADDR_SPACE_MEMX});
 
   tree const_memx_ptr_type_node
     = build_pointer_type_for_mode (const_memx_void_node, PSImode, false);
@@ -16223,7 +16710,7 @@ avr_init_builtins (void)
   {									\
     int id = AVR_BUILTIN_ ## NAME;					\
     const char *Name = "__builtin_avr_" #NAME;				\
-    char *name = (char *) alloca (1 + strlen (Name));			\
+    char *name = XALLOCAVEC (char, 1 + strlen (Name));			\
 									\
     gcc_assert (id < AVR_BUILTIN_COUNT);				\
     avr_bdesc[id].fndecl						\
@@ -16596,7 +17083,7 @@ avr_fold_builtin (tree fndecl, int /*n_args*/, tree *arg, bool /*ignore*/)
 	if (TREE_CODE (tbits) != INTEGER_CST
 	    && avr_map_metric (map, MAP_PREIMAGE_0_7) == 0)
 	  {
-	    /* Similar for the bits to be inserted. If they are unused,
+	    /* Similar for the bits to be inserted.  If they are unused,
 	       we can just as well pass 0.  */
 
 	    tbits = build_int_cst (val_type, 0);

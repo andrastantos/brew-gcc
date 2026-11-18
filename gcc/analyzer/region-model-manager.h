@@ -21,6 +21,10 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_ANALYZER_REGION_MODEL_MANAGER_H
 #define GCC_ANALYZER_REGION_MODEL_MANAGER_H
 
+#include "svalue.h"
+#include "region.h"
+#include "known-function-manager.h"
+
 namespace ana {
 
 /* A class responsible for owning and consolidating region and svalue
@@ -31,11 +35,12 @@ namespace ana {
 class region_model_manager
 {
 public:
-  region_model_manager (logger *logger = nullptr);
+  region_model_manager (symbolic::node_manager &node_mgr,
+			logger *logger = nullptr);
   ~region_model_manager ();
 
-  unsigned get_num_symbols () const { return m_next_symbol_id; }
-  unsigned alloc_symbol_id () { return m_next_symbol_id++; }
+  unsigned
+  alloc_node_id () { return m_node_mgr.alloc_node_id (); }
 
   /* call_string consolidation.  */
   const call_string &get_empty_call_string () const
@@ -56,28 +61,23 @@ public:
   const svalue *get_or_create_initial_value (const region *reg,
 					     bool check_poisoned = true);
   const svalue *get_ptr_svalue (tree ptr_type, const region *pointee);
+  const svalue *get_ptr_svalue (tree ptr_type, symbolic::pointer ptr);
   const svalue *get_or_create_unaryop (tree type, enum tree_code op,
 				       const svalue *arg);
   const svalue *get_or_create_cast (tree type, const svalue *arg);
   const svalue *get_or_create_binop (tree type,
 				     enum tree_code op,
 				     const svalue *arg0, const svalue *arg1);
-  const svalue *get_or_create_sub_svalue (tree type,
-					  const svalue *parent_svalue,
-					  const region *subregion);
-  const svalue *get_or_create_repeated_svalue (tree type,
-					       const svalue *outer_size,
-					       const svalue *inner_svalue);
-  const svalue *get_or_create_bits_within (tree type,
-					   const bit_range &bits,
-					   const svalue *inner_svalue);
+  const svalue *get_svalue_from_bit_vector (tree type,
+					    const symbolic::bit_vector &bv);
+  template <typename ConcreteValueType>
+  const svalue *get_svalue_from_scalar (tree type,
+					const symbolic::scalar<ConcreteValueType> &scalar);
   const svalue *get_or_create_unmergeable (const svalue *arg);
   const svalue *get_or_create_widening_svalue (tree type,
 					       const supernode *snode,
 					       const svalue *base_svalue,
 					       const svalue *iter_svalue);
-  const svalue *get_or_create_compound_svalue (tree type,
-					       const binding_map &map);
   const svalue *get_or_create_conjured_svalue (tree type, const gimple *stmt,
 					       const region *id_reg,
 					       const conjured_purge &p,
@@ -97,13 +97,6 @@ public:
   get_or_create_const_fn_result_svalue (tree type,
 					tree fndecl,
 					const vec<const svalue *> &inputs);
-
-  const svalue *maybe_get_char_from_cst (tree data_cst,
-					 tree byte_offset_cst);
-  const svalue *maybe_get_char_from_string_cst (tree string_cst,
-						tree byte_offset_cst);
-  const svalue *maybe_get_char_from_raw_data_cst (tree raw_data_cst,
-						  tree byte_offset_cst);
 
   /* Dynamically-allocated svalue instances.
      The number of these within the analysis can grow arbitrarily.
@@ -140,7 +133,7 @@ public:
   const region *get_symbolic_region (const svalue *sval);
   const string_region *get_region_for_string (tree string_cst);
   const region *get_bit_range (const region *parent, tree type,
-			       const bit_range &bits);
+			       const concrete_bit_range &bits);
   const var_arg_region *get_var_arg_region (const frame_region *parent,
 					    unsigned idx);
 
@@ -151,7 +144,12 @@ public:
 				       tree t,
 				       const dump_location_t &loc);
 
-  store_manager *get_store_manager () { return &m_store_mgr; }
+  symbolic::node_manager &
+  get_node_manager () const
+  {
+    return m_node_mgr;
+  }
+
   bounded_ranges_manager *get_range_manager () const { return m_range_mgr; }
 
   known_function_manager *get_known_function_manager ()
@@ -177,6 +175,7 @@ public:
 
   const svalue *maybe_fold_binop (tree type, enum tree_code op,
 				  const svalue *arg0, const svalue *arg1);
+
 private:
   bool too_complex_p (const complexity &c) const;
   bool reject_if_too_complex (svalue *sval);
@@ -186,24 +185,20 @@ private:
 				      const binop_svalue *binop);
   const svalue *maybe_fold_unaryop (tree type, enum tree_code op,
 				    const svalue *arg);
-  const svalue *maybe_fold_sub_svalue (tree type,
-				       const svalue *parent_svalue,
-				       const region *subregion);
-  const svalue *maybe_fold_repeated_svalue (tree type,
-					    const svalue *outer_size,
-					    const svalue *inner_svalue);
-  const svalue *maybe_fold_bits_within_svalue (tree type,
-					       const bit_range &bits,
-					       const svalue *inner_svalue);
-  const svalue *maybe_undo_optimize_bit_field_compare (tree type,
-						       const compound_svalue *compound_sval,
-						       tree cst, const svalue *arg1);
+  const svalue *maybe_fold_svalue_from_bit_vector (tree type,
+						   const symbolic::bit_vector &bv);
   const svalue *maybe_fold_asm_output_svalue (tree type,
 					      const vec<const svalue *> &inputs);
 
-  logger *m_logger;
+  const region *
+  maybe_fold_sized_region_to_initial_field (const region *parent,
+					    tree type,
+					    const svalue *byte_size_sval);
+  const region *
+  maybe_fold_symbolic_region (const svalue *sval);
 
-  unsigned m_next_symbol_id;
+  symbolic::node_manager &m_node_mgr;
+  logger *m_logger;
 
   const call_string m_empty_call_string;
 
@@ -212,68 +207,51 @@ private:
   heap_region m_heap_region;
 
   /* svalue consolidation.  */
-  typedef hash_map<constant_svalue::key_t, constant_svalue *> constants_map_t;
+  typedef std::map<constant_svalue::key_t, constant_svalue *> constants_map_t;
   constants_map_t m_constants_map;
 
-  typedef hash_map<tree, unknown_svalue *> unknowns_map_t;
+  typedef std::map<tree, unknown_svalue *> unknowns_map_t;
   unknowns_map_t m_unknowns_map;
   const unknown_svalue *m_unknown_NULL;
 
-  typedef hash_map<poisoned_svalue::key_t,
+  typedef std::map<poisoned_svalue::key_t,
 		   poisoned_svalue *> poisoned_values_map_t;
   poisoned_values_map_t m_poisoned_values_map;
 
-  typedef hash_map<setjmp_svalue::key_t,
+  typedef std::map<setjmp_svalue::key_t,
 		   setjmp_svalue *> setjmp_values_map_t;
   setjmp_values_map_t m_setjmp_values_map;
 
-  typedef hash_map<const region *, initial_svalue *> initial_values_map_t;
+  typedef std::map<const region *, initial_svalue *> initial_values_map_t;
   initial_values_map_t m_initial_values_map;
 
-  typedef hash_map<region_svalue::key_t, region_svalue *> pointer_values_map_t;
+  typedef std::map<pointer_svalue::key_t, pointer_svalue *> pointer_values_map_t;
   pointer_values_map_t m_pointer_values_map;
 
-  typedef hash_map<unaryop_svalue::key_t,
+  typedef std::map<unaryop_svalue::key_t,
 		   unaryop_svalue *> unaryop_values_map_t;
   unaryop_values_map_t m_unaryop_values_map;
 
-  typedef hash_map<binop_svalue::key_t, binop_svalue *> binop_values_map_t;
+  typedef std::map<binop_svalue::key_t, binop_svalue *> binop_values_map_t;
   binop_values_map_t m_binop_values_map;
 
-  typedef hash_map<sub_svalue::key_t, sub_svalue *> sub_values_map_t;
-  sub_values_map_t m_sub_values_map;
+  typedef std::map<svalue_from_bit_vector::key_t,
+		   svalue_from_bit_vector *> bit_vector_to_svalue_map_t;
+  bit_vector_to_svalue_map_t m_bit_vector_to_svalue_map;
 
-  typedef hash_map<repeated_svalue::key_t,
-		   repeated_svalue *> repeated_values_map_t;
-  repeated_values_map_t m_repeated_values_map;
-
-  typedef hash_map<bits_within_svalue::key_t,
-		   bits_within_svalue *> bits_within_values_map_t;
-  bits_within_values_map_t m_bits_within_values_map;
-
-  typedef hash_map<const svalue *,
+  typedef std::map<const svalue *,
 		   unmergeable_svalue *> unmergeable_values_map_t;
   unmergeable_values_map_t m_unmergeable_values_map;
 
-  typedef hash_map<widening_svalue::key_t,
-		   widening_svalue */*,
-		   widening_svalue::key_t::hash_map_traits*/>
-    widening_values_map_t;
+  typedef std::map<widening_svalue::key_t,
+		   widening_svalue *> widening_values_map_t;
   widening_values_map_t m_widening_values_map;
 
-  typedef hash_map<compound_svalue::key_t,
-		   compound_svalue *> compound_values_map_t;
-  compound_values_map_t m_compound_values_map;
-
-  typedef hash_map<conjured_svalue::key_t,
-		   conjured_svalue *> conjured_values_map_t;
-  conjured_values_map_t m_conjured_values_map;
-
-  typedef hash_map<asm_output_svalue::key_t,
+  typedef std::map<asm_output_svalue::key_t,
 		   asm_output_svalue *> asm_output_values_map_t;
   asm_output_values_map_t m_asm_output_values_map;
 
-  typedef hash_map<const_fn_result_svalue::key_t,
+  typedef std::map<const_fn_result_svalue::key_t,
 		   const_fn_result_svalue *> const_fn_result_values_map_t;
   const_fn_result_values_map_t m_const_fn_result_values_map;
 
@@ -290,16 +268,16 @@ private:
   /* region consolidation.  */
 
   code_region m_code_region;
-  typedef hash_map<tree, function_region *> fndecls_map_t;
+  typedef std::map<tree, function_region *> fndecls_map_t;
   typedef fndecls_map_t::iterator fndecls_iterator_t;
   fndecls_map_t m_fndecls_map;
 
-  typedef hash_map<tree, label_region *> labels_map_t;
+  typedef std::map<tree, label_region *> labels_map_t;
   typedef labels_map_t::iterator labels_iterator_t;
   labels_map_t m_labels_map;
 
   globals_region m_globals_region;
-  typedef hash_map<tree, decl_region *> globals_map_t;
+  typedef std::map<tree, decl_region *> globals_map_t;
   typedef globals_map_t::iterator globals_iterator_t;
   globals_map_t m_globals_map;
 
@@ -314,13 +292,11 @@ private:
   consolidation_map<frame_region> m_frame_regions;
   consolidation_map<symbolic_region> m_symbolic_regions;
 
-  typedef hash_map<tree, string_region *> string_map_t;
+  typedef std::map<tree, string_region *> string_map_t;
   string_map_t m_string_map;
 
   consolidation_map<bit_range_region> m_bit_range_regions;
   consolidation_map<var_arg_region> m_var_arg_regions;
-
-  store_manager m_store_mgr;
 
   bounded_ranges_manager *m_range_mgr;
 

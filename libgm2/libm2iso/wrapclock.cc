@@ -52,13 +52,13 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #endif
 
 // Conditional inclusion of sys/time.h for gettimeofday
-#if !defined(_GLIBCXX_USE_CLOCK_MONOTONIC) && \
-    !defined(_GLIBCXX_USE_CLOCK_REALTIME) && \
-     defined(_GLIBCXX_USE_GETTIMEOFDAY)
+#if !defined(_GLIBGM2_USE_CLOCK_MONOTONIC) && \
+    !defined(_GLIBGM2_USE_CLOCK_REALTIME) && \
+     defined(_GLIBGM2_USE_GETTIMEOFDAY)
 #include <sys/time.h>
 #endif
 
-#if defined(_GLIBCXX_USE_CLOCK_GETTIME_SYSCALL)
+#if defined(_GLIBGM2_USE_CLOCK_GETTIME_SYSCALL)
 #include <unistd.h>
 #include <sys/syscall.h>
 #endif
@@ -82,16 +82,27 @@ typedef long long int longint_t;
    gettime returns 0 on success and -1 on failure.  If the underlying
    system does not have gettime then GetTimeRealtime returns 1.  */
 
-#if defined(HAVE_STRUCT_TIMESPEC) && defined(_GLIBCXX_USE_CLOCK_REALTIME)
+#if defined(HAVE_STRUCT_TIMESPEC) && defined(_GLIBGM2_USE_CLOCK_REALTIME)
 extern "C" int
 EXPORT(GetTimeRealtime) (struct timespec *ts)
 {
-  timespec tp;
-#if defined(_GLIBCXX_USE_CLOCK_GETTIME_SYSCALL)
+#if defined(_GLIBGM2_USE_CLOCK_GETTIME_SYSCALL)
   return syscall (SYS_clock_gettime, CLOCK_REALTIME, ts);
 #else
   return clock_gettime (CLOCK_REALTIME, ts);
 #endif
+}
+
+#elif defined(HAVE_STRUCT_TIMESPEC) && defined(HAVE_GETTIMEOFDAY)
+extern "C" int
+EXPORT(GetTimeRealtime) (struct timespec *ts)
+{
+  struct timeval tv;
+  if (gettimeofday (&tv, NULL) != 0)
+    return -1;
+  ts->tv_sec = tv.tv_sec;
+  ts->tv_nsec = ((long) tv.tv_usec) * 1000;
+  return 0;
 }
 
 #else
@@ -107,11 +118,11 @@ EXPORT(GetTimeRealtime) (void *ts)
    gettime returns 0 on success and -1 on failure.  If the underlying
    system does not have gettime then GetTimeRealtime returns 1.  */
 
-#if defined(HAVE_STRUCT_TIMESPEC) && defined(_GLIBCXX_USE_CLOCK_REALTIME)
+#if defined(HAVE_STRUCT_TIMESPEC) && defined(_GLIBGM2_USE_CLOCK_REALTIME)
 extern "C" int
 EXPORT(SetTimeRealtime) (struct timespec *ts)
 {
-#if defined(_GLIBCXX_USE_CLOCK_SETTIME_SYSCALL)
+#if defined(_GLIBGM2_USE_CLOCK_SETTIME_SYSCALL)
   return syscall (SYS_clock_settime, CLOCK_REALTIME, ts);
 #elif defined(HAVE_CLOCK_SETTIME)
   return clock_settime (CLOCK_REALTIME, ts);
@@ -135,7 +146,7 @@ EXPORT(SetTimeRealtime) (void *ts)
 extern "C" struct timespec *
 EXPORT(InitTimespec) (void)
 {
-#if defined(HAVE_STRUCT_TIMESPEC) && defined(HAVE_MALLOC_H)
+#if defined(HAVE_STRUCT_TIMESPEC) && defined(HAVE_STDLIB_H)
   return (struct timespec *)malloc (sizeof (struct timespec));
 #else
   return NULL;
@@ -157,7 +168,7 @@ EXPORT(InitTimespec) (void)
 extern "C" struct timespec *
 EXPORT(KillTimespec) (void *ts)
 {
-#if defined(HAVE_MALLOC_H)
+#if defined(HAVE_STDLIB_H)
   free (ts);
 #endif
   return NULL;
@@ -249,7 +260,7 @@ EXPORT(istimezone) (void)
 {
 #if defined(HAVE_STRUCT_TIMESPEC)
 #if defined(HAVE_TM_TM_GMTOFF)
-#if defined(_GLIBCXX_USE_CLOCK_REALTIME)
+#if defined(_GLIBGM2_USE_CLOCK_REALTIME)
   return 1;
 #endif
 #endif

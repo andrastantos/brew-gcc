@@ -14,12 +14,15 @@
 // along with GCC; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
+#include "expected.h"
+#include "optional.h"
 #include "rust-diagnostics.h"
 #include "rust-system.h"
 #include "rust-builtins.h"
 
 #include "target.h"
 #include "stringpool.h"
+#include "rust-intrinsic-values.h"
 
 namespace Rust {
 namespace Compile {
@@ -28,11 +31,15 @@ BuiltinsContext &
 BuiltinsContext::get ()
 {
   static BuiltinsContext instance;
+
+  if (instance.setup_state == SetupState::UNINITIALIZED)
+    instance.setup ();
+
   return instance;
 }
 
-bool
-BuiltinsContext::lookup_simple_builtin (const std::string &name, tree *builtin)
+tl::optional<tree>
+BuiltinsContext::lookup_simple_builtin (const std::string &name)
 {
   auto *to_search = &name;
 
@@ -40,10 +47,23 @@ BuiltinsContext::lookup_simple_builtin (const std::string &name, tree *builtin)
   if (it != rust_intrinsic_to_gcc_builtin.end ())
     to_search = &it->second;
 
-  return lookup_gcc_builtin (*to_search, builtin);
+  return lookup_gcc_builtin (*to_search);
 }
 
-BuiltinsContext::BuiltinsContext () { setup (); }
+tl::expected<std::pair<tree, LlvmBuiltinAdapter>, LlvmBuiltinMappingError>
+BuiltinsContext::map_llvm_to_gcc_builtin (const std::string &name)
+{
+  auto mapping = llvm_to_gcc_builtin.find (name);
+  if (mapping == llvm_to_gcc_builtin.end ())
+    return tl::make_unexpected (LlvmBuiltinMappingError::NotMapped ());
+
+  if (auto lookup = lookup_gcc_builtin (mapping->second.gcc_name))
+    return std::make_pair (*lookup, mapping->second.adapter);
+
+  return tl::make_unexpected (LlvmBuiltinMappingError::TargetUnavailable ());
+}
+
+BuiltinsContext::BuiltinsContext () : setup_state (SetupState::UNINITIALIZED) {}
 
 /**
  * Define a function type according to `builtin-types.def`
@@ -227,7 +247,7 @@ BuiltinsContext::define_builtin_attributes ()
 
 #define DEF_ATTR_NULL_TREE(ENUM) built_in_attributes[(int) ENUM] = NULL_TREE;
 #define DEF_ATTR_INT(ENUM, VALUE)                                              \
-  built_in_attributes[ENUM] = build_int_cst (NULL_TREE, VALUE);
+  built_in_attributes[ENUM] = build_int_cst (integer_type_node, VALUE);
 #define DEF_ATTR_STRING(ENUM, VALUE)                                           \
   built_in_attributes[ENUM] = build_string (strlen (VALUE), VALUE);
 #define DEF_ATTR_IDENT(ENUM, STRING)                                           \
@@ -285,94 +305,162 @@ void
 BuiltinsContext::register_rust_mappings ()
 {
   rust_intrinsic_to_gcc_builtin = {
-    {"unreachable", "__builtin_unreachable"},
-    {"abort", "__builtin_abort"},
+    {Values::Intrinsics::UNREACHABLE, "__builtin_unreachable"},
+    {Values::Intrinsics::ABORT, "__builtin_abort"},
 
     // Math intrinsics
-    {"sqrtf32", "__builtin_sqrtf"},
-    {"sqrtf64", "__builtin_sqrt"},
+    {Values::Intrinsics::SQRTF32, "__builtin_sqrtf"},
+    {Values::Intrinsics::SQRTF64, "__builtin_sqrt"},
 
-    {"sinf32", "__builtin_sinf"},
-    {"sinf64", "__builtin_sin"},
+    {Values::Intrinsics::SINF32, "__builtin_sinf"},
+    {Values::Intrinsics::SINF64, "__builtin_sin"},
 
-    {"cosf32", "__builtin_cosf"},
-    {"cosf64", "__builtin_cos"},
+    {Values::Intrinsics::COSF32, "__builtin_cosf"},
+    {Values::Intrinsics::COSF64, "__builtin_cos"},
 
-    {"powf32", "__builtin_powf"},
-    {"powf64", "__builtin_pow"},
+    {Values::Intrinsics::POWF32, "__builtin_powf"},
+    {Values::Intrinsics::POWF64, "__builtin_pow"},
 
-    {"powif32", "__builtin_powif"},
-    {"powif64", "__builtin_powi"},
+    {Values::Intrinsics::POWIF32, "__builtin_powif"},
+    {Values::Intrinsics::POWIF64, "__builtin_powi"},
 
-    {"expf32", "__builtin_expf"},
-    {"expf64", "__builtin_exp"},
+    {Values::Intrinsics::EXPF32, "__builtin_expf"},
+    {Values::Intrinsics::EXPF64, "__builtin_exp"},
 
-    {"exp2f32", "__builtin_exp2f"},
-    {"exp2f64", "__builtin_exp2"},
+    {Values::Intrinsics::EXP2F32, "__builtin_exp2f"},
+    {Values::Intrinsics::EXP2F64, "__builtin_exp2"},
 
-    {"logf32", "__builtin_logf"},
-    {"logf64", "__builtin_log"},
+    {Values::Intrinsics::LOGF32, "__builtin_logf"},
+    {Values::Intrinsics::LOGF64, "__builtin_log"},
 
-    {"log10f32", "__builtin_log10f"},
-    {"log10f64", "__builtin_log10"},
+    {Values::Intrinsics::LOG10F32, "__builtin_log10f"},
+    {Values::Intrinsics::LOG10F64, "__builtin_log10"},
 
-    {"log2f32", "__builtin_log2f"},
-    {"log2f64", "__builtin_log2"},
+    {Values::Intrinsics::LOG2F32, "__builtin_log2f"},
+    {Values::Intrinsics::LOG2F64, "__builtin_log2"},
 
-    {"fmaf32", "__builtin_fmaf"},
-    {"fmaf64", "__builtin_fma"},
+    {Values::Intrinsics::FMAF32, "__builtin_fmaf"},
+    {Values::Intrinsics::FMAF64, "__builtin_fma"},
 
-    {"fabsf32", "__builtin_fabsf"},
-    {"fabsf64", "__builtin_fabs"},
+    {Values::Intrinsics::FABSF32, "__builtin_fabsf"},
+    {Values::Intrinsics::FABSF64, "__builtin_fabs"},
 
-    {"minnumf32", "__builtin_fminf"},
-    {"minnumf64", "__builtin_fmin"},
+    {Values::Intrinsics::MINNUMF32, "__builtin_fminf"},
+    {Values::Intrinsics::MINNUMF64, "__builtin_fmin"},
 
-    {"maxnumf32", "__builtin_fmaxf"},
-    {"maxnumf64", "__builtin_fmax"},
+    {Values::Intrinsics::MAXNUMF32, "__builtin_fmaxf"},
+    {Values::Intrinsics::MAXNUMF64, "__builtin_fmax"},
 
-    {"copysignf32", "__builtin_copysignf"},
-    {"copysignf64", "__builtin_copysign"},
+    {Values::Intrinsics::COPYSIGNF32, "__builtin_copysignf"},
+    {Values::Intrinsics::COPYSIGNF64, "__builtin_copysign"},
 
-    {"floorf32", "__builtin_floorf"},
-    {"floorf64", "__builtin_floor"},
+    {Values::Intrinsics::FLOORF32, "__builtin_floorf"},
+    {Values::Intrinsics::FLOORF64, "__builtin_floor"},
 
-    {"ceilf32", "__builtin_ceilf"},
-    {"ceilf64", "__builtin_ceil"},
+    {Values::Intrinsics::CEILF32, "__builtin_ceilf"},
+    {Values::Intrinsics::CEILF64, "__builtin_ceil"},
 
-    {"truncf32", "__builtin_truncf"},
-    {"truncf64", "__builtin_trunc"},
+    {Values::Intrinsics::TRUNCF32, "__builtin_truncf"},
+    {Values::Intrinsics::TRUNCF64, "__builtin_trunc"},
 
-    {"rintf32", "__builtin_rintf"},
-    {"rintf64", "__builtin_rint"},
+    {Values::Intrinsics::RINTF32, "__builtin_rintf"},
+    {Values::Intrinsics::RINTF64, "__builtin_rint"},
 
-    {"nearbyintf32", "__builtin_nearbyintf"},
-    {"nearbyintf64", "__builtin_nearbyint"},
+    {Values::Intrinsics::NEARBYINTF32, "__builtin_nearbyintf"},
+    {Values::Intrinsics::NEARBYINTF64, "__builtin_nearbyint"},
 
-    {"roundf32", "__builtin_roundf"},
-    {"roundf64", "__builtin_round"},
+    {Values::Intrinsics::ROUNDF32, "__builtin_roundf"},
+    {Values::Intrinsics::ROUNDF64, "__builtin_round"},
   };
+}
+
+void
+BuiltinsContext::register_llvm_to_gcc_builtin ()
+{
+  llvm_to_gcc_builtin = {
+    {"llvm.x86.rdrand.16",
+     {"__builtin_ia32_rdrand16_step",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_VALUE_STATUS}},
+    {"llvm.x86.rdrand.32",
+     {"__builtin_ia32_rdrand32_step",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_VALUE_STATUS}},
+    {"llvm.x86.rdrand.64",
+     {"__builtin_ia32_rdrand64_step",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_VALUE_STATUS}},
+    {"llvm.x86.rdseed.16",
+     {"__builtin_ia32_rdseed_hi_step",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_VALUE_STATUS}},
+    {"llvm.x86.rdseed.32",
+     {"__builtin_ia32_rdseed_si_step",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_VALUE_STATUS}},
+    {"llvm.x86.rdseed.64",
+     {"__builtin_ia32_rdseed_di_step",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_VALUE_STATUS}},
+
+    {"llvm.x86.addcarry.32",
+     {"__builtin_ia32_addcarryx_u32",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_STATUS_VALUE}},
+    {"llvm.x86.addcarryx.u32",
+     {"__builtin_ia32_addcarryx_u32", LlvmBuiltinAdapter::FORWARD_ARGUMENTS}},
+    {"llvm.x86.subborrow.32",
+     {"__builtin_ia32_sbb_u32",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_STATUS_VALUE}},
+    {"llvm.x86.addcarry.64",
+     {"__builtin_ia32_addcarryx_u64",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_STATUS_VALUE}},
+    {"llvm.x86.addcarryx.u64",
+     {"__builtin_ia32_addcarryx_u64", LlvmBuiltinAdapter::FORWARD_ARGUMENTS}},
+    {"llvm.x86.subborrow.64",
+     {"__builtin_ia32_sbb_u64",
+      LlvmBuiltinAdapter::OUTPUT_POINTER_STATUS_VALUE}},
+
+    {"llvm.x86.vcvtph2ps.128",
+     {"__builtin_ia32_vcvtph2ps", LlvmBuiltinAdapter::FORWARD_ARGUMENTS}},
+    {"llvm.x86.vcvtph2ps.256",
+     {"__builtin_ia32_vcvtph2ps256", LlvmBuiltinAdapter::FORWARD_ARGUMENTS}},
+    {"llvm.x86.vcvtps2ph.128",
+     {"__builtin_ia32_vcvtps2ph", LlvmBuiltinAdapter::FORWARD_ARGUMENTS}},
+    {"llvm.x86.vcvtps2ph.256",
+     {"__builtin_ia32_vcvtps2ph256", LlvmBuiltinAdapter::FORWARD_ARGUMENTS}},
+  };
+}
+
+void
+BuiltinsContext::register_builtin (tree decl)
+{
+  rust_assert (TREE_CODE (decl) == FUNCTION_DECL);
+  rust_assert (DECL_NAME (decl));
+
+  const char *name = IDENTIFIER_POINTER (DECL_NAME (decl));
+  builtin_functions.insert ({std::string (name), decl});
 }
 
 void
 BuiltinsContext::setup ()
 {
+  rust_assert (setup_state == SetupState::UNINITIALIZED);
+  setup_state = SetupState::INITIALIZING;
+
   define_builtin_types ();
   define_builtin_attributes ();
   define_builtins ();
 
+  targetm.init_builtins ();
+
   register_rust_mappings ();
+  register_llvm_to_gcc_builtin ();
+
+  setup_state = SetupState::READY;
 }
 
-bool
-BuiltinsContext::lookup_gcc_builtin (const std::string &name, tree *builtin)
+tl::optional<tree>
+BuiltinsContext::lookup_gcc_builtin (const std::string &name)
 {
   auto it = builtin_functions.find (name);
   if (it == builtin_functions.end ())
-    return false;
+    return tl::nullopt;
 
-  *builtin = it->second;
-  return true;
+  return it->second;
 }
 
 } // namespace Compile

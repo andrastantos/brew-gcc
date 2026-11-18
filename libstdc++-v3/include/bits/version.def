@@ -89,6 +89,9 @@ ftms = {
 };
 
 ftms = {
+  // 202106 P0401R6 Providing size feedback in the Allocator interface
+  // 202302 P2652R2 Disallow user specialization of allocator_traits
+  //        LWG3887 Version macro for allocate_at_least 
   name = allocate_at_least;
   values = {
     v = 202302;
@@ -408,11 +411,12 @@ ftms = {
 
 ftms = {
   name = constant_wrapper;
-  // 202506 P2781R9 std::constexpr_wrapper 
+  // 202506 P2781R9 std::constexpr_wrapper
   // 202603 P3978R3 constant_wrapper should unwrap on call and subscript
+  // 202606 P4206R0 Revert string support in std::constant_wrapper
   values = {
-    v = 202603;
-    cxxmin = 26;
+    v = 202606;
+    cxxmin = 26; // P4206R0 accepted as DR for C++26
   };
 };
 
@@ -612,23 +616,23 @@ ftms = {
     v = 202306;
     cxxmin = 26;
     hosted = yes;
-    cxx11abi = yes;
+    extra_cond = "_GLIBCXX_USE_CXX11_ABI || !_GLIBCXX_USE_DUAL_ABI";
   };
   values = {
     v = 201907;
     cxxmin = 20;
     hosted = yes;
-    cxx11abi = yes; // std::chrono::tzdb requires cxx11 std::string
+    extra_cond = "_GLIBCXX_USE_CXX11_ABI || !_GLIBCXX_USE_DUAL_ABI";
   };
   values = {
     v = 201611;
     cxxmin = 17;
-    hosted = yes;
+    hosted = yes; // system_clock::now() and steady_clock::now() are hosted
   };
 };
 
 ftms = {
-  // Unofficial macro for chrono features supported for old string ABI.
+  // Unofficial macro for <chrono> subset supported for old string ABI.
   name = chrono_cxx20;
   values = {
     v = 202306;
@@ -638,6 +642,27 @@ ftms = {
   values = {
     v = 201800;
     cxxmin = 20;
+    no_stdname = yes;
+  };
+};
+
+ftms = {
+  // Unofficial macro for <chrono> subset supported for freestanding.
+  // This excludes Clock::now() functions and everything that depends on tzdb.
+  name = freestanding_chrono;
+  values = {
+    v = 202306;
+    cxxmin = 26;
+    no_stdname = yes;
+  };
+  values = {
+    v = 201907;
+    cxxmin = 20;
+    no_stdname = yes;
+  };
+  values = {
+    v = 201611;
+    cxxmin = 17;
     no_stdname = yes;
   };
 };
@@ -886,6 +911,13 @@ ftms = {
 
 ftms = {
   name = bitops;
+  // 202606 P3793R2 Better shifting
+  // 202607 P3104R6 Bit permutations
+  values = {
+    v = 202607;
+    cxxmin = 29;
+  };
+  // 201907 P0553R4 Bit operations
   values = {
     v = 201907;
     cxxmin = 20;
@@ -1127,8 +1159,8 @@ ftms = {
   // 202306 P2630R4 Submdspan
   // 202403 P2642R6 Padded mdspan layouts
   // 202411 P3355R1 Fix submdspan for C++26
-  // 202511 P3663R3 Future-proof submdspan-mapping  
-  // 202603 P3982R1 Split strided_slice into extent_slice and range_slice for C++26                                                          
+  // 202511 P3663R3 Future-proof submdspan-mapping
+  // 202603 P3982R1 Split strided_slice into extent_slice and range_slice for C++26
   values = {
     v = 202603;
     cxxmin = 26;
@@ -1329,6 +1361,16 @@ ftms = {
 };
 
 ftms = {
+  name = constexpr_exceptions;
+  values = {
+    v = 202502;
+    cxxmin = 26;
+    extra_cond = "__cpp_constexpr_exceptions >= 202411L";
+    cxx11abi = yes;
+  };
+};
+
+ftms = {
   name = format;
   // 202305 P2757R3 Type checking format args
   // 202306 P2637R3 Member visit
@@ -1348,6 +1390,18 @@ ftms = {
     v = 202304;
     cxxmin = 20;
     hosted = yes;
+  };
+};
+
+ftms = {
+  name = constexpr_format;
+  // 202511 P3391R2 constexpr std::format
+  values = {
+    v = 202511;
+    cxxmin = 26;
+    hosted = yes;
+    extra_cond = "__cpp_lib_constexpr_exceptions >= 202502L";
+    cxx11abi = yes;
   };
 };
 
@@ -1398,6 +1452,14 @@ ftms = {
 
 ftms = {
   name = constexpr_string;
+  // 202511 LWG4531 Should there be a feature-test macro update for constexpr std::to_(w)string?
+  //        P3391R2 constexpr std::format
+  values = {
+    v = 202511;
+    cxxmin = 26;
+    hosted = yes;
+    cxx11abi = yes;
+  };
   values = {
     v = 201907;
     cxxmin = 20;
@@ -1425,6 +1487,33 @@ ftms = {
   values = {
     v = 201907;
     cxxmin = 20;
+    hosted = yes;
+  };
+};
+
+ftms = {
+  name = constexpr_deque;
+  values = {
+    v = 202502;
+    cxxmin = 26;
+    hosted = yes;
+  };
+};
+
+ftms = {
+  name = constexpr_queue;
+  values = {
+    v = 202502;
+    cxxmin = 26;
+    hosted = yes;
+  };
+};
+
+ftms = {
+  name = constexpr_stack;
+  values = {
+    v = 202502;
+    cxxmin = 26;
     hosted = yes;
   };
 };
@@ -1585,8 +1674,9 @@ ftms = {
 ftms = {
   name = format_path;
   // 202403 P2845R8 Formatting of std::filesystem::path
+  // 202506 P2319R5 Prevent path presentation problems
   values = {
-    v = 202403;
+    v = 202506;
     cxxmin = 26;
     hosted = yes;
   };
@@ -1898,16 +1988,21 @@ ftms = {
 
 ftms = {
   name = flat_map;
+  // 202207 P0429R9 A Standard flat_map
+  // 202511 P3567R2 flat_meow Fixes
   values = {
-    v = 202207;
+    v = 202511; // P3567R2 applied as DR for C++23
     cxxmin = 23;
   };
 };
 
 ftms = {
   name = flat_set;
+  // 202207 P1222R4 A Standard flat_set
+  //        LWG3751 Missing feature macro for flat_set
+  // 202511 P3567R2 flat_meow Fixes
   values = {
-    v = 202207;
+    v = 202511; // P3567R2 applied as DR for C++23
     cxxmin = 23;
   };
 };
@@ -1985,9 +2080,10 @@ ftms = {
   // 202306 P0792R14 function_ref: a non-owning reference to a Callable
   // 202511 P3774R1  Rename std::nontype, and make it broadly useful
   // 202603 P3948R1  constant_wrapper is the only tool needed for passing...
+  // 202604 P3961R1  Less double indirection in function_ref (RU-220)
   name = function_ref;
   values = {
-    v = 202603;
+    v = 202604;
     cxxmin = 26;
   };
 };
@@ -2244,13 +2340,31 @@ ftms = {
 };
 
 ftms = {
-  // 202406 P0843R14 inplace_vector 
+  name = start_lifetime;
+  values = {
+    v = 202603;
+    cxxmin = 26;
+    extra_cond = "__has_builtin(__builtin_start_lifetime)";
+  };
+};
+
+ftms = {
+  // 202406 P0843R14 inplace_vector
   // 202603 P3981R2 Better return types in std::inplace_vector and std::exception_ptr_cast
   //        P4022R0 Remove try_append_range from inplace_vector for now
   name = inplace_vector;
   values = {
     v = 202603;
     cxxmin = 26;
+  };
+};
+
+ftms = {
+  name = constexpr_inplace_vector;
+  values = {
+    v = 202502;
+    cxxmin = 26;
+    extra_cond = "__glibcxx_start_lifetime";
   };
 };
 
@@ -2301,9 +2415,11 @@ ftms = {
 };
 
 ftms = {
+  // 202506 P2927R3 Observing exceptions stored in exception_ptr
+  // 202603 P3981R2 Better return types in std::inplace_vector and std::exception_ptr_cast
   name = exception_ptr_cast;
   values = {
-    v = 202506;
+    v = 202603;
     cxxmin = 26;
   };
 };
@@ -2313,16 +2429,6 @@ ftms = {
   values = {
     v = 202306;
     cxxmin = 26;
-  };
-};
-
-ftms = {
-  name = constexpr_exceptions;
-  values = {
-    v = 202502;
-    cxxmin = 26;
-    extra_cond = "__cpp_constexpr_exceptions >= 202411L";
-    cxx11abi = yes;
   };
 };
 
@@ -2401,11 +2507,213 @@ ftms = {
 };
 
 ftms = {
+  name = simd_complex;
+  values = {
+    no_stdname = true; // TODO: change once complete
+    v = 202502;
+    cxxmin = 26;
+    extra_cond = "defined __glibcxx_simd";
+    hosted = yes;
+  };
+};
+
+ftms = {
   name = is_structural;
   values = {
     v = 202603;
     cxxmin = 26;
     extra_cond = "__has_builtin(__builtin_is_structural)";
+  };
+};
+
+ftms = {
+  name = initializer_list;
+  values = {
+    v = 202511;
+    cxxmin = 26;
+  };
+};
+
+ftms = {
+  name = valarray;
+  values = {
+    v = 202511;
+    cxxmin = 26;
+  };
+};
+
+ftms = {
+  name = within_lifetime;
+  // 202306 P2641R4 Checking if a union alternative is active
+  // 202603 P3450R1 Extend std::is_within_lifetime
+  values = {
+    v = 202603;
+    cxxmin = 26;
+    extra_cond = "__has_builtin(__builtin_is_within_lifetime)";
+  };
+};
+
+ftms = {
+  name = hardened_array;
+  values = {
+    v = 202502;
+    cxxmin = 11;
+    extra_cond = "defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_basic_stacktrace;
+  values = {
+    v = 202502;
+    cxxmin = 23;
+    hosted = yes;
+    extra_cond = "defined(__glibcxx_stacktrace) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_basic_string;
+  values = {
+    v = 202502;
+    extra_cond = "defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_basic_string_view;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_string_view) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_bitset;
+  values = {
+    v = 202502;
+    extra_cond = "defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_common_iterator;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_ranges) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_counted_iterator;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_ranges) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_deque;
+  values = {
+    v = 202502;
+    extra_cond = "defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_expected;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_expected) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_forward_list;
+  values = {
+    v = 202502;
+    cxxmin = 11;
+    extra_cond = "defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_inplace_vector;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_inplace_vector) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_list;
+  values = {
+    v = 202502;
+    extra_cond = "defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_mdspan;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_mdspan) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_optional;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_optional) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_shared_ptr_array;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_shared_ptr_arrays) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_span;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_span) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_valarray;
+  values = {
+    v = 202502;
+    extra_cond = "defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_vector;
+  values = {
+    v = 202502;
+    extra_cond = "defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = hardened_view_interface;
+  values = {
+    v = 202502;
+    extra_cond = "defined(__glibcxx_ranges) && defined(_GLIBCXX_ASSERTIONS)";
+  };
+};
+
+ftms = {
+  name = clmul;
+  values = {
+    v = 202610;
+    cxxmin = 29;
   };
 };
 
@@ -2416,8 +2724,9 @@ stds[11] = ">= 201103L";
 stds[14] = ">= 201402L";
 stds[17] = ">= 201703L";
 stds[20] = ">= 202002L";
-stds[23] = ">= 202100L"; // Should be 202302L but Clang 16 uses 202101L
-stds[26] = ">  202302L"; // TODO: update when finalized
+stds[23] = ">  202002L"; // >= 202302L but Clang 16 uses 202101L
+stds[26] = ">  202302L"; // >= 202603L but Clang 21 uses 202400L
+stds[29] = ">  202603L"; // GCC 17 uses 202700
 
 // Local Variables:
 // compile-command: "autogen version.def"

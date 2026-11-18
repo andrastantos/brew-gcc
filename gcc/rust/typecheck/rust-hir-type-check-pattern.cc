@@ -19,9 +19,10 @@
 #include "rust-hir-type-check-pattern.h"
 #include "rust-hir-pattern.h"
 #include "rust-hir-type-check-expr.h"
+#include "rust-rib.h"
 #include "rust-token.h"
 #include "rust-type-util.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
 #include "rust-tyty.h"
 #include "tree.h"
 
@@ -48,18 +49,19 @@ TypeCheckPattern::Resolve (HIR::Pattern &pattern, TyTy::BaseType *parent)
 void
 TypeCheckPattern::visit (HIR::PathInExpression &pattern)
 {
-  // Pattern must be enum variants, sturcts, constants, or associated constansts
+  // Pattern must be enum variants, structs, constants, or associated constansts
   TyTy::BaseType *pattern_ty = TypeCheckExpr::Resolve (pattern);
 
   NodeId ref_node_id = UNKNOWN_NODEID;
   bool maybe_item = false;
 
-  auto &nr_ctx
-    = Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
+  auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
 
-  if (auto id = nr_ctx.lookup (pattern.get_mappings ().get_nodeid ()))
+  if (auto nslookup = nr_ctx.lookup (pattern.get_mappings ().get_nodeid (),
+				     Resolver2_0::Namespace::Values,
+				     Resolver2_0::Namespace::Types))
     {
-      ref_node_id = *id;
+      ref_node_id = nslookup->id;
       maybe_item = true;
     }
 
@@ -72,7 +74,7 @@ TypeCheckPattern::visit (HIR::PathInExpression &pattern)
       rust_assert (definition_id.has_value ());
       HirId def_id = definition_id.value ();
 
-      tl::optional<HIR::Item *> hir_item = mappings.lookup_hir_item (def_id);
+      tl::optional<HIR::Item *> hir_item = mappings.hir.items.lookup (def_id);
       // If the path references an item, it must be constants or structs.
       if (hir_item.has_value ())
 	{
@@ -109,8 +111,14 @@ TypeCheckPattern::visit (HIR::PathInExpression &pattern)
 	}
     }
 
+  if (path_is_const_item)
+    {
+      infered = pattern_ty;
+      return;
+    }
+
   // If the path is a constructor, it must be a unit struct or unit variants.
-  if (!path_is_const_item && pattern_ty->get_kind () == TyTy::TypeKind::ADT)
+  if (pattern_ty->get_kind () == TyTy::TypeKind::ADT)
     {
       TyTy::ADTType *adt = static_cast<TyTy::ADTType *> (pattern_ty);
       rust_assert (adt->get_variants ().size () > 0);
@@ -940,6 +948,10 @@ TypeCheckPattern::visit (HIR::SlicePattern &pattern)
       {
 	auto &ref
 	  = static_cast<HIR::SlicePatternItemsHasRest &> (pattern.get_items ());
+
+	// TODO: support rest_bind (c in [a, b, c @ ..])
+	rust_assert (!ref.has_rest_bind ());
+
 	for (const auto &pattern_member : ref.get_lower_patterns ())
 	  {
 	    TypeCheckPattern::Resolve (*pattern_member, parent_element_ty);

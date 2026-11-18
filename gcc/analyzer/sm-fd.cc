@@ -205,7 +205,7 @@ public:
   /* A bound socket after a successful call to "listen" (stream or unknown).  */
   state_t m_listening_stream_socket;
 
-  /* (i) the new FD as a result of a succesful call to "accept" on a
+  /* (i) the new FD as a result of a successful call to "accept" on a
      listening socket (via a passive open), or
      (ii) an active socket after a successful call to "connect"
      (via an active open).  */
@@ -2443,7 +2443,10 @@ public:
 
   bool matches_call_types_p (const call_details &cd) const final override
   {
-    return (cd.num_args () == 3 && cd.arg_is_pointer_p (1));
+    return (cd.num_args () == 3
+	    && cd.arg_is_integral_p (0)
+	    && cd.arg_is_pointer_p (1)
+	    && cd.arg_is_integral_p (2));
   }
 
   void impl_call_post (const call_details &cd) const final override
@@ -2814,11 +2817,10 @@ public:
   {
     region_model *model = cd.get_model ();
     const svalue *ptr_sval = cd.get_arg_svalue (1);
-    if (const region *reg = ptr_sval->maybe_get_region ())
+    if (auto *sym_ptr = ptr_sval->maybe_get_symbolic_pointer ())
       {
-	const region *base_reg = reg->get_base_region ();
-	const svalue *new_sval = cd.get_or_create_conjured_svalue (base_reg);
-	model->set_value (base_reg, new_sval, cd.get_ctxt ());
+	const region *base_reg = &sym_ptr->get_base_region ();
+	model->mark_region_as_unknown (base_reg, nullptr);
       }
     cd.set_any_lhs_with_defaults ();
   }

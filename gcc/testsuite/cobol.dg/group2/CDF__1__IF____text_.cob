@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-options "-dialect ibm" }
        *> { dg-output-file "group2/CDF__1__IF____text_.out" }
 

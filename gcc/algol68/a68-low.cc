@@ -207,7 +207,7 @@ a68_demangle_symbol (const char *mname, const char *symbol,
 	{
 	  switch (symbol[i])
 	    {
-	    case 'p': demangled[o++] = '+'; break;
+	    case 'p': demangled[o++] = '%'; break;
 	    case 'c': demangled[o++] = '^'; break;
 	    case 'a': demangled[o++] = '&'; break;
 	    case 'u': demangled[o++] = '+'; break;
@@ -403,32 +403,25 @@ a68_consolidate_ref (MOID_T *m, tree expr)
 
   /* Address EXPR as many times as necessary to match the number of REFs in the
      desired mode.  */
-  while (num_pointers < num_refs)
+
+  if (num_pointers == num_refs)
+    ; /* We are good. */
+  else if (num_pointers == num_refs - 1)
     {
-      if (TREE_CODE (expr) == COMPOUND_EXPR)
-	{
-	  /* (..., x) -> (..., &x) */
-	  //	  gcc_assert (TREE_CODE (TREE_OPERAND (expr, 0)) == MODIFY_EXPR);
-	  //	  gcc_assert (VAR_P (TREE_OPERAND (expr, 1)));
-	  TREE_OPERAND (expr, 1) = a68_consolidate_ref (m, TREE_OPERAND (expr, 1));
-	  TREE_TYPE (expr) = TREE_TYPE (TREE_OPERAND (expr, 1));
-	}
+      /* x -> &x */
+      if (TREE_CODE (expr) == INDIRECT_REF)
+	/* expr is an indirection.  Remove the pointer rather than adding an
+	   addr.  This avoids &* situations and marking stuff as addressable
+	   unnecessarily.  */
+	expr = TREE_OPERAND (expr,0);
       else
 	{
-	  /* x -> &x */
-	  if (TREE_CODE (expr) == INDIRECT_REF)
-	    /* expr is an indirection.  Remove the pointer rather than adding
-	       an addr.  This avoids &* situations and marking stuff as
-	       addressable unnecessarily.  */
-	    expr = TREE_OPERAND (expr,0);
-	  else
-	    {
-	      TREE_ADDRESSABLE (expr) = true;
-	      expr = fold_build1 (ADDR_EXPR, build_pointer_type (TREE_TYPE (expr)), expr);
-	    }
+	  TREE_ADDRESSABLE (expr) = true;
+	  expr = fold_build1 (ADDR_EXPR, build_pointer_type (TREE_TYPE (expr)), expr);
 	}
-      num_pointers += 1;
     }
+  else
+    gcc_unreachable ();
 
   return expr;
 }
@@ -450,9 +443,8 @@ a68_make_anonymous_routine_decl (MOID_T *mode)
   free (name);
   DECL_EXTERNAL (func_decl) = 0;
   DECL_STATIC_CHAIN (func_decl) = !a68_in_global_range ();
-  /* Nested functions should be addressable.
-     XXX this should be propagated to their containing functions, so for now
-     we mark them all as addressable.  */
+  /* Anonymous routines will always be nested, and nested functions should be
+     addressable.  */
   TREE_ADDRESSABLE (func_decl) = 1;
   /* A nested function is not global.  */
   TREE_PUBLIC (func_decl) = a68_in_global_range ();
@@ -636,7 +628,7 @@ a68_make_variable_declaration_decl (NODE_T *identifier,
 
    If ADDRP is true then it is the address of the external symbol we are
    interested in.  In that case the mode of P shall be a ref.
-   
+
    Note that this function is not used for formal holes with proc modes, called
    from a68_wrap_formal_var_hole.  See a68_wrap_formal_proc_hole.  */
 
@@ -681,7 +673,7 @@ a68_checked_indirect_ref (NODE_T *p, tree exp, MOID_T *exp_mode)
       tree consolidated_exp = a68_consolidate_ref (exp_mode, exp);
 
       /* Check whether we are dereferencing NIL.  */
-      unsigned int lineno = NUMBER (LINE (INFO (p)));
+      unsigned int lineno = LINE_NUMBER (p);
       const char *filename_str = FILENAME (LINE (INFO (p)));
       tree filename = build_string_literal (strlen (filename_str) + 1,
 					    filename_str);
@@ -924,13 +916,13 @@ a68_low_dup (tree expr, bool use_heap)
 	  a68_add_decl (continue_label_decl);
 
 	  a68_add_stmt (fold_build2 (TRUTH_ORIF_EXPR,
-				     integer_type_node,
+				     a68_int_type,
 				     fold_build2 (EQ_EXPR,
-						  integer_type_node,
+						  a68_int_type,
 						  a68_union_overhead (dup),
 						  size_int (a68_united_mode_index (union_mode, MOID (pack)))),
 				     fold_build2 (COMPOUND_EXPR,
-						  integer_type_node,
+						  a68_int_type,
 						  build1 (GOTO_EXPR, void_type_node, continue_label_decl),
 						  integer_zero_node)));
 	  a68_add_stmt (fold_build2 (MODIFY_EXPR, type,
@@ -1001,11 +993,16 @@ a68_low_assignation (NODE_T *p,
   tree assignation = NULL_TREE;
   tree orig_rhs = rhs;
 
+  /* The lhs might be a selection that has been "ref_consolidated".  */
+  if (TREE_CODE (lhs) == ADDR_EXPR
+      && TREE_CODE (TREE_OPERAND (lhs, 0)) == COMPONENT_REF)
+    lhs = TREE_OPERAND (lhs, 0);
+
   if (IS_FLEXETY_ROW (mode_rhs))
     {
       /* Make a deep copy of the rhs.  Note that we have to use the heap
 	 because the scope of the lhs may be older than the scope of the rhs.
-	 XXX this can be ommitted if a68_multiple_copy_elems below supports
+	 XXX this can be omitted if a68_multiple_copy_elems below supports
 	 overlapping multiples.  */
       if (HAS_ROWS (mode_rhs))
 	rhs = a68_low_dup (rhs, true /* use_heap */);
@@ -1016,10 +1013,11 @@ a68_low_assignation (NODE_T *p,
 	{
 	  /* Assigning to a flexible name updates descriptor with new bounds
 	     and also sets the elements to the dup of the rhs.  No boundscheck
-	     is peformed.  XXX but bound checking in contained values may be
+	     is performed.  XXX but bound checking in contained values may be
 	     necessary, ghost elements.  */
 	  if (POINTER_TYPE_P (TREE_TYPE (lhs))
-	      && TREE_TYPE (TREE_TYPE (lhs)) == TREE_TYPE (rhs))
+	      && (TYPE_CANONICAL (TREE_TYPE (TREE_TYPE (lhs)))
+		  == TYPE_CANONICAL (TREE_TYPE (rhs))))
 	    {
 	      /* Make sure to not evaluate the expression yielding the pointer
 		 more than once.  */
@@ -1059,7 +1057,7 @@ a68_low_assignation (NODE_T *p,
 	  else
 	    {
 	      /* The name at the lhs is either a variable or a component ref as
-		 a l-value.  It is ok to evaluate it as an r-value as well as
+		 an l-value.  It is ok to evaluate it as an r-value as well as
 		 doing so introduces no side-effects.  */
 	      effective_lhs = lhs;
 	    }
@@ -1099,7 +1097,8 @@ a68_low_assignation (NODE_T *p,
 	rhs = a68_low_dup (rhs, true /* use_heap */);
 
       if (POINTER_TYPE_P (TREE_TYPE (lhs))
-	  && TREE_TYPE (TREE_TYPE (lhs)) == TREE_TYPE (rhs))
+	  && (TYPE_CANONICAL (TREE_TYPE (TREE_TYPE (lhs)))
+	      == TYPE_CANONICAL (TREE_TYPE (rhs))))
 	{
 	  /* If the left hand side is a pointer, deref it, but return the
 	     pointer.  Make sure to not evaluate the expression yielding the
@@ -1326,6 +1325,7 @@ lower_module_text (NODE_T *p, LOW_CTX_T ctx)
   DECL_EXTERNAL (prelude_decl) = 0;
   TREE_PUBLIC (prelude_decl) = 1;
   TREE_STATIC (prelude_decl) = 1;
+  DECL_ARTIFICIAL (prelude_decl) = 1;
 
   a68_push_function_range (prelude_decl,
 			   void_type_node /* result_type */, true /* top_level */);
@@ -1384,6 +1384,7 @@ lower_module_text (NODE_T *p, LOW_CTX_T ctx)
   DECL_EXTERNAL (postlude_decl) = 0;
   TREE_PUBLIC (postlude_decl) = 1;
   TREE_STATIC (postlude_decl) = 1;
+  DECL_ARTIFICIAL (postlude_decl) = 1;
 
   a68_push_function_range (postlude_decl,
 			   void_type_node /* result_type */, true /* top_level */);

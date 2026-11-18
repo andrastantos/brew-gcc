@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-options "-ffixed-form" }
        *> { dg-output-file "group2/debugging_lines__WITH_DEBUGGING_MODE_.out" }
 

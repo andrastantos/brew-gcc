@@ -842,6 +842,9 @@ output_stack_usage_1 (FILE *cf)
       print_decl_identifier (stack_usage_file, current_function_decl,
 			     PRINT_DECL_ORIGIN | PRINT_DECL_NAME
 			     | PRINT_DECL_REMAP_DEBUG);
+      fputs ("\t", stack_usage_file);
+      print_decl_identifier (stack_usage_file, current_function_decl,
+			     PRINT_DECL_UNIQUE_NAME);
       fprintf (stack_usage_file, "\t" HOST_WIDE_INT_PRINT_DEC"\t%s\n",
 	       stack_usage, stack_usage_kind_str[stack_usage_kind]);
     }
@@ -2301,7 +2304,11 @@ toplev::main (int argc, char **argv)
 {
   /* Parsing and gimplification sometimes need quite large stack.
      Increase stack size limits if possible.  */
+#ifdef __SANITIZE_ADDRESS__
+  stack_limit_increase (128 * 1024 * 1024);
+#else
   stack_limit_increase (64 * 1024 * 1024);
+#endif
 
   /* Stash a copy of the original argv before expansion
      for use by SARIF output.  */

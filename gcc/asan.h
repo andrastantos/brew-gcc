@@ -158,7 +158,7 @@ asan_red_zone_size (unsigned int size)
   return c ? 2 * ASAN_RED_ZONE_SIZE - c : ASAN_RED_ZONE_SIZE;
 }
 
-/* Return how much a stack variable occupis on a stack
+/* Return how much a stack variable occupies on a stack
    including a space for red zone.  */
 
 inline unsigned HOST_WIDE_INT
@@ -267,7 +267,7 @@ sanitize_flags_p (sanitize_code_type flag,
   return result_flags;
 }
 
-/* Return true when coverage sanitization should happend for FN function.  */
+/* Return true when coverage sanitization should happen for FN function.  */
 
 inline bool
 sanitize_coverage_p (const_tree fn = current_function_decl)

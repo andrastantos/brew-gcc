@@ -239,8 +239,9 @@ compute_save_world_info (rs6000_stack_t *info)
   if (WORLD_SAVE_P (info))
     {
       rtx_insn *insn;
+      rtx_call_insn *call;
       for (insn = get_last_insn_anywhere (); insn; insn = PREV_INSN (insn))
-	if (CALL_P (insn) && SIBLING_CALL_P (insn))
+	if ((call = dyn_cast<rtx_call_insn *> (insn)) && SIBLING_CALL_P (call))
 	  {
 	    info->world_save_p = 0;
 	    break;
@@ -282,7 +283,7 @@ is_altivec_return_reg (rtx reg, void *xyes)
 }
 
 
-/* Return whether REG is a global user reg or has been specifed by
+/* Return whether REG is a global user reg or has been specified by
    -ffixed-REG.  We should not restore these, and so cannot use
    lmw or out-of-line restore functions if there are any.  We also
    can't save them (well, emit frame notes for them), because frame
@@ -1224,9 +1225,9 @@ rs6000_ra_ever_killed (void)
     {
       if (INSN_P (insn))
 	{
-	  if (CALL_P (insn))
+	  if (auto call = dyn_cast<rtx_call_insn *> (insn))
 	    {
-	      if (!SIBLING_CALL_P (insn))
+	      if (!SIBLING_CALL_P (call))
 		return 1;
 	    }
 	  else if (find_regno_note (insn, REG_INC, LR_REGNO))
@@ -1252,11 +1253,11 @@ rs6000_emit_load_toc_table (int fromprolog)
   if (TARGET_ELF && TARGET_SECURE_PLT && DEFAULT_ABI == ABI_V4 && flag_pic)
     {
       char buf[30];
-      rtx lab, tmp1, tmp2, got;
+      rtx tmp1, tmp2, got;
 
-      lab = gen_label_rtx ();
+      rtx_code_label *lab = gen_label_rtx ();
       ASM_GENERATE_INTERNAL_LABEL (buf, "L", CODE_LABEL_NUMBER (lab));
-      lab = gen_rtx_SYMBOL_REF (Pmode, ggc_strdup (buf));
+      rtx sym = gen_rtx_SYMBOL_REF (Pmode, ggc_strdup (buf));
       if (flag_pic == 2)
 	{
 	  got = gen_rtx_SYMBOL_REF (Pmode, ggc_strdup (toc_label_name));
@@ -1270,10 +1271,10 @@ rs6000_emit_load_toc_table (int fromprolog)
 	  tmp1 = gen_reg_rtx (Pmode);
 	  tmp2 = gen_reg_rtx (Pmode);
 	}
-      emit_insn (gen_load_toc_v4_PIC_1 (lab));
+      emit_insn (gen_load_toc_v4_PIC_1 (sym));
       emit_move_insn (tmp1, gen_rtx_REG (Pmode, LR_REGNO));
-      emit_insn (gen_load_toc_v4_PIC_3b (tmp2, tmp1, got, lab));
-      emit_insn (gen_load_toc_v4_PIC_3c (dest, tmp2, got, lab));
+      emit_insn (gen_load_toc_v4_PIC_3b (tmp2, tmp1, got, sym));
+      emit_insn (gen_load_toc_v4_PIC_3c (dest, tmp2, got, sym));
     }
   else if (TARGET_ELF && DEFAULT_ABI == ABI_V4 && flag_pic == 1)
     {
@@ -1303,11 +1304,11 @@ rs6000_emit_load_toc_table (int fromprolog)
 	}
       else
 	{
-	  rtx tocsym, lab;
+	  rtx tocsym;
 
 	  tocsym = gen_rtx_SYMBOL_REF (Pmode, ggc_strdup (toc_label_name));
 	  need_toc_init = 1;
-	  lab = gen_label_rtx ();
+	  rtx_code_label *lab = gen_label_rtx ();
 	  emit_insn (gen_load_toc_v4_PIC_1b (tocsym, lab));
 	  emit_move_insn (dest, gen_rtx_REG (Pmode, LR_REGNO));
 	  if (TARGET_LINK_STACK)
@@ -2360,13 +2361,13 @@ rs6000_savres_routine_sym (rs6000_stack_t *info, int sel)
    reset the stack pointer, but move the base of the frame into
    reg UPDT_REGNO for use by out-of-line register restore routines.  */
 
-static rtx
+static rtx_insn *
 rs6000_emit_stack_reset (rtx frame_reg_rtx, HOST_WIDE_INT frame_off,
 			 unsigned updt_regno)
 {
   /* If there is nothing to do, don't do anything.  */
   if (frame_off == 0 && REGNO (frame_reg_rtx) == updt_regno)
-    return NULL_RTX;
+    return nullptr;
 
   rtx updt_reg_rtx = gen_rtx_REG (Pmode, updt_regno);
 
@@ -2386,7 +2387,7 @@ rs6000_emit_stack_reset (rtx frame_reg_rtx, HOST_WIDE_INT frame_off,
   else
     return emit_move_insn (updt_reg_rtx, frame_reg_rtx);
 
-  return NULL_RTX;
+  return nullptr;
 }
 
 /* Return the register number used as a pointer by out-of-line
@@ -2973,7 +2974,7 @@ emit_split_stack_prologue (rs6000_stack_t *info, rtx_insn *sp_adjust,
       rtx r12 = gen_rtx_REG (Pmode, 12);
       rtx r29 = gen_rtx_REG (Pmode, 29);
       rtx cr7 = gen_rtx_REG (CCUNSmode, CR7_REGNO);
-      rtx not_more = gen_label_rtx ();
+      rtx_code_label *not_more = gen_label_rtx ();
       rtx jump;
 
       jump = gen_rtx_IF_THEN_ELSE (VOIDmode,
@@ -3449,8 +3450,9 @@ rs6000_emit_prologue (void)
   /* In AIX ABI we need to make sure r2 is really saved.  */
   if (TARGET_AIX && crtl->calls_eh_return)
     {
-      rtx tmp_reg, tmp_reg_si, hi, lo, compare_result, toc_save_done, jump;
-      rtx join_insn, note;
+      rtx tmp_reg, tmp_reg_si, hi, lo, compare_result;
+      rtx jump;
+      rtx note;
       rtx_insn *save_insn;
       long toc_restore_insn;
 
@@ -3479,7 +3481,7 @@ rs6000_emit_prologue (void)
       lo = gen_int_mode (toc_restore_insn & 0xffff, SImode);
       emit_insn (gen_rtx_SET (compare_result,
 			      gen_rtx_COMPARE (CCUNSmode, tmp_reg_si, lo)));
-      toc_save_done = gen_label_rtx ();
+      rtx_code_label *toc_save_done = gen_label_rtx ();
       jump = gen_rtx_IF_THEN_ELSE (VOIDmode,
 				   gen_rtx_EQ (VOIDmode, compare_result,
 					       const0_rtx),
@@ -3511,7 +3513,7 @@ rs6000_emit_prologue (void)
 			       copy_rtx (PATTERN (save_insn)), NULL_RTX);
       RTX_FRAME_RELATED_P (save_insn) = 0;
 
-      join_insn = emit_insn (gen_blockage ());
+      rtx_insn *join_insn = emit_insn (gen_blockage ());
       REG_NOTES (join_insn) = note;
       RTX_FRAME_RELATED_P (join_insn) = 1;
 
@@ -4069,7 +4071,7 @@ rs6000_output_function_prologue (FILE *file)
       asm_fprintf (file, "\tmflr %s\n", reg_names[0]);
 
       /* In the ELFv2 ABI we have no compiler stack word.  It must be
-	 the resposibility of _mcount to preserve the static chain
+	 the responsibility of _mcount to preserve the static chain
 	 register if required.  */
       if (DEFAULT_ABI != ABI_ELFv2
 	  && cfun->static_chain_decl != NULL)
@@ -4181,8 +4183,9 @@ restore_saved_cr (rtx reg, bool using_mfcr_multiple, bool exit_func)
     for (i = 0; i < 8; i++)
       if (save_reg_p (CR0_REGNO + i))
 	{
-	  rtx insn = emit_insn (gen_movsi_to_cr_one
-				 (gen_rtx_REG (CCmode, CR0_REGNO + i), reg));
+	  rtx_insn *insn = emit_insn (gen_movsi_to_cr_one
+				      (gen_rtx_REG (CCmode, CR0_REGNO + i),
+				       reg));
 
 	  /* For the ELFv2 ABI we generate a CFA_RESTORE for each
 	     CR field separately, attached to the insn that in fact
@@ -4297,7 +4300,7 @@ rs6000_emit_epilogue (enum epilogue_type epilogue_type)
   rtx sp_reg_rtx = gen_rtx_REG (Pmode, 1);
   rtx frame_reg_rtx = sp_reg_rtx;
   rtx cfa_restores = NULL_RTX;
-  rtx insn;
+  rtx_insn *insn;
   rtx cr_save_reg = NULL_RTX;
   machine_mode reg_mode = Pmode;
   int reg_size = TARGET_32BIT ? 4 : 8;
@@ -4575,7 +4578,7 @@ rs6000_emit_epilogue (enum epilogue_type epilogue_type)
       emit_insn (generate_set_vrsave (reg, info, 1));
     }
 
-  insn = NULL_RTX;
+  insn = nullptr;
   /* If we have a large stack frame, restore the old stack pointer
      using the backchain.  */
   if (use_backchain_to_restore_sp)
@@ -5551,7 +5554,8 @@ rs6000_expand_split_stack_prologue (void)
   rs6000_stack_t *info = rs6000_stack_info ();
   unsigned HOST_WIDE_INT allocate;
   long alloc_hi, alloc_lo;
-  rtx r0, r1, r12, lr, ok_label, compare, jump, call_fusage;
+  rtx r0, r1, r12, lr;
+  rtx compare, jump, call_fusage;
   rtx_insn *insn;
 
   gcc_assert (flag_split_stack && reload_completed);
@@ -5616,7 +5620,7 @@ rs6000_expand_split_stack_prologue (void)
 
   compare = gen_rtx_REG (CCUNSmode, CR7_REGNO);
   emit_insn (gen_rtx_SET (compare, gen_rtx_COMPARE (CCUNSmode, r12, r0)));
-  ok_label = gen_label_rtx ();
+  rtx_code_label *ok_label = gen_label_rtx ();
   jump = gen_rtx_IF_THEN_ELSE (VOIDmode,
 			       gen_rtx_GEU (VOIDmode, compare, const0_rtx),
 			       gen_rtx_LABEL_REF (VOIDmode, ok_label),

@@ -169,7 +169,7 @@ private:
    related to a callgraph node.  Typical usage can be seen in IPA passes which
    create a temporary pass-related structures.  The summary class registers
    hooks that are triggered when a new node is inserted, duplicated and deleted.
-   A user of a summary class can ovewrite virtual methods than are triggered by
+   A user of a summary class can overwrite virtual methods than are triggered by
    the summary if such hook is triggered.  Apart from a callgraph node, the user
    is given a data structure tied to the node.
 
@@ -695,7 +695,7 @@ public:
 
   /* Getter for summary callgraph edge pointer.
      If a summary for an edge does not exist, it will be created.  */
-  T* get_create (cgraph_edge *edge)
+  T* get_create (const cgraph_edge *edge)
   {
     bool existed;
     T **v = &m_map.get_or_insert (edge->get_uid (), &existed);
@@ -706,7 +706,7 @@ public:
   }
 
   /* Getter for summary callgraph edge pointer.  */
-  T* get (cgraph_edge *edge) ATTRIBUTE_PURE
+  T* get (const cgraph_edge *edge) ATTRIBUTE_PURE
   {
     T **v = m_map.get (edge->get_uid ());
     return v == NULL ? NULL : *v;
@@ -714,7 +714,7 @@ public:
 
   /* Remove edge from summary.  */
   using call_summary_base<T>::remove;
-  void remove (cgraph_edge *edge)
+  void remove (const cgraph_edge *edge)
   {
     int uid = edge->get_uid ();
     T **v = m_map.get (uid);
@@ -726,7 +726,7 @@ public:
   }
 
   /* Return true if a summary for the given EDGE already exists.  */
-  bool exists (cgraph_edge *edge)
+  bool exists (const cgraph_edge *edge)
   {
     return m_map.get (edge->get_uid ()) != NULL;
   }

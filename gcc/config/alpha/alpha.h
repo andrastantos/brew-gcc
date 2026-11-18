@@ -195,9 +195,6 @@ extern enum alpha_fp_trap_mode alpha_fptm;
 /* Define the size of `long long'.  The default is the twice the word size.  */
 #define LONG_LONG_TYPE_SIZE 64
 
-/* Work around target_flags dependency in ada/targtyps.cc.  */
-#define WIDEST_HARDWARE_FP_SIZE 64
-
 #define	WCHAR_TYPE "unsigned int"
 #define	WCHAR_TYPE_SIZE 32
 
@@ -482,8 +479,13 @@ enum reg_class {
 /* Define this to nonzero if the nominal address of the stack frame
    is at the high-address end of the local variables;
    that is, each additional local variable allocated
-   goes at a more negative offset in the frame.  */
-/* #define FRAME_GROWS_DOWNWARD 0 */
+   goes at a more negative offset in the frame.
+
+   The stack protector requires that the canary be placed above the
+   local arrays it protects, which only happens with a downward-growing
+   frame.  Alpha otherwise grows the frame upward, so switch the
+   direction only when the stack protector is in use.  */
+#define FRAME_GROWS_DOWNWARD (flag_stack_protect != 0)
 
 /* If we generate an insn to push BYTES bytes,
    this says how many the stack pointer really advances by.
@@ -625,6 +627,14 @@ enum reg_class {
    the COUNT-1 frame if RETURN_ADDR_IN_PREVIOUS_FRAME is defined.  */
 
 #define RETURN_ADDR_RTX  alpha_return_addr
+
+/* An Alpha frame carries no link to its caller: $15 is a frame pointer only
+   in a function that needs one, and offset 0 of a frame that has one holds
+   the saved return address, not a saved frame pointer.  Decline frames above
+   the current one the way alpha_return_addr already does, so that the caller
+   gets 0 and a diagnostic rather than a text address.  */
+
+#define FRAME_ADDR_RTX(COUNT, FRAME) ((COUNT) == 0 ? (FRAME) : NULL_RTX)
 
 /* Provide a definition of DWARF_FRAME_REGNUM here so that fallback unwinders
    can use DWARF_ALT_FRAME_RETURN_COLUMN defined below.  This is just the same

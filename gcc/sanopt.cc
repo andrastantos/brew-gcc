@@ -39,7 +39,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-phinodes.h"
 #include "ssa-iterators.h"
 #include "gimplify.h"
-#include "gimple-iterator.h"
 #include "gimple-walk.h"
 #include "cfghooks.h"
 #include "tree-dfa.h"
@@ -233,7 +232,7 @@ public:
   /* Number of IFN_ASAN_CHECK statements.  */
   int asan_num_accesses;
 
-  /* True when the current functions constains an ASAN_MARK.  */
+  /* True when the current functions contains an ASAN_MARK.  */
   bool contains_asan_mark;
 };
 

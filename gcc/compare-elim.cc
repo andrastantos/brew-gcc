@@ -71,12 +71,6 @@ along with GCC; see the file COPYING3.  If not see
 
 /* These structures describe a comparison and how it is used.  */
 
-/* The choice of maximum 3 uses comes from wanting to eliminate the two
-   duplicate compares from a three-way branch on the sign of a value.
-   This is also sufficient to eliminate the duplicate compare against the
-   high-part of a double-word comparison.  */
-#define MAX_CMP_USE 3
-
 struct comparison_use
 {
   /* The instruction in which the result of the compare is used.  */
@@ -106,17 +100,12 @@ struct comparison
   rtx eh_note;
 
   /* Information about how this comparison is used.  */
-  struct comparison_use uses[MAX_CMP_USE];
+  auto_vec<comparison_use, 3> uses;
 
   /* The original CC_MODE for this comparison.  */
   machine_mode orig_mode;
 
-  /* The number of uses identified for this comparison.  */
-  unsigned short n_uses;
-
-  /* True if not all uses of this comparison have been identified.
-     This can happen either for overflowing the array above, or if
-     the flags register is used in some unusual context.  */
+  /* True if not all uses of this comparison have been identified.  */
   bool missing_uses;
 
   /* True if its inputs are still valid at the end of the block.  */
@@ -243,10 +232,6 @@ find_flags_uses_in_insn (struct comparison *cmp, rtx_insn *insn)
 	if (DF_REF_TYPE (use) != DF_REF_REG_USE)
 	  goto fail;
 
-	/* If we've run out of slots to record uses, quit.  */
-	if (cmp->n_uses == MAX_CMP_USE)
-	  goto fail;
-
 	/* Unfortunately the location of the flags register, while present
 	   in the reference structure, doesn't help.  We need to find the
 	   comparison code that is outer to the actual flags use.  */
@@ -265,10 +250,7 @@ find_flags_uses_in_insn (struct comparison *cmp, rtx_insn *insn)
 	    && XEXP (x, 1) == const0_rtx)
 	  {
 	    /* We've found a use of the flags that we understand.  */
-	    struct comparison_use *cuse = &cmp->uses[cmp->n_uses++];
-	    cuse->insn = insn;
-	    cuse->loc = loc;
-	    cuse->code = GET_CODE (x);
+	    cmp->uses.safe_push (comparison_use { insn, loc, GET_CODE (x) });
 	  }
 	else
 	  goto fail;
@@ -388,7 +370,7 @@ find_comparison_dom_walker::before_dom_children (basic_block bb)
 	      continue;
 	    }
 
-	  last_cmp = XCNEW (struct comparison);
+	  last_cmp = new comparison ();
 	  last_cmp->insn = insn;
 	  last_cmp->prev_clobber = last_clobber;
 	  last_cmp->in_a = strip_not (XEXP (src, 0));
@@ -465,7 +447,7 @@ find_comparison_dom_walker::before_dom_children (basic_block bb)
 	  FOR_EACH_EDGE (e, ei, bb->succs)
 	    {
 	      basic_block dest = e->dest;
-	      if (bitmap_bit_p (df_get_live_in (bb), targetm.flags_regnum)
+	      if (bitmap_bit_p (df_get_live_in (dest), targetm.flags_regnum)
 		  && !single_pred_p (dest))
 		{
 		  last_cmp->missing_uses = true;
@@ -508,7 +490,7 @@ maybe_select_cc_mode (struct comparison *cmp, rtx a ATTRIBUTE_UNUSED,
 		      rtx b ATTRIBUTE_UNUSED)
 {
   machine_mode sel_mode;
-  const int n = cmp->n_uses;
+  const int n = cmp->uses.length ();
   rtx flags = NULL;
 
 #ifndef SELECT_CC_MODE
@@ -660,7 +642,7 @@ can_merge_compare_into_arith (rtx_insn *cmp_insn, rtx_insn *arith_insn)
    a recognizable pattern when emitted in parallel.  Return that parallel
    if so.  Otherwise return NULL.  */
 
-static rtx
+static rtx_insn *
 try_validate_parallel (rtx set_a, rtx set_b)
 {
   rtx par = gen_rtx_PARALLEL (VOIDmode, gen_rtvec (2, set_a, set_b));
@@ -669,7 +651,7 @@ try_validate_parallel (rtx set_a, rtx set_b)
   if (insn_invalid_p (insn, false))
     {
       crtl->emit.x_cur_insn_uid--;
-      return NULL_RTX;
+      return nullptr;
     }
 
   SET_PREV_INSN (insn) = NULL_RTX;
@@ -738,7 +720,7 @@ try_merge_compare (struct comparison *cmp)
 					   copy_rtx (src),
 					   CONST0_RTX (GET_MODE (src))));
   rtx arith_set = copy_rtx (PATTERN (def_insn));
-  rtx par = try_validate_parallel (flag_set, arith_set);
+  rtx_insn *par = try_validate_parallel (flag_set, arith_set);
   if (!par)
     {
       /* We may already have a change group going through maybe_select_cc_mode.
@@ -918,14 +900,12 @@ execute_compare_elim_after_reload (void)
   find_comparisons ();
   if (all_compares.exists ())
     {
-      struct comparison *cmp;
-      size_t i;
-
       /* Eliminate comparisons that are redundant with flags computation.  */
-      FOR_EACH_VEC_ELT (all_compares, i, cmp)
+      for (auto &cmp : all_compares)
 	{
 	  try_eliminate_compare (cmp);
-	  XDELETE (cmp);
+	  delete cmp;
+	  cmp = nullptr;
 	}
 
       all_compares.release ();

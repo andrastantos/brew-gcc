@@ -380,7 +380,8 @@ do_load_for_compare_from_addr (machine_mode mode, rtx dest, rtx addr,
 
 static void
 do_ifelse (machine_mode cmpmode, rtx_code comparison,
-	   rtx a, rtx b, rtx cr, rtx true_label, profile_probability br_prob)
+	   rtx a, rtx b, rtx cr,
+	   rtx_code_label *true_label, profile_probability br_prob)
 {
   gcc_assert ((a == NULL_RTX && b == NULL_RTX && cr != NULL_RTX)
 	      || (a != NULL_RTX && b != NULL_RTX));
@@ -645,8 +646,9 @@ expand_cmp_vec_sequence (unsigned HOST_WIDE_INT bytes_to_compare,
 			 rtx orig_src1, rtx orig_src2,
 			 rtx s1addr, rtx s2addr, rtx off_reg,
 			 rtx s1data, rtx s2data, rtx vec_result,
-			 bool equality_compare_rest, rtx *p_cleanup_label,
-			 rtx final_move_label, bool checkzero)
+			 bool equality_compare_rest,
+			 rtx_code_label **p_cleanup_label,
+			 rtx_code_label *final_move_label, bool checkzero)
 {
   machine_mode load_mode;
   unsigned int load_mode_size;
@@ -655,7 +657,7 @@ expand_cmp_vec_sequence (unsigned HOST_WIDE_INT bytes_to_compare,
   rtx zero_reg = NULL;
 
   gcc_assert (p_cleanup_label != NULL);
-  rtx cleanup_label = *p_cleanup_label;
+  rtx_code_label *cleanup_label = *p_cleanup_label;
 
   emit_move_insn (s1addr, force_reg (Pmode, XEXP (orig_src1, 0)));
   emit_move_insn (s2addr, force_reg (Pmode, XEXP (orig_src2, 0)));
@@ -752,13 +754,13 @@ expand_cmp_vec_sequence (unsigned HOST_WIDE_INT bytes_to_compare,
 
       bool branch_to_cleanup = (remain > 0 || equality_compare_rest);
       rtx cr6 = gen_rtx_REG (CCmode, CR6_REGNO);
-      rtx dst_label;
+      rtx_code_label *dst_label;
       rtx cmp_rtx;
       if (branch_to_cleanup)
 	{
 	  /* Branch to cleanup code, otherwise fall through to do more
 	     compares.  P8 and P9 use different CR bits because on P8
-	     we are looking at the result of a comparsion vs a
+	     we are looking at the result of a comparison vs a
 	     register of zeroes so the all-true condition means no
 	     difference or zero was found.  On P9, vcmpnezb sets a byte
 	     to 0xff if there is a mismatch or zero, so the all-false
@@ -1030,11 +1032,11 @@ expand_compare_loop (rtx operands[])
     return false;
 
   bool no_remainder_code = false;
-  rtx final_label = gen_label_rtx ();
+  rtx_code_label *final_label = gen_label_rtx ();
   rtx final_ref = gen_rtx_LABEL_REF (VOIDmode, final_label);
-  rtx diff_label = gen_label_rtx ();
-  rtx library_call_label = NULL;
-  rtx cleanup_label = gen_label_rtx ();
+  rtx_code_label *diff_label = gen_label_rtx ();
+  rtx_code_label *library_call_label = nullptr;
+  rtx_code_label *cleanup_label = gen_label_rtx ();
 
   rtx cr;
 
@@ -1170,7 +1172,7 @@ expand_compare_loop (rtx operands[])
 	}
       else
 	{
-	  rtx lab_after = gen_label_rtx ();
+	  rtx_code_label *lab_after = gen_label_rtx ();
 	  do_ifelse (CCmode, LE, bytes_rtx, GEN_INT (max_bytes),
 		     NULL_RTX, lab_after, profile_probability::even ());
 	  emit_move_insn (loop_cmp, mb_reg);
@@ -1206,7 +1208,7 @@ expand_compare_loop (rtx operands[])
       emit_move_insn (iv2, GEN_INT (load_mode_size));
 
       /* inner loop to compare 2*word_mode */
-      rtx loop_top_label = gen_label_rtx ();
+      rtx_code_label *loop_top_label = gen_label_rtx ();
       emit_label (loop_top_label);
 
       rtx src1_ix1 = gen_rtx_PLUS (word_mode, src1_addr, iv1);
@@ -1330,7 +1332,7 @@ expand_compare_loop (rtx operands[])
 		     NULL_RTX, final_label, profile_probability::unlikely ());
 	}
 
-      rtx final_cleanup = gen_label_rtx ();
+      rtx_code_label *final_cleanup = gen_label_rtx ();
       rtx cmp_rem_before = gen_reg_rtx (word_mode);
       /* Compare one more word_mode chunk if needed.  */
       if (!bytes_is_const || bytes_remaining >= load_mode_size)
@@ -1405,7 +1407,7 @@ expand_compare_loop (rtx operands[])
 	  /* Alignment is larger than word_mode so we do not need to be
 	     concerned with extra page crossings.  But, we do not know
 	     that the length is larger than load_mode_size so we might
-	     end up compareing against data before the block if we try
+	     end up comparing against data before the block if we try
 	     an overlapping compare.  Also we use this on P7 for fixed length
 	     remainder because P7 doesn't like overlapping unaligned.
 	     Strategy: load 8B, shift off bytes past length, and compare.  */
@@ -1426,11 +1428,11 @@ expand_compare_loop (rtx operands[])
 	}
       else if (!bytes_is_const)
 	{
-	  rtx handle4k_label = gen_label_rtx ();
-	  rtx nonconst_overlap = gen_label_rtx ();
+	  rtx_code_label *handle4k_label = gen_label_rtx ();
+	  rtx_code_label *nonconst_overlap = gen_label_rtx ();
 	  emit_label (nonconst_overlap);
 
-	  /* Here we have to handle the case where whe have runtime
+	  /* Here we have to handle the case where we have runtime
 	     length which may be too short for overlap compare, and
 	     alignment is not at least load_mode_size so we have to
 	     tread carefully to avoid stepping across 4k boundaries.  */
@@ -1438,7 +1440,7 @@ expand_compare_loop (rtx operands[])
 	  /* If the length after the loop was larger than word_mode
 	     size, we can just do an overlapping compare and we're
 	     done.  We fall through to this code from the word_mode
-	     compare that preceeds this.  */
+	     compare that precedes this.  */
 	  do_overlap_load_compare (load_mode, false, 0, diff,
 				   cmp_rem, dcond, src1_addr, src2_addr,
 				   orig_src1, orig_src2);
@@ -1508,7 +1510,7 @@ expand_compare_loop (rtx operands[])
 	  rtx d1 = gen_reg_rtx (word_mode);
 	  rtx d2 = gen_reg_rtx (word_mode);
 
-	  rtx fc_loop = gen_label_rtx ();
+	  rtx_code_label *fc_loop = gen_label_rtx ();
 	  emit_label (fc_loop);
 
 	  do_load_for_compare_from_addr (QImode, d1, src1_ix, orig_src1);
@@ -1632,7 +1634,7 @@ expand_compare_loop (rtx operands[])
    produce the final result from memcmp.
 
    TARGET is the rtx for the register to receive the memcmp result.
-   SUB_RESULT is the rtx for the register contining the subtract result.  */
+   SUB_RESULT is the rtx for the register containing the subtract result.  */
 
 void
 generate_6432_conversion(rtx target, rtx sub_result)
@@ -1739,8 +1741,8 @@ expand_block_compare_gpr(unsigned HOST_WIDE_INT bytes, unsigned int base_align,
   rtx tmp_reg_src1 = gen_reg_rtx (word_mode);
   rtx tmp_reg_src2 = gen_reg_rtx (word_mode);
   bool need_6432_conv = false;
-  rtx convert_label = NULL;
-  rtx final_label = NULL;
+  rtx_code_label *convert_label = nullptr;
+  rtx_code_label *final_label = nullptr;
   machine_mode load_mode;
 
   while (bytes > 0)
@@ -1853,7 +1855,7 @@ expand_block_compare_gpr(unsigned HOST_WIDE_INT bytes, unsigned int base_align,
 	      if (final_label)
 		{
 		  rtx fin_ref = gen_rtx_LABEL_REF (VOIDmode, final_label);
-		  rtx j = emit_jump_insn (gen_rtx_SET (pc_rtx, fin_ref));
+		  rtx_insn *j = emit_jump_insn (gen_rtx_SET (pc_rtx, fin_ref));
 		  JUMP_LABEL (j) = final_label;
 		  LABEL_NUSES (final_label) += 1;
 		  emit_barrier ();
@@ -2025,11 +2027,11 @@ expand_block_compare (rtx operands[])
 
   if (use_vec)
     {
-      rtx final_move_label = gen_label_rtx ();
+      rtx_code_label *final_move_label = gen_label_rtx ();
       rtx s1addr = gen_reg_rtx (Pmode);
       rtx s2addr = gen_reg_rtx (Pmode);
       rtx off_reg = gen_reg_rtx (Pmode);
-      rtx cleanup_label = NULL;
+      rtx_code_label *cleanup_label = NULL;
       rtx vec_result = gen_reg_rtx (V16QImode);
       rtx s1data = gen_reg_rtx (V16QImode);
       rtx s2data = gen_reg_rtx (V16QImode);
@@ -2088,7 +2090,8 @@ expand_block_compare (rtx operands[])
    SRC_ADDR is the string address to be examined.
    BYTES is the max number of bytes to compare.  */
 static void
-expand_strncmp_align_check (rtx strncmp_label, rtx src_addr, HOST_WIDE_INT bytes)
+expand_strncmp_align_check (rtx_code_label *strncmp_label, rtx src_addr,
+			    HOST_WIDE_INT bytes)
 {
   rtx lab_ref = gen_rtx_LABEL_REF (VOIDmode, strncmp_label);
   rtx src_pgoff = gen_reg_rtx (GET_MODE (src_addr));
@@ -2126,8 +2129,9 @@ expand_strncmp_gpr_sequence (unsigned HOST_WIDE_INT bytes_to_compare,
 			     unsigned int base_align,
 			     rtx orig_src1, rtx orig_src2,
 			     rtx tmp_reg_src1, rtx tmp_reg_src2, rtx result_reg,
-			     bool equality_compare_rest, rtx *p_cleanup_label,
-			     rtx final_move_label)
+			     bool equality_compare_rest,
+			     rtx_code_label **p_cleanup_label,
+			     rtx_code_label *final_move_label)
 {
   unsigned int word_mode_size = GET_MODE_SIZE (word_mode);
   machine_mode load_mode;
@@ -2137,7 +2141,7 @@ expand_strncmp_gpr_sequence (unsigned HOST_WIDE_INT bytes_to_compare,
   rtx src1_addr = force_reg (Pmode, XEXP (orig_src1, 0));
   rtx src2_addr = force_reg (Pmode, XEXP (orig_src2, 0));
   gcc_assert (p_cleanup_label != NULL);
-  rtx cleanup_label = *p_cleanup_label;
+  rtx_code_label *cleanup_label = *p_cleanup_label;
 
   while (bytes_to_compare > 0)
     {
@@ -2240,7 +2244,7 @@ expand_strncmp_gpr_sequence (unsigned HOST_WIDE_INT bytes_to_compare,
 	 A == B: branch to result 0.
 	 A != B: cleanup code to compute result.  */
 
-      rtx dst_label;
+      rtx_code_label *dst_label;
       if (remain > 0 || equality_compare_rest)
 	{
 	  /* Branch to cleanup code, otherwise fall through to do
@@ -2305,7 +2309,7 @@ expand_strncmp_gpr_sequence (unsigned HOST_WIDE_INT bytes_to_compare,
 	      do_sub3 (result_reg, tmp_reg_src1, tmp_reg_src2);
 
 	      rtx fin_ref = gen_rtx_LABEL_REF (VOIDmode, final_move_label);
-	      rtx j = emit_jump_insn (gen_rtx_SET (pc_rtx, fin_ref));
+	      rtx_insn *j = emit_jump_insn (gen_rtx_SET (pc_rtx, fin_ref));
 	      JUMP_LABEL (j) = final_move_label;
 	      LABEL_NUSES (final_move_label) += 1;
 	      emit_barrier ();
@@ -2517,16 +2521,16 @@ expand_strn_compare (rtx operands[], int no_length)
     }
 
   rtx result_reg = gen_reg_rtx (word_mode);
-  rtx final_move_label = gen_label_rtx ();
-  rtx final_label = gen_label_rtx ();
-  rtx begin_compare_label = NULL;
+  rtx_code_label *final_move_label = gen_label_rtx ();
+  rtx_code_label *final_label = gen_label_rtx ();
+  rtx_code_label *begin_compare_label = nullptr;
 
   if (base_align < required_align)
     {
       /* Generate code that checks distance to 4k boundary for this case.  */
       begin_compare_label = gen_label_rtx ();
-      rtx strncmp_label = gen_label_rtx ();
-      rtx jmp;
+      rtx_code_label *strncmp_label = gen_label_rtx ();
+      rtx_insn *jmp;
 
       /* Strncmp for power8 in glibc does this:
 	 rldicl r8,r3,0,52
@@ -2600,7 +2604,7 @@ expand_strn_compare (rtx operands[], int no_length)
       emit_label (begin_compare_label);
     }
 
-  rtx cleanup_label = NULL;
+  rtx_code_label *cleanup_label = NULL;
   rtx s1addr = NULL, s2addr = NULL, off_reg = NULL, vec_result = NULL;
 
   /* Generate a sequence of GPR or VEC/VSX instructions to compare out
@@ -2657,7 +2661,7 @@ expand_strn_compare (rtx operands[], int no_length)
 	}
 
       rtx fin_ref = gen_rtx_LABEL_REF (VOIDmode, final_label);
-      rtx jmp = emit_jump_insn (gen_rtx_SET (pc_rtx, fin_ref));
+      rtx_insn *jmp = emit_jump_insn (gen_rtx_SET (pc_rtx, fin_ref));
       JUMP_LABEL (jmp) = final_label;
       LABEL_NUSES (final_label) += 1;
       emit_barrier ();
@@ -2786,6 +2790,7 @@ expand_block_move (rtx operands[], bool might_overlap)
 
       if (TARGET_MMA && TARGET_BLOCK_OPS_UNALIGNED_VSX
 	  && TARGET_BLOCK_OPS_VECTOR_PAIR
+	  && TARGET_POWERPC64
 	  && bytes >= 32
 	  && (align >= 256 || !STRICT_ALIGNMENT))
 	{

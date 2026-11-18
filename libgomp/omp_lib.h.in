@@ -79,14 +79,25 @@
       parameter (omp_pause_resource_kind = 4)
       integer (omp_pause_resource_kind) omp_pause_soft
       integer (omp_pause_resource_kind) omp_pause_hard
+      integer (omp_pause_resource_kind) omp_pause_tool
       parameter (omp_pause_soft = 1)
       parameter (omp_pause_hard = 2)
+      parameter (omp_pause_tool = 3)
 
       integer omp_allocator_handle_kind, omp_alloctrait_key_kind
       integer omp_alloctrait_val_kind, omp_memspace_handle_kind
       integer omp_event_handle_kind
       integer omp_interop_kind, omp_interop_fr_kind
       integer omp_interop_property_kind, omp_interop_rc_kind
+
+      integer omp_access_kind
+      parameter (omp_access_kind = 4)
+      integer (omp_access_kind) omp_access_cgroup
+      integer (omp_access_kind) omp_access_pteam
+      parameter (omp_access_cgroup = 0)
+      parameter (omp_access_pteam = 1)
+      integer omp_control_tool_kind
+      integer omp_control_tool_result_kind
       parameter (omp_allocator_handle_kind = @INTPTR_T_KIND@)
       parameter (omp_alloctrait_key_kind = 4)
       parameter (omp_alloctrait_val_kind = @INTPTR_T_KIND@)
@@ -96,6 +107,8 @@
       parameter (omp_interop_fr_kind = 4)
       parameter (omp_interop_property_kind = 4)
       parameter (omp_interop_rc_kind = 4)
+      parameter (omp_control_tool_kind = 4)
+      parameter (omp_control_tool_result_kind = 4)
       integer (omp_alloctrait_key_kind) omp_atk_sync_hint
       integer (omp_alloctrait_key_kind) omp_atk_alignment
       integer (omp_alloctrait_key_kind) omp_atk_access
@@ -244,6 +257,24 @@
       parameter (omp_irc_type_ptr = -4)
       parameter (omp_irc_type_str = -5)
       parameter (omp_irc_other = -6)
+      integer (omp_control_tool_kind) omp_control_tool_start
+      integer (omp_control_tool_kind) omp_control_tool_pause
+      integer (omp_control_tool_kind) omp_control_tool_flush
+      integer (omp_control_tool_kind) omp_control_tool_end
+      integer (omp_control_tool_kind) omp_control_tool_max
+      parameter (omp_control_tool_start = 1)
+      parameter (omp_control_tool_pause = 2)
+      parameter (omp_control_tool_flush = 3)
+      parameter (omp_control_tool_end = 4)
+      parameter (omp_control_tool_max = huge(1_omp_control_tool_kind))
+      integer (omp_control_tool_result_kind) omp_control_tool_notool
+      integer (omp_control_tool_result_kind) omp_control_tool_nocallback
+      integer (omp_control_tool_result_kind) omp_control_tool_success
+      integer (omp_control_tool_result_kind) omp_control_tool_ignored
+      parameter (omp_control_tool_notool = -2)
+      parameter (omp_control_tool_nocallback = -1)
+      parameter (omp_control_tool_success = 0)
+      parameter (omp_control_tool_ignored = 1)
 
       type omp_alloctrait
         integer (omp_alloctrait_key_kind) key
@@ -313,6 +344,69 @@
       integer(4) omp_get_default_device, omp_get_num_devices
       integer(4) omp_get_num_teams, omp_get_team_num
 
+      interface
+!       Implementation choice: bind(C) and no default-kind-8 integer
+        function omp_get_num_threads_dim (dim) bind(C)
+          use, intrinsic :: iso_c_binding, only : c_int
+          integer (c_int) :: omp_get_num_threads_dim
+          integer (c_int), value :: dim
+        end function omp_get_num_threads_dim
+      end interface
+
+      interface
+!       Implementation choice: bind(C) and no default-kind-8 integer
+        function omp_get_thread_num_dim (dim) bind(C)
+          use, intrinsic :: iso_c_binding, only : c_int
+          integer (c_int) :: omp_get_thread_num_dim
+          integer (c_int), value :: dim
+        end function omp_get_thread_num_dim
+      end interface
+
+      interface
+!       Implementation choice: bind(C) and no default-kind-8 integer
+        function omp_get_thread_limit_dim (dim) bind(C)
+          use, intrinsic :: iso_c_binding, only : c_int
+          integer (c_int) :: omp_get_thread_limit_dim
+          integer (c_int), value :: dim
+        end function omp_get_thread_limit_dim
+      end interface
+
+      interface
+!       Use bind(C) for simplicity; will fail with default-kind-8 integer
+        function omp_get_device_teams_thread_limit (device_num) bind(C)
+          use iso_c_binding, only: c_int
+          integer (c_int), value :: device_num
+          integer (c_int) :: omp_get_device_teams_thread_limit
+        end function omp_get_device_teams_thread_limit
+      end interface
+
+      interface
+!       Implementation choice: bind(C) and no default-kind-8 integer
+        function omp_get_num_teams_dim (dim) bind(C)
+          use, intrinsic :: iso_c_binding, only : c_int
+          integer (c_int) :: omp_get_num_teams_dim
+          integer (c_int), value :: dim
+        end function omp_get_num_teams_dim
+      end interface
+
+      interface
+!       Use bind(C) for simplicity; will fail with default-kind-8 integer
+        function omp_get_device_num_teams (device_num) bind(C)
+          use iso_c_binding, only: c_int
+          integer (c_int), value :: device_num
+          integer (c_int) :: omp_get_device_num_teams
+        end function omp_get_device_num_teams
+      end interface
+
+      interface
+!       Implementation choice: bind(C) and no default-kind-8 integer
+        function omp_get_team_num_dim (dim) bind(C)
+          use, intrinsic :: iso_c_binding, only : c_int
+          integer (c_int) :: omp_get_team_num_dim
+          integer (c_int), value :: dim
+        end function omp_get_team_num_dim
+      end interface
+
       external omp_is_initial_device
       logical(4) omp_is_initial_device
       external omp_get_initial_device
@@ -327,6 +421,24 @@
       external omp_set_num_teams, omp_set_teams_thread_limit
       external omp_get_max_teams, omp_get_teams_thread_limit
       integer(4) omp_get_max_teams, omp_get_teams_thread_limit
+
+      interface
+!       Use bind(C) for simplicity; will fail with default-kind-8 integer
+        subroutine omp_set_device_num_teams (num_teams, device_num)             &
+     &      bind(C)
+          use iso_c_binding, only: c_int
+          integer (c_int), value, intent (in) :: num_teams, device_num
+        end subroutine omp_set_device_num_teams
+      end interface
+
+      interface
+!       Use bind(C) for simplicity; will fail with default-kind-8 integer
+        subroutine omp_set_device_teams_thread_limit (thread_limit,             &
+     &      device_num) bind(C)
+          use iso_c_binding, only: c_int
+          integer (c_int), value, intent (in) :: thread_limit,device_num
+        end subroutine omp_set_device_teams_thread_limit
+      end interface
 
       external omp_fulfill_event
 
@@ -662,3 +774,80 @@
           integer(c_int64_t), intent(in), value :: device_num
         end function omp_get_uid_from_device_8
       end interface omp_get_uid_from_device
+
+      interface omp_get_supported_active_team_dims
+!       Implementation choice: no default-kind-8 integer
+        function omp_get_supported_active_team_dims (device_num,                &
+     &     native_support)
+          use, intrinsic :: iso_c_binding, only : c_int
+         integer (4) :: omp_get_supported_active_team_dims
+         integer (4), intent(in) :: device_num
+         logical (4), intent(in) :: native_support
+        end function omp_get_supported_active_team_dims
+      end interface
+
+      interface omp_get_supported_active_league_dims
+!       Implementation choice: no default-kind-8 integer
+        function omp_get_supported_active_league_dims (                         &
+     &      device_num, native_support)
+          integer (4) :: omp_get_supported_active_league_dims
+          integer (4), intent(in) :: device_num
+          logical (4), intent(in) :: native_support
+        end function omp_get_supported_active_league_dims
+      end interface
+
+      interface omp_get_supported_teams_dim
+!       Implementation choice: bind(C) and no default-kind-8 integer
+        function omp_get_supported_teams_dim (device_num, dim) bind(C)
+          use, intrinsic :: iso_c_binding, only : c_int
+          integer (c_int) :: omp_get_supported_teams_dim
+          integer (c_int), value :: device_num, dim
+        end function omp_get_supported_teams_dim
+      end interface
+
+      interface omp_get_supported_threads_dim
+!       Implementation choice: bind(C) and no default-kind-8 integer
+        function omp_get_supported_threads_dim (device_num, dim) bind(C)
+          use, intrinsic :: iso_c_binding, only : c_int
+          integer (c_int) :: omp_get_supported_threads_dim
+          integer (c_int), value :: device_num, dim
+        end function omp_get_supported_threads_dim
+      end interface
+
+      interface
+        integer (kind=c_size_t) function omp_get_gprivate_limit (               &
+     &      device_num, access_group)
+          use, intrinsic :: iso_c_binding, only : c_size_t, c_int
+          import :: omp_access_kind
+          integer (kind=c_int), value :: device_num
+          integer (kind=omp_access_kind),value,optional :: access_group
+        end function omp_get_gprivate_limit
+      end interface
+
+      interface
+!       This function only supports integer(4) for simplicity.
+!       Contrary to OpenMP 6.1, it also uses bind(C) and value
+!       and an explicit-size instead of assumed-size array.
+        subroutine omp_get_device_distances (ndevs, devs, distances)            &
+     &      bind(C)
+          use iso_c_binding
+          integer(c_int), value, intent(in) :: ndevs
+          integer(c_int), intent(in) :: devs(ndevs)
+          integer(c_int), intent(out) :: distances(ndevs)
+        end subroutine omp_get_device_distances
+      end interface
+
+      interface omp_control_tool
+        integer (kind=omp_control_tool_result_kind) function                    &
+     &      omp_control_tool (command, modifier)
+          import
+          integer (kind=omp_control_tool_kind) command
+          integer(4) modifier
+        end function
+        integer (kind=omp_control_tool_result_kind) function                    &
+     &      omp_control_tool_8 (command, modifier)
+          import
+          integer (kind=omp_control_tool_kind) command
+          integer(8) modifier
+        end function
+      end interface omp_control_tool

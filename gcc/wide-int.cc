@@ -36,18 +36,13 @@ along with GCC; see the file COPYING3.  If not see
 #endif
 
 #define W_TYPE_SIZE HOST_BITS_PER_WIDE_INT
-/* Do not include longlong.h when compiler is clang-based. See PR61146.  */
-#if GCC_VERSION >= 3000 && (W_TYPE_SIZE == 32 || defined (__SIZEOF_INT128__)) && !defined(__clang__)
+#if GCC_VERSION >= 3000 && defined (__SIZEOF_INT128__)
 typedef unsigned HOST_HALF_WIDE_INT UHWtype;
 typedef unsigned HOST_WIDE_INT UWtype;
 typedef unsigned int UQItype __attribute__ ((mode (QI)));
 typedef unsigned int USItype __attribute__ ((mode (SI)));
 typedef unsigned int UDItype __attribute__ ((mode (DI)));
-#if W_TYPE_SIZE == 32
-typedef unsigned int UDWtype __attribute__ ((mode (DI)));
-#else
 typedef unsigned int UDWtype __attribute__ ((mode (TI)));
-#endif
 #include "longlong.h"
 #endif
 
@@ -90,7 +85,7 @@ canonize (HOST_WIDE_INT *val, unsigned int len, unsigned int precision)
     len = blocks_needed;
 
   if (len == 1)
-    return len;
+    return 1;
 
   top = val[len - 1];
   if (len * HOST_BITS_PER_WIDE_INT > precision)
@@ -319,7 +314,7 @@ wi::from_mpz (const_tree type, mpz_t x, bool wrap)
 
 /* Return the largest SGNed number that is representable in PRECISION bits.
 
-   TODO: There is still code from the double_int era that trys to
+   TODO: There is still code from the double_int era that tries to
    make up for the fact that double int's could not represent the
    min and max values of all types.  This code should be removed
    because the min and max values can always be represented in
@@ -401,7 +396,7 @@ wi::force_to_size (HOST_WIDE_INT *val, const HOST_WIDE_INT *xval,
 }
 
 /* This function hides the fact that we cannot rely on the bits beyond
-   the precision.  This issue comes up in the relational comparisions
+   the precision.  This issue comes up in the relational comparisons
    where we do allow comparisons of values of different precisions.  */
 static inline HOST_WIDE_INT
 selt (const HOST_WIDE_INT *a, unsigned int len,
@@ -763,22 +758,21 @@ wi::bswap_large (HOST_WIDE_INT *val, const HOST_WIDE_INT *xval,
   return canonize (val, len, precision);
 }
 
-/* Bitreverse the integer represented by XVAL and LEN into VAL.  Return
+/* Bitreverse the integer represented by XVAL and XLEN into VAL.  Return
    the number of blocks in VAL.  Both XVAL and VAL have PRECISION bits.  */
 unsigned int
 wi::bitreverse_large (HOST_WIDE_INT *val, const HOST_WIDE_INT *xval,
-		      unsigned int len, unsigned int precision)
+		      unsigned int xlen, unsigned int precision)
 {
-  unsigned int i, s;
+  unsigned int s, len = BLOCKS_NEEDED (precision);
 
-  for (i = 0; i < len; i++)
-    val[i] = 0;
+  memset (val, 0, sizeof (unsigned HOST_WIDE_INT) * len);
 
   for (s = 0; s < precision; s++)
     {
       unsigned int block = s / HOST_BITS_PER_WIDE_INT;
       unsigned int offset = s & (HOST_BITS_PER_WIDE_INT - 1);
-      if (((safe_uhwi (xval, len, block) >> offset) & 1) != 0)
+      if (((safe_uhwi (xval, xlen, block) >> offset) & 1) != 0)
 	{
 	  unsigned int d = (precision - 1) - s;
 	  block = d / HOST_BITS_PER_WIDE_INT;
@@ -1865,7 +1859,7 @@ wi::divmod_internal (HOST_WIDE_INT *quotient, unsigned int *remainder_len,
     overflow = true;
 
   /* Handle the overflow cases.  Viewed as unsigned value, the quotient of
-     (signed min / -1) has the same representation as the orignal dividend.
+     (signed min / -1) has the same representation as the original dividend.
      We have traditionally made division by zero act as division by one,
      so there too we use the original dividend.  */
   if (overflow)
@@ -2399,6 +2393,72 @@ wi::mod_inv (const wide_int &a, const wide_int &b)
   if (wi::lt_p (x1, 0, SIGNED))
     x1 += d;
   return x1;
+}
+
+/* Return as many repetition of X.get_precision () bits from X
+   as fit into PREC.  */
+wide_int
+wi::bit_repeat (const wide_int_ref &x, unsigned int prec)
+{
+  unsigned int xprec = x.get_precision ();
+  if (xprec >= prec)
+    return wide_int::from (x, prec, UNSIGNED);
+  if (xprec <= HOST_BITS_PER_WIDE_INT && (HOST_BITS_PER_WIDE_INT % xprec) == 0)
+    {
+      unsigned HOST_WIDE_INT val = x.to_uhwi (xprec);
+      while (xprec < HOST_BITS_PER_WIDE_INT)
+	{
+	  val |= val << xprec;
+	  xprec <<= 1;
+	}
+      wide_int ret = wide_int::create (prec);
+      HOST_WIDE_INT *v = ret.write_val (0);
+      unsigned int i = 0;
+      for (unsigned int p = 0; p < prec; p += HOST_BITS_PER_WIDE_INT)
+	v[i++] = val;
+      ret.set_len (i, false);
+      return ret;
+    }
+  wide_int ret = wide_int::from (x, prec, UNSIGNED), b;
+  while (xprec < prec)
+    {
+      ret |= (ret << xprec);
+      xprec <<= 1;
+    }
+  return ret;
+}
+
+/* Compute carry-less product of X and Y with precision PREC.  */
+
+wide_int
+wi::clmul (const wide_int_ref &x, const wide_int_ref &y, unsigned int prec)
+{
+  wide_int a;
+  const wide_int_ref *b;
+  if (wi::popcount (x) >= wi::popcount (y))
+    {
+      a = wide_int::from (x, prec, UNSIGNED);
+      b = &y;
+    }
+  else
+    {
+      a = wide_int::from (y, prec, UNSIGNED);
+      b = &x;
+    }
+  unsigned int bprec = b->get_precision ();
+  wide_int r = wi::zero (prec);
+  unsigned int j = 0, k = 0;
+  for (unsigned int i = 0; i < bprec; ++i)
+    {
+      if (((((unsigned HOST_WIDE_INT) b->elt (k)) >> j) & 1) != 0)
+	r ^= a << i;
+      if (++j == HOST_BITS_PER_WIDE_INT)
+	{
+	  j = 0;
+	  ++k;
+	}
+    }
+  return r;
 }
 
 /*

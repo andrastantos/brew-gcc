@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-options "-Wno-truncate" }
        *> { dg-output-file "group2/Alphanumeric_MOVE_with_truncation.out" }
 

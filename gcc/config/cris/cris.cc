@@ -215,6 +215,10 @@ int cris_cpu_version = CRIS_DEFAULT_CPU_VERSION;
 #undef TARGET_ASM_CAN_OUTPUT_MI_THUNK
 #define TARGET_ASM_CAN_OUTPUT_MI_THUNK default_can_output_mi_thunk_no_vcall
 
+/* The casesi dispatch reads the table at its own PC.  */
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P hook_bool_rtx_insn_false
+
 #undef TARGET_ASM_FILE_START
 #define TARGET_ASM_FILE_START cris_file_start
 
@@ -399,8 +403,8 @@ cris_postdbr_cmpelim ()
 
       /* Consider filled delay slots; there might be a comparison there.
 	 It's only the second insn in a sequence that is interesting.  */
-      if (GET_CODE (pat) == SEQUENCE)
-	insn = as_a <rtx_insn *> (XVECEXP (pat, 0, 1));
+      if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (pat))
+	insn = seq->insn (1);
       /* The "else" eliminates temptations to consider an insn in a
 	 delay slot for elimination; it can only be a prev_cc_setter.  */
       else if (prev_cc_setter != 0 && GET_CODE (pat) == SET)
@@ -1860,7 +1864,8 @@ cris_simple_epilogue (void)
 void
 cris_emit_trap_for_misalignment (rtx mem)
 {
-  rtx addr, reg, ok_label, andop;
+  rtx addr, reg;
+  rtx andop;
   rtx_insn *jmp;
   int natural_alignment;
   gcc_assert (MEM_P (mem));
@@ -1868,7 +1873,7 @@ cris_emit_trap_for_misalignment (rtx mem)
   natural_alignment = GET_MODE_SIZE (GET_MODE (mem));
   addr = XEXP (mem, 0);
   reg = force_reg (Pmode, addr);
-  ok_label = gen_label_rtx ();
+  rtx_code_label *ok_label = gen_label_rtx ();
 
   /* This will yield a btstq without a separate register used, usually -
      with the exception for PRE hoisting the "and" but not the branch
@@ -2306,10 +2311,10 @@ cris_asm_output_case_end (FILE *stream, int num, rtx_insn *table)
 
   asm_fprintf (stream,
 	       "\t.word %LL%d-%LL%d%s\n",
-	       CODE_LABEL_NUMBER (XEXP
+	       CODE_LABEL_NUMBER (label_ref_label
 				  (XEXP
 				   (XEXP (XVECEXP (whole_jump_pat, 0, 0), 1),
-				    2), 0)),
+				    2))),
 	       num,
 	       (TARGET_PDEBUG ? "; default" : ""));
 }
@@ -2535,13 +2540,12 @@ cris_init_machine_status (void)
 /* Split a 2 word move (DI or presumably DF) into component parts.
    Originally a copy of gen_split_move_double in m32r.cc.  */
 
-rtx
+rtx_insn *
 cris_split_movdx (rtx *operands)
 {
   machine_mode mode = GET_MODE (operands[0]);
   rtx dest = operands[0];
   rtx src  = operands[1];
-  rtx val;
 
   /* We used to have to handle (SUBREG (MEM)) here, but that should no
      longer happen; after reload there are no SUBREGs any more, and we're
@@ -2597,25 +2601,21 @@ cris_split_movdx (rtx *operands)
           if (GET_CODE (addr) == POST_INC)
 	    {
 	      rtx mem;
-	      rtx insn;
 
 	      /* Whenever we emit insns with post-incremented
 		 addresses ourselves, we must add a post-inc note
 		 manually.  */
 	      mem = change_address (src, SImode, addr);
-	      insn = emit_move_insn (operand_subword (dest, 0, TRUE, mode),
-				     mem);
+	      rtx_insn *insn
+		= emit_move_insn (operand_subword (dest, 0, TRUE, mode),
+				  mem);
 	      if (GET_CODE (XEXP (mem, 0)) == POST_INC)
-		REG_NOTES (insn)
-		  = alloc_EXPR_LIST (REG_INC, XEXP (XEXP (mem, 0), 0),
-				     REG_NOTES (insn));
+		add_reg_note (insn, REG_INC, XEXP (XEXP (mem, 0), 0));
 
 	      mem = copy_rtx (mem);
 	      insn = emit_move_insn (operand_subword (dest, 1, TRUE, mode), mem);
 	      if (GET_CODE (XEXP (mem, 0)) == POST_INC)
-		REG_NOTES (insn)
-		  = alloc_EXPR_LIST (REG_INC, XEXP (XEXP (mem, 0), 0),
-				     REG_NOTES (insn));
+		add_reg_note (insn, REG_INC, XEXP (XEXP (mem, 0), 0));
 	    }
 	  else
 	    {
@@ -2653,23 +2653,19 @@ cris_split_movdx (rtx *operands)
       if (GET_CODE (addr) == POST_INC)
 	{
 	  rtx mem;
-	  rtx insn;
 
 	  /* Whenever we emit insns with post-incremented addresses
 	     ourselves, we must add a post-inc note manually.  */
 	  mem = change_address (dest, SImode, addr);
-	  insn = emit_move_insn (mem, operand_subword (src, 0, TRUE, mode));
+	  rtx_insn *insn
+	    = emit_move_insn (mem, operand_subword (src, 0, TRUE, mode));
 	  if (GET_CODE (XEXP (mem, 0)) == POST_INC)
-	    REG_NOTES (insn)
-	      = alloc_EXPR_LIST (REG_INC, XEXP (XEXP (mem, 0), 0),
-				 REG_NOTES (insn));
+	    add_reg_note (insn, REG_INC, XEXP (XEXP (mem, 0), 0));
 
 	  mem = copy_rtx (mem);
 	  insn = emit_move_insn (mem, operand_subword (src, 1, TRUE, mode));
 	  if (GET_CODE (XEXP (mem, 0)) == POST_INC)
-	    REG_NOTES (insn)
-	      = alloc_EXPR_LIST (REG_INC, XEXP (XEXP (mem, 0), 0),
-				 REG_NOTES (insn));
+	    add_reg_note (insn, REG_INC, XEXP (XEXP (mem, 0), 0));
 	}
       else
 	{
@@ -2692,8 +2688,7 @@ cris_split_movdx (rtx *operands)
   else
     internal_error ("unknown dest");
 
-  val = end_sequence ();
-  return val;
+  return end_sequence ();
 }
 
 /* Try to split the constant WVAL into a number of separate insns of less cost
@@ -2874,7 +2869,8 @@ cris_expand_prologue (void)
   int cfoa_size = crtl->outgoing_args_size;
   int last_movem_reg = -1;
   int framesize = 0;
-  rtx mem, insn;
+  rtx mem;
+  rtx_insn *insn;
   int return_address_on_stack = cris_return_address_on_stack ();
   int n_movem_regs = 0;
   int pretend = crtl->args.pretend_args_size;
@@ -3157,7 +3153,6 @@ cris_expand_epilogue (void)
        regno--)
     if (cris_reg_saved_in_regsave_area (regno))
       {
-	rtx insn;
 
 	if (argspace_offset)
 	  {
@@ -3172,18 +3167,16 @@ cris_expand_epilogue (void)
 	mem = gen_rtx_MEM (SImode, gen_rtx_POST_INC (SImode,
 						     stack_pointer_rtx));
 	set_mem_alias_set (mem, get_frame_alias_set ());
-	insn = emit_move_insn (gen_raw_REG (SImode, regno), mem);
+	rtx_insn *insn = emit_move_insn (gen_raw_REG (SImode, regno), mem);
 
 	/* Whenever we emit insns with post-incremented addresses
 	   ourselves, we must add a post-inc note manually.  */
-	REG_NOTES (insn)
-	  = alloc_EXPR_LIST (REG_INC, stack_pointer_rtx, REG_NOTES (insn));
+	add_reg_note (insn, REG_INC, stack_pointer_rtx);
       }
 
   /* If we have any movem-restore, do it now.  */
   if (last_movem_reg != -1)
     {
-      rtx insn;
 
       if (argspace_offset)
 	{
@@ -3194,13 +3187,12 @@ cris_expand_epilogue (void)
       mem = gen_rtx_MEM (SImode,
 			 gen_rtx_POST_INC (SImode, stack_pointer_rtx));
       set_mem_alias_set (mem, get_frame_alias_set ());
-      insn
+      rtx_insn *insn
 	= emit_insn (cris_gen_movem_load (mem, GEN_INT (last_movem_reg + 1)));
       /* Whenever we emit insns with post-incremented addresses
 	 ourselves, we must add a post-inc note manually.  */
       if (side_effects_p (PATTERN (insn)))
-	REG_NOTES (insn)
-	  = alloc_EXPR_LIST (REG_INC, stack_pointer_rtx, REG_NOTES (insn));
+	add_reg_note (insn, REG_INC, stack_pointer_rtx);
     }
 
   /* If we don't clobber all of the allocated stack area (we've already
@@ -3216,7 +3208,6 @@ cris_expand_epilogue (void)
   /* Restore frame pointer if necessary.  */
   if (frame_pointer_needed)
     {
-      rtx insn;
 
       emit_insn (gen_cris_frame_deallocated_barrier ());
 
@@ -3224,12 +3215,11 @@ cris_expand_epilogue (void)
       mem = gen_rtx_MEM (SImode, gen_rtx_POST_INC (SImode,
 						   stack_pointer_rtx));
       set_mem_alias_set (mem, get_frame_alias_set ());
-      insn = emit_move_insn (hard_frame_pointer_rtx, mem);
+      rtx_insn *insn = emit_move_insn (hard_frame_pointer_rtx, mem);
 
       /* Whenever we emit insns with post-incremented addresses
 	 ourselves, we must add a post-inc note manually.  */
-      REG_NOTES (insn)
-	= alloc_EXPR_LIST (REG_INC, stack_pointer_rtx, REG_NOTES (insn));
+      add_reg_note (insn, REG_INC, stack_pointer_rtx);
     }
   else if ((size + argspace_offset) != 0)
     {
@@ -3253,18 +3243,16 @@ cris_expand_epilogue (void)
       if (crtl->calls_eh_return)
 	{
 	  rtx mem;
-	  rtx insn;
 	  rtx srpreg = gen_raw_REG (SImode, CRIS_SRP_REGNUM);
 	  mem = gen_rtx_MEM (SImode,
 			     gen_rtx_POST_INC (SImode,
 					       stack_pointer_rtx));
 	  set_mem_alias_set (mem, get_frame_alias_set ());
-	  insn = emit_move_insn (srpreg, mem);
+	  rtx_insn *insn = emit_move_insn (srpreg, mem);
 
 	  /* Whenever we emit insns with post-incremented addresses
 	     ourselves, we must add a post-inc note manually.  */
-	  REG_NOTES (insn)
-	    = alloc_EXPR_LIST (REG_INC, stack_pointer_rtx, REG_NOTES (insn));
+	  add_reg_note (insn, REG_INC, stack_pointer_rtx);
 
 	  if (crtl->calls_eh_return)
 	    emit_insn (gen_add2_insn (stack_pointer_rtx,
@@ -3286,18 +3274,16 @@ cris_expand_epilogue (void)
 	{
 	  rtx mem;
 	  rtx srpreg = gen_raw_REG (SImode, CRIS_SRP_REGNUM);
-	  rtx insn;
 
 	  mem = gen_rtx_MEM (SImode,
 			     gen_rtx_POST_INC (SImode,
 					       stack_pointer_rtx));
 	  set_mem_alias_set (mem, get_frame_alias_set ());
-	  insn = emit_move_insn (srpreg, mem);
+	  rtx_insn *insn = emit_move_insn (srpreg, mem);
 
 	  /* Whenever we emit insns with post-incremented addresses
 	     ourselves, we must add a post-inc note manually.  */
-	  REG_NOTES (insn)
-	    = alloc_EXPR_LIST (REG_INC, stack_pointer_rtx, REG_NOTES (insn));
+	  add_reg_note (insn, REG_INC, stack_pointer_rtx);
 	}
 
       emit_insn (gen_add2_insn (stack_pointer_rtx, GEN_INT (pretend)));
@@ -3376,7 +3362,7 @@ cris_emit_insn (rtx x)
 /* Worker function for generating movem to mem.  If FRAME_RELATED, notes
    are added that the dwarf2 machinery understands.  */
 
-rtx
+rtx_insn *
 cris_emit_movem_store (rtx dest, rtx nregs_rtx, int increment,
 		       bool frame_related)
 {
@@ -3384,7 +3370,7 @@ cris_emit_movem_store (rtx dest, rtx nregs_rtx, int increment,
   rtvec vec;
   int eltno = 1;
   int i;
-  rtx insn;
+  rtx_insn *insn;
   rtx destreg = XEXP (dest, 0);
   unsigned int regno = nregs - 1;
   int regno_inc = -1;

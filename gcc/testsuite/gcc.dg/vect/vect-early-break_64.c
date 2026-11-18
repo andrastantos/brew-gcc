@@ -15,4 +15,4 @@ void a() {
     return;
 }
 
-/* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" { target vect_partial_vectors } } } */
+/* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" { target { vect_partial_vectors && { ! s390x-*-* } } } } } */

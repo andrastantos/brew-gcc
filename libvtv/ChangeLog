@@ -1,3 +1,36 @@
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Use AC_CANONICAL_TARGET instead of
+	AC_CANONICAL_SYSTEM.  Remove unneeded AC_SUBST(target_alias).
+
+2026-11-02  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Remove AC_LIBTOOL_DLOPEN and change LT_INIT to LT_INIT([dlopen]).
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_GNU_SOURCE with AC_USE_SYSTEM_EXTENSIONS.
+	Replace AM_PROG_LIBTOOL with LT_INIT.  Replace AC_FOREACH with
+	m4_foreach_w.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* vtv_fail.cc: Fix typos.
+	* vtv_malloc.cc (__vtv_free): Likewise.
+	* vtv_map.h (class insert_only_hash_map): Likewise.
+	* vtv_rts.cc (init_set_symbol_debug): Likewise.
+	* vtv_utils.cc (vtv_log_write): Likewise.
+
 2025-12-29  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
 
 	* configure: Regenerate.

@@ -20,7 +20,7 @@
 #ifndef GCC_AARCH64_SVE_BUILTINS_FUNCTIONS_H
 #define GCC_AARCH64_SVE_BUILTINS_FUNCTIONS_H
 
-namespace aarch64_sve {
+namespace aarch64_acle {
 
 /* Wrap T, which is derived from function_base, and indicate that the
    function never has side effects.  It is only necessary to use this
@@ -71,7 +71,7 @@ using write_zt0 = add_call_properties<T, CP_WRITE_ZT0>;
 class multi_vector_function : public function_base
 {
 public:
-  CONSTEXPR multi_vector_function (unsigned int vectors_per_tuple)
+  constexpr multi_vector_function (unsigned int vectors_per_tuple)
     : m_vectors_per_tuple (vectors_per_tuple) {}
 
   unsigned int
@@ -95,7 +95,7 @@ public:
 class full_width_access : public multi_vector_function
 {
 public:
-  CONSTEXPR full_width_access (unsigned int vectors_per_tuple = 1)
+  constexpr full_width_access (unsigned int vectors_per_tuple = 1)
     : multi_vector_function (vectors_per_tuple) {}
 
   tree
@@ -121,7 +121,7 @@ public:
 class extending_load : public function_base
 {
 public:
-  CONSTEXPR extending_load (type_suffix_index memory_type)
+  constexpr extending_load (type_suffix_index memory_type)
     : m_memory_type (memory_type) {}
 
   unsigned int
@@ -164,7 +164,7 @@ public:
 class truncating_store : public function_base
 {
 public:
-  CONSTEXPR truncating_store (scalar_int_mode to_mode) : m_to_mode (to_mode) {}
+  constexpr truncating_store (scalar_int_mode to_mode) : m_to_mode (to_mode) {}
 
   unsigned int
   call_properties (const function_instance &) const override
@@ -201,10 +201,10 @@ public:
 class rtx_code_function_base : public function_base
 {
 public:
-  CONSTEXPR rtx_code_function_base (rtx_code code_for_sint,
+  constexpr rtx_code_function_base (rtx_code code_for_sint,
 				    rtx_code code_for_uint,
-				    int unspec_for_cond_fp = -1,
-				    int unspec_for_uncond_fp = -1)
+				    unspec unspec_for_cond_fp = UNSPEC_NONE,
+				    unspec unspec_for_uncond_fp = UNSPEC_NONE)
     : m_code_for_sint (code_for_sint), m_code_for_uint (code_for_uint),
       m_unspec_for_cond_fp (unspec_for_cond_fp),
       m_unspec_for_uncond_fp (unspec_for_uncond_fp) {}
@@ -216,11 +216,11 @@ public:
 
   /* The UNSPEC_COND_* to use for floating-point operations.  Can be -1
      for functions that only operate on integers.  */
-  int m_unspec_for_cond_fp;
+  unspec m_unspec_for_cond_fp;
 
   /* The UNSPEC_* to use for unpredicated floating-point operations.
      Can be -1 if there is no such operation.  */
-  int m_unspec_for_uncond_fp;
+  unspec m_unspec_for_uncond_fp;
 };
 
 /* A function_base for functions that have an associated rtx code.
@@ -267,10 +267,10 @@ public:
 class unspec_based_function_base : public function_base
 {
 public:
-  CONSTEXPR unspec_based_function_base (int unspec_for_sint,
-					int unspec_for_uint,
-					int unspec_for_fp,
-					int unspec_for_mfp8 = -1,
+  constexpr unspec_based_function_base (unspec unspec_for_sint,
+					unspec unspec_for_uint = UNSPEC_NONE,
+					unspec unspec_for_fp = UNSPEC_NONE,
+					unspec unspec_for_mfp8 = UNSPEC_NONE,
 					unsigned int suffix_index = 0)
     : m_unspec_for_sint (unspec_for_sint),
       m_unspec_for_uint (unspec_for_uint),
@@ -280,7 +280,7 @@ public:
   {}
 
   /* Return the unspec code to use for INSTANCE, based on type suffix 0.  */
-  int
+  unspec
   unspec_for (const function_instance &instance) const
   {
     if (instance.fpm_mode == FPM_set)
@@ -294,10 +294,10 @@ public:
 
   /* The unspec code associated with signed-integer, unsigned-integer
      and floating-point operations respectively.  */
-  int m_unspec_for_sint;
-  int m_unspec_for_uint;
-  int m_unspec_for_fp;
-  int m_unspec_for_mfp8;
+  unspec m_unspec_for_sint;
+  unspec m_unspec_for_uint;
+  unspec m_unspec_for_fp;
+  unspec m_unspec_for_mfp8;
 
   /* Which type suffix is used to choose between the unspecs.  */
   unsigned int m_suffix_index;
@@ -371,7 +371,7 @@ typedef unspec_based_function_exact_insn<code_for_aarch64_sve_add_lane>
 typedef unspec_based_function_exact_insn<code_for_aarch64_sve_lane>
   unspec_based_lane_function;
 
-/* A functon that uses aarch64_pred* patterns regardless of the
+/* A function that uses aarch64_pred* patterns regardless of the
    predication type.  */
 typedef unspec_based_function_exact_insn<code_for_aarch64_pred>
   unspec_based_pred_function;
@@ -397,12 +397,17 @@ typedef unspec_based_function_exact_insn<code_for_aarch64_sve_sub>
 typedef unspec_based_function_exact_insn<code_for_aarch64_sve_sub_lane>
   unspec_based_sub_lane_function;
 
+typedef unspec_based_function_exact_insn<code_for_aarch64_sve2_aes_lane>
+  unspec_based_aes_lane_function;
+typedef unspec_based_function_exact_insn<code_for_aarch64_sve2_aes_lane_mc>
+  unspec_based_aes_lane_mc_function;
+
 /* A function that has conditional and unconditional forms, with both
    forms being associated with a single unspec each.  */
 class cond_or_uncond_unspec_function : public function_base
 {
 public:
-  CONSTEXPR cond_or_uncond_unspec_function (int cond_unspec, int uncond_unspec)
+  constexpr cond_or_uncond_unspec_function (unspec cond_unspec, unspec uncond_unspec)
     : m_cond_unspec (cond_unspec), m_uncond_unspec (uncond_unspec) {}
 
   rtx
@@ -421,8 +426,8 @@ public:
 
   /* The unspecs for the conditional and unconditional instructions,
      respectively.  */
-  int m_cond_unspec;
-  int m_uncond_unspec;
+  unspec m_cond_unspec;
+  unspec m_uncond_unspec;
 };
 
 /* General SME unspec-based functions, parameterized on the vector mode.  */
@@ -431,9 +436,10 @@ class sme_1mode_function : public read_write_za<unspec_based_function_base>
 public:
   using parent = read_write_za<unspec_based_function_base>;
 
-  CONSTEXPR sme_1mode_function (int unspec_for_sint, int unspec_for_uint,
-				int unspec_for_fp)
-    : parent (unspec_for_sint, unspec_for_uint, unspec_for_fp, -1, 1)
+  constexpr sme_1mode_function (unspec unspec_for_sint,
+				unspec unspec_for_uint = UNSPEC_NONE,
+				unspec unspec_for_fp = UNSPEC_NONE)
+    : parent (unspec_for_sint, unspec_for_uint, unspec_for_fp, UNSPEC_NONE, 1)
   {}
 
   rtx
@@ -461,10 +467,11 @@ class sme_2mode_function_t : public read_write_za<unspec_based_function_base>
 public:
   using parent = read_write_za<unspec_based_function_base>;
 
-  CONSTEXPR sme_2mode_function_t (int unspec_for_sint, int unspec_for_uint,
-				  int unspec_for_fp, int unspec_for_mfp8 = -1)
-    : parent (unspec_for_sint, unspec_for_uint, unspec_for_fp, unspec_for_mfp8,
-	      1)
+  constexpr sme_2mode_function_t (unspec unspec_for_sint,
+				  unspec unspec_for_uint = UNSPEC_NONE,
+				  unspec unspec_for_fp = UNSPEC_NONE,
+				  unspec unspec_for_mfp8 = UNSPEC_NONE)
+    : parent (unspec_for_sint, unspec_for_uint, unspec_for_fp, unspec_for_mfp8, 1)
   {}
 
   rtx
@@ -488,8 +495,8 @@ class svvdot_half_impl : public read_write_za<unspec_based_function_base>
 public:
   using parent = read_write_za<unspec_based_function_base>;
 
-  CONSTEXPR svvdot_half_impl (int unspec_for_sint, int unspec_for_uint,
-			      int unspec_for_fp, int unspec_for_mfp8)
+  constexpr svvdot_half_impl (unspec unspec_for_sint, unspec unspec_for_uint,
+			      unspec unspec_for_fp, unspec unspec_for_mfp8)
     : parent (unspec_for_sint, unspec_for_uint, unspec_for_fp, unspec_for_mfp8,
 	      1)
   {}
@@ -497,6 +504,58 @@ public:
   rtx expand (function_expander &e) const override
   {
     insn_code icode = code_for_aarch64_fvdot_half (unspec_for (e));
+    return e.use_exact_insn (icode);
+  }
+};
+
+class sme_mop4 : public read_write_za<unspec_based_function_base>
+{
+private:
+  unspec m_unspec_for_suint;
+  unspec m_unspec_for_usint;
+
+public:
+  using parent = read_write_za<unspec_based_function_base>;
+
+  constexpr sme_mop4 (unspec unspec_for_sint, unspec unspec_for_uint,
+		      unspec unspec_for_fp, unspec unspec_for_suint,
+		      unspec unspec_for_usint)
+    : parent (unspec_for_sint, unspec_for_uint,
+	      unspec_for_fp, unspec_for_fp, 1),
+      m_unspec_for_suint (unspec_for_suint),
+      m_unspec_for_usint (unspec_for_usint)
+  {}
+
+  rtx expand (function_expander &e) const override
+  {
+    machine_mode za_mode = e.vector_mode (0);
+    machine_mode v1_mode = e.tuple_mode (1);
+    machine_mode v2_mode = e.tuple_mode (1);
+
+    switch (e.mode_suffix_id)
+      {
+      case MODE_1x1:
+	break;
+      case MODE_1x2:
+	v2_mode = targetm.array_mode (v2_mode, 2).require ();
+	break;
+      case MODE_2x1:
+	v1_mode = targetm.array_mode (v1_mode, 2).require ();
+	break;
+      case MODE_2x2:
+	v1_mode = targetm.array_mode (v1_mode, 2).require ();
+	v2_mode = targetm.array_mode (v2_mode, 2).require ();
+	break;
+      default:
+	gcc_unreachable ();
+      }
+
+    unspec unspec = (e.type_suffix (1).unsigned_p == e.type_suffix (2).unsigned_p)
+		   ? unspec_for (e)
+		   : (e.type_suffix (1).unsigned_p ? m_unspec_for_usint
+						   : m_unspec_for_suint);
+
+    insn_code icode = code_for_aarch64_mop4 (unspec, za_mode, v1_mode, v2_mode);
     return e.use_exact_insn (icode);
   }
 };
@@ -519,7 +578,7 @@ public:
   rtx
   expand (function_expander &e) const override
   {
-    int unspec = unspec_for (e);
+    unspec unspec = unspec_for (e);
     insn_code icode;
     if (e.type_suffix (m_suffix_index).float_p
 	&& e.fpm_mode != FPM_set)
@@ -550,7 +609,7 @@ public:
   rtx
   expand (function_expander &e) const override
   {
-    int unspec = unspec_for (e);
+    unspec unspec = unspec_for (e);
     insn_code icode;
     if (e.type_suffix (m_suffix_index).float_p
 	&& e.fpm_mode != FPM_set)
@@ -602,7 +661,7 @@ public:
 class fixed_insn_function : public function_base
 {
 public:
-  CONSTEXPR fixed_insn_function (insn_code code) : m_code (code) {}
+  constexpr fixed_insn_function (insn_code code) : m_code (code) {}
 
   rtx
   expand (function_expander &e) const override
@@ -629,10 +688,10 @@ public:
       return NULL;
 
     unsigned int nargs = gimple_call_num_args (f.call);
-    poly_uint64 nelts = TYPE_VECTOR_SUBPARTS (TREE_TYPE (f.lhs));
+    poly_uint64 nelts = TYPE_VECTOR_SUBPARTS (f.ret_type);
     vec_perm_indices indices (builder, nargs, nelts);
     tree perm_type = build_vector_type (ssizetype, nelts);
-    return gimple_build_assign (f.lhs, VEC_PERM_EXPR,
+    return gimple_build_assign (f.lhs (), VEC_PERM_EXPR,
 				gimple_call_arg (f.call, 0),
 				gimple_call_arg (f.call, nargs == 1 ? 0 : 1),
 				vec_perm_indices_to_tree (perm_type, indices));
@@ -644,7 +703,7 @@ public:
 class binary_permute : public permute
 {
 public:
-  CONSTEXPR binary_permute (int unspec) : m_unspec (unspec) {}
+  constexpr binary_permute (unspec unspec) : m_unspec (unspec) {}
 
   rtx
   expand (function_expander &e) const override
@@ -657,7 +716,7 @@ public:
   }
 
   /* The unspec code associated with the operation.  */
-  int m_unspec;
+  unspec m_unspec;
 };
 
 /* A function that implements a x2 or x4 permute instruction.  Both forms
@@ -666,7 +725,7 @@ public:
 class multireg_permute : public function_base
 {
 public:
-  CONSTEXPR multireg_permute (int unspec) : m_unspec (unspec) {}
+  constexpr multireg_permute (unspec unspec) : m_unspec (unspec) {}
 
   rtx
   expand (function_expander &e) const override
@@ -684,7 +743,7 @@ public:
   }
 
   /* The unspec associated with the permutation.  */
-  int m_unspec;
+  unspec m_unspec;
 };
 
 /* A function that has two type integer type suffixes, which might agree
@@ -693,8 +752,10 @@ public:
 class integer_conversion : public function_base
 {
 public:
-  CONSTEXPR integer_conversion (int unspec_for_sint, int unspec_for_sintu,
-				int unspec_for_uint, int unspec_for_uints)
+  constexpr integer_conversion (unspec unspec_for_sint,
+				unspec unspec_for_sintu = UNSPEC_NONE,
+				unspec unspec_for_uint = UNSPEC_NONE,
+				unspec unspec_for_uints = UNSPEC_NONE)
     : m_unspec_for_sint (unspec_for_sint),
       m_unspec_for_sintu (unspec_for_sintu),
       m_unspec_for_uint (unspec_for_uint),
@@ -706,7 +767,7 @@ public:
   {
     machine_mode mode0 = e.vector_mode (0);
     machine_mode mode1 = GET_MODE (e.args[0]);
-    int unspec;
+    unspec unspec;
     if (e.type_suffix (0).unsigned_p == e.type_suffix (1).unsigned_p)
       unspec = (e.type_suffix (0).unsigned_p
 		? m_unspec_for_uint
@@ -719,30 +780,31 @@ public:
   }
 
   /* The unspec for signed -> signed.  */
-  int m_unspec_for_sint;
+  unspec m_unspec_for_sint;
 
   /* The unspec for signed -> unsigned.  */
-  int m_unspec_for_sintu;
+  unspec m_unspec_for_sintu;
 
   /* The unspec for unsigned -> signed.  */
-  int m_unspec_for_uint;
+  unspec m_unspec_for_uint;
 
   /* The unspec for unsigned -> unsigned.  */
-  int m_unspec_for_uints;
+  unspec m_unspec_for_uints;
 };
 
 /* A function_base for functions that reduce a vector to a scalar.  */
 class reduction : public function_base
 {
 public:
-  CONSTEXPR reduction (int unspec)
+  constexpr reduction (unspec unspec)
     : m_unspec_for_sint (unspec),
       m_unspec_for_uint (unspec),
       m_unspec_for_fp (unspec)
   {}
 
-  CONSTEXPR reduction (int unspec_for_sint, int unspec_for_uint,
-		       int unspec_for_fp)
+  constexpr reduction (unspec unspec_for_sint,
+		       unspec unspec_for_uint,
+		       unspec unspec_for_fp = UNSPEC_NONE)
     : m_unspec_for_sint (unspec_for_sint),
       m_unspec_for_uint (unspec_for_uint),
       m_unspec_for_fp (unspec_for_fp)
@@ -752,9 +814,9 @@ public:
   expand (function_expander &e) const override
   {
     machine_mode mode = e.vector_mode (0);
-    int unspec = (!e.type_suffix (0).integer_p ? m_unspec_for_fp
-		  : e.type_suffix (0).unsigned_p ? m_unspec_for_uint
-		  : m_unspec_for_sint);
+    unspec unspec = (!e.type_suffix (0).integer_p ? m_unspec_for_fp
+		     : e.type_suffix (0).unsigned_p ? m_unspec_for_uint
+						    : m_unspec_for_sint);
     /* There's no distinction between SADDV and UADDV for 64-bit elements;
        the signed versions only exist for narrower elements.  */
     if (GET_MODE_UNIT_BITSIZE (mode) == 64 && unspec == UNSPEC_SADDV)
@@ -764,9 +826,9 @@ public:
 
   /* The unspec code associated with signed-integer, unsigned-integer
      and floating-point operations respectively.  */
-  int m_unspec_for_sint;
-  int m_unspec_for_uint;
-  int m_unspec_for_fp;
+  unspec m_unspec_for_sint;
+  unspec m_unspec_for_uint;
+  unspec m_unspec_for_fp;
 };
 
 /* A function_base for functions that shift narrower-than-64-bit values
@@ -774,7 +836,7 @@ public:
 class shift_wide : public function_base
 {
 public:
-  CONSTEXPR shift_wide (rtx_code code, int wide_unspec)
+  constexpr shift_wide (rtx_code code, int wide_unspec)
     : m_code (code), m_wide_unspec (wide_unspec) {}
 
   rtx
@@ -789,7 +851,7 @@ public:
     if (aarch64_simd_shift_imm_p (shift, elem_mode, m_code == ASHIFT))
       {
 	e.args.last () = shift;
-	return e.map_to_rtx_codes (m_code, m_code, -1, -1);
+	return e.map_to_rtx_codes (m_code, m_code);
       }
 
     if (e.pred == PRED_x)
@@ -809,7 +871,7 @@ public:
 class unary_count : public quiet<function_base>
 {
 public:
-  CONSTEXPR unary_count (rtx_code code) : m_code (code) {}
+  constexpr unary_count (rtx_code code) : m_code (code) {}
 
   rtx
   expand (function_expander &e) const override
@@ -832,7 +894,7 @@ public:
 class while_comparison : public function_base
 {
 public:
-  CONSTEXPR while_comparison (int unspec_for_sint, int unspec_for_uint)
+  constexpr while_comparison (unspec unspec_for_sint, unspec unspec_for_uint)
     : m_unspec_for_sint (unspec_for_sint),
       m_unspec_for_uint (unspec_for_uint)
   {}
@@ -842,7 +904,7 @@ public:
   {
     /* Suffix 0 determines the predicate mode, suffix 1 determines the
        scalar mode and signedness.  */
-    int unspec = (e.type_suffix (1).unsigned_p
+    unspec unspec = (e.type_suffix (1).unsigned_p
 		  ? m_unspec_for_uint
 		  : m_unspec_for_sint);
     if (e.vectors_per_tuple () > 1)
@@ -866,20 +928,61 @@ public:
 
   /* The unspec codes associated with signed and unsigned operations
      respectively.  */
-  int m_unspec_for_sint;
-  int m_unspec_for_uint;
+  unspec m_unspec_for_sint;
+  unspec m_unspec_for_uint;
 };
+
+template<insn_code (*CODE_FOR_MODE) (machine_mode), unsigned int N>
+class narrowing_top_convert : public code_for_mode_function <CODE_FOR_MODE, N>
+{
+  using base = code_for_mode_function <CODE_FOR_MODE, N>;
+
+public:
+  gimple *
+  fold (gimple_folder &f) const override
+  {
+    if (f.pred == PRED_x && is_pfalse (gimple_call_arg (f.call, 1)))
+      return f.fold_call_to (build_zero_cst (f.ret_type));
+    return NULL;
+  }
+
+  rtx
+  expand (function_expander &e) const override
+  {
+    /* If the instruction is predicated, Add a selector argument for the
+       values of inactive lanes, which is equal to all ones for merging
+       predication and to all zeros for zeroing predication.  */
+    if (e.pred == PRED_none)
+      ;
+    else if (e.pred == PRED_z)
+      {
+	e.args.quick_push (CONST0_RTX (e.result_mode ()));
+      }
+    else
+      {
+	gcc_assert (e.pred == PRED_m || e.pred == PRED_x);
+	e.args.quick_push (CONST1_RTX (e.result_mode ()));
+      }
+
+    return base::expand (e);
+  }
+};
+
+#define NARROWING_TOP_CONVERT0(PATTERN)\
+  narrowing_top_convert<code_for_##PATTERN, 0>
+#define NARROWING_TOP_CONVERT1(PATTERN)\
+  narrowing_top_convert<code_for_##PATTERN, 1>
 
 }
 
 /* Declare the global function base NAME, creating it from an instance
    of class CLASS with constructor arguments ARGS.  */
 #define FUNCTION(NAME, CLASS, ARGS) \
-  namespace { static CONSTEXPR const CLASS NAME##_obj ARGS; } \
+  namespace { static constexpr const CLASS NAME##_obj ARGS; } \
   namespace functions { const function_base *const NAME = &NAME##_obj; }
 
 #define NEON_SVE_BRIDGE_FUNCTION(NAME, CLASS, ARGS) \
-  namespace { static CONSTEXPR const CLASS NAME##_obj ARGS; } \
+  namespace { static constexpr const CLASS NAME##_obj ARGS; } \
   namespace neon_sve_bridge_functions { const function_base *const NAME = &NAME##_obj; }
 
 #endif

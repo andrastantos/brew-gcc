@@ -22,7 +22,7 @@
 #include "rust-hir-visitor.h"
 #include "rust-hir-type-check.h"
 #include "rust-stacked-contexts.h"
-#include "rust-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
 
 namespace Rust {
 namespace HIR {
@@ -72,7 +72,7 @@ private:
     std::vector<std::unique_ptr<GenericParam>> &param, ConstGenericCtx context);
 
   StackedContexts<HirId> const_context;
-  const Resolver2_0::NameResolutionContext &resolver;
+  const Resolver2_0::FinalizedNameResolutionContext &resolver;
   Analysis::Mappings &mappings;
 
   virtual void visit (Lifetime &lifetime) override;
@@ -121,8 +121,8 @@ private:
   virtual void visit (RangeFromExpr &expr) override;
   virtual void visit (RangeToExpr &expr) override;
   virtual void visit (RangeFullExpr &expr) override;
-  virtual void visit (RangeFromToInclExpr &expr) override;
   virtual void visit (RangeToInclExpr &expr) override;
+  virtual void visit (BoxExpr &expr) override;
   virtual void visit (ReturnExpr &expr) override;
   virtual void visit (UnsafeBlockExpr &expr) override;
   virtual void visit (LoopExpr &expr) override;

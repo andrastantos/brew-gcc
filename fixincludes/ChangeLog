@@ -1,3 +1,79 @@
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't check for errno.
+	* system.h: Drop errno fallback.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for abort. Don't search for strings.h.
+	* system.h: Drop abort fallback. Drop strings.h fallback.
+
+2026-10-15  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Drop AC_C_CONST.
+
+2026-10-13  Simon Marchi  <simon.marchi@polymtl.ca>
+
+	* configure.ac: Add AC_CONFIG_MACRO_DIRS.
+	* configure: Regenerate.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for stddef.h or stdlib.h.
+	* system.h (HAVE_STDDEF_H): Delete.
+	Include stddef.h unconditionally.
+	(HAVE_STDLIB_H): Delete.
+	Include stdlib.h unconditionally.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* configure: Regenerate.
+	* configure.ac: Drop AC_HEADER_STDC.
+
+2026-09-20  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* fixincl.x: Regenerate.
+	* inclhack.def: Allow for math.h in architecture/<arch> in SDKs.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Replace AC_CANONICAL_SYSTEM with AC_CANONICAL_TARGET.
+
+2026-06-27  Filip Kastl  <fkastl@suse.cz>
+
+	* fixincl.c (extract_quoted_files): Add a const char * helper
+	variable.
+
+2026-06-22  Filip Kastl  <fkastl@suse.cz>
+
+	* fixincl.c (cksum_test): Remove trailing whitespace.
+	(quoted_file_exists): Remove trailing whitespace.
+	(extract_quoted_files): const char * -> char *.
+	(fix_with_system): Remove trailing whitespace.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* README: Fix typos.
+	* fixinc.in: Likewise.
+	* fixincl.c (quoted_file_exists): Likewise.
+	* fixlib.c (fix_path_separators): Likewise.
+	* inclhack.def: Likewise.
+
 2026-02-15  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
 
 	PR libstdc++/113450

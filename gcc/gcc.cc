@@ -63,7 +63,7 @@ compilation is specified by a string called a "spec".  */
 
 /* Manage the manipulation of env vars.
 
-   We poison "getenv" and "putenv", so that all enviroment-handling is
+   We poison "getenv" and "putenv", so that all environment-handling is
    done through this class.  Note that poisoning happens in the
    preprocessor at the identifier level, and doesn't distinguish between
      env.getenv ();
@@ -389,7 +389,7 @@ static void xputenv (const char *);
 static void putenv_from_prefixes (const struct path_prefix *, const char *,
 				  bool);
 static int access_check (const char *, int);
-static char *find_a_file (const struct path_prefix *, const char *, int, bool);
+static char *find_a_file (const struct path_prefix *, const char *, bool);
 static char *find_a_program (const char *);
 static void add_prefix (struct path_prefix *, const char *, const char *,
 			int, int, int);
@@ -607,7 +607,7 @@ or with constant text in a single argument.
  %2	process CC1PLUS_SPEC as a spec.
  %*	substitute the variable part of a matched option.  (See below.)
 	Note that each comma in the substituted string is replaced by
-	a single space.  A space is appended after the last substition
+	a single space.  A space is appended after the last substitution
 	unless there is more text in current sequence.
  %<S    remove all occurrences of -S from the command line.
         Note - this command is position dependent.  % commands in the
@@ -643,7 +643,7 @@ or with constant text in a single argument.
           if %* appears somewhere in X, then X will be substituted
           once for each matching switch, with the %* replaced by the
           part of that switch that matched the '*'.  A space will be
-	  appended after the last substition unless there is more
+	  appended after the last substitution unless there is more
 	  text in current sequence.
  %{.S:X}  substitutes X, if processing a file with suffix S.
  %{!.S:X} substitutes X, if NOT processing a file with suffix S.
@@ -707,6 +707,12 @@ proper position among the other output files.  */
    or extra switch-translations.  */
 #ifndef ASM_SPEC
 #define ASM_SPEC ""
+#endif
+
+/* config.h can define ASM_V_SPEC to pass equivalents of -v, -w (no warnings),
+   and -I to the assembler.  */
+#ifndef ASM_V_SPEC
+#define ASM_V_SPEC "%{v} %{w:-W} %{I*}"
 #endif
 
 /* config.h can define ASM_FINAL_SPEC to run a post processor after
@@ -1094,7 +1100,7 @@ proper position among the other output files.  */
 /* Conditional to test whether the LTO plugin is used or not.
    FIXME: For slim LTO we will need to enable plugin unconditionally.  This
    still cause problems with PLUGIN_LD != LD and when plugin is built but
-   not useable.  For GCC 4.6 we don't support slim LTO and thus we can enable
+   not usable.  For GCC 4.6 we don't support slim LTO and thus we can enable
    plugin only when LTO is enabled.  We still honor explicit
    -fuse-linker-plugin if the linker used understands -plugin.  */
 
@@ -1327,12 +1333,8 @@ static const char *cc1_options =
 
 static const char *asm_options =
 "%{-target-help:%:print-asm-header()} "
-#if HAVE_GNU_AS
-/* If GNU AS is used, then convert -w (no warnings), -I, and -v
-   to the assembler equivalents.  */
-"%{v} %{w:-W} %{I*} "
-#endif
-"%(asm_debug_option)"
+ASM_V_SPEC
+" %(asm_debug_option)"
 ASM_COMPRESS_DEBUG_SPEC
 "%a %Y %{c:%W{o*}%{!o*:-o %w%b%O}}%{!c:-o %d%w%u%O}";
 
@@ -1630,6 +1632,11 @@ static const char *machine_suffix = 0;
    This is just `MACHINE/'.  */
 
 static const char *just_machine_suffix = 0;
+
+/* Prefix to attach to *basename* of commands being searched.
+   This is just `MACHINE-'.  */
+
+static const char *just_machine_prefix = 0;
 
 /* Adjusted value of GCC_EXEC_PREFIX envvar.  */
 
@@ -2466,7 +2473,7 @@ read_specs (const char *filename, bool main_p, bool user_p)
 			     "%td characters", p1 - buffer + 1);
 
 	      p[-2] = '\0';
-	      new_filename = find_a_file (&startfile_prefixes, p1, R_OK, true);
+	      new_filename = find_a_file (&startfile_prefixes, p1, true);
 	      read_specs (new_filename ? new_filename : p1, false, user_p);
 	      continue;
 	    }
@@ -2486,7 +2493,7 @@ read_specs (const char *filename, bool main_p, bool user_p)
 			     "%td characters", p1 - buffer + 1);
 
 	      p[-2] = '\0';
-	      new_filename = find_a_file (&startfile_prefixes, p1, R_OK, true);
+	      new_filename = find_a_file (&startfile_prefixes, p1, true);
 	      if (new_filename)
 		read_specs (new_filename, false, user_p);
 	      else if (verbose_flag)
@@ -2830,7 +2837,7 @@ for_each_path (const struct path_prefix *paths,
   const char *multi_suffix;
   const char *just_multi_suffix;
   char *path = NULL;
-  decltype (callback (nullptr)) ret = nullptr;
+  decltype (callback (nullptr, false)) ret = nullptr;
   bool skip_multi_dir = false;
   bool skip_multi_os_dir = false;
 
@@ -2881,7 +2888,7 @@ for_each_path (const struct path_prefix *paths,
 	  if (!skip_multi_dir)
 	    {
 	      memcpy (path + len, multi_suffix, suffix_len + 1);
-	      ret = callback (path);
+	      ret = callback (path, true);
 	      if (ret)
 		break;
 	    }
@@ -2892,7 +2899,7 @@ for_each_path (const struct path_prefix *paths,
 	      && pl->require_machine_suffix == 2)
 	    {
 	      memcpy (path + len, just_multi_suffix, just_suffix_len + 1);
-	      ret = callback (path);
+	      ret = callback (path, true);
 	      if (ret)
 		break;
 	    }
@@ -2902,7 +2909,7 @@ for_each_path (const struct path_prefix *paths,
 	      && !pl->require_machine_suffix && multiarch_dir)
 	    {
 	      memcpy (path + len, multiarch_suffix, multiarch_len + 1);
-	      ret = callback (path);
+	      ret = callback (path, true);
 	      if (ret)
 		break;
 	    }
@@ -2930,7 +2937,7 @@ for_each_path (const struct path_prefix *paths,
 	      else
 		path[len] = '\0';
 
-	      ret = callback (path);
+	      ret = callback (path, false);
 	      if (ret)
 		break;
 	    }
@@ -3003,7 +3010,7 @@ build_search_list (const struct path_prefix *paths, const char *prefix,
   obstack_1grow (&collect_obstack, '=');
 
   /* Callback adds path to obstack being built.  */
-  for_each_path (paths, do_multi, 0, [&](char *path) -> void*
+  for_each_path (paths, do_multi, 0, [&](char *path, bool) -> void*
     {
       if (check_dir && !is_directory (path))
 	return NULL;
@@ -3056,47 +3063,32 @@ access_check (const char *name, int mode)
    Return 0 if not found, otherwise return its name, allocated with malloc.  */
 
 static char *
-find_a_file (const struct path_prefix *pprefix, const char *name, int mode,
+find_a_file (const struct path_prefix *pprefix, const char *name,
 	     bool do_multi)
 {
   /* Find the filename in question (special case for absolute paths).  */
 
   if (IS_ABSOLUTE_PATH (name))
     {
-      if (access (name, mode) == 0)
+      if (access (name, R_OK) == 0)
 	return xstrdup (name);
 
       return NULL;
     }
 
-  const char *suffix = (mode & X_OK) != 0 ? HOST_EXECUTABLE_SUFFIX : "";
   const int name_len = strlen (name);
-  const int suffix_len = strlen (suffix);
 
 
   /* Callback appends the file name to the directory path.  If the
      resulting file exists in the right mode, return the full pathname
      to the file.  */
   return for_each_path (pprefix, do_multi,
-			name_len + suffix_len,
-			[=](char *path) -> char*
+			name_len,
+			[=](char *path, bool) -> char*
     {
-      size_t len = strlen (path);
+      memcpy (path + strlen (path), name, name_len + 1);
 
-      memcpy (path + len, name, name_len);
-      len += name_len;
-
-      /* Some systems have a suffix for executable files.
-	 So try appending that first.  */
-      if (suffix_len)
-	{
-	  memcpy (path + len, suffix, suffix_len + 1);
-	  if (access_check (path, mode) == 0)
-	    return path;
-	}
-
-      path[len] = '\0';
-      if (access_check (path, mode) == 0)
+      if (access_check (path, R_OK) == 0)
 	return path;
 
       return NULL;
@@ -3131,7 +3123,65 @@ find_a_program (const char *name)
     return xstrdup (DEFAULT_WINDRES);
 #endif
 
-  return find_a_file (&exec_prefixes, name, X_OK, false);
+  /* Find the filename in question (special case for absolute paths).  */
+
+  if (IS_ABSOLUTE_PATH (name))
+    {
+      if (access (name, X_OK) == 0)
+	return xstrdup (name);
+
+      return NULL;
+    }
+
+  const char *suffix = HOST_EXECUTABLE_SUFFIX;
+  const int name_len = strlen (name);
+  const int prefix_len = strlen (just_machine_prefix);
+  const int suffix_len = strlen (suffix);
+
+  /* Callback appends the file name to the directory path.  If the
+     resulting file exists in the right mode, return the full pathname
+     to the file.  */
+  return for_each_path (&exec_prefixes, false,
+			prefix_len + name_len + suffix_len,
+			[=](char *path, bool machine_specific) -> char*
+    {
+      size_t path_len = strlen (path);
+
+      auto search = [=](size_t len) -> char*
+	{
+	  memcpy (path + len, name, name_len + 1);
+	  len += name_len;
+
+	  /* Some systems have a suffix for executable files.
+	     So try appending that first.  */
+	  if (suffix_len)
+	    {
+	      memcpy (path + len, suffix, suffix_len + 1);
+	      if (access_check (path, X_OK) == 0)
+		return path;
+	    }
+
+	  path[len] = '\0';
+	  if (access_check (path, X_OK) == 0)
+	    return path;
+
+	  return NULL;
+	};
+
+      /* Additionally search for $target-prog in machine-agnostic dirs,
+	 as an additional way to disambiguate targets. Do not do this in
+	 machine-specific dirs because so further disambiguation is
+	 needed. */
+      if (!machine_specific)
+	{
+	  memcpy (path + path_len, just_machine_prefix, prefix_len);
+	  auto ret = search(path_len + prefix_len);
+	  if (ret)
+	    return ret;
+	}
+
+      return search(path_len);
+    });
 }
 
 /* Ranking of prefixes in the sort list. -B prefixes are put before
@@ -3513,9 +3563,9 @@ execute (void)
 		 thinking there's a compiler bug.  Much more likely is
 		 the user or OOM killer nuked it.  */
 	      fatal_error (input_location,
-			   "%s signal terminated program %s",
-			   strsignal (WTERMSIG (status)),
-			   commands[i].prog);
+			   "%s terminated by signal %d (%s)",
+			   commands[i].prog, WTERMSIG (status),
+			   strsignal (WTERMSIG (status)));
 	      break;
 
 #ifdef SIGPIPE
@@ -3537,9 +3587,9 @@ execute (void)
 
 	    default:
 	      /* The inferior failed to catch the signal.  */
-	      internal_error_no_backtrace ("%s signal terminated program %s",
-					   strsignal (WTERMSIG (status)),
-					   commands[i].prog);
+	      internal_error_no_backtrace ("%s terminated by signal %d (%s)",
+					   commands[i].prog, WTERMSIG (status),
+					   strsignal (WTERMSIG (status)));
 	    }
 	else if (WIFEXITED (status)
 		 && WEXITSTATUS (status) >= MIN_FATAL_STATUS)
@@ -5634,6 +5684,52 @@ process_command (unsigned int decoded_options_count,
   infiles[n_infiles].name = 0;
 }
 
+/* Set COLLECT_GCC_OPTIONS in the environment.  If the value would
+   exceed COLLECT2_OPTIONS_MAX_LENGTH, spill it to a temporary
+   response file and set the variable to @<path> instead.  */
+
+static void
+xsetenv_collect_gcc_options (char *string)
+{
+  if (strlen (string) <= COLLECT2_OPTIONS_MAX_LENGTH)
+    {
+      xputenv (string);
+      return;
+    }
+
+  static const char prefix[] = "COLLECT_GCC_OPTIONS=";
+  gcc_assert (startswith (string, prefix));
+
+  /* parse_options_from_collect_gcc_options expects argc to start
+     at 1, so push a placeholder argv[0].  */
+  struct obstack argv_obstack;
+  obstack_init (&argv_obstack);
+  obstack_ptr_grow (&argv_obstack, const_cast<char *> (progname));
+  int argc;
+  parse_options_from_collect_gcc_options (string + sizeof (prefix) - 1,
+					  &argv_obstack, &argc);
+  char **argv = XOBFINISH (&argv_obstack, char **);
+
+  char *temp_file = make_temp_file ("");
+  FILE *f = fopen (temp_file, "wb");
+  if (f == nullptr)
+    fatal_error (input_location,
+		 "cannot open response file %qs: %m", temp_file);
+  /* writeargv walks until NULL; skip our placeholder argv[0].  */
+  if (writeargv (argv + 1, f) != 0)
+    fatal_error (input_location,
+		 "cannot write response file %qs: %m", temp_file);
+  if (fclose (f) != 0)
+    fatal_error (input_location,
+		 "cannot close response file %qs: %m", temp_file);
+
+  char *env_val = concat (prefix, "@", temp_file, nullptr);
+  /* Delete on both success and failure unless -save-temps.  */
+  record_temp_file (temp_file, !save_temps_flag, !save_temps_flag);
+  obstack_free (&argv_obstack, nullptr);
+  xputenv (env_val);
+}
+
 /* Store switches not filtered out by %<S in spec in COLLECT_GCC_OPTIONS
    and place that in the environment.  */
 
@@ -5712,7 +5808,7 @@ set_collect_gcc_options (void)
     }
 
   obstack_grow (&collect_obstack, "\0", 1);
-  xputenv (XOBFINISH (&collect_obstack, char *));
+  xsetenv_collect_gcc_options (XOBFINISH (&collect_obstack, char *));
 }
 
 /* Process a spec string, accumulating and running commands.  */
@@ -5787,7 +5883,7 @@ end_going_arg (void)
 	string = find_file (string);
       if (this_is_linker_script)
 	{
-	  char * full_script_path = find_a_file (&startfile_prefixes, string, R_OK, true);
+	  char * full_script_path = find_a_file (&startfile_prefixes, string, true);
 
 	  if (full_script_path == NULL)
 	    {
@@ -6042,11 +6138,11 @@ struct spec_path {
   bool separate_options;
   bool realpaths;
 
-  void *operator() (char *path);
+  void *operator() (char *path, bool);
 };
 
 void *
-spec_path::operator() (char *path)
+spec_path::operator() (char *path, bool)
 {
   size_t len = 0;
   char save = 0;
@@ -8093,7 +8189,7 @@ out:
 static const char *
 find_file (const char *name)
 {
-  char *newname = find_a_file (&startfile_prefixes, name, R_OK, true);
+  char *newname = find_a_file (&startfile_prefixes, name, true);
   return newname ? newname : name;
 }
 
@@ -8423,7 +8519,11 @@ driver::global_initializations ()
 
   /* Parsing and gimplification sometimes need quite large stack.
      Increase stack size limits if possible.  */
+#ifdef __SANITIZE_ADDRESS__
+  stack_limit_increase (128 * 1024 * 1024);
+#else
   stack_limit_increase (64 * 1024 * 1024);
+#endif
 
   /* Allocate the argument vector.  */
   alloc_args ();
@@ -8518,8 +8618,9 @@ driver::set_up_specs () const
   machine_suffix = concat (spec_host_machine, dir_separator_str, spec_version,
 			   accel_dir_suffix, dir_separator_str, NULL);
   just_machine_suffix = concat (spec_machine, dir_separator_str, NULL);
+  just_machine_prefix = concat (spec_machine, "-", NULL);
 
-  specs_file = find_a_file (&startfile_prefixes, "specs", R_OK, true);
+  specs_file = find_a_file (&startfile_prefixes, "specs", true);
   /* Read the specs file unless it is a default one.  */
   if (specs_file != 0 && strcmp (specs_file, "specs"))
     read_specs (specs_file, true, false);
@@ -8663,7 +8764,7 @@ driver::set_up_specs () const
   for (struct user_specs *uptr = user_specs_head; uptr; uptr = uptr->next)
     {
       char *filename = find_a_file (&startfile_prefixes, uptr->filename,
-				    R_OK, true);
+				    true);
       read_specs (filename ? filename : uptr->filename, false, true);
     }
 
@@ -9298,7 +9399,7 @@ driver::maybe_run_linker (const char *argv0) const
 #endif
 	    {
 	      char *temp_spec = find_a_file (&exec_prefixes,
-					     LTOPLUGINSONAME, R_OK,
+					     LTOPLUGINSONAME,
 					     false);
 	      if (!temp_spec)
 		fatal_error (input_location,
@@ -9339,7 +9440,7 @@ driver::maybe_run_linker (const char *argv0) const
 	  warning (0, "%s: linker input file unused because linking not done",
 		   outfiles[i]);
 	  if (access (outfiles[i], F_OK) < 0)
-	    /* This is can be an indication the user specifed an errorneous
+	    /* This is can be an indication the user specified an erroneous
 	       separated option value, (or used the wrong prefix for an
 	       option).  */
 	    error ("%s: linker input file not found: %m", outfiles[i]);
@@ -10787,7 +10888,7 @@ include_spec_function (int argc, const char **argv)
   if (argc != 1)
     abort ();
 
-  file = find_a_file (&startfile_prefixes, argv[0], R_OK, true);
+  file = find_a_file (&startfile_prefixes, argv[0], true);
   read_specs (file ? file : argv[0], false, false);
 
   return NULL;
@@ -11224,12 +11325,12 @@ find_fortran_preinclude_file (int argc, const char **argv)
 			     NULL, 0, 0, 0);
 #endif
 
-  const char *path = find_a_file (&include_prefixes, argv[1], R_OK, false);
+  const char *path = find_a_file (&include_prefixes, argv[1], false);
   if (path != NULL)
     result = concat (argv[0], path, NULL);
   else
     {
-      path = find_a_file (&prefixes, argv[1], R_OK, false);
+      path = find_a_file (&prefixes, argv[1], false);
       if (path != NULL)
 	result = concat (argv[0], path, NULL);
     }

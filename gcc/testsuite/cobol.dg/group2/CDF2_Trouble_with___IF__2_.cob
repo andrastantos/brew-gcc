@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/CDF2_Trouble_with___IF__2_.out" }
 
       *> This should compile, and doesn't

@@ -50,7 +50,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "objc-runtime-hooks.h"
 /* Routines used mainly by the runtimes.  */
 #include "objc-runtime-shared-support.h"
-/* For default_tree_printer ().  */
 
 /* For enum gimplify_status */
 #include "gimple-expr.h"
@@ -273,12 +272,12 @@ objc_create_temporary_var (tree type, const char *name)
 
   if (name != NULL)
     {
-      decl = build_decl (input_location,
+      decl = objc_build_decl (input_location,
 			 VAR_DECL, get_identifier (name), type);
     }
   else
     {
-      decl = build_decl (input_location,
+      decl = objc_build_decl (input_location,
 			 VAR_DECL, NULL_TREE, type);
     }
   TREE_USED (decl) = 1;
@@ -2231,7 +2230,7 @@ objc_build_struct (tree klass, tree fields, tree super_name)
     {
       /* Prepend a packed variant of the base class into the layout.  This
 	 is necessary to preserve ObjC ABI compatibility.  */
-      tree base = build_decl (input_location,
+      tree base = objc_build_decl (input_location,
 			      FIELD_DECL, NULL_TREE, super);
       tree field = TYPE_FIELDS (super);
 
@@ -2572,7 +2571,7 @@ objc_compare_types (tree ltyp, tree rtyp, int argno, tree callee)
 	  ltyp = function_args_iter_cond (&liter);
 	  rtyp = function_args_iter_cond (&riter);
 
-	  /* If we've exhaused both lists simulateously, we're done.  */
+	  /* If we've exhausted both lists simulateously, we're done.  */
 	  if (ltyp == NULL_TREE && rtyp == NULL_TREE)
 	    break;
 
@@ -3111,19 +3110,19 @@ synth_module_prologue (void)
   objc_selector_name = get_identifier (SEL_TYPEDEF_NAME);
 
   /* Declare the 'id', 'instancetype' and 'Class' typedefs.  */
-  type = lang_hooks.decls.pushdecl (build_decl (input_location,
+  type = lang_hooks.decls.pushdecl (objc_build_decl (input_location,
 						TYPE_DECL,
 						objc_object_name,
 						objc_object_type));
   suppress_warning (type);
 
-  type = lang_hooks.decls.pushdecl (build_decl (input_location,
+  type = lang_hooks.decls.pushdecl (objc_build_decl (input_location,
 						TYPE_DECL,
 						objc_instancetype_name,
 						objc_instancetype_type));
   suppress_warning (type);
 
-  type = lang_hooks.decls.pushdecl (build_decl (input_location,
+  type = lang_hooks.decls.pushdecl (objc_build_decl (input_location,
 						TYPE_DECL,
 						objc_class_name,
 						objc_class_type));
@@ -3235,13 +3234,13 @@ static tree
 objc_build_internal_const_str_type (void)
 {
   tree type = (*lang_hooks.types.make_type) (RECORD_TYPE);
-  tree fields = build_decl (input_location,
+  tree fields = objc_build_decl (input_location,
 			    FIELD_DECL, NULL_TREE, ptr_type_node);
-  tree field = build_decl (input_location,
+  tree field = objc_build_decl (input_location,
 			   FIELD_DECL, NULL_TREE, ptr_type_node);
 
   DECL_CHAIN (field) = fields; fields = field;
-  field = build_decl (input_location,
+  field = objc_build_decl (input_location,
 		      FIELD_DECL, NULL_TREE, unsigned_type_node);
   DECL_CHAIN (field) = fields; fields = field;
   /* NB: The finish_builtin_struct() routine expects FIELD_DECLs in
@@ -3387,17 +3386,12 @@ objc_build_string_object (tree string)
 tree
 objc_build_constructor (tree type, vec<constructor_elt, va_gc> *elts)
 {
+  gcc_checking_assert (!elts || (*elts)[0].index);
   tree constructor = build_constructor (type, elts);
 
   TREE_CONSTANT (constructor) = 1;
   TREE_STATIC (constructor) = 1;
   TREE_READONLY (constructor) = 1;
-
-#ifdef OBJCPLUS
-  /* If we know the initializer, then set the type to what C++ expects.  */
-  if (elts && !(*elts)[0].index)
-    TREE_TYPE (constructor) = init_list_type_node;
-#endif
   return constructor;
 }
 
@@ -4346,7 +4340,7 @@ objc_begin_catch_clause (tree decl)
      else
        {
 	 /* The parser passed in a PARM_DECL, but what we really want is a VAR_DECL.  */
-	 decl = build_decl (input_location,
+	 decl = objc_build_decl (input_location,
 			    VAR_DECL, DECL_NAME (decl), TREE_TYPE (decl));
        }
      lang_hooks.decls.pushdecl (decl);
@@ -5096,7 +5090,7 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 	    {
 	      /* We need to fixup all the argument indexes by adding 2
 		 for the two hidden arguments of an Objective-C method
-		 invocation, similat to what we do above for the
+		 invocation, similar to what we do above for the
 		 "format" attribute.  */
 	      /* FIXME: This works great in terms of implementing the
 		 functionality, but the warnings that are produced by
@@ -8456,17 +8450,13 @@ objc_push_parm (tree parm)
   /* If the parameter type has been decayed, a new PARM_DECL needs to be
      built as well.  */
   if (type != TREE_TYPE (parm))
-    parm = build_decl (input_location, PARM_DECL, DECL_NAME (parm), type);
+    parm = objc_build_decl (input_location, PARM_DECL, DECL_NAME (parm), type);
 
   DECL_ARG_TYPE (parm)
     = lang_hooks.types.type_promotes_to (TREE_TYPE (parm));
 
   /* Record constancy and volatility.  */
-  c_apply_type_quals_to_decl
-  ((TYPE_READONLY (TREE_TYPE (parm)) ? TYPE_QUAL_CONST : 0)
-   | (TYPE_RESTRICT (TREE_TYPE (parm)) ? TYPE_QUAL_RESTRICT : 0)
-   | (TYPE_ATOMIC (TREE_TYPE (parm)) ? TYPE_QUAL_ATOMIC : 0)
-   | (TYPE_VOLATILE (TREE_TYPE (parm)) ? TYPE_QUAL_VOLATILE : 0), parm);
+  c_apply_type_quals_to_decl (TYPE_QUALS (TREE_TYPE (parm)), parm);
 
   objc_parmlist = chainon (objc_parmlist, parm);
 }
@@ -8528,11 +8518,11 @@ synth_self_and_ucmd_args (void)
     self_type = objc_object_type;
 
   /* id self; */
-  objc_push_parm (build_decl (input_location,
+  objc_push_parm (objc_build_decl (input_location,
 			      PARM_DECL, self_id, self_type));
 
   /* SEL _cmd; */
-  objc_push_parm (build_decl (input_location,
+  objc_push_parm (objc_build_decl (input_location,
 			      PARM_DECL, ucmd_id, objc_selector_type));
 }
 
@@ -8577,7 +8567,7 @@ start_method_def (tree method, tree expr)
       tree type = TREE_VALUE (TREE_TYPE (parmlist));
       tree parm;
 
-      parm = build_decl (input_location,
+      parm = objc_build_decl (input_location,
 			 PARM_DECL, KEYWORD_ARG_NAME (parmlist), type);
       decl_attributes (&parm, DECL_ATTRIBUTES (parmlist), 0);
       objc_push_parm (parm);
@@ -8814,7 +8804,7 @@ objc_start_function (tree name, tree type, tree attrs,
 #endif
 		     )
 {
-  tree fndecl = build_decl (input_location,
+  tree fndecl = objc_build_decl (input_location,
 			    FUNCTION_DECL, name, type);
 
 #ifdef OBJCPLUS
@@ -8837,7 +8827,7 @@ objc_start_function (tree name, tree type, tree attrs,
   push_scope ();
   declare_parm_level ();
   DECL_RESULT (current_function_decl)
-    = build_decl (input_location,
+    = objc_build_decl (input_location,
 		  RESULT_DECL, NULL_TREE,
 		  TREE_TYPE (TREE_TYPE (current_function_decl)));
   DECL_ARTIFICIAL (DECL_RESULT (current_function_decl)) = 1;
@@ -8994,7 +8984,7 @@ get_super_receiver (void)
       bool inst_meth;
       if (!UOBJC_SUPER_decl)
       {
-	UOBJC_SUPER_decl = build_decl (input_location,
+	UOBJC_SUPER_decl = objc_build_decl (input_location,
 				       VAR_DECL, get_identifier (TAG_SUPER),
 				       objc_super_template);
 	/* This prevents `unused variable' warnings when compiling with -Wall.  */
@@ -9843,7 +9833,7 @@ build_fast_enumeration_state_template (void)
             next_object:
 	    if (__objc_foreach_mutation_pointer != *__objc_foreach_enum_state.mutationsPtr) objc_enumeration_mutation (<collection expression>);
 	    <object expression> = enumState.itemsPtr[__objc_foreach_index];
-	    <statements> [PS: inside <statments>, 'break' jumps to break_label and 'continue' jumps to continue_label]
+	    <statements> [PS: inside <statements>, 'break' jumps to break_label and 'continue' jumps to continue_label]
 
             continue_label:
             __objc_foreach_index++;
@@ -10038,7 +10028,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
       t = build2 (MODIFY_EXPR, void_type_node,
 		  build_array_ref (location, objc_build_component_ref (objc_foreach_enum_state_decl,
 								       get_identifier ("extra")),
-				   build_int_cst (NULL_TREE, i)),
+				   build_int_cst (integer_type_node, i)),
 		  build_int_cst (long_unsigned_type_node, 0));
       SET_EXPR_LOCATION (t, location);
       append_to_statement_list (t, &BIND_EXPR_BODY (bind));
@@ -10054,7 +10044,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
 				 tree_cons   /* __objc_foreach_items  */
 				 (NULL_TREE, objc_foreach_items_decl,
 				  tree_cons  /* 16 */
-				  (NULL_TREE, build_int_cst (NULL_TREE, 16), NULL_TREE))), NULL);
+				  (NULL_TREE, build_int_cst (integer_type_node, 16), NULL_TREE))), NULL);
 #else
   /* In C, we need to decay the __objc_foreach_items array that we are passing.  */
   {
@@ -10067,7 +10057,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
 				   tree_cons   /* __objc_foreach_items  */
 				   (NULL_TREE, default_function_array_conversion (location, array).value,
 				    tree_cons  /* 16 */
-				    (NULL_TREE, build_int_cst (NULL_TREE, 16), NULL_TREE))), NULL);
+				    (NULL_TREE, build_int_cst (integer_type_node, 16), NULL_TREE))), NULL);
   }
 #endif
   t = build2 (MODIFY_EXPR, void_type_node, objc_foreach_batchsize_decl,
@@ -10181,7 +10171,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
   SET_EXPR_LOCATION (t, location);
   append_to_statement_list (t, &BIND_EXPR_BODY (next_batch_bind));
 
-  /* <statements> [PS: in <statments>, 'break' jumps to break_label and 'continue' jumps to continue_label] */
+  /* <statements> [PS: in <statements>, 'break' jumps to break_label and 'continue' jumps to continue_label] */
   append_to_statement_list (for_body, &BIND_EXPR_BODY (next_batch_bind));
 
   /* continue_label: */
@@ -10228,7 +10218,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
 				 tree_cons   /* __objc_foreach_items  */
 				 (NULL_TREE, objc_foreach_items_decl,
 				  tree_cons  /* 16 */
-				  (NULL_TREE, build_int_cst (NULL_TREE, 16), NULL_TREE))), NULL);
+				  (NULL_TREE, build_int_cst (integer_type_node, 16), NULL_TREE))), NULL);
 #else
   /* In C, we need to decay the __objc_foreach_items array that we are passing.  */
   {
@@ -10241,7 +10231,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
 				   tree_cons   /* __objc_foreach_items  */
 				   (NULL_TREE, default_function_array_conversion (location, array).value,
 				    tree_cons  /* 16 */
-				    (NULL_TREE, build_int_cst (NULL_TREE, 16), NULL_TREE))), NULL);
+				    (NULL_TREE, build_int_cst (integer_type_node, 16), NULL_TREE))), NULL);
   }
 #endif
   t = build2 (MODIFY_EXPR, void_type_node, objc_foreach_batchsize_decl,

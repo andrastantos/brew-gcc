@@ -38,27 +38,6 @@
 
 extern int yy_flex_debug;
 
-source_format_t& cdf_source_format();
-
-void
-source_format_t::infer( const char *bol, bool want_reference_format ) {
-  if( bol ) {
-    left = 7;
-    if( want_reference_format ) {
-      right = 73;
-    }
-  }
-  dbgmsg("%s:%d: %s format detected", __func__, __LINE__,
-         description());
-}
-
-
-// public source format test functions
-bool is_fixed_format() { return cdf_source_format().is_fixed(); }
-bool is_reference_format() { return cdf_source_format().is_reffmt(); }
-
-static bool debug_mode = false;
-
 /*
  * The "debug mode" is a little odd, because we have to make sure a
  * leading "D" doesn't start the verb DISPLAY (for example).  If
@@ -68,25 +47,19 @@ static bool debug_mode = false;
  *
  * So, the line is excluded if: fixed format and not debug mode
  * Else, it's included.
-*/
-
-static inline int left_margin() {
-  return cdf_source_format().left_margin();
-}
-static inline int right_margin() {
-  return cdf_source_format().right_margin();
-}
+ */
+static bool debug_mode = false;
 
 /*
- * When setting the indicator column explicity:
+ * When setting the indicator column explicitly:
  *   To get strict fixed 72-column lines, use a negative column number.
  *   When setting back to 0 (free), the right margin is also reset to 0.
  */
 void
 cobol_set_indicator_column( int column );
 
-bool include_debug()      { return is_fixed_format() && debug_mode; }
-bool set_debug( bool tf ) { return debug_mode = tf && is_fixed_format(); }
+bool include_debug()      { return debug_mode; }
+bool set_debug( bool tf ) { return debug_mode = tf; }
 
 static bool nonblank( const char ch ) { return !isblank(ch); }
 
@@ -97,30 +70,38 @@ start_of_line( char *bol, char *eol ) {
   return bol;
 }
 
-static inline char *
-continues_at( char *bol, char *eol ) {
-  if( cdf_source_format().is_free() ) return NULL;  // cannot continue in free format
-  bol += left_margin();
-  if( *bol != '-' ) return NULL; // not a continuation line
-  return start_of_line(++bol, eol);
-}
-
 // Return pointer to indicator column. Test ch if provided.
 // NULL means no indicator column or tested value not present.
-static inline char *
-indicated( char *bol, const char *eol, char ch = '\0' ) {
-  if( cdf_source_format().left_margin() == 0 && *bol != '*' ) {
+char *
+source_format_t::indicated( char *bol, const char *eol, char ch ) {
+  if( left_margin() == 0 && *bol != '*' ) {
     return NULL;  // no indicator column in free format, except for comments
   }
   gcc_assert(bol != NULL);
   auto ind = bol + left_margin();
   if( eol <= ind ) return NULL; // left margin would be after end of line
   // If TAB is in the line-number region, nothing is in the indicator column.
-  bool has_tab = std::any_of(bol, ind,
-                             [](const char ch) { return ch == '\t'; } );
-  if( has_tab ) return NULL;
+  auto ptab = std::find(bol, ind, '\t');
+  if( ptab != ind) return ptab;
   if( (bol += left_margin()) > eol ) return NULL;
   return ch == '\0' || ch == *bol? bol : NULL;
+}
+
+/* Advance past a quoted literal */
+static char *
+skip_quoted_literal( char *p, char *pend ) {
+  const char delimiter = *p++;
+  while( p < pend ) {
+    p = std::find(p, pend, delimiter);
+    if( p == pend )
+      return pend;
+    if( p + 1 < pend && p[1] == delimiter ) {
+      p += 2; // nested quote
+      continue;
+    }
+    return ++p;
+  }
+  return pend;
 }
 
 static char *
@@ -128,13 +109,22 @@ remove_inline_comment( char *bol, char *eol ) {
   char *nl = std::find(bol, eol, '\n');
 
   if( bol < nl ) {
-    static char ends = '\0';
-    std::swap(*nl, ends);
-    char *comment = strstr(bol, "*>");
-    if( comment ) {
-      std::fill(comment, nl, SPACE);
+    /* skip *> in alphanumeric literals */
+    static const char markers[] = { '\'', '"', '*' };
+    for( char *p = bol; p < nl; ) {
+      p = std::find_first_of(p, nl, markers, markers + sizeof(markers));
+      if( p == nl )
+        break;
+      if( isquote(*p) ) {
+        p = skip_quoted_literal(p, nl);
+        continue;
+      }
+      if( p + 1 < nl && p[1] == '>' ) {
+        std::fill(p, nl, SPACE);
+        break;
+      }
+      p++;
     }
-    std::swap(*nl, ends);
   }
   return eol;
 }
@@ -148,20 +138,6 @@ erase_line( char *src, char *esrc ) {
 static size_t
 count_newlines( const char *beg, const char *end ) {
   return std::count(beg, end, '\n');
-}
-
-size_t
-filespan_t::tab_check( const char *src, const char *esrc ) {
-  static const char tab = '\t';
-
-  const char *data = src + left_margin();
-  if( data < esrc ) { // not a blank line
-    const char *tab_at = std::find(src, data, tab);
-    if( tab_at < data ) {
-      return (tab_at - src) + 1;
-    }
-  }
-  return 0;
 }
 
 static const auto extended_icase = regex::extended | regex::icase;
@@ -206,7 +182,7 @@ maybe_add_space(const span_t& pattern, replace_t& recognized) {
  * directive.  For the current line, apply patterns that begins on the
  * line.  (It may match input extending beyond the current eol.)
  *
- * As each replacement is identified, append it to the passsed list of
+ * As each replacement is identified, append it to the passed list of
  * pending replacements.  For these elements:
  *
  *     before is a span in mfile
@@ -321,7 +297,8 @@ recognize_replacements( filespan_t mfile, std::list<replace_t>& pending_replacem
 }
 
 static void
-check_push_pop_directive( filespan_t& mfile ) {
+check_push_pop_directive( filespan_t& mfile,
+                          source_format_stack_t& source_format ) {
   char eol = '\0';
   const char *p = std::find(mfile.cur, mfile.eol, '>');
   if( ! (p < mfile.eol && p[1] == *p ) ) return;
@@ -368,7 +345,14 @@ check_push_pop_directive( filespan_t& mfile ) {
       push? cdf_push_dictionary() : cdf_pop_dictionary();
       break;
     case 'S': // SOURCE FORMAT
-      push? cdf_push_source_format() : cdf_pop_source_format();
+      if( push ) {
+        auto format = source_format.top();
+        source_format.push(format);
+      } else {
+        source_format.pop();
+        dbgmsg("%s: POP: format now %s", __func__,
+               source_format.top().description());
+      }
       break;
     case 'T': // TURN
       push? cdf_push_enabled_exceptions() : cdf_pop_enabled_exceptions();
@@ -382,7 +366,8 @@ check_push_pop_directive( filespan_t& mfile ) {
 }
 
 static void
-check_source_format_directive( filespan_t& mfile ) {
+check_source_format_directive( filespan_t& mfile,
+                               source_format_t& source_format ) {
   char eol = '\0';
   const char *p = std::find(mfile.cur, mfile.eol, '>');
   if( ! (p < mfile.eol && p[1] == *p ) ) return;
@@ -405,10 +390,10 @@ check_source_format_directive( filespan_t& mfile ) {
     gcc_assert(cm.size() > 1);
     switch( cm[3].length() ) {
     case 4:
-      cobol_set_indicator_column(0);
+      source_format.indicator_column_set(0);
       break;
     case 5:
-      cobol_set_indicator_column(-7);
+      source_format.indicator_column_set(-7);
       break;
     default:
       gcc_assert(cm[3].length() == 4 || cm[3].length() == 5);
@@ -417,9 +402,9 @@ check_source_format_directive( filespan_t& mfile ) {
 
     dbgmsg( "%s:%d: %s format set, on line " HOST_SIZE_T_PRINT_UNSIGNED,
             __func__, __LINE__,
-            cdf_source_format().description(),
+            source_format.description(),
             (fmt_size_t)mfile.lineno() );
-    char *bol = cdf_source_format().is_fixed()? mfile.cur : const_cast<char*>(cm[0].first);
+    char *bol = source_format.is_fixed()? mfile.cur : const_cast<char*>(cm[0].first);
     gcc_assert(cm[0].second <= mfile.eol);
     erase_line(bol, const_cast<char*>(cm[0].second));
   }
@@ -460,25 +445,33 @@ struct buffer_t : public bytespan_t {
   }
 };
 
-static inline bool is_p( char ch ) { return TOUPPER(ch) == 'P'; }
+static inline bool is_pf( char ch ) { return TOUPPER(ch) == 'P' || TOUPPER(ch) == 'F'; }
 
 static bool
 is_program_id( const char *p, const char *eol ) {
-  static const std::string program_id("PROGRAM-ID");
-  auto eop = p + program_id.size();
-  if( eop < eol ) {
-    // PROGRAM-ID must be followed by a dot, perhaps with intervening whitespace.
-    for( const char *dot=eop; dot < eol && *dot != '.'; dot++ ) {
-      if( !ISSPACE(*dot) ) return false;
+  static const std::vector<std::string> ids { "PROGRAM-ID", "FUNCTION-ID" };
+  for( const auto& id : ids ) {
+    auto eop = p + id.size();
+    if( eop < eol ) {
+      bool valid = true;
+      // PROGRAM-ID must be followed by a dot, perhaps with intervening whitespace.
+      for( const char *dot=eop; dot < eol && *dot != '.'; dot++ ) {
+        if( !ISSPACE(*dot) ) {
+          valid = false;
+          break;
+        }
+      }
+      if (!valid)
+        continue;
+      std::string line (p, eop);
+      std::transform(line.begin(), line.end(), line.begin(), ::toupper);
+      return line == id;
     }
-    std::string line (p, eop);
-    std::transform(line.begin(), line.end(), line.begin(), ::toupper);
-    return line == program_id;
   }
   return false;
 }
 
-const char * esc( size_t len, const char input[] );
+const char * esc( size_t len, const char input[], bool is_fixed_format );
 
 static bool
 is_word_char( char ch ) {
@@ -520,7 +513,7 @@ struct replacing_term_t {
     {}
 };
 
-extern YYLTYPE yylloc;
+extern cbl_loc_t yylloc;
 
 static const char *
 last_newline (const char *p, const char *pend ) {
@@ -811,12 +804,13 @@ parse_replacing_pair( const char *stmt, const char *estmt ) {
 }
 
 static std::pair<std::list<replace_t>, char *>
-parse_replace_pairs( const char *stmt, const char *estmt, bool is_copy_stmt ) {
+parse_replace_pairs( const char *stmt, const char *estmt,
+                     bool is_copy_stmt, const source_format_t& source_format ) {
   std::list<replace_t> pairs ;
 
   static const char     any_ch[] = "";
-  ////   const char    word_ch[] = "[[:alnum:]$_-]";
-  static const char nonword_ch[] = "[^[:alnum:]\"'$_-]";
+  // lexio replaces 'D' with 0x8D for a Debug indicator, which scan.l recognizes.
+  static const char nonword_ch[] = "[^[:alnum:]\x8D\"'$_-]";
 
   // Pattern to find one REPLACE pseudo-text pair
   static const char replace_pattern[] =
@@ -873,7 +867,7 @@ parse_replace_pairs( const char *stmt, const char *estmt, bool is_copy_stmt ) {
     if( !is_word_char(before.p[0]) )     befter[0] = any_ch;
     if( !is_word_char(before.pend[-1]) ) befter[1] = any_ch;
 
-    const char *src = esc(before.size(), before.p);
+    const char *src = esc(before.size(), before.p, source_format.is_fixed());
 
     if( parsed.leading_trailing.size() > 0 ) {
       switch( TOUPPER(parsed.leading_trailing.p[0]) ) {
@@ -934,9 +928,9 @@ struct copy_descr_t {
     : parsed(false), fd(-1), nreplace(0), partial_line(line, eol) {}
 };
 
-static YYLTYPE
+static cbl_loc_t
 location_in( const filespan_t& mfile, const csub_match& cm ) {
-  YYLTYPE loc {
+  cbl_loc_t loc {
     int(mfile.lineno() + 1), int(mfile.colno() + 1),
     int(mfile.lineno() + 1), int(mfile.colno() + 1)
   };
@@ -953,7 +947,7 @@ location_in( const filespan_t& mfile, const csub_match& cm ) {
 }
 
 static copy_descr_t
-parse_copy_directive( filespan_t& mfile ) {
+parse_copy_directive( filespan_t& mfile, const source_format_t& source_format ) {
   static const char *most_recent_buffer;
   static span_t copy_stmt(mfile.eodata, mfile.eodata);
 
@@ -993,7 +987,7 @@ parse_copy_directive( filespan_t& mfile ) {
         size_t nst = 1 + count_newlines(copy_stmt.p, copy_stmt.pend);
         dbgmsg("%s:%d: %s:" HOST_SIZE_T_PRINT_UNSIGNED
                ": COPY directive is " HOST_SIZE_T_PRINT_UNSIGNED " lines '%.*s'",
-               __func__, __LINE__, cobol_filename(), 
+               __func__, __LINE__, cobol_filename(),
                (fmt_size_t)nnl, (fmt_size_t)nst, copy_stmt.size(), copy_stmt.p);
       }
     }
@@ -1024,10 +1018,10 @@ parse_copy_directive( filespan_t& mfile ) {
     bool replacing = !cm[20].matched;
 
     if( library_name.matched ) {
-      YYLTYPE loc = location_in( mfile, library_name );
+      cbl_loc_t loc = location_in( mfile, library_name );
       copybook.library( loc, xstrndup(library_name.first, library_name.length()) );
     }
-    YYLTYPE loc = location_in( mfile, copybook_name );
+    cbl_loc_t loc = location_in( mfile, copybook_name );
     outcome.fd = copybook.open( loc, xstrndup(copybook_name.first,
                                               copybook_name.length()) );
     if( outcome.fd == -1 ) { // let parser report missing copybook
@@ -1037,7 +1031,7 @@ parse_copy_directive( filespan_t& mfile ) {
 
     if( replacing ) {
       std::pair<std::list<replace_t>, char*>
-        result = parse_replace_pairs( cm[0].second, mfile.eodata, true );
+        result = parse_replace_pairs( cm[0].second, mfile.eodata, true, source_format );
 
       const std::list<replace_t>& replacements(result.first);
       outcome.parsed = (outcome.nreplace = replacements.size()) > 0;
@@ -1052,7 +1046,7 @@ parse_copy_directive( filespan_t& mfile ) {
       }
     }
 
-    // If the parse failed, pass it through to the parser for analysis.
+    // If the parse succeeded, erase it, else pass it through to the parser for analysis.
     if( outcome.parsed ) {
       erase_line( const_cast<char*>(copy_stmt.p),
                   const_cast<char*>(copy_stmt.pend));
@@ -1060,7 +1054,7 @@ parse_copy_directive( filespan_t& mfile ) {
     }
 
     mfile.eol = const_cast<char*>(copy_stmt.pend);
-    mfile.next_line();
+    mfile.next_line(source_format.is_reffmt());
   }
   return outcome;
 }
@@ -1104,7 +1098,7 @@ parse_replace_last_off( const filespan_t& mfile ) {
 }
 
 static span_t
-parse_replace_text( filespan_t& mfile ) {
+parse_replace_text( filespan_t& mfile, const source_format_t& source_format ) {
   static const char pattern[] =
     /* 0 */    "REPLACE"
     /* 1 */    "([[:space:]]+ALSO)?"
@@ -1166,7 +1160,7 @@ parse_replace_text( filespan_t& mfile ) {
   span_t replace_stmt(cm[0].first, cm[0].second);
 
   std::pair<std::list<replace_t>, char*>
-        result = parse_replace_pairs(replace_stmt.p, replace_stmt.pend, false);
+    result = parse_replace_pairs(replace_stmt.p, replace_stmt.pend, false, source_format);
   const std::list<replace_t>& replacements(result.first);
   replace_directives.push( replacements );
 
@@ -1190,7 +1184,7 @@ parse_replace_text( filespan_t& mfile ) {
 }
 
 static span_t
-parse_replace_directive( filespan_t& mfile ) {
+parse_replace_directive( filespan_t& mfile, const source_format_t& source_format ) {
   static const char *most_recent_buffer, *next_directive;
   static bool off_coming_up;
   static const char pattern[] =
@@ -1232,7 +1226,7 @@ parse_replace_directive( filespan_t& mfile ) {
     if( off_coming_up ) {
       parse_replace_last_off(mfile);
     } else {
-      erased = parse_replace_text(mfile);
+      erased = parse_replace_text(mfile, source_format);
     }
   }
   return erased;
@@ -1432,8 +1426,6 @@ find_filter( const char filter[] ) {
   return NULL;
 }
 
-bool verbose_file_reader = false;
-
 typedef std::pair <char *, std::list<std::string> > preprocessor_filter_t;
 static std::list<preprocessor_filter_t> preprocessor_filters;
 static std::list<const char *> included_files;
@@ -1456,12 +1448,11 @@ preprocess_filter_add( const char input[] ) {
   size_t pos = filter.find(",");
 
   if( pos != filter.npos ) {
-    std::vector<char> others( filter.size() - pos, '\0' );
-    std::copy( filter.begin() + pos + 1, filter.end(), others.begin() );
+    std::string args( filter.begin() + pos + 1, filter.end() );
     filter.resize(pos);
-    char *optstr = others.data();
-    for( char *opt = optstr + 1; (opt = strtok(opt, ",")); opt = NULL ) {
-      options.push_back(opt);
+
+    for( char *arg = xstrdup(args.c_str()); (arg = strtok(arg, ",")); arg = NULL ) {
+      options.push_back(arg);
     }
   }
 
@@ -1507,14 +1498,21 @@ inode_of( int fd ) {
   return sb.st_ino;
 }
 
+namespace cmd_line {
+  static source_format_t source_format;
+}
+
 FILE *
 cdftext::lex_open( const char filename[] ) {
+  source_format_stack_t source_format;
+  source_format.push(cmd_line::source_format);
+
   int input = open_input( filename );
   if( input == -1 ) return NULL;
 
   int output = open_output();
-  size_t n =0;
-  
+  size_t n = 0;
+
   // Process any files supplied by the -include command-line option.
   for( auto name : included_files ) {
     int input; // cppcheck-suppress shadowVariable
@@ -1524,9 +1522,10 @@ cdftext::lex_open( const char filename[] ) {
     }
     dbgmsg("lex_open: including %zu of %zu: '%s'", ++n, included_files.size(), name);
     cobol_filename(name, inode_of(input));
-    filespan_t mfile( free_form_reference_format( input ) );
+    filespan_t mfile( free_form_reference_format( input, source_format ) );
 
-    process_file( mfile, output );
+    please_push_filename = true;
+    process_file( mfile, output, source_format );
 
     dbgmsg("lex_open: processed %zu of %zu: '%s'", n, included_files.size(), name);
     cobol_filename_restore(); // process_file restores only for COPY
@@ -1534,10 +1533,12 @@ cdftext::lex_open( const char filename[] ) {
   included_files.clear();
   dbgmsg("lex_open: '%s'", filename);
 
-  cobol_filename(filename, inode_of(input));
-  filespan_t mfile( free_form_reference_format( input ) );
+  source_format.top() = cmd_line::source_format;
 
-  process_file( mfile, output );
+  cobol_filename(filename, inode_of(input));
+  filespan_t mfile( free_form_reference_format( input, source_format ) );
+
+  process_file( mfile, output, source_format );
 
   if( lexer_echo() ) {
     echo_input(output, filename);
@@ -1605,14 +1606,10 @@ int
 cdftext::open_input( const char filename[] ) {
   int fd = open(filename, O_RDONLY);
   if( fd == -1 ) {
-    dbgmsg( "could not open '%s': %s", filename, xstrerror(errno) );
+    auto erc(errno);
+    dbgmsg( "could not open '%s': %s", filename, xstrerror(erc) );
   }
 
-  verbose_file_reader = NULL != getenv("GCOBOL_TEMPDIR");
-
-  if( verbose_file_reader ) {
-    cbl_message(LexInputN, "verbose: opening %s for input", filename);
-  }
   return fd;
 }
 
@@ -1694,21 +1691,22 @@ bool lexio_dialect_mf();
 static const char *
 valid_sequence_area( const char *data, const char *eodata ) {
 
-  for( const char *p = data;
-       (p = std::find_if(p, eodata, is_p)) != eodata;
+  for( const char *p = data; // find every 'P' to try Program-ID
+       (p = std::find_if(p, eodata, is_pf)) != eodata;
        p++ )
   {
     auto eol = std::find(p, eodata, '\n');
-    if( p == data || ISSPACE(p[-1]) ) {
-      if( is_program_id(p, eol) ) {  // found program-id token
+    if( p == data || ISSPACE(p[-1]) ) { // start-of-buffer or preceded by space.
+      if( is_program_id(p, eol) ) {     // found program-id token
 	const char *bol = p;
 	for( ; data <= bol-1 && bol[-1] != '\n'; --bol )
 	  ;
-	if( 6 < p - bol ) {
-	  if( std::all_of(bol, bol+6, ::isdigit) ) {
-	    return bol;
-	  }
-	  if( std::all_of(bol, bol+6, ::isblank) ) {
+	if( 6 < p - bol ) {             // Program-ID is at least in column 7 (?)
+	  bool ok = std::all_of( bol, bol+6,
+                                 []( char ch ) {
+                                   return ISDIGIT(ch) || ISBLANK(ch);
+                                 } );
+          if( ok ) {                    // sequence area is all digits or blanks
 	    return bol;
 	  }
 	  break;
@@ -1735,7 +1733,8 @@ infer_reference_format( const char *bol, const char *eodata ) {
 }
 
 filespan_t
-cdftext::free_form_reference_format( int input ) {
+cdftext::free_form_reference_format( int input,
+                                     source_format_stack_t& format ) {
   filespan_t source_buffer = map_file(input);
   filespan_t mfile(source_buffer);
 
@@ -1754,38 +1753,38 @@ cdftext::free_form_reference_format( int input ) {
   /*
    * Infer source code format.
    */
-  if( cdf_source_format().inference_pending()  ) {
+  if( format.top().inference_pending()  ) {
     const char *bol = valid_sequence_area(mfile.data, mfile.eodata);
     if( bol ) {
-      cdf_source_format().infer( bol, infer_reference_format(bol, mfile.eodata) );
+      format.top().infer( bol, infer_reference_format(bol, mfile.eodata) );
     }
   }
 
-  while( mfile.next_line() ) {
-    check_push_pop_directive(mfile);
-    check_source_format_directive(mfile);
+  while( mfile.next_line(format.top().is_reffmt()) ) {
+    check_push_pop_directive(mfile, format);
+    check_source_format_directive(mfile, format.top());
     remove_inline_comment(mfile.cur, mfile.eol);
 
     if( mfile.is_blank_line() ) continue;
 
-    char *indcol = indicated(mfile.cur, mfile.eol); // true only for fixed
-    //                                              // format
+    // indcol is true only for fixed format
+    char *indcol = format.top().indicated(mfile.cur, mfile.eol);
 
-    if( is_fixed_format() && !indcol ) { // short line
+    if( format.top().is_fixed() && !indcol ) { // short line
       erase_source(mfile.cur, mfile.eol);
     }
 
     if( indcol ) {
       // Set to blank columns 1-6 and anything past the right margin.
       erase_source(mfile.cur, indcol);
-      if( is_reference_format() ) {
-        if( mfile.cur + right_margin() <  mfile.eol ) {
-          auto p = std::find(mfile.cur + right_margin(), mfile.eol, '\n');
-          erase_source(mfile.cur + right_margin(), p);
+      if( format.top().is_reffmt() ) {
+        if( mfile.cur + format.top().right_margin() <  mfile.eol ) {
+          auto p = std::find(mfile.cur + format.top().right_margin(), mfile.eol, '\n');
+          erase_source(mfile.cur + format.top().right_margin(), p);
         }
       }
 
-      switch( TOUPPER(*indcol) ) {
+      switch(*indcol) {
       case '-':
         gcc_assert(0 < current.line.size());
         /*
@@ -1795,8 +1794,8 @@ cdftext::free_form_reference_format( int input ) {
          */
         {
           char *pend = mfile.eol;
-          if( right_margin() ) {
-            pend = std::min(mfile.cur + right_margin(), mfile.eol);
+          if( format.top().right_margin() ) {
+            pend = std::min(mfile.cur + format.top().right_margin(), mfile.eol);
           }
           // The appended segment has no newline because the erased line retains
           // one.
@@ -1806,25 +1805,33 @@ cdftext::free_form_reference_format( int input ) {
             erase_source(p, mfile.eol);
           }
         }
+        gcc_assert( ! mfile.line_contains_nul() );
         continue;
+      case TAB:
       case SPACE:
         break;
+      case 'd':
       case 'D':
         /*
-         * Pass the D to the lexer, because WITH DEBUGGING MODE is
+         * Pass the D to the lexer as 0x8D, because WITH DEBUGGING MODE is
          * parsed in the parser.  This assumes too strict a rule: that
          * all the source is in one format. In fact, DEBUGGING MODE
          * could be set on, and >>SOURCE-FORMAT can switch back and
          * forth. To solve that, we'd have to parse WITH DEBUGGING MODE
          * in free_form_reference_format(), which is a lot of work for
          * an obsolete feature.
+         *
+         * Use the weird input value to signify fixed format, information
+         * otherwise not available and not significant to the parser.
          */
+        if( format.top().is_fixed() ) *indcol = char(0x8D);
         break;
       case '*':
       case '/':
         if( indcol < mfile.eol - 1 ) {
           erase_source(indcol, mfile.eol);
         }
+        mfile.sanitize_nul();
         continue;
       case '$':
         if( lexio_dialect_mf() ) {
@@ -1833,20 +1840,64 @@ cdftext::free_form_reference_format( int input ) {
         __attribute__ ((fallthrough));
       default: // flag other characters in indicator area
         if( ! ISSPACE(indcol[0]) ) {
-          yyerrorvl( mfile.lineno(), cobol_filename(),
-                     "error: stray indicator '%c' (0x%x): \"%.*s\"",
-                     indcol[0], indcol[0],
-                     int(mfile.line_length() - 1), mfile.cur );
+          // TODO: initialize diagnostic system earlier and use it here.
+          if( ! cbl_diagnostic_ignored(LexIndicatorE) ) {
+            yyerrorvl( mfile.lineno(), cobol_filename(),
+                       "error: stray indicator '%c' (0x%x): \"%.*s\"",
+                       indcol[0], indcol[0],
+                       int(mfile.line_length() - 1), mfile.cur );
+          }
           *indcol = SPACE;
         }
         break;
       }
     }
-    current.line.update(mfile.cur, mfile.eol, right_margin());
+    mfile.sanitize_nul();
+    current.line.update(mfile.cur, mfile.eol, format.top().right_margin());
     current.lineno = mfile.lineno();
   } // next line
 
   return source_buffer;
+}
+
+bool cdftext::please_push_filename = false;
+
+void
+cobol_set_indicator_column( int column ) {
+  source_format_t& format( cmd_line::source_format );
+
+  format.indicator_column_set(column);
+  dbgmsg("%s: format now %s", __func__, format.description());
+}
+
+static inline void
+output_segment(const char *beg, const char *end,
+               std::ostream_iterator<char> ofs )
+{
+#if 1
+  std::copy(beg, end, ofs);
+#else
+  // Replace each tab with 8 spaces.
+  for (auto p = beg; p < end; ++p) {
+    if (*p == '\t') {
+      std::generate_n(ofs, 8, [](){ return ' '; });
+      continue;
+    }
+    *ofs = *p;
+  }
+#endif
+}
+
+void
+cdftext::output_push_directive( const char filename[],
+                               std::ostream_iterator<char>& ofs )
+{
+  static const char file_push[] = "\f#FILE PUSH ";
+  static const char delimiter[] = "\f";
+
+  std::copy(file_push, file_push + strlen(file_push), ofs);
+  std::copy(filename, filename + strlen(filename), ofs);
+  std::copy(delimiter, delimiter + strlen(delimiter), ofs);
 }
 
 /*
@@ -1881,83 +1932,106 @@ cdftext::free_form_reference_format( int input ) {
  * cobol filename and yylineno.
  */
 void
-cdftext::process_file( filespan_t mfile, int output, bool second_pass ) {
+cdftext::process_file( filespan_t mfile, int output,
+                       source_format_stack_t source_format,
+                       bool second_pass )
+{
   static size_t nfiles = 0;
 
   __gnu_cxx::stdio_filebuf<char> outbuf(fdopen(output, "a"), std::ios::out);
   std::ostream out(&outbuf);
   std::ostream_iterator<char> ofs(out);
 
-  // indicate current file
-  static const char file_push[] = "\f#FILE PUSH ", file_pop[] = "\f#FILE POP\f";
+  if( please_push_filename ) {
+    assert(!second_pass);
+    output_push_directive( cobol_filename(), ofs );
+    please_push_filename = false;
+  }
+
+#if 0
+  {
+    auto fd = open("/tmp/I", O_CREAT | O_WRONLY, S_IRWXU);
+    auto n = write(fd, mfile.data, mfile.size());
+    if( n < 0 ) perror("write error");
+    close(fd);
+  }
+#endif
 
   if( !included_files.empty() ) { ++nfiles; }; // force push/pop of included filename
   if( !second_pass && nfiles++ ) {
-    static const char delimiter[] = "\f";
-    const char *filename = cobol_filename();
-    std::copy(file_push, file_push + strlen(file_push), ofs);
-    std::copy(filename, filename + strlen(filename), ofs);
-    std::copy(delimiter, delimiter + strlen(delimiter), ofs);
     out.flush();
   }
 
   // parse CDF directives
-  while( mfile.next_line() ) {
+  while( mfile.next_line(source_format.top().is_reffmt()) ) {
     yylloc = mfile.as_location();
-    auto copied = parse_copy_directive(mfile);
+    auto copied = parse_copy_directive(mfile, source_format.top());
     if( copied.parsed && copied.fd != -1 ) {
       gcc_assert(copied.erased_lines.p);
-      std::copy_if(copied.erased_lines.p, copied.erased_lines.pend, ofs,
-                   []( char ch ) { return ch == '\n'; } );
+      output_push_directive( cobol_filename(), ofs );
+
       struct { int in, out; filespan_t mfile; } copy;
       dbgmsg("%s:%d: line " HOST_SIZE_T_PRINT_UNSIGNED ", opening %s on fd %d",
              __func__, __LINE__, (fmt_size_t)mfile.lineno(),
              copybook.source(), copybook.current()->fd);
       copy.in = copybook.current()->fd;
-      copy.mfile = free_form_reference_format( copy.in );
+      copy.mfile = free_form_reference_format( copy.in, source_format );
 
       if( copied.partial_line.size() ) {
-        std::copy(copied.partial_line.p, copied.partial_line.pend, ofs);
+        output_segment(copied.partial_line.p, copied.partial_line.pend, ofs);
       }
       out.flush();
 
       if( copied.nreplace == 0 ) {
         // process with extant REPLACE directive
-        process_file(copy.mfile, output);
+        process_file(copy.mfile, output, source_format );
       } else {
         copy.out = open_output();
         // process to intermediate, applying COPY ... REPLACING
-        process_file(copy.mfile, copy.out);
+        process_file(copy.mfile, copy.out, source_format);
         copy.mfile = map_file(copy.out);
         replace_directives.pop();
         // process intermediate with extant REPLACE directive
-        process_file(copy.mfile, output, true);
+        process_file(copy.mfile, output, source_format, true);
         // COPY statement is erased from input if processed successfully
       }
+      /*
+       * After returning from the recursive call, restore the global current
+       * filename and output blank lines representing the erased COPY
+       * statement.  Do not be confused: the POP directive is produced by the
+       * recursed function after processing the copybook file.  Here we output
+       * the blank lines after that directive is produced, representing the
+       * lines where the COPY statement appeared.
+       */
       cobol_filename_restore();
+      unsigned long n = std::count(copied.erased_lines.p, copied.erased_lines.pend, '\n');
+      std::copy_if(copied.erased_lines.p, copied.erased_lines.pend, ofs,
+                   []( char ch ) { return ch == '\n'; } );
+      dbgmsg("%s:%d: %lu blank lines erased", __func__, __LINE__, n);
     }
 
-    auto erased = parse_replace_directive(mfile);
+    auto erased = parse_replace_directive(mfile, source_format.top());
     if( erased.p ) {
       std::copy_if( erased.p, erased.pend, ofs,
                     []( char ch ) { return ch == '\n'; } );
     }
     if( replace_directives.empty() ) {
-      std::copy(mfile.cur, mfile.eol, ofs);
+      output_segment(mfile.cur, mfile.eol, ofs);
       continue; // No active REPLACE directive.
     }
 
     std::list<span_t> segments = segment_line(mfile);
 
     for( const auto& segment : segments ) {
-      std::copy(segment.p, segment.pend, ofs);
+      output_segment(segment.p, segment.pend, ofs);
     }
 
     out.flush();
   }
   // end of file
   if( !second_pass && --nfiles ) {
-    std::copy(file_pop, file_pop + strlen(file_pop), ofs);
+    static const char file_pop[] = "\f#FILE POP\f";
+    output_segment(file_pop, file_pop + strlen(file_pop), ofs);
     out.flush();
   }
   if( !included_files.empty() ) { --nfiles; };

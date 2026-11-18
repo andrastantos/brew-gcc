@@ -369,6 +369,27 @@
    UNSPEC_XXSPLTI32DX
    UNSPEC_XXBLEND
    UNSPEC_XXPERMX
+   UNSPEC_XXMULMUL
+   UNSPEC_XXMULMULHIADD
+   UNSPEC_XXMULMULLOADD
+   UNSPEC_XXSSUMUDM
+   UNSPEC_XXSSUMUDMC
+   UNSPEC_XXSSUMUDMCEXT
+   UNSPEC_XSADDADDUQM
+   UNSPEC_XSADDADDSUQM
+   UNSPEC_XSADDSUBUQM
+   UNSPEC_XSADDSUBSUQM
+   UNSPEC_XSMERGE2T1UQM
+   UNSPEC_XSMERGE2T2UQM
+   UNSPEC_XSMERGE2T3UQM
+   UNSPEC_XSMERGE3T1UQM
+   UNSPEC_XSREBASE2T1UQM
+   UNSPEC_XSREBASE2T2UQM
+   UNSPEC_XSREBASE2T3UQM
+   UNSPEC_XSREBASE2T4UQM
+   UNSPEC_XSREBASE3T1UQM
+   UNSPEC_XSREBASE3T2UQM
+   UNSPEC_XSREBASE3T3UQM
   ])
 
 (define_int_iterator XVCVBF16	[UNSPEC_VSX_XVCVSPBF16
@@ -417,6 +438,9 @@
 			      UNSPEC_VCTZLSBB])
 (define_int_attr vczlsbb_char [(UNSPEC_VCLZLSBB "l")
 			       (UNSPEC_VCTZLSBB "t")])
+
+;; Vector integer arithmetic modes
+(define_mode_iterator VIArith [V8HI V4SI])
 
 ;; VSX moves
 
@@ -1710,6 +1734,13 @@
   "VECTOR_UNIT_VSX_P (<MODE>mode)"
   "xvsub<sd>p %x0,%x1,%x2"
   [(set_attr "type" "<VStype_simple>")])
+
+(define_insn "vsx_mul<mode>3"
+  [(set (match_operand:VIArith 0 "vsx_register_operand" "=wa")
+        (mult:VIArith (match_operand:VIArith 1 "vsx_register_operand" "wa")
+                      (match_operand:VIArith 2 "vsx_register_operand" "wa")))]
+  "TARGET_FUTURE && TARGET_VSX"
+  "xvmulu<wd>m %x0,%x1,%x2")
 
 (define_insn "*vsx_mul<mode>3"
   [(set (match_operand:VSX_F 0 "vsx_register_operand" "=wa")
@@ -4798,6 +4829,24 @@
   "lxvdsx %x0,%y1"
   [(set_attr "type" "vecload")])
 
+;; Optimize SPLAT of an extract from a V2DF/V2DI vector with a constant element
+(define_insn "*vsx_splat_extract_<mode>"
+  [(set (match_operand:VSX_D 0 "vsx_register_operand" "=wa")
+	(vec_duplicate:VSX_D
+	 (vec_select:<VEC_base>
+	  (match_operand:VSX_D 1 "vsx_register_operand" "wa")
+	  (parallel [(match_operand 2 "const_0_to_1_operand" "n")]))))]
+  "VECTOR_MEM_VSX_P (<MODE>mode)"
+{
+  int which_word = INTVAL (operands[2]);
+  if (!BYTES_BIG_ENDIAN)
+    which_word = 1 - which_word;
+
+  operands[3] = GEN_INT (which_word ? 3 : 0);
+  return "xxpermdi %x0,%x1,%x1,%3";
+}
+  [(set_attr "type" "vecperm")])
+
 ;; V4SI splat support
 (define_insn "vsx_splat_v4si"
   [(set (match_operand:V4SI 0 "vsx_register_operand" "=wa,wa")
@@ -4826,24 +4875,31 @@
 
 ;; V4SF splat (ISA 3.0)
 (define_insn_and_split "vsx_splat_v4sf"
-  [(set (match_operand:V4SF 0 "vsx_register_operand" "=wa,wa,wa")
+  [(set (match_operand:V4SF 0 "vsx_register_operand" "=wa,wa,wa,wa,wa")
 	(vec_duplicate:V4SF
-	 (match_operand:SF 1 "splat_input_operand" "Z,wa,r")))]
-  "TARGET_P9_VECTOR"
+	 (match_operand:SF 1 "splat_input_operand" "Z,Z,Z,wa,r")))
+   (clobber (match_scratch:DI 2 "=X,X,d,X,X"))]
+  "VECTOR_MEM_VSX_P (V4SFmode)"
   "@
    lxvwsx %x0,%y1
+   lxsiwzx %x0,%y1\;xxspltw %x0,%x0,1
+   lfiwzx %2,%y1\;xxspltw %x0,%x2,1
    #
    mtvsrws %x0,%1"
   "&& reload_completed && vsx_register_operand (operands[1], SFmode)"
-  [(set (match_dup 0)
-	(unspec:V4SF [(match_dup 1)] UNSPEC_VSX_CVDPSPN))
-   (set (match_dup 0)
-	(unspec:V4SF [(match_dup 0)
-		      (const_int 0)] UNSPEC_VSX_XXSPLTW))]
-  ""
-  [(set_attr "type" "vecload,vecperm,vecperm")
-   (set_attr "length" "*,8,*")
-   (set_attr "isa" "*,p8v,*")])
+  [(const_int 0)]
+{
+  rtx cvt = (TARGET_XSCVDPSPN
+	     ? gen_vsx_xscvdpspn_scalar (operands[0], operands[1])
+	     : gen_vsx_xscvdpsp_scalar (operands[0], operands[1]));
+  emit_insn (cvt);
+  emit_insn (gen_vsx_xxspltw_v4sf_direct (operands[0], operands[0],
+					  const0_rtx));
+  DONE;
+}
+  [(set_attr "type" "vecload,vecload,fpload,vecperm,vecperm")
+   (set_attr "length" "4,8,8,8,4")
+   (set_attr "isa" "p9v,p8v,*,*,p9v")])
 
 ;; V4SF/V4SI splat from a vector element
 (define_insn "vsx_xxspltw_<mode>"
@@ -5595,7 +5651,7 @@
   emit_insn (gen_vcmpne<VSX_EXTRACT_WIDTH> (cmpz2_result, operands[2], vzero));
   emit_insn (gen_and<mode>3 (and_result, cmpz1_result, cmpz2_result));
 
-  /* Vector with ones in elments that do not match.  */
+  /* Vector with ones in elements that do not match.  */
   emit_insn (gen_vcmpnez<VSX_EXTRACT_WIDTH> (cmpz_result, operands[1],
                                              operands[2]));
 
@@ -5668,29 +5724,14 @@
   "TARGET_P9_VECTOR"
 {
   int sh;
-  rtx cmpz1_result = gen_reg_rtx (<MODE>mode);
-  rtx cmpz2_result = gen_reg_rtx (<MODE>mode);
-  rtx cmpz_result = gen_reg_rtx (<MODE>mode);
-  rtx not_cmpz_result = gen_reg_rtx (<MODE>mode);
-  rtx and_result = gen_reg_rtx (<MODE>mode);
   rtx result = gen_reg_rtx (<MODE>mode);
-  rtx vzero = gen_reg_rtx (<MODE>mode);
 
-  /* Vector with zeros in elements that correspond to zeros in operands.  */
-  emit_move_insn (vzero, CONST0_RTX (<MODE>mode));
+  /* Vector with ones in elements that do not match or elements corresponding
+     to zeros in operands.  */
 
-  emit_insn (gen_vcmpne<VSX_EXTRACT_WIDTH> (cmpz1_result, operands[1], vzero));
-  emit_insn (gen_vcmpne<VSX_EXTRACT_WIDTH> (cmpz2_result, operands[2], vzero));
-  emit_insn (gen_and<mode>3 (and_result, cmpz1_result, cmpz2_result));
-
-  /* Vector with ones in elments that match.  */
-  emit_insn (gen_vcmpnez<VSX_EXTRACT_WIDTH> (cmpz_result, operands[1],
+  emit_insn (gen_vcmpnez<VSX_EXTRACT_WIDTH> (result, operands[1],
                                              operands[2]));
-  emit_insn (gen_one_cmpl<mode>2 (not_cmpz_result, cmpz_result));
 
-  /* Create vector with ones in elements where there was a zero in one of
-     the source elements or the elements did not match.  */
-  emit_insn (gen_nand<mode>3 (result, and_result, not_cmpz_result));
   sh = GET_MODE_SIZE (GET_MODE_INNER (<MODE>mode)) / 2;
 
   if (<MODE>mode == V16QImode)
@@ -5712,20 +5753,32 @@
   DONE;
 })
 
-;; Load VSX Vector with Length
+;; Load VSX Vector with Length.  If we have lxvrl, we don't have to do an
+;; explicit shift left into a pseudo.
 (define_expand "lxvl"
-  [(set (match_dup 3)
-        (ashift:DI (match_operand:DI 2 "register_operand")
-                   (const_int 56)))
-   (set (match_operand:V16QI 0 "vsx_register_operand")
-	(unspec:V16QI
-	 [(match_operand:DI 1 "gpc_reg_operand")
-          (mem:V16QI (match_dup 1))
-	  (match_dup 3)]
-	 UNSPEC_LXVL))]
+  [(use (match_operand:V16QI 0 "vsx_register_operand"))
+   (use (match_operand:DI 1 "gpc_reg_operand"))
+   (use (match_operand:DI 2 "gpc_reg_operand"))]
   "TARGET_P9_VECTOR && TARGET_64BIT"
 {
-  operands[3] = gen_reg_rtx (DImode);
+  rtx shift_len = gen_rtx_ASHIFT (DImode, operands[2], GEN_INT (56));
+  rtx len;
+
+  if (TARGET_FUTURE)
+    len = shift_len;
+  else
+    {
+      len = gen_reg_rtx (DImode);
+      emit_insn (gen_rtx_SET (len, shift_len));
+    }
+
+  rtx dest = operands[0];
+  rtx addr = operands[1];
+  rtx mem = gen_rtx_MEM (V16QImode, addr);
+  rtvec rv = gen_rtvec (3, addr, mem, len);
+  rtx lxvl = gen_rtx_UNSPEC (V16QImode, rv, UNSPEC_LXVL);
+  emit_insn (gen_rtx_SET (dest, lxvl));
+  DONE;
 })
 
 (define_insn "*lxvl"
@@ -5747,6 +5800,34 @@
 		      UNSPEC_LXVLL))]
   "TARGET_P9_VECTOR"
   "lxvll %x0,%1,%2"
+  [(set_attr "type" "vecload")])
+
+;; For lxvrl and lxvrll, use the combiner to eliminate the shift.  The
+;; define_expand for lxvl will already incorporate the shift in generating the
+;; insn.  The lxvll buitl-in function required the user to have already done
+;; the shift.  Defining lxvrll this way, will optimize cases where the user has
+;; done the shift immediately before the built-in.
+(define_insn "*lxvrl"
+  [(set (match_operand:V16QI 0 "vsx_register_operand" "=wa")
+	(unspec:V16QI
+	 [(match_operand:DI 1 "gpc_reg_operand" "b")
+	  (mem:V16QI (match_dup 1))
+	  (ashift:DI (match_operand:DI 2 "register_operand" "r")
+		     (const_int 56))]
+	 UNSPEC_LXVL))]
+  "TARGET_FUTURE && TARGET_64BIT"
+  "lxvrl %x0,%1,%2"
+  [(set_attr "type" "vecload")])
+
+(define_insn "*lxvrll"
+  [(set (match_operand:V16QI 0 "vsx_register_operand" "=wa")
+	(unspec:V16QI [(match_operand:DI 1 "gpc_reg_operand" "b")
+                       (mem:V16QI (match_dup 1))
+		       (ashift:DI (match_operand:DI 2 "register_operand" "r")
+				  (const_int 56))]
+		      UNSPEC_LXVLL))]
+  "TARGET_FUTURE"
+  "lxvrll %x0,%1,%2"
   [(set_attr "type" "vecload")])
 
 ;; Expand for builtin xl_len_r
@@ -5780,18 +5861,29 @@
 
 ;; Store VSX Vector with Length
 (define_expand "stxvl"
-  [(set (match_dup 3)
-	(ashift:DI (match_operand:DI 2 "register_operand")
-		   (const_int 56)))
-   (set (mem:V16QI (match_operand:DI 1 "gpc_reg_operand"))
-	(unspec:V16QI
-	 [(match_operand:V16QI 0 "vsx_register_operand")
-	  (mem:V16QI (match_dup 1))
-	  (match_dup 3)]
-	 UNSPEC_STXVL))]
+  [(use (match_operand:V16QI 0 "vsx_register_operand"))
+   (use (match_operand:DI 1 "gpc_reg_operand"))
+   (use (match_operand:DI 2 "gpc_reg_operand"))]
   "TARGET_P9_VECTOR && TARGET_64BIT"
 {
-  operands[3] = gen_reg_rtx (DImode);
+  rtx shift_len = gen_rtx_ASHIFT (DImode, operands[2], GEN_INT (56));
+  rtx len;
+
+  if (TARGET_FUTURE)
+    len = shift_len;
+  else
+    {
+      len = gen_reg_rtx (DImode);
+      emit_insn (gen_rtx_SET (len, shift_len));
+    }
+
+  rtx src = operands[0];
+  rtx addr = operands[1];
+  rtx mem = gen_rtx_MEM (V16QImode, addr);
+  rtvec rv = gen_rtvec (3, src, mem, len);
+  rtx stxvl = gen_rtx_UNSPEC (V16QImode, rv, UNSPEC_STXVL);
+  emit_insn (gen_rtx_SET (mem, stxvl));
+  DONE;
 })
 
 ;; Define optab for vector access with length vectorization exploitation.
@@ -5834,6 +5926,35 @@
 	 UNSPEC_STXVL))]
   "TARGET_P9_VECTOR && TARGET_64BIT"
   "stxvl %x0,%1,%2"
+  [(set_attr "type" "vecstore")])
+
+;; For stxvrl and stxvrll, use the combiner to eliminate the shift.  The
+;; define_expand for stxvl will already incorporate the shift in generating the
+;; insn.  The stxvll buitl-in function required the user to have already done
+;; the shift.  Defining stxvrll this way, will optimize cases where the user
+;; has done the shift immediately before the built-in.
+
+(define_insn "*stxvrl"
+  [(set (mem:V16QI (match_operand:DI 1 "gpc_reg_operand" "b"))
+	(unspec:V16QI
+	 [(match_operand:V16QI 0 "vsx_register_operand" "wa")
+	  (mem:V16QI (match_dup 1))
+	  (ashift:DI (match_operand:DI 2 "register_operand" "r")
+		     (const_int 56))]
+	 UNSPEC_STXVL))]
+  "TARGET_FUTURE && TARGET_64BIT"
+  "stxvrl %x0,%1,%2"
+  [(set_attr "type" "vecstore")])
+
+(define_insn "*stxvrll"
+  [(set (mem:V16QI (match_operand:DI 1 "gpc_reg_operand" "b"))
+	(unspec:V16QI [(match_operand:V16QI 0 "vsx_register_operand" "wa")
+		       (mem:V16QI (match_dup 1))
+		       (ashift:DI (match_operand:DI 2 "register_operand" "r")
+				  (const_int 56))]
+	              UNSPEC_STXVLL))]
+  "TARGET_FUTURE"
+  "stxvrll %x0,%1,%2"
   [(set_attr "type" "vecstore")])
 
 ;; Expand for builtin xst_len_r
@@ -6265,7 +6386,7 @@
    (SFBOOL_MFVSR_A		 3)		;; move to gpr src
    (SFBOOL_BOOL_D		 4)		;; and/ior/xor dest
    (SFBOOL_BOOL_A1		 5)		;; and/ior/xor arg1
-   (SFBOOL_BOOL_A2		 6)		;; and/ior/xor arg1
+   (SFBOOL_BOOL_A2		 6)		;; and/ior/xor arg2
    (SFBOOL_SHL_D		 7)		;; shift left dest
    (SFBOOL_SHL_A		 8)		;; shift left arg
    (SFBOOL_MTVSR_D		 9)		;; move to vecter dest
@@ -6305,18 +6426,18 @@
 ;; GPR, and instead move the integer mask value to the vector register after a
 ;; shift and do the VSX logical operation.
 
-;; The insns for dealing with SFmode in GPR registers looks like:
+;; The insns for dealing with SFmode in GPR registers looks like on power8:
 ;; (set (reg:V4SF reg2) (unspec:V4SF [(reg:SF reg1)] UNSPEC_VSX_CVDPSPN))
 ;;
-;; (set (reg:DI reg3) (unspec:DI [(reg:V4SF reg2)] UNSPEC_P8V_RELOAD_FROM_VSX))
+;; (set (reg:DI reg3) (zero_extend:DI (reg:SI reg2)))
 ;;
-;; (set (reg:DI reg4) (and:DI (reg:DI reg3) (reg:DI reg3)))
+;; (set (reg:DI reg4) (and:SI (reg:SI reg3) (reg:SI mask)))
 ;;
 ;; (set (reg:DI reg5) (ashift:DI (reg:DI reg4) (const_int 32)))
 ;;
 ;; (set (reg:SF reg6) (unspec:SF [(reg:DI reg5)] UNSPEC_P8V_MTVSRD))
 ;;
-;; (set (reg:SF reg6) (unspec:SF [(reg:SF reg6)] UNSPEC_VSX_CVSPDPN))
+;; (set (reg:SF reg7) (unspec:SF [(reg:SF reg6)] UNSPEC_VSX_CVSPDPN))
 
 (define_peephole2
   [(match_scratch:DI SFBOOL_TMP_GPR "r")
@@ -6395,6 +6516,138 @@
   operands[SFBOOL_MFVSR_A_V4SF] = gen_rtx_REG (V4SFmode, regno_mfvsr_a);
   operands[SFBOOL_TMP_VSX_DI] = gen_rtx_REG (DImode, regno_tmp_vsx);
   operands[SFBOOL_MTVSR_D_V4SF] = gen_rtx_REG (V4SFmode, regno_mtvsr_d);
+})
+
+;; Constants for SFbool optimization on power9/power10
+(define_constants
+  [(SFBOOL2_TMP_VSX_V4SI	 0)		;; vector temporary (V4SI)
+   (SFBOOL2_TMP_GPR_SI		 1)		;; GPR temporary (SI)
+   (SFBOOL2_MFVSR_D		 2)		;; move to gpr dest (DI)
+   (SFBOOL2_MFVSR_A		 3)		;; move to gpr src (SI)
+   (SFBOOL2_BOOL_D		 4)		;; and/ior/xor dest (SI)
+   (SFBOOL2_BOOL_A1		 5)		;; and/ior/xor arg1 (SI)
+   (SFBOOL2_BOOL_A2		 6)		;; and/ior/xor arg2 (SI)
+   (SFBOOL2_SPLAT_D		 7)		;; splat dest (V4SI)
+   (SFBOOL2_MTVSR_D		 8)		;; move/splat to VSX dest.
+   (SFBOOL2_MTVSR_A		 9)		;; move/splat to VSX arg.
+   (SFBOOL2_MFVSR_A_V4SI	10)		;; MFVSR_A as V4SI
+   (SFBOOL2_MTVSR_D_V4SI	11)		;; MTVSR_D as V4SI
+   (SFBOOL2_XXSPLTW		12)])		;; 1 or 3 for XXSPLTW
+
+;; On power9/power10, the code is different because we have a splat 32-bit
+;; operation that does a direct move to the FPR/vector registers (MTVSRWS).
+;;
+;; The insns for dealing with SFmode in GPR registers looks like on
+;; power9/power10:
+;;
+;; (set (reg:V4SF reg2) (unspec:V4SF [(reg:SF reg1)] UNSPEC_VSX_CVDPSPN))
+;;
+;; (set (reg:DI reg3) (zero_extend:DI (reg:SI reg2)))
+;;
+;; (set (reg:SI reg4) (and:SI (reg:SI reg3) (reg:SI mask)))
+;;
+;; (set (reg:V4SI reg5) (vec_duplicate:V4SI (reg:SI reg4)))
+;;
+;; (set (reg:SF reg6) (unspec:SF [(reg:SF reg5)] UNSPEC_VSX_CVSPDPN))
+
+;; The VSX temporary needs to be an Altivec register in case we are trying to
+;; do and/ior/xor of -16..15 and we want to use VSPLTISW to load the constant.
+;;
+;; The GPR temporary is only used if we are trying to do a logical operation
+;; with a constant outside of the -16..15 range on a power9.  Otherwise, we can
+;; load the constant directly into the VSX temporary register.
+
+(define_peephole2
+  [(match_scratch:V4SI SFBOOL2_TMP_VSX_V4SI "v")
+   (match_scratch:SI SFBOOL2_TMP_GPR_SI "r")
+
+   ;; Zero_extend and direct move
+   (set (match_operand:DI SFBOOL2_MFVSR_D "int_reg_operand")
+	(zero_extend:DI
+	 (match_operand:SI SFBOOL2_MFVSR_A "vsx_register_operand")))
+
+   ;; AND/IOR/XOR operation on int
+   (set (match_operand:SI SFBOOL2_BOOL_D "int_reg_operand")
+	(and_ior_xor:SI
+	 (match_operand:SI SFBOOL2_BOOL_A1 "int_reg_operand")
+	 (match_operand:SI SFBOOL2_BOOL_A2 "reg_or_cint_operand")))
+
+   ;; Splat sfbool result to vector register
+   (set (match_operand:V4SI SFBOOL2_SPLAT_D "vsx_register_operand")
+	(vec_duplicate:V4SI
+	 (match_dup SFBOOL2_BOOL_D)))]
+
+  "TARGET_POWERPC64 && TARGET_P9_VECTOR
+   && REG_P (operands[SFBOOL2_MFVSR_D])
+   && REG_P (operands[SFBOOL2_BOOL_A1])
+   && (REGNO (operands[SFBOOL2_MFVSR_D]) == REGNO (operands[SFBOOL2_BOOL_A1])
+       || (REG_P (operands[SFBOOL2_BOOL_A2])
+           && (REGNO (operands[SFBOOL2_MFVSR_D])
+               == REGNO (operands[SFBOOL2_BOOL_A2]))))
+   && peep2_reg_dead_p (3, operands[SFBOOL2_MFVSR_D])
+   && peep2_reg_dead_p (4, operands[SFBOOL2_BOOL_D])"
+
+  ;; Either (set (reg:SI xxx) (reg:SI yyy))	or
+  ;;        (set (reg:V4SI xxx) (const_vector (parallel [c, c, c, c])))
+  [(set (match_dup SFBOOL2_MTVSR_D)
+	(match_dup SFBOOL2_MTVSR_A))
+
+   ;; And/ior/xor on vector registers
+   (set (match_dup SFBOOL2_TMP_VSX_V4SI)
+	(and_ior_xor:V4SI
+	 (match_dup SFBOOL2_MFVSR_A_V4SI)
+	 (match_dup SFBOOL2_TMP_VSX_V4SI)))
+
+   ;; XXSPLTW t,r,r,1
+   (set (match_dup SFBOOL2_SPLAT_D)
+	(vec_duplicate:V4SI
+	 (vec_select:SI
+	  (match_dup SFBOOL2_TMP_VSX_V4SI)
+	  (parallel [(match_dup SFBOOL2_XXSPLTW)]))))]
+{
+  rtx mfvsr_d = operands[SFBOOL2_MFVSR_D];
+  rtx bool_a1 = operands[SFBOOL2_BOOL_A1];
+  rtx bool_a2 = operands[SFBOOL2_BOOL_A2];
+  rtx bool_arg = (rtx_equal_p (mfvsr_d, bool_a1) ? bool_a2 : bool_a1);
+  int regno_mfvsr_a = REGNO (operands[SFBOOL2_MFVSR_A]);
+  int regno_tmp_vsx = REGNO (operands[SFBOOL2_TMP_VSX_V4SI]);
+
+  /* If the logical operation is a constant, form the constant in a vector
+     register.  */
+  if (CONST_INT_P (bool_arg))
+    {
+      HOST_WIDE_INT value = INTVAL (bool_arg);
+
+      /* See if we can directly load the constant, either by VSPLTIW or by
+         XXSPLTIW on power10.  */
+
+      if (IN_RANGE (value, -16, 15) || TARGET_PREFIXED)
+	{
+	  rtvec cv = gen_rtvec (4, bool_arg, bool_arg, bool_arg, bool_arg);
+	  operands[SFBOOL2_MTVSR_D] = gen_rtx_REG (V4SImode, regno_tmp_vsx);
+	  operands[SFBOOL2_MTVSR_A] = gen_rtx_CONST_VECTOR (V4SImode, cv);
+	}
+
+      else
+	{
+	  /* We need to load up the constant to a GPR and move it to a
+	     vector register.  */
+	  rtx tmp_gpr = operands[SFBOOL2_TMP_GPR_SI];
+	  emit_move_insn (tmp_gpr, bool_arg);
+	  operands[SFBOOL2_MTVSR_D] = gen_rtx_REG (SImode, regno_tmp_vsx);
+	  operands[SFBOOL2_MTVSR_A] = tmp_gpr;
+	}
+    }
+  else
+    {
+      /* Mask is in a register, move it to a vector register.  */
+      operands[SFBOOL2_MTVSR_D] = gen_rtx_REG (SImode, regno_tmp_vsx);
+      operands[SFBOOL2_MTVSR_A] = bool_arg;
+    }
+
+    operands[SFBOOL2_TMP_VSX_V4SI] = gen_rtx_REG (V4SImode, regno_tmp_vsx);
+    operands[SFBOOL2_MFVSR_A_V4SI] = gen_rtx_REG (V4SImode, regno_mfvsr_a);
+    operands[SFBOOL2_XXSPLTW] = GEN_INT (BYTES_BIG_ENDIAN ? 1 : 2);
 })
 
 ;; Support signed/unsigned long long to float conversion vectorization.
@@ -6546,28 +6799,62 @@
   [(set_attr "type" "vecdiv")
    (set_attr "size" "<bits>")])
 
-(define_insn "smul<mode>3_highpart"
-  [(set (match_operand:VIlong 0 "vsx_register_operand" "=v")
-	(mult:VIlong (ashiftrt
-		       (match_operand:VIlong 1 "vsx_register_operand" "v")
-		       (const_int 32))
-		     (ashiftrt
-		       (match_operand:VIlong 2 "vsx_register_operand" "v")
-		       (const_int 32))))]
+(define_insn "smulv8hi3_highpart"
+  [(set (match_operand:V8HI 0 "vsx_register_operand" "=wa")
+        (smul_highpart:V8HI
+          (match_operand:V8HI 1 "vsx_register_operand" "wa")
+          (match_operand:V8HI 2 "vsx_register_operand" "wa")))]
+  "TARGET_FUTURE && TARGET_VSX"
+  "xvmulhsh %x0,%x1,%x2")
+
+(define_insn "smulv4si3_highpart"
+  [(set (match_operand:V4SI 0 "register_operand" "=wa,v")
+        (smul_highpart:V4SI
+          (match_operand:V4SI 1 "register_operand" "wa,v")
+          (match_operand:V4SI 2 "register_operand" "wa,v")))]
   "TARGET_POWER10"
-  "vmulhs<wd> %0,%1,%2"
+  "@
+   xvmulhsw %x0,%x1,%x2
+   vmulhsw %0,%1,%2"
+  [(set_attr "type" "veccomplex")
+   (set_attr "isa" "future,p10")])
+
+(define_insn "smulv2di3_highpart"
+  [(set (match_operand:V2DI 0 "altivec_register_operand" "=v")
+        (smul_highpart:V2DI
+          (match_operand:V2DI 1 "altivec_register_operand" "v")
+          (match_operand:V2DI 2 "altivec_register_operand" "v")))]
+  "TARGET_POWER10"
+  "vmulhsd %0,%1,%2"
   [(set_attr "type" "veccomplex")])
 
-(define_insn "umul<mode>3_highpart"
-  [(set (match_operand:VIlong 0 "vsx_register_operand" "=v")
-	(us_mult:VIlong (ashiftrt
-			  (match_operand:VIlong 1 "vsx_register_operand" "v")
-			  (const_int 32))
-			(ashiftrt
-			  (match_operand:VIlong 2 "vsx_register_operand" "v")
-			  (const_int 32))))]
+(define_insn "umulv8hi3_highpart"
+  [(set (match_operand:V8HI 0 "vsx_register_operand" "=wa")
+        (umul_highpart:V8HI
+          (match_operand:V8HI 1 "vsx_register_operand" "wa")
+          (match_operand:V8HI 2 "vsx_register_operand" "wa")))]
+  "TARGET_FUTURE && TARGET_VSX"
+  "xvmulhuh %x0,%x1,%x2")
+
+(define_insn "umulv4si3_highpart"
+  [(set (match_operand:V4SI 0 "register_operand" "=wa,v")
+        (umul_highpart:V4SI
+          (match_operand:V4SI 1 "register_operand" "wa,v")
+          (match_operand:V4SI 2 "register_operand" "wa,v")))]
   "TARGET_POWER10"
-  "vmulhu<wd> %0,%1,%2"
+  "@
+   xvmulhuw %x0,%x1,%x2
+   vmulhuw %0,%1,%2"
+  [(set_attr "type" "veccomplex")
+   (set_attr "isa" "future,p10")])
+
+(define_insn "umulv2di3_highpart"
+  [(set (match_operand:V2DI 0 "altivec_register_operand" "=v")
+        (umul_highpart:V2DI
+          (match_operand:V2DI 1 "altivec_register_operand" "v")
+          (match_operand:V2DI 2 "altivec_register_operand" "v")))]
+  "TARGET_POWER10"
+  "vmulhud %0,%1,%2"
   [(set_attr "type" "veccomplex")])
 
 ;; Vector multiply low double word
@@ -6720,16 +7007,17 @@
   else
     {
       /* Reverse value of byte element indexes by XORing with 0xFF.
-	 Reverse the 32-byte section identifier match by subracting bits [0:2]
-	 of elemet from 7.  */
+	 Reverse the 32-byte section identifier match by subtracting bits [0:2]
+	 of element from 7.  */
       int value = INTVAL (operands[4]);
       rtx vreg = gen_reg_rtx (V16QImode);
+      rtx tmp = gen_reg_rtx (V16QImode);
 
       emit_insn (gen_xxspltib_v16qi (vreg, GEN_INT (-1)));
-      emit_insn (gen_xorv16qi3 (operands[3], operands[3], vreg));
+      emit_insn (gen_xorv16qi3 (tmp, operands[3], vreg));
       value = 7 - value;
       emit_insn (gen_xxpermx_inst (operands[0], operands[2],
-				   operands[1], operands[3],
+				   operands[1], tmp,
 				   GEN_INT (value)));
     }
 
@@ -6807,3 +7095,218 @@
   emit_insn (gen_vsx_extract_v2di (dest_op1, src_op, const1_rtx));
   DONE;
 })
+
+
+;; ECC (Elliptic Curve Cryptography) acceleration instructions for Power future
+;; These instructions support P-256 and P-384 elliptic curve operations
+
+;; xxmulmul - Multiply-Multiply with scaling
+(define_insn "vsx_xxmulmul"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V2DI 1 "vsx_register_operand" "wa")
+		      (match_operand:V2DI 2 "vsx_register_operand" "wa")
+		      (match_operand:QI 3 "const_0_to_6_operand" "n")]
+		     UNSPEC_XXMULMUL))]
+  "TARGET_FUTURE"
+  "xxmulmul %x0,%x1,%x2,%3")
+
+;; xxmulmulhiadd - Multiply-Multiply with high add and accumulator
+(define_insn "vsx_xxmulmulhiadd"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V2DI 2 "vsx_register_operand" "wa")
+		      (match_operand:V2DI 3 "vsx_register_operand" "wa")
+		      (match_operand:QI 4 "const_0_to_1_operand" "n")
+		      (match_operand:QI 5 "const_0_to_1_operand" "n")
+		      (match_operand:QI 6 "const_0_to_1_operand" "n")]
+		     UNSPEC_XXMULMULHIADD))]
+  "TARGET_FUTURE"
+  "xxmulmulhiadd %x0,%x2,%x3,%4,%5,%6")
+
+;; xxmulmulloadd - Multiply-Multiply low add with accumulator
+(define_insn "vsx_xxmulmulloadd"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V2DI 2 "vsx_register_operand" "wa")
+		      (match_operand:V2DI 3 "vsx_register_operand" "wa")
+		      (match_operand:QI 4 "const_0_to_1_operand" "n")
+		      (match_operand:QI 5 "const_0_to_1_operand" "n")]
+		     UNSPEC_XXMULMULLOADD))]
+  "TARGET_FUTURE"
+  "xxmulmulloadd %x0,%x2,%x3,%4,%5")
+
+;; xxssumudm - Scaled sum unsigned doubleword modulo
+(define_insn "vsx_xxssumudm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V2DI 2 "vsx_register_operand" "wa")
+		      (match_operand:V2DI 3 "vsx_register_operand" "wa")
+		      (match_operand:QI 4 "const_0_to_1_operand" "n")]
+		     UNSPEC_XXSSUMUDM))]
+  "TARGET_FUTURE"
+  "xxssumudm %x0,%x2,%x3,%4")
+
+;; xxssumudmc - Scaled sum unsigned doubleword modulo carry
+(define_insn "vsx_xxssumudmc"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V2DI 2 "vsx_register_operand" "wa")
+		      (match_operand:V2DI 3 "vsx_register_operand" "wa")
+		      (match_operand:QI 4 "const_0_to_1_operand" "n")]
+		     UNSPEC_XXSSUMUDMC))]
+  "TARGET_FUTURE"
+  "xxssumudmc %x0,%x2,%x3,%4")
+
+;; xxssumudmcext - Scaled sum unsigned doubleword modulo carry extended (prefixed)
+(define_insn "vsx_xxssumudmcext"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V2DI 1 "vsx_register_operand" "wa")
+		      (match_operand:V2DI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")
+		      (match_operand:QI 4 "const_0_to_1_operand" "n")]
+		     UNSPEC_XXSSUMUDMCEXT))]
+  "TARGET_FUTURE"
+  "xxssumudmcext %x0,%x1,%x2,%x3,%4")
+
+;; xsaddadduqm - Add add unsigned quadword modulo
+(define_insn "vsx_xsaddadduqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")]
+		     UNSPEC_XSADDADDUQM))]
+  "TARGET_FUTURE"
+  "xsaddadduqm %x0,%x2,%x3")
+
+;; xsaddaddsuqm - Add add scaled unsigned quadword modulo
+(define_insn "vsx_xsaddaddsuqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")]
+		     UNSPEC_XSADDADDSUQM))]
+  "TARGET_FUTURE"
+  "xsaddaddsuqm %x0,%x2,%x3")
+
+;; xsaddsubuqm - Add subtract unsigned quadword modulo
+(define_insn "vsx_xsaddsubuqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")]
+		     UNSPEC_XSADDSUBUQM))]
+  "TARGET_FUTURE"
+  "xsaddsubuqm %x0,%x2,%x3")
+
+;; xsaddsubsuqm - Add subtract scaled unsigned quadword modulo
+(define_insn "vsx_xsaddsubsuqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")]
+		     UNSPEC_XSADDSUBSUQM))]
+  "TARGET_FUTURE"
+  "xsaddsubsuqm %x0,%x2,%x3")
+
+;; xsmerge2t1uqm - Merge type 1 (2-operand)
+(define_insn "vsx_xsmerge2t1uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")]
+		     UNSPEC_XSMERGE2T1UQM))]
+  "TARGET_FUTURE"
+  "xsmerge2t1uqm %x0,%x1,%x2")
+
+;; xsmerge2t2uqm - Merge type 2 (2-operand)
+(define_insn "vsx_xsmerge2t2uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")]
+		     UNSPEC_XSMERGE2T2UQM))]
+  "TARGET_FUTURE"
+  "xsmerge2t2uqm %x0,%x1,%x2")
+
+;; xsmerge2t3uqm - Merge type 3 (2-operand)
+(define_insn "vsx_xsmerge2t3uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")]
+		     UNSPEC_XSMERGE2T3UQM))]
+  "TARGET_FUTURE"
+  "xsmerge2t3uqm %x0,%x1,%x2")
+
+;; xsmerge3t1uqm - Merge type 1 (3-operand with accumulator)
+(define_insn "vsx_xsmerge3t1uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")]
+		     UNSPEC_XSMERGE3T1UQM))]
+  "TARGET_FUTURE"
+  "xsmerge3t1uqm %x0,%x2,%x3")
+
+;; xsrebase2t1uqm - Rebase type 1 (2-operand)
+(define_insn "vsx_xsrebase2t1uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")]
+		     UNSPEC_XSREBASE2T1UQM))]
+  "TARGET_FUTURE"
+  "xsrebase2t1uqm %x0,%x1,%x2")
+
+;; xsrebase2t2uqm - Rebase type 2 (2-operand)
+(define_insn "vsx_xsrebase2t2uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")]
+		     UNSPEC_XSREBASE2T2UQM))]
+  "TARGET_FUTURE"
+  "xsrebase2t2uqm %x0,%x1,%x2")
+
+;; xsrebase2t3uqm - Rebase type 3 (2-operand)
+(define_insn "vsx_xsrebase2t3uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")]
+		     UNSPEC_XSREBASE2T3UQM))]
+  "TARGET_FUTURE"
+  "xsrebase2t3uqm %x0,%x1,%x2")
+
+;; xsrebase2t4uqm - Rebase type 4 (2-operand)
+(define_insn "vsx_xsrebase2t4uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")]
+		     UNSPEC_XSREBASE2T4UQM))]
+  "TARGET_FUTURE"
+  "xsrebase2t4uqm %x0,%x1,%x2")
+
+;; xsrebase3t1uqm - Rebase type 1 (3-operand with accumulator)
+(define_insn "vsx_xsrebase3t1uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")]
+		     UNSPEC_XSREBASE3T1UQM))]
+  "TARGET_FUTURE"
+  "xsrebase3t1uqm %x0,%x2,%x3")
+
+;; xsrebase3t2uqm - Rebase type 2 (3-operand with accumulator)
+(define_insn "vsx_xsrebase3t2uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")]
+		     UNSPEC_XSREBASE3T2UQM))]
+  "TARGET_FUTURE"
+  "xsrebase3t2uqm %x0,%x2,%x3")
+
+;; xsrebase3t3uqm - Rebase type 3 (3-operand with accumulator)
+(define_insn "vsx_xsrebase3t3uqm"
+  [(set (match_operand:V1TI 0 "vsx_register_operand" "=wa")
+	(unspec:V1TI [(match_operand:V1TI 1 "vsx_register_operand" "0")
+		      (match_operand:V1TI 2 "vsx_register_operand" "wa")
+		      (match_operand:V1TI 3 "vsx_register_operand" "wa")]
+		     UNSPEC_XSREBASE3T3UQM))]
+  "TARGET_FUTURE"
+  "xsrebase3t3uqm %x0,%x2,%x3")

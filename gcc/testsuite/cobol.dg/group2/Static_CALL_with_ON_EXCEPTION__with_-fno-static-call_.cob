@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-options "-fno-static-call -rdynamic" }
        *> { dg-output-file "group2/Static_CALL_with_ON_EXCEPTION__with_-fno-static-call_.out" }
 

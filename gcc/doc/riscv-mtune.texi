@@ -30,7 +30,13 @@ particular CPU name.  Permissible values for this option are:
 
 @samp{sifive-p600-series},
 
-@samp{tt-ascalon-d8},
+@samp{sifive-p550},
+
+@samp{sifive-p870-d},
+
+@samp{tt-ascalon-x},
+
+@samp{tt-ascalon-xg},
 
 @samp{thead-c906},
 
@@ -46,11 +52,21 @@ particular CPU name.  Permissible values for this option are:
 
 @samp{xt-c920v2},
 
+@samp{xt-c9501fdvt},
+
 @samp{xiangshan-nanhu},
 
 @samp{xiangshan-kunminghu},
 
 @samp{spacemit-x60},
+
+@samp{spacemit-x100},
+
+@samp{spacemit-a100},
+
+@samp{arc-v-rhx-100-series},
+
+@samp{arc-v-rpx-100-series},
 
 @samp{generic-ooo},
 
@@ -58,10 +74,14 @@ particular CPU name.  Permissible values for this option are:
 
 @samp{mips-p8700},
 
+@samp{mips-i8500},
+
 @samp{andes-25-series},
 
 @samp{andes-23-series},
 
 @samp{andes-45-series},
+
+@samp{arc-v-rmx-100-series},
 
 and all valid options for @option{-mcpu=}.

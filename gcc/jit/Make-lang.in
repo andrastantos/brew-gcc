@@ -44,8 +44,13 @@
 LIBGCCJIT_MINOR_NUM = 0
 LIBGCCJIT_RELEASE_NUM = 1
 
-ifneq (,$(findstring mingw,$(target)))
-LIBGCCJIT_FILENAME = libgccjit-$(LIBGCCJIT_VERSION_NUM).dll
+SHARED_PFX=lib
+ifneq (,$(filter %cygwin,$(target)))
+SHARED_PFX=cyg
+endif
+
+ifneq (,$(or $(findstring mingw,$(target)),$(filter %-cygwin,$(target))))
+LIBGCCJIT_FILENAME = $(SHARED_PFX)gccjit-$(LIBGCCJIT_VERSION_NUM).dll
 LIBGCCJIT_IMPORT_LIB = libgccjit.dll.a
 
 jit: $(LIBGCCJIT_FILENAME) \
@@ -131,6 +136,7 @@ jit.serial = $(LIBGCCJIT_FILENAME)
 .PHONY: jit
 
 JIT_OBJS = attribs.o \
+	attr-handlers.o \
 	jit/dummy-frontend.o \
 	jit/libgccjit.o \
 	jit/jit-logging.o \
@@ -153,15 +159,7 @@ jit_OBJS = $(JIT_OBJS) $(JIT_TARGET_OBJS)
 # Use strict warnings for this front end.
 jit-warn = $(STRICT_WARN)
 
-ifneq (,$(findstring mingw,$(target)))
-# Create import library
-LIBGCCJIT_EXTRA_OPTS = -Wl,--out-implib,$(LIBGCCJIT_IMPORT_LIB)
-else
 ifneq (,$(findstring darwin,$(host)))
-LIBGCCJIT_VERS = $(LIBGCCJIT_CURRENT).$(LIBGCCJIT_REVISION).$(LIBGCCJIT_AGE)
-LIBGCCJIT_EXTRA_OPTS = -Wl,-current_version,$(LIBGCCJIT_VERS) \
- -Wl,-compatibility_version,$(LIBGCCJIT_COMPAT) \
-  $(LIBGCCJIT_VERSION_SCRIPT_OPTION) $(LIBGCCJIT_SONAME_OPTION)
 # Use the default (shared) libgcc.
 JIT_LDFLAGS = $(filter-out -static-libgcc, $(LDFLAGS))
 ifeq (,$(findstring darwin8,$(host)))
@@ -169,6 +167,26 @@ JIT_LDFLAGS += -Wl,-rpath,@loader_path
 endif
 else
 JIT_LDFLAGS = $(LDFLAGS)
+endif
+
+ifneq (,$(or $(findstring mingw,$(target)),$(filter %-cygwin,$(target))))
+LIBGCCJIT_DEF_FILE = libgccjit.def
+
+# Create import library
+LIBGCCJIT_EXTRA_OPTS = $(LIBGCCJIT_DEF_FILE) -Wl,--exclude-all-symbols \
+ -Wl,--out-implib,$(LIBGCCJIT_IMPORT_LIB)
+
+$(LIBGCCJIT_DEF_FILE): $(srcdir)/jit/libgccjit.exports
+	echo EXPORTS > $@.tmp
+	$(AWK) '/^_/ { sub(/^_/, ""); print }' $< >> $@.tmp
+	$(SHELL) $(srcdir)/../move-if-change $@.tmp $@
+else
+ifneq (,$(findstring darwin,$(host)))
+LIBGCCJIT_VERS = $(LIBGCCJIT_CURRENT).$(LIBGCCJIT_REVISION).$(LIBGCCJIT_AGE)
+LIBGCCJIT_EXTRA_OPTS = -Wl,-current_version,$(LIBGCCJIT_VERS) \
+ -Wl,-compatibility_version,$(LIBGCCJIT_COMPAT) \
+  $(LIBGCCJIT_VERSION_SCRIPT_OPTION) $(LIBGCCJIT_SONAME_OPTION)
+else
 LIBGCCJIT_EXTRA_OPTS = $(LIBGCCJIT_VERSION_SCRIPT_OPTION) \
 	$(LIBGCCJIT_SONAME_OPTION)
 endif
@@ -184,7 +202,7 @@ EXTRA_GCC_OBJS_EXCLUSIVE = $(foreach _obj1, $(EXTRA_GCC_OBJS), \
 $(LIBGCCJIT_FILENAME): $(jit_OBJS) \
 	libbackend.a libcommon-target.a libcommon.a \
 	$(CPPLIB) $(LIBDECNUMBER) \
-	$(LIBDEPS) $(srcdir)/jit/libgccjit.map \
+	$(LIBDEPS) $(srcdir)/jit/libgccjit.map $(LIBGCCJIT_DEF_FILE) \
 	$(EXTRA_GCC_OBJS_EXCLUSIVE) $(jit.prev)
 	@$(call LINK_PROGRESS,$(INDEX.jit),start)
 	+$(LLINKER) $(ALL_LINKERFLAGS) $(JIT_LDFLAGS) -o $@ -shared \
@@ -195,7 +213,7 @@ $(LIBGCCJIT_FILENAME): $(jit_OBJS) \
 	@$(call LINK_PROGRESS,$(INDEX.jit),end)
 
 # Create symlinks when not building for Windows
-ifeq (,$(findstring mingw,$(target)))
+ifeq (,$(or $(findstring mingw,$(target)),$(filter %-cygwin,$(target))))
 
 ifeq (,$(findstring darwin,$(host)))
 # but only one level for Darwin, version info is embedded.
@@ -381,7 +399,7 @@ jit.install-headers: installdirs
 	$(INSTALL_DATA) $(srcdir)/jit/libgccjit++.h \
 	  $(DESTDIR)$(includedir)/libgccjit++.h
 
-ifneq (,$(findstring mingw,$(target)))
+ifneq (,$(or $(findstring mingw,$(target)),$(filter %-cygwin,$(target))))
 jit.install-common: installdirs jit.install-headers
 # Install import library
 	$(INSTALL_PROGRAM) $(LIBGCCJIT_IMPORT_LIB) \
@@ -428,7 +446,7 @@ jit.uninstall:
 jit.mostlyclean:
 	-rm -f $(LIBGCCJIT_FILENAME) $(LIBGCCJIT_SYMLINK)
 	-rm -f $(LIBGCCJIT_LINKER_NAME_SYMLINK) $(FULL_DRIVER_NAME)
-	-rm -f $(LIBGCCJIT_SONAME)
+	-rm -f $(LIBGCCJIT_SONAME) $(LIBGCCJIT_DEF_FILE) $(LIBGCCJIT_DEF_FILE).tmp
 	-rm -f $(jit_OBJS)
 
 jit.clean:

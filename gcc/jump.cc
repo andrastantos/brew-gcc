@@ -63,7 +63,7 @@ static void mark_all_labels (rtx_insn *);
 static void mark_jump_label_1 (rtx, rtx_insn *, bool, bool);
 static void mark_jump_label_asm (rtx, rtx_insn *);
 static void redirect_exp_1 (rtx *, rtx, rtx, rtx_insn *);
-static bool invert_exp_1 (rtx, rtx_insn *);
+static bool invert_exp_1 (rtx, rtx_jump_insn *);
 
 /* Worker for rebuild_jump_labels and rebuild_jump_labels_chain.  */
 static void
@@ -388,10 +388,18 @@ reversed_comparison_code_parts (enum rtx_code code, const_rtx arg0,
       return reverse_condition (code);
     case ORDERED:
     case UNORDERED:
-    case LTGT:
-    case UNEQ:
       /* In case we already see unordered comparison, we can be sure to
 	 be dealing with floating point so we don't need any more tests.  */
+      return reverse_condition_maybe_unordered (code);
+    case LTGT:
+    case UNEQ:
+      /* LTGT is signaling and UNEQ is quiet, so reversing one into the
+	 other changes whether a quiet NaN operand raises an exception.
+	 That only matters if FP traps are honored and the operands may
+	 be NaNs; a MODE_CC comparison does not tell us the latter.  */
+      if (flag_trapping_math
+	  && (GET_MODE_CLASS (mode) == MODE_CC || HONOR_NANS (mode)))
+	return UNKNOWN;
       return reverse_condition_maybe_unordered (code);
     case UNLT:
     case UNLE:
@@ -1244,12 +1252,14 @@ delete_related_insns (rtx uncast_insn)
 	   either directly if NEXT is JUMP_LABEL (INSN),
 	   or indirectly through more levels of jumps.  */
 	delete_related_insns (lab);
-      else if (tablejump_p (insn, NULL, &lab_next))
+      else if (tablejump_p (insn, NULL, &lab_next)
+	       && !JUMP_TABLE_SHARED_P (PATTERN (lab_next)))
 	{
 	  /* If we're deleting the tablejump, delete the dispatch table.
 	     We may not be able to kill the label immediately preceding
 	     just yet, as it might be referenced in code leading up to
-	     the tablejump.  */
+	     the tablejump.  A table that other jumps dispatch through as
+	     well outlives this one.  */
 	  delete_related_insns (lab_next);
 	}
     }
@@ -1263,8 +1273,8 @@ delete_related_insns (rtx uncast_insn)
       int len = GET_NUM_ELEM (labels);
 
       for (i = 0; i < len; i++)
-	if (LABEL_NUSES (XEXP (RTVEC_ELT (labels, i), 0)) == 0)
-	  delete_related_insns (XEXP (RTVEC_ELT (labels, i), 0));
+	if (LABEL_NUSES (label_ref_label (RTVEC_ELT (labels, i))) == 0)
+	  delete_related_insns (label_ref_label (RTVEC_ELT (labels, i)));
       while (next && next->deleted ())
 	next = NEXT_INSN (next);
       return next;
@@ -1281,7 +1291,7 @@ delete_related_insns (rtx uncast_insn)
 	if (LABEL_NUSES (XEXP (note, 0)) == 0)
 	  delete_related_insns (XEXP (note, 0));
 
-  while (prev && (prev->deleted () || NOTE_P (prev)))
+  while (prev && (prev->deleted () || NOTE_P (prev) || DEBUG_INSN_P (prev)))
     prev = PREV_INSN (prev);
 
   /* If INSN was a label and a dispatch table follows it,
@@ -1443,7 +1453,7 @@ redirect_exp_1 (rtx *loc, rtx olabel, rtx nlabel, rtx_insn *insn)
    not see how to do that.  */
 
 bool
-redirect_jump_1 (rtx_insn *jump, rtx nlabel)
+redirect_jump_1 (rtx_jump_insn *jump, rtx nlabel)
 {
   int ochanges = num_validated_changes ();
   rtx *loc, asmop;
@@ -1542,7 +1552,7 @@ redirect_jump_2 (rtx_jump_insn *jump, rtx olabel, rtx nlabel, int delete_unused,
      label and are now changing it into a direct conditional return.
      The jump is no longer crossing in that case.  */
   if (ANY_RETURN_P (nlabel))
-    CROSSING_JUMP_P (jump) = 0;
+    set_crossing_jump (jump, false);
 
   if (!ANY_RETURN_P (olabel)
       && --LABEL_NUSES (olabel) == 0 && delete_unused > 0
@@ -1556,7 +1566,7 @@ redirect_jump_2 (rtx_jump_insn *jump, rtx olabel, rtx nlabel, int delete_unused,
 /* Invert the jump condition X contained in jump insn INSN.  Accrue the
    modifications into the change group.  Return true for success.  */
 static bool
-invert_exp_1 (rtx x, rtx_insn *insn)
+invert_exp_1 (rtx x, rtx_jump_insn *insn)
 {
   RTX_CODE code = GET_CODE (x);
 

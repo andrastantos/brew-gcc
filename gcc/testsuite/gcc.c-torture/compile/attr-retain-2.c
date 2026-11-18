@@ -1,4 +1,4 @@
-/* { dg-do compile { target R_flag_in_section } } */
+/* { dg-do compile { target gnu_retain } } */
 /* { dg-final { scan-assembler ".text.used_fn,\"axR\"" } } */
 /* { dg-final { scan-assembler ".text.used_fn2,\"axR\"" } } */
 /* { dg-final { scan-assembler ".bss.used_bss,\"awR\"" } } */
@@ -13,5 +13,8 @@
 /* { dg-options "-ffunction-sections -fdata-sections" } */
 /* Prevent readonly data from being put in writable sdata for 32-bit powerpc. */
 /* { dg-options "-ffunction-sections -fdata-sections -G0" { target { powerpc*-*-* && ilp32 } } } */
+/* Alpha places small objects in gp-relative sdata/sbss, which carry an
+   extra "s" section flag the scans do not match. */
+/* { dg-additional-options "-G0" { target alpha*-*-* } } */
 
 #include "attr-retain-1.c"

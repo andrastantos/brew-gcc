@@ -257,7 +257,7 @@ Structures and unions
 
 .. c:type:: gcc_jit_struct
 
-A compound type analagous to a C `struct`.
+A compound type analogous to a C `struct`.
 
 .. c:type:: gcc_jit_field
 
@@ -455,6 +455,18 @@ Reflection API
                gcc_jit_type_is_integral (gcc_jit_type *type)
 
      Return non-zero if the type is an integral.
+
+.. function::  int\
+               gcc_jit_type_is_floating_point (gcc_jit_type *type)
+
+     Return non-zero if the type is floating point.
+
+   This entrypoint was added in :ref:`LIBGCCJIT_ABI_38`; you can test for
+   its presence using
+
+   .. code-block:: c
+
+      #ifdef LIBGCCJIT_HAVE_gcc_jit_type_is_floating_point
 
 .. function::  gcc_jit_type *\
                gcc_jit_type_is_pointer (gcc_jit_type *type)

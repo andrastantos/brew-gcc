@@ -16,4 +16,4 @@ int main ()
     abort ();
 }
 
-/* { dg-final { scan-tree-dump "vectorized 1 loops in function" "vect" } } */
+/* { dg-final { scan-tree-dump "vectorized 1 loops in function" "vect" { target { ! s390x-*-* } } } } */

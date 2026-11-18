@@ -4816,15 +4816,22 @@ simplify_cobound (gfc_expr *array, gfc_expr *dim, gfc_expr *kind, int upper)
 {
   gfc_ref *ref;
   gfc_array_spec *as;
+  gfc_symbol *sym;
   int d;
 
   if (array->expr_type != EXPR_VARIABLE)
     return NULL;
 
-  /* Follow any component references.  */
-  as = (array->ts.type == BT_CLASS && CLASS_DATA (array))
-       ? CLASS_DATA (array)->as
-       : array->symtree->n.sym->as;
+  /* Do not attempt to resolve if an error has already been issued.  */
+  if (array->symtree->n.sym->error)
+    return NULL;
+
+  /* Follow any component references, starting from the base symbol's array
+     spec; ARRAY itself may be a subobject of the coarray.  */
+  sym = array->symtree->n.sym;
+  as = (sym->ts.type == BT_CLASS && sym->attr.class_ok && CLASS_DATA (sym))
+       ? CLASS_DATA (sym)->as
+       : sym->as;
   for (ref = array->ref; ref; ref = ref->next)
     {
       switch (ref->type)
@@ -4835,7 +4842,7 @@ simplify_cobound (gfc_expr *array, gfc_expr *dim, gfc_expr *kind, int upper)
 	    case AR_ELEMENT:
 	      if (ref->u.ar.as->corank > 0)
 		{
-		  gcc_assert (as == ref->u.ar.as);
+		  as = ref->u.ar.as;
 		  goto done;
 		}
 	      as = NULL;
@@ -4866,12 +4873,9 @@ simplify_cobound (gfc_expr *array, gfc_expr *dim, gfc_expr *kind, int upper)
 	}
     }
 
-  if (!as)
-    gcc_unreachable ();
-
  done:
 
-  if (as->cotype == AS_DEFERRED || as->cotype == AS_ASSUMED_SHAPE)
+  if (!as || as->cotype == AS_DEFERRED || as->cotype == AS_ASSUMED_SHAPE)
     return NULL;
 
   if (dim == NULL)
@@ -5028,6 +5032,18 @@ gfc_simplify_len (gfc_expr *e, gfc_expr *kind)
   if (k == -1)
     return &gfc_bad_expr;
 
+  /* Catch parameterized strings of nested PDTs and let the expansion occur
+     downstream in trans-array.cc(structure_alloc_comps).  */
+  if (e->expr_type == EXPR_VARIABLE && IS_PDT (e->symtree->n.sym)
+      && !e->param_list && e->ref)
+    {
+      gfc_ref *r = e->ref;
+      for (; r; r = r->next)
+	if (r->type == REF_COMPONENT
+	    && (IS_PDT (r->u.c.component) || IS_CLASS_PDT (r->u.c.component)))
+	  return NULL;
+    }
+
   if (e->expr_type == EXPR_CONSTANT
       || substring_has_constant_len (e))
     {
@@ -5056,20 +5072,15 @@ gfc_simplify_len (gfc_expr *e, gfc_expr *kind)
 	   component the last _data ref needs to be stripped and a ref to the
 	   _len component added.  */
 	return gfc_get_len_component (e->symtree->n.sym->assoc->target, k);
-      else if (e->symtree->n.sym->ts.type == BT_DERIVED
-	       && e->ref && e->ref->type == REF_COMPONENT
-	       && e->ref->u.c.component->attr.pdt_string
-	       && e->ref->u.c.component->ts.type == BT_CHARACTER
-	       && e->ref->u.c.component->ts.u.cl->length)
+      else if (gfc_expr_attr (e).pdt_string
+	       && e->ts.u.cl->length->expr_type == EXPR_VARIABLE)
 	{
+	  const char *name = e->ts.u.cl->length->symtree->name;
 	  if (gfc_init_expr_flag)
 	    {
 	      gfc_expr* tmp;
 	      tmp = gfc_pdt_find_component_copy_initializer (e->symtree->n.sym,
-							     e->ref->u.c
-							     .component->ts.u.cl
-							     ->length->symtree
-							     ->name);
+							     name);
 	      if (tmp)
 		return tmp;
 	    }
@@ -5078,13 +5089,29 @@ gfc_simplify_len (gfc_expr *e, gfc_expr *kind)
 	      gfc_expr *len_expr = gfc_copy_expr (e);
 	      gfc_free_ref_list (len_expr->ref);
 	      len_expr->ref = NULL;
-	      gfc_find_component (len_expr->symtree->n.sym->ts.u.derived, e->ref
-				  ->u.c.component->ts.u.cl->length->symtree
-				  ->name,
-				  false, true, &len_expr->ref);
+	      gfc_find_component (len_expr->symtree->n.sym->ts.u.derived,
+				  name, false, true, &len_expr->ref);
 	      len_expr->ts = len_expr->ref->u.c.component->ts;
 	      return len_expr;
 	    }
+	}
+      else if (gfc_expr_attr (e).pdt_string)
+	{
+	  gfc_actual_arglist *parms;
+	  gfc_expr *len_expr;
+
+	  len_expr = gfc_copy_expr (e->ts.u.cl->length);
+	  parms = e->param_list ? e->param_list :
+				  e->symtree->n.sym->param_list;
+	  if (parms)
+	    gfc_insert_parameter_exprs (len_expr, parms);
+
+	  if (e->ts.u.cl->length->expr_type != EXPR_VARIABLE
+	      && gfc_simplify_expr (len_expr, 0)
+	      && gfc_is_constant_expr (len_expr))
+	    return len_expr;
+
+	  gfc_free_expr (len_expr);
 	}
     }
   else if (e->expr_type == EXPR_ARRAY && e->ts.type == BT_CHARACTER
@@ -7035,7 +7062,8 @@ gfc_simplify_null (gfc_expr *mold)
 
 
 gfc_expr *
-gfc_simplify_num_images (gfc_expr *team_or_team_number ATTRIBUTE_UNUSED)
+gfc_simplify_num_images (gfc_expr *team ATTRIBUTE_UNUSED,
+			 gfc_expr *team_number ATTRIBUTE_UNUSED)
 {
   gfc_expr *result;
 
@@ -9082,7 +9110,6 @@ gfc_simplify_transfer (gfc_expr *source, gfc_expr *mold, gfc_expr *size)
   size_t source_size;
   size_t result_size;
   size_t buffer_size;
-  mpz_t tmp;
   unsigned char *buffer;
   size_t result_length;
 
@@ -9099,12 +9126,33 @@ gfc_simplify_transfer (gfc_expr *source, gfc_expr *mold, gfc_expr *size)
     return NULL;
 
   /* Calculate the size of the source.  */
-  if (source->expr_type == EXPR_ARRAY && !gfc_array_size (source, &tmp))
-    gfc_internal_error ("Failure getting length of a constant array.");
+  if (source->expr_type == EXPR_ARRAY)
+    {
+      mpz_t tmp;
 
-  /* Create an empty new expression with the appropriate characteristics.  */
-  result = gfc_get_constant_expr (mold->ts.type, mold->ts.kind,
-				  &source->where);
+      if (!gfc_array_size (source, &tmp))
+	gfc_internal_error ("Failure getting length of a constant array.");
+      mpz_clear (tmp);
+    }
+
+  /* Set the number of elements in the result, and determine its size.  */
+
+  if (mold->expr_type == EXPR_ARRAY || mold->rank || size)
+    {
+      result = gfc_get_array_expr (mold->ts.type, mold->ts.kind,
+				   &source->where);
+      result->rank = 1;
+      result->shape = gfc_get_shape (1);
+      mpz_init_set_ui (result->shape[0], result_length);
+    }
+  else
+    {
+      /* Create an empty expression with the appropriate characteristics.  */
+      result = gfc_get_constant_expr (mold->ts.type, mold->ts.kind,
+				      &source->where);
+      result->rank = 0;
+    }
+
   result->ts = mold->ts;
 
   mold_element = (mold->expr_type == EXPR_ARRAY && mold->value.constructor)
@@ -9127,18 +9175,6 @@ gfc_simplify_transfer (gfc_expr *source, gfc_expr *mold, gfc_expr *size)
 	  gfc_get_int_expr (gfc_charlen_int_kind, NULL,
 			    mold_element->value.character.length);
     }
-
-  /* Set the number of elements in the result, and determine its size.  */
-
-  if (mold->expr_type == EXPR_ARRAY || mold->rank || size)
-    {
-      result->expr_type = EXPR_ARRAY;
-      result->rank = 1;
-      result->shape = gfc_get_shape (1);
-      mpz_init_set_ui (result->shape[0], result_length);
-    }
-  else
-    result->rank = 0;
 
   /* Allocate the buffer to store the binary version of the source.  */
   buffer_size = MAX (source_size, result_size);
@@ -9227,7 +9263,8 @@ gfc_simplify_trim (gfc_expr *e)
 
 gfc_expr *
 gfc_simplify_image_index (gfc_expr *coarray, gfc_expr *sub,
-			  gfc_expr *team_or_team_number ATTRIBUTE_UNUSED)
+			  gfc_expr *team ATTRIBUTE_UNUSED,
+			  gfc_expr *team_number ATTRIBUTE_UNUSED)
 {
   gfc_expr *result;
   gfc_ref *ref;

@@ -36,12 +36,7 @@ public:
 
   ~ExportContext ();
 
-  void push_module_scope (const HIR::Module &module);
-
-  const HIR::Module &pop_module_scope ();
-
-  void emit_trait (const HIR::Trait &trait);
-  void emit_function (const HIR::Function &fn);
+  void emit_crate (AST::Crate &c);
 
   /**
    * Macros are a bit particular - they only live at the AST level, so we can

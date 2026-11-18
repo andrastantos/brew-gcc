@@ -485,7 +485,7 @@ except that in an ``Assertion_Policy`` pragma, the identifier
 (or disabled).
 
 The intention is that this be used within a subprogram when the
-given test expresion sums up all the work done so far in the
+given test expression sums up all the work done so far in the
 subprogram, so that the rest of the subprogram can be verified
 (informally or formally) using only the entry preconditions,
 and the expression in this pragma. This allows dividing up
@@ -3887,6 +3887,40 @@ entry.
 
 A value of -1 represents no additional restriction on queue length.
 
+Pragma Modifies
+===============
+.. index:: Modifies
+
+Syntax:
+
+
+::
+
+  pragma Modifies (MODIFIES_SPECIFICATION);
+
+  MODIFIES_SPECIFICATION ::=
+      MODIFIES_CLAUSE
+    | (MODIFIES_CLAUSE {, MODIFIES_CLAUSE});
+
+  MODIFIES_CLAUSE ::= MODIFIED_OBJECTS { when GUARD }
+
+  GUARD ::= boolean_EXPRESSION
+
+  MODIFIED_OBJECTS ::= MODIFIED_OBJECT | (MODIFIED_OBJECT {, MODIFIED_OBJECT})
+
+  MODIFIED_OBJECT ::=
+      name
+    | MODIFIED_OBJECT . all
+    | MODIFIED_OBJECT . component_selector_name
+    | MODIFIED_OBJECT (expression {, expression})
+
+The ``Modifies`` pragma is intended to be an exact replacement for the
+implementation-defined ``Modifies`` aspect, and shares its restrictions
+and semantics.
+
+This is an assertion kind pragma that can associate a set of its arguments
+with an assertion level. See SPARK 2014 Reference Manual, section TBD.
+
 Pragma No_Body
 ==============
 
@@ -4854,7 +4888,7 @@ checking is enabled.
 
 Note that pragma ``Postcondition`` differs from the language-defined
 ``Post`` aspect (and corresponding ``Post`` pragma) in allowing
-multiple occurrences, allowing occurences in the body even if there
+multiple occurrences, allowing occurrences in the body even if there
 is a separate spec, and allowing a second string parameter, and the
 use of the pragma identifier ``Check``. Historically, pragma
 ``Postcondition`` was implemented prior to the development of
@@ -4984,7 +5018,7 @@ checking is enabled.
 
 Note that pragma ``Precondition`` differs from the language-defined
 ``Pre`` aspect (and corresponding ``Pre`` pragma) in allowing
-multiple occurrences, allowing occurences in the body even if there
+multiple occurrences, allowing occurrences in the body even if there
 is a separate spec, and allowing a second string parameter, and the
 use of the pragma identifier ``Check``. Historically, pragma
 ``Precondition`` was implemented prior to the development of
@@ -6638,8 +6672,7 @@ the implementation-defined ``Subprogram_Variant`` aspect, and shares its
 restrictions and semantics.
 
 This is an assertion kind pragma that can associate a set of its arguments
-with an assertion level. See SPARK 2014 Reference Manual, section
-11.4.2.
+with an assertion level. See SPARK 2014 Reference Manual, section 11.4.2.
 
 Pragma Subtitle
 ===============

@@ -77,7 +77,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "rtl-iter.h"
 #include "tree-dfa.h"
 #include "tree-ssa.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "gimple.h"
 #include "options.h"
@@ -149,12 +148,14 @@ static tree *get_block_vector (tree, int *);
 extern tree debug_find_var_in_block_tree (tree, tree);
 /* We always define `record_insns' even if it's not used so that we
    can always export `prologue_epilogue_contains'.  */
-static void record_insns (rtx_insn *, rtx, hash_table<insn_cache_hasher> **)
+static void record_insns (rtx_insn *, rtx_insn *,
+			  hash_table<insn_cache_hasher> **)
      ATTRIBUTE_UNUSED;
 static bool contains (const rtx_insn *, hash_table<insn_cache_hasher> *);
 static void prepare_function_start (void);
 static void do_clobber_return_reg (rtx, void *);
 static void do_use_return_reg (rtx, void *);
+static rtx assign_stack_local_2 (machine_mode, poly_int64, int, int, rtx *);
 
 
 /* Stack of nested functions.  */
@@ -370,6 +371,10 @@ add_frame_space (poly_int64 start, poly_int64 end)
    -2 means use BITS_PER_UNIT,
    positive specifies alignment boundary in bits.
 
+   A positive ALIGN that exceeds MAX_SUPPORTED_STACK_ALIGNMENT is honoured
+   by overallocating the slot and aligning its address at run time, with
+   insns emitted at the current position, unless KIND has ASLK_REDUCE_ALIGN.
+
    KIND has ASLK_REDUCE_ALIGN bit set if it is OK to reduce
    alignment and ASLK_RECORD_PAD bit set if we should remember
    extra space we allocated for alignment purposes.  When we are
@@ -382,10 +387,23 @@ rtx
 assign_stack_local_1 (machine_mode mode, poly_int64 size,
 		      int align, int kind)
 {
+  return assign_stack_local_2 (mode, size, align, kind, NULL);
+}
+
+/* Like assign_stack_local_1.  If BASE_ADDR is nonnull, set it to the slot
+   address before run-time alignment, or to NULL_RTX if none was needed.  */
+
+static rtx
+assign_stack_local_2 (machine_mode mode, poly_int64 size,
+		      int align, int kind, rtx *base_addr)
+{
   rtx x, addr;
   poly_int64 bigend_correction = 0;
   poly_int64 slot_offset = 0, old_frame_offset;
-  unsigned int alignment, alignment_in_bits;
+  unsigned int alignment, alignment_in_bits, dynamic_align = 0;
+
+  if (base_addr)
+    *base_addr = NULL_RTX;
 
   if (align == 0)
     {
@@ -404,9 +422,23 @@ assign_stack_local_1 (machine_mode mode, poly_int64 size,
 
   alignment_in_bits = alignment * BITS_PER_UNIT;
 
-  /* Ignore alignment if it exceeds MAX_SUPPORTED_STACK_ALIGNMENT.  */
+  /* The frame cannot be aligned beyond MAX_SUPPORTED_STACK_ALIGNMENT.  If more
+     is requested, pad the slot so that an over-aligned object still fits.  */
   if (alignment_in_bits > MAX_SUPPORTED_STACK_ALIGNMENT)
     {
+      if (align > 0 && !(kind & ASLK_REDUCE_ALIGN) && maybe_ne (size, 0))
+	{
+	  gcc_assert (currently_expanding_to_rtl);
+	  dynamic_align = alignment_in_bits;
+
+	  if (crtl->preferred_stack_boundary < PREFERRED_STACK_BOUNDARY)
+	    crtl->preferred_stack_boundary = PREFERRED_STACK_BOUNDARY;
+
+	  /* Pad from the alignment the frame base is guaranteed to have.  */
+	  size += ((alignment_in_bits
+		    - REGNO_POINTER_ALIGN (VIRTUAL_STACK_VARS_REGNUM))
+		   / BITS_PER_UNIT);
+	}
       alignment_in_bits = MAX_SUPPORTED_STACK_ALIGNMENT;
       alignment = MAX_SUPPORTED_STACK_ALIGNMENT / BITS_PER_UNIT;
     }
@@ -506,7 +538,7 @@ assign_stack_local_1 (machine_mode mode, poly_int64 size,
  found_space:
   /* On a big-endian machine, if we are allocating more space than we will use,
      use the least significant bytes of those that are allocated.  */
-  if (mode != BLKmode)
+  if (mode != BLKmode && !dynamic_align)
     {
       /* The slot size can sometimes be smaller than the mode size;
 	 e.g. the rs6000 port allocates slots with a vector mode
@@ -530,6 +562,15 @@ assign_stack_local_1 (machine_mode mode, poly_int64 size,
 			  trunc_int_for_mode
 			  (slot_offset + bigend_correction,
 			   Pmode));
+
+  if (dynamic_align)
+    {
+      if (base_addr)
+	*base_addr = addr;
+      addr = align_dynamic_address (addr, dynamic_align);
+      mark_reg_pointer (addr, dynamic_align);
+      alignment_in_bits = dynamic_align;
+    }
 
   x = gen_rtx_MEM (mode, addr);
   set_mem_align (x, alignment_in_bits);
@@ -592,6 +633,9 @@ public:
   /* The size of the slot, including extra space for alignment.  This
      info is for combine_temp_slots.  */
   poly_int64 full_size;
+  /* The address before run-time alignment, or NULL_RTX if the slot does not
+     need run-time alignment.  */
+  rtx base_addr;
 };
 
 /* Entry for the below hash table.  */
@@ -708,7 +752,7 @@ temp_address_hasher::equal (temp_slot_address_entry *t1,
   return exp_equiv_p (t1->address, t2->address, 0, true);
 }
 
-/* Add ADDRESS as an alias of TEMP_SLOT to the addess -> temp slot mapping.  */
+/* Add ADDRESS as an alias of TEMP_SLOT to the address -> temp slot mapping.  */
 static void
 insert_temp_slot_address (rtx address, class temp_slot *temp_slot)
 {
@@ -803,6 +847,18 @@ assign_stack_temp_for_type (machine_mode mode, poly_int64 size, tree type)
 
   align = get_stack_local_alignment (type, mode);
 
+  unsigned int required_align
+    = (mode == BLKmode ? BITS_PER_UNIT : GET_MODE_ALIGNMENT (mode));
+  if (type)
+    required_align = MAX (required_align, TYPE_ALIGN (type));
+
+  bool dynamic_align = required_align > MAX_SUPPORTED_STACK_ALIGNMENT;
+
+  if (dynamic_align)
+    align = required_align;
+  else
+    align = MAX (required_align, MIN (align, MAX_SUPPORTED_STACK_ALIGNMENT));
+
   /* Try to find an available, already-allocated temporary of the proper
      mode which meets the size and alignment requirements.  Choose the
      smallest one with the closest alignment.
@@ -844,7 +900,8 @@ assign_stack_temp_for_type (machine_mode mode, poly_int64 size, tree type)
       /* If there are enough aligned bytes left over, make them into a new
 	 temp_slot so that the extra bytes don't get wasted.  Do this only
 	 for BLKmode slots, so that we can be sure of the alignment.  */
-      if (GET_MODE (best_p->slot) == BLKmode)
+      if (GET_MODE (best_p->slot) == BLKmode
+	  && best_p->align <= MAX_SUPPORTED_STACK_ALIGNMENT)
 	{
 	  int alignment = best_p->align / BITS_PER_UNIT;
 	  poly_int64 rounded_size = aligned_upper_bound (size, alignment);
@@ -852,6 +909,7 @@ assign_stack_temp_for_type (machine_mode mode, poly_int64 size, tree type)
 	  if (known_ge (best_p->size - rounded_size, alignment))
 	    {
 	      p = ggc_alloc<temp_slot> ();
+	      p->base_addr = NULL_RTX;
 	      p->in_use = false;
 	      p->size = best_p->size - rounded_size;
 	      p->base_offset = best_p->base_offset + rounded_size;
@@ -869,12 +927,20 @@ assign_stack_temp_for_type (machine_mode mode, poly_int64 size, tree type)
 	}
     }
 
+  bool reused_p = selected != 0;
+
   /* If we still didn't find one, make a new temporary.  */
   if (selected == 0)
     {
       poly_int64 frame_offset_old = frame_offset;
 
       p = ggc_alloc<temp_slot> ();
+      p->base_addr = NULL_RTX;
+
+      poly_int64 slot_size
+	= (mode == BLKmode
+	     ? aligned_upper_bound (size, (int) align / BITS_PER_UNIT)
+	     : size);
 
       /* We are passing an explicit alignment request to assign_stack_local.
 	 One side effect of that is assign_stack_local will not round SIZE
@@ -883,14 +949,15 @@ assign_stack_temp_for_type (machine_mode mode, poly_int64 size, tree type)
 	 So for requests which depended on the rounding of SIZE, we go ahead
 	 and round it now.  We also make sure ALIGNMENT is at least
 	 BIGGEST_ALIGNMENT.  */
-      gcc_assert (mode != BLKmode || align == BIGGEST_ALIGNMENT);
-      p->slot = assign_stack_local_1 (mode,
-				      (mode == BLKmode
-				       ? aligned_upper_bound (size,
-							      (int) align
-							      / BITS_PER_UNIT)
-				       : size),
-				      align, 0);
+      gcc_assert (mode != BLKmode
+		  || dynamic_align
+		  || (align
+		      >= MIN (BIGGEST_ALIGNMENT,
+			      MAX_SUPPORTED_STACK_ALIGNMENT)));
+
+      rtx base_addr;
+      p->slot = assign_stack_local_2 (mode, slot_size, align, 0, &base_addr);
+      p->base_addr = base_addr;
 
       p->align = align;
 
@@ -901,7 +968,9 @@ assign_stack_temp_for_type (machine_mode mode, poly_int64 size, tree type)
 	 can be either above or below this stack slot depending on which
 	 way the frame grows.  We include the extra space if and only if it
 	 is above this slot.  */
-      if (FRAME_GROWS_DOWNWARD)
+      if (dynamic_align)
+	p->size = slot_size;
+      else if (FRAME_GROWS_DOWNWARD)
 	p->size = frame_offset_old - frame_offset;
       else
 	p->size = size;
@@ -929,10 +998,19 @@ assign_stack_temp_for_type (machine_mode mode, poly_int64 size, tree type)
 
   pp = temp_slots_at_level (p->level);
   insert_slot_to_list (p, pp);
-  insert_temp_slot_address (XEXP (p->slot, 0), p);
+
+  rtx addr = XEXP (p->slot, 0);
+
+  if (reused_p && p->align > MAX_SUPPORTED_STACK_ALIGNMENT)
+    {
+      addr = align_dynamic_address (p->base_addr, p->align);
+      mark_reg_pointer (addr, p->align);
+    }
+
+  insert_temp_slot_address (addr, p);
 
   /* Create a new MEM rtx to avoid clobbering MEM flags of old slots.  */
-  slot = gen_rtx_MEM (mode, XEXP (p->slot, 0));
+  slot = gen_rtx_MEM (mode, addr);
   vec_safe_push (stack_slot_list, slot);
 
   /* If we know the alias set for the memory that will be used, use
@@ -1061,7 +1139,8 @@ combine_temp_slots (void)
 
       next = p->next;
 
-      if (GET_MODE (p->slot) != BLKmode)
+      if (GET_MODE (p->slot) != BLKmode
+	  || p->align > MAX_SUPPORTED_STACK_ALIGNMENT)
 	continue;
 
       for (q = p->next; q; q = next_q)
@@ -1070,7 +1149,8 @@ combine_temp_slots (void)
 
 	  next_q = q->next;
 
-	  if (GET_MODE (q->slot) != BLKmode)
+	  if (GET_MODE (q->slot) != BLKmode
+	      || q->align > MAX_SUPPORTED_STACK_ALIGNMENT)
 	    continue;
 
 	  if (known_eq (p->base_offset + p->full_size, q->base_offset))
@@ -1992,8 +2072,8 @@ instantiate_virtual_regs (void)
 	instantiate_virtual_regs_in_rtx (&REG_NOTES (insn));
 
 	/* Instantiate any virtual registers in CALL_INSN_FUNCTION_USAGE.  */
-	if (CALL_P (insn))
-	  instantiate_virtual_regs_in_rtx (&CALL_INSN_FUNCTION_USAGE (insn));
+	if (auto call = dyn_cast<rtx_call_insn *> (insn))
+	  instantiate_virtual_regs_in_rtx (&CALL_INSN_FUNCTION_USAGE (call));
       }
 
   /* Instantiate the virtual registers in the DECLs for debugging purposes.  */
@@ -2729,6 +2809,16 @@ assign_parm_find_stack_rtl (tree parm, struct assign_parm_data_one *data)
       if (offset_align != 0)
 	align = MIN (align, offset_align);
     }
+
+  /* If part of the argument is passed in registers and the rest on the
+     stack, the value is reconstructed by spilling the register part just
+     below the aligned stack slot.  The full value therefore starts at an
+     address that is only aligned to the largest power of two dividing the
+     size of the register part, not to FUNCTION_ARG_BOUNDARY.  */
+  if (data->partial)
+    align = MIN (align,
+		 least_bit_hwi (data->partial) * BITS_PER_UNIT);
+
   set_mem_align (stack_parm, align);
 
   if (data->entry_parm)
@@ -2948,21 +3038,8 @@ assign_parm_setup_block (struct assign_parm_data_all *all,
 	   ? MAX (DECL_ALIGN (parm), BITS_PER_WORD) : DECL_ALIGN (parm));
 
       SET_DECL_ALIGN (parm, parm_align);
-      if (DECL_ALIGN (parm) > MAX_SUPPORTED_STACK_ALIGNMENT)
-	{
-	  rtx allocsize = gen_int_mode (size_stored, Pmode);
-	  get_dynamic_stack_size (&allocsize, 0, DECL_ALIGN (parm), NULL);
-	  stack_parm = assign_stack_local (BLKmode, UINTVAL (allocsize),
-					   MAX_SUPPORTED_STACK_ALIGNMENT);
-	  rtx addr = align_dynamic_address (XEXP (stack_parm, 0),
-					    DECL_ALIGN (parm));
-	  mark_reg_pointer (addr, DECL_ALIGN (parm));
-	  stack_parm = gen_rtx_MEM (GET_MODE (stack_parm), addr);
-	  MEM_NOTRAP_P (stack_parm) = 1;
-	}
-      else
-	stack_parm = assign_stack_local (BLKmode, size_stored,
-					 DECL_ALIGN (parm));
+      stack_parm = assign_stack_local (BLKmode, size_stored,
+				       DECL_ALIGN (parm));
       if (known_eq (GET_MODE_SIZE (GET_MODE (entry_parm)), size))
 	PUT_MODE (stack_parm, GET_MODE (entry_parm));
       set_mem_attributes (stack_parm, parm, 1);
@@ -4978,6 +5055,10 @@ prepare_function_start (void)
   /* Reset the cache of the "extended" flag in the target's
      _BitInt info struct.  */
   bitint_extended = -1;
+
+  /* Reset the divisor of the last division expanded, so that a function's
+     code does not depend on what was expanded before it.  */
+  last_div_const = 0;
 }
 
 void
@@ -5731,7 +5812,8 @@ dump_stack_clash_frame_info (enum stack_clash_probes probes, bool residuals)
    for the first time.  */
 
 static void
-record_insns (rtx_insn *insns, rtx end, hash_table<insn_cache_hasher> **hashp)
+record_insns (rtx_insn *insns, rtx_insn *end,
+	      hash_table<insn_cache_hasher> **hashp)
 {
   rtx_insn *tmp;
   hash_table<insn_cache_hasher> *hash = *hashp;
@@ -5752,7 +5834,7 @@ record_insns (rtx_insn *insns, rtx end, hash_table<insn_cache_hasher> **hashp)
    insn, then record COPY as well.  */
 
 void
-maybe_copy_prologue_epilogue_insn (rtx insn, rtx copy)
+maybe_copy_prologue_epilogue_insn (rtx_insn *insn, rtx_insn *copy)
 {
   hash_table<insn_cache_hasher> *hash;
   rtx *slot;
@@ -5895,9 +5977,11 @@ make_prologue_seq (void)
 }
 
 /* Emit a sequence of insns to zero the call-used registers before RET
-   according to ZERO_REGS_TYPE.  */
+   according to ZERO_REGS_TYPE.  Return true if a sequence was emitted, in
+   which case crtl->must_be_zero_on_return has grown and the caller has to
+   refresh the data flow information.  */
 
-static void
+static bool
 gen_call_used_regs_seq (rtx_insn *ret, unsigned int zero_regs_type)
 {
   bool only_gpr = true;
@@ -5906,12 +5990,12 @@ gen_call_used_regs_seq (rtx_insn *ret, unsigned int zero_regs_type)
 
   /* No need to zero call-used-regs in main ().  */
   if (MAIN_NAME_P (DECL_NAME (current_function_decl)))
-    return;
+    return false;
 
   /* No need to zero call-used-regs if __builtin_eh_return is called
      since it isn't a normal function return.  */
   if (crtl->calls_eh_return)
-    return;
+    return false;
 
   /* If only_gpr is true, only zero call-used registers that are
      general-purpose registers; if only_used is true, only zero
@@ -5932,7 +6016,7 @@ gen_call_used_regs_seq (rtx_insn *ret, unsigned int zero_regs_type)
 	    1. it is a call-used register;
 	and 2. it is not a fixed register;
 	and 3. it is not live at the return of the routine;
-	and 4. it is general registor if only_gpr is true;
+	and 4. it is general register if only_gpr is true;
 	and 5. it is used in the routine if only_used is true;
 	and 6. it is a register that passes parameter if only_arg is true.  */
 
@@ -5975,7 +6059,7 @@ gen_call_used_regs_seq (rtx_insn *ret, unsigned int zero_regs_type)
     }
 
   if (hard_reg_set_empty_p (selected_hardregs))
-    return;
+    return false;
 
   /* Now that we have a hard register set that needs to be zeroed, pass it to
      target to generate zeroing sequence.  */
@@ -5992,21 +6076,20 @@ gen_call_used_regs_seq (rtx_insn *ret, unsigned int zero_regs_type)
   gcc_assert (hard_reg_set_subset_p (zeroed_hardregs, all_call_used_regs));
 
   rtx_insn *seq = end_sequence ();
-  if (seq)
-    {
-      /* Emit the memory blockage and register clobber asm volatile before
-	 the whole sequence.  */
-      start_sequence ();
-      expand_asm_reg_clobber_mem_blockage (zeroed_hardregs);
-      rtx_insn *seq_barrier = end_sequence ();
+  if (!seq)
+    return false;
 
-      emit_insn_before (seq_barrier, ret);
-      emit_insn_before (seq, ret);
+  /* Emit the memory blockage and register clobber asm volatile before
+     the whole sequence.  */
+  start_sequence ();
+  expand_asm_reg_clobber_mem_blockage (zeroed_hardregs);
+  rtx_insn *seq_barrier = end_sequence ();
 
-      /* Update the data flow information.  */
-      crtl->must_be_zero_on_return |= zeroed_hardregs;
-      df_update_exit_block_uses ();
-    }
+  emit_insn_before (seq_barrier, ret);
+  emit_insn_before (seq, ret);
+
+  crtl->must_be_zero_on_return |= zeroed_hardregs;
+  return true;
 }
 
 
@@ -6259,7 +6342,8 @@ thread_prologue_and_epilogue_insns (void)
 
       rtx_insn *insn = BB_END (e->src);
 
-      if (!(CALL_P (insn) && SIBLING_CALL_P (insn)))
+      auto call = dyn_cast<rtx_call_insn *> (insn);
+      if (!(call && SIBLING_CALL_P (call)))
 	continue;
 
       rtx_insn *ep_seq;
@@ -6833,12 +6917,20 @@ pass_zero_call_used_regs::execute (function *fun)
   /* Iterate over the function's return instructions and insert any
      register zeroing required by the -fzero-call-used-regs command-line
      option or the "zero_call_used_regs" function attribute.  */
+  bool zeroed = false;
   FOR_EACH_EDGE (e, ei, EXIT_BLOCK_PTR_FOR_FN (cfun)->preds)
     {
       rtx_insn *insn = BB_END (e->src);
       if (JUMP_P (insn) && ANY_RETURN_P (JUMP_LABEL (insn)))
-	gen_call_used_regs_seq (insn, zero_regs_type);
+	zeroed |= gen_call_used_regs_seq (insn, zero_regs_type);
     }
+
+  /* The registers in must_be_zero_on_return are uses of the exit block, see
+     df_epilogue_uses_p.  Growing that set also changes which registers a
+     sibling call is recorded as clobbering, see df_get_call_refs, so the
+     calls have to be rescanned as well.  */
+  if (zeroed)
+    df_update_entry_exit_and_calls ();
 
   return 0;
 }

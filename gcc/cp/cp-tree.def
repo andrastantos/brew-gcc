@@ -495,18 +495,29 @@ DEFTREECODE (TEMPLATE_INFO, "template_info", tcc_exceptional, 0)
    Operand 1: OMP_DEPOBJ_CLAUSES: List of clauses.  */
 DEFTREECODE (OMP_DEPOBJ, "omp_depobj", tcc_statement, 2)
 
+/* OpenMP - #pragma omp allocate
+   Underlying node type is tree_exp, used to represent the directive as a
+   statement in a function.  Only used for template instantiation.
+   Operand 0: OMP_ALLOCATE_VARS: tree_list containing each var_decl passed to
+				 the directive as an args, purpose contains the
+				 var_decl, value contains a expr that holds the
+				 location where the var was passed in.
+   Operand 1: OMP_ALLOCATE_ALLOCATOR: Expr of the allocator clause.
+   Operand 2: OMP_ALLOCATE_ALIGN: Expr of the align clause.  */
+DEFTREECODE (OMP_ALLOCATE, "omp_allocate", tcc_statement, 3)
+
 /* Extensions for Concepts. */
 
 /* Used to represent information associated with constrained declarations. */
 DEFTREECODE (CONSTRAINT_INFO, "constraint_info", tcc_exceptional, 0)
 
-/* A requires-expr has three operands. The first operand is
-   its parameter list (possibly NULL). The second is a list of
-   requirements, which are denoted by the _REQ* tree codes
-   below.  The third is a TREE_VEC of template arguments to
+/* A requires-expr has three operands.  REQUIRES_EXPR_PARMS is
+   its parameter list (possibly NULL).  REQUIRES_EXPR_REQS is a list of
+   requirements, which are denoted by the _REQ* tree codes below.
+   REQUIRES_EXPR_EXTRA_ARGS is a TREE_VEC of template arguments to
    be applied when substituting into the parameter list and
    requirements, set by tsubst_requires_expr for partial instantiations.  */
-DEFTREECODE (REQUIRES_EXPR,   "requires_expr", tcc_expression, 3)
+DEFTREECODE (REQUIRES_EXPR, "requires_expr", tcc_exceptional, 0)
 
 /* A requirement for an expression. */
 DEFTREECODE (SIMPLE_REQ, "simple_req", tcc_expression, 1)
@@ -515,10 +526,9 @@ DEFTREECODE (SIMPLE_REQ, "simple_req", tcc_expression, 1)
 DEFTREECODE (TYPE_REQ, "type_req", tcc_expression, 1)
 
 /* A requirement for an expression and its properties. The
-   first operand is the expression, and the 2nd is its type.
-   The accessor COMPOUND_REQ_NOEXCEPT determines whether
-   the noexcept keyword was present. */
-DEFTREECODE (COMPOUND_REQ, "compound_req", tcc_expression, 2)
+   first operand is the expression, the 2nd is its type,
+   the third one is noexcept expression.   */
+DEFTREECODE (COMPOUND_REQ, "compound_req", tcc_expression, 3)
 
 /* A requires clause within a requires expression. */
 DEFTREECODE (NESTED_REQ, "nested_req", tcc_expression, 1)
@@ -547,7 +557,7 @@ DEFTREECODE (DISJ_CONSTR, "disj_constr", tcc_expression, 2)
 
 /* The co_await expression is used to support coroutines.
 
-  Op 0 is the cast expresssion (potentially modified by the
+  Op 0 is the cast expression (potentially modified by the
   promise "await_transform()" method).
   Op1 is a proxy for the temp / coro frame slot 'e' value.
   Op2 is the initialiser for Op1 (Op0, potentially modified by any
@@ -588,9 +598,6 @@ DEFTREECODE (TU_LOCAL_ENTITY, "tu_local_entity", tcc_exceptional, 0)
 
 /* C++26 reflection expression.  */
 DEFTREECODE (REFLECT_EXPR, "reflect_expr", tcc_expression, 1)
-
-/* Represents the std::meta::info type.  */
-DEFTREECODE (META_TYPE, "meta_type", tcc_type, 0)
 
 /* Represents a dependent splice expression.  If SPLICE_EXPR_EXPRESSION_P
    is set, this tree represents a splice-expression (as opposed to

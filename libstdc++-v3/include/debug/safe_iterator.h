@@ -131,9 +131,6 @@ namespace __gnu_debug
     : private _Iterator,
       public _Safe_iterator_base
     {
-      typedef _Iterator _Iter_base;
-      typedef _Safe_iterator_base _Safe_base;
-
       typedef std::iterator_traits<_Iterator> _Traits;
 
     protected:
@@ -149,11 +146,8 @@ namespace __gnu_debug
 
       _GLIBCXX20_CONSTEXPR
       _Safe_iterator(const _Safe_iterator& __x, _Unchecked) _GLIBCXX_NOEXCEPT
-      : _Iter_base(__x.base()), _Safe_base()
-      {
-	if (!std::__is_constant_evaluated())
-	  _M_attach(__x._M_sequence);
-      }
+      : _Iterator(__x), _Safe_iterator_base(__x, _S_constant())
+      { }
 
     public:
       typedef _Iterator					iterator_type;
@@ -169,7 +163,7 @@ namespace __gnu_debug
 
       /// @post the iterator is singular and unattached
       _GLIBCXX20_CONSTEXPR
-      _Safe_iterator() _GLIBCXX_NOEXCEPT : _Iter_base() { }
+      _Safe_iterator() _GLIBCXX_NOEXCEPT : _Iterator() { }
 
       /**
        * @brief Safe iterator construction from an unsafe iterator and
@@ -181,7 +175,7 @@ namespace __gnu_debug
       _GLIBCXX20_CONSTEXPR
       _Safe_iterator(_Iterator __i, const _Safe_sequence_base* __seq)
       _GLIBCXX_NOEXCEPT
-      : _Iter_base(__i), _Safe_base(__seq, _S_constant())
+      : _Iterator(__i), _Safe_iterator_base(__seq, _S_constant())
       { }
 
       /**
@@ -189,7 +183,7 @@ namespace __gnu_debug
        */
       _GLIBCXX20_CONSTEXPR
       _Safe_iterator(const _Safe_iterator& __x) _GLIBCXX_NOEXCEPT
-      : _Iter_base(__x.base()), _Safe_base()
+      : _Iterator(__x), _Safe_iterator_base()
       {
 	if (std::__is_constant_evaluated())
 	  return;
@@ -211,7 +205,7 @@ namespace __gnu_debug
        */
       _GLIBCXX20_CONSTEXPR
       _Safe_iterator(_Safe_iterator&& __x) noexcept
-      : _Iter_base()
+      : _Iterator()
       {
 	if (std::__is_constant_evaluated())
 	  {
@@ -243,7 +237,7 @@ namespace __gnu_debug
 	      std::__are_same<_MutableIterator, _OtherIterator>::__value,
 			       _Category>::__type>& __x)
 	_GLIBCXX_NOEXCEPT
-	: _Iter_base(__x.base())
+	: _Iterator(__x.base())
 	{
 	  if (std::__is_constant_evaluated())
 	    return;
@@ -446,12 +440,12 @@ namespace __gnu_debug
       /** Attach iterator to the given sequence. */
       void
       _M_attach(const _Safe_sequence_base* __seq)
-      { _Safe_base::_M_attach(__seq, _S_constant()); }
+      { _Safe_iterator_base::_M_attach(__seq, _S_constant()); }
 
       /** Likewise, but not thread-safe. */
       void
       _M_attach_single(const _Safe_sequence_base* __seq)
-      { _Safe_base::_M_attach_single(__seq, _S_constant()); }
+      { _Safe_iterator_base::_M_attach_single(__seq, _S_constant()); }
 
       /// Is the iterator dereferenceable?
       bool
@@ -478,7 +472,7 @@ namespace __gnu_debug
       /// Is the iterator value-initialized?
       bool
       _M_value_initialized() const
-      { return _M_version == 0 && base() == _Iter_base(); }
+      { return _M_version == 0 && base() == _Iterator(); }
 
       // Can we advance the iterator @p __n steps (@p __n may be negative)
       bool
@@ -588,6 +582,19 @@ namespace __gnu_debug
 	  return __lhs.base() != __rhs.base();
 	}
 #endif // three-way comparison
+
+      template<typename _Fn>
+	static _GLIBCXX14_CONSTEXPR _Self
+	_S_for_each_segment(_Self __first, _Self __last, _Fn __func)
+	{
+	  __glibcxx_check_valid_range(__first, __last);
+	  _Iterator __ret
+	    = _Iterator::_S_for_each_segment(__first.base(), __last.base(), __func);
+	  return _Self(__ret, __first._M_sequence);
+	}
+
+      static const bool _S_enable_for_each_segment
+	= std::__enable_for_each_segment<_Iterator>;
     };
 
   template<typename _Iterator, typename _Sequence>
@@ -1149,7 +1156,7 @@ namespace __gnu_debug
     inline bool
     __can_advance(const _Safe_iterator<_Iterator, _Sequence, _Category>& __it,
 		  _Size __n)
-    { 
+    {
       if (std::__is_constant_evaluated())
 	return true;
 
@@ -1166,7 +1173,7 @@ namespace __gnu_debug
     {
       if (std::__is_constant_evaluated())
 	return true;
-    
+
       return __it._M_can_advance(__dist, __way);
     }
 

@@ -1,3 +1,36 @@
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Remove unneeded AC_SUBST(target_alias).
+
+2026-10-21  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* configure: Regenerate.
+	* m4/libtool.m4 (_LT_LANG_D_CONFIG): Use AC_LANG_PUSH,
+	AC_LANG_POP instead of AC_LANG_SAVE, AC_LANG_RESTORE.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+
+2026-07-10  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* libdruntime/config/common/threadasm.S: Don't emit
+	.note.GNU-stack on NetBSD.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Replace AC_CANONICAL_SYSTEM with AC_CANONICAL_TARGET.
+	Remove redundant AM_PROG_LIBTOOL.  Replace AC_FOREACH with m4_foreach_w.
+	* m4/druntime.m4: Replace AC_HELP_STRING AS_HELP_STRING.  Replace
+	AC_TRY_COMPILE with AC_COMPILE_IFELSE.
+	* m4/druntime/cpu.m4: Replace AC_TRY_LINK with AC_LINK_IFELSE.
+	* m4/druntime/os.m4: Replace AC_TRY_COMPILE with AC_COMPILE_IFELSE.
+
 2026-04-21  Iain Buclaw  <ibuclaw@gdcproject.org>
 
 	* libdruntime/MERGE: Merge upstream druntime d1fbbb1a2f.

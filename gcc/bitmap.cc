@@ -22,15 +22,33 @@ along with GCC; see the file COPYING3.  If not see
 #include "coretypes.h"
 #include "bitmap.h"
 #include "selftest.h"
+#include "pretty-print.h"
+#include "splay-tree-utils.h"
+
+class bitmap_splay_tree_accessors
+{
+public:
+  using node_type = bitmap_element *;
+
+  static node_type &child (node_type node, unsigned int index)
+  {
+    return index ? node->next : node->prev;
+  }
+};
+
+using bitmap_splay_tree
+  = splay_tree_without_parent<bitmap_splay_tree_accessors>;
 
 /* Memory allocation statistics purpose instance.  */
-mem_alloc_description<bitmap_usage> bitmap_mem_desc;
+inline auto &
+bitmap_mem_desc ()
+{
+  return mem_alloc_description<bitmap_usage>::instance<BITMAP_ORIGIN> ();
+}
 
 /* Static zero-initialized bitmap obstack used for default initialization
    of bitmap_head.  */
 bitmap_obstack bitmap_head::crashme;
-
-static bitmap_element *bitmap_tree_listify_from (bitmap, bitmap_element *);
 
 /* Register new bitmap.  */
 void
@@ -40,8 +58,8 @@ bitmap_register (bitmap b MEM_STAT_DECL)
   gcc_assert (b->alloc_descriptor == 0);
   b->alloc_descriptor = alloc_descriptor_max_uid++;
 
-  bitmap_mem_desc.register_descriptor (b->get_descriptor (), BITMAP_ORIGIN,
-				       false FINAL_PASS_MEM_STAT);
+  bitmap_mem_desc ().register_descriptor (b->get_descriptor (), BITMAP_ORIGIN,
+					  false FINAL_PASS_MEM_STAT);
 }
 
 /* Account the overhead.  */
@@ -49,8 +67,8 @@ static void
 register_overhead (bitmap b, size_t amount)
 {
   unsigned *d = b->get_descriptor ();
-  if (bitmap_mem_desc.contains_descriptor_for_instance (d))
-    bitmap_mem_desc.register_instance_overhead (amount, d);
+  if (bitmap_mem_desc ().contains_descriptor_for_instance (d))
+    bitmap_mem_desc ().register_instance_overhead (amount, d);
 }
 
 /* Release the overhead.  */
@@ -58,8 +76,8 @@ static void
 release_overhead (bitmap b, size_t amount, bool remove_from_map)
 {
   unsigned *d = b->get_descriptor ();
-  if (bitmap_mem_desc.contains_descriptor_for_instance (d))
-    bitmap_mem_desc.release_instance_overhead (d, amount, remove_from_map);
+  if (bitmap_mem_desc ().contains_descriptor_for_instance (d))
+    bitmap_mem_desc ().release_instance_overhead (d, amount, remove_from_map);
 }
 
 
@@ -151,17 +169,16 @@ bitmap_element_allocate (bitmap head)
 /* Remove ELT and all following elements from bitmap HEAD.
    Put the released elements in the freelist for HEAD.  */
 
-void
+static void
 bitmap_elt_clear_from (bitmap head, bitmap_element *elt)
 {
   bitmap_element *prev;
   bitmap_obstack *bit_obstack = head->obstack;
 
+  gcc_checking_assert (!head->tree_form);
+
   if (!elt)
     return;
-
-  if (head->tree_form)
-    elt = bitmap_tree_listify_from (head, elt);
 
   if (GATHER_STATISTICS)
     {
@@ -361,7 +378,7 @@ bitmap_list_find_element (bitmap head, unsigned int indx)
      call initialize function.  */
   bitmap_usage *usage = NULL;
   if (GATHER_STATISTICS)
-    usage = bitmap_mem_desc.get_descriptor_for_instance (head);
+    usage = bitmap_mem_desc ().get_descriptor_for_instance (head);
 
   /* This bitmap has more than one element, and we're going to look
      through the elements list.  Count that as a search.  */
@@ -414,14 +431,14 @@ bitmap_list_find_element (bitmap head, unsigned int indx)
 
 /* Splay-tree view of bitmaps.
 
-   This is an almost one-to-one the implementatin of the simple top-down
+   This is an almost one-to-one the implementation of the simple top-down
    splay tree in Sleator and Tarjan's "Self-adjusting Binary Search Trees".
    It is probably not the most efficient form of splay trees, but it should
    be good enough to experiment with this idea of bitmaps-as-trees.
 
    For all functions below, the variable or function argument "t" is a node
    in the tree, and "e" is a temporary or new node in the tree.  The rest
-   is sufficiently straigh-forward (and very well explained in the paper)
+   is sufficiently straight-forward (and very well explained in the paper)
    that comment would only clutter things.  */
 
 static inline void
@@ -468,7 +485,7 @@ bitmap_tree_splay (bitmap head, bitmap_element *t, unsigned int indx)
 
   bitmap_usage *usage = NULL;
   if (GATHER_STATISTICS)
-    usage = bitmap_mem_desc.get_descriptor_for_instance (head);
+    usage = bitmap_mem_desc ().get_descriptor_for_instance (head);
 
   N.prev = N.next = NULL;
   l = r = &N;
@@ -503,16 +520,18 @@ bitmap_tree_splay (bitmap head, bitmap_element *t, unsigned int indx)
   return t;
 }
 
-/* Link bitmap element E into the current bitmap splay tree.  */
+/* Link bitmap element E into the current bitmap splay tree.  The caller
+   must have called bitmap_tree_find_element first, which guarantees that
+   the current root should become a neighbor of E.  */
 
 static inline void
 bitmap_tree_link_element (bitmap head, bitmap_element *e)
 {
-  if (head->first == NULL)
+  bitmap_element *t = head->first;
+  if (t == NULL)
     e->prev = e->next = NULL;
   else
     {
-      bitmap_element *t = bitmap_tree_splay (head, head->first, e->indx);
       if (e->indx < t->indx)
 	{
 	  e->prev = t->prev;
@@ -545,6 +564,8 @@ bitmap_tree_unlink_element (bitmap head, bitmap_element *e)
 
   if (e->prev == NULL)
     t = e->next;
+  else if (e->next == NULL)
+    t = e->prev;
   else
     {
       t = bitmap_tree_splay (head, e->prev, e->indx);
@@ -570,7 +591,7 @@ bitmap_tree_find_element (bitmap head, unsigned int indx)
      call initialize function.  */
   bitmap_usage *usage = NULL;
   if (GATHER_STATISTICS)
-    usage = bitmap_mem_desc.get_descriptor_for_instance (head);
+    usage = bitmap_mem_desc ().get_descriptor_for_instance (head);
 
   /* This bitmap has more than one element, and we're going to look
      through the elements list.  Count that as a search.  */
@@ -589,100 +610,65 @@ bitmap_tree_find_element (bitmap head, unsigned int indx)
 
 /* Converting bitmap views from linked-list to tree and vice versa.  */
 
-/* Splice element E and all elements with a larger index from
-   bitmap HEAD, convert the spliced elements to the linked-list
-   view, and return the head of the list (which should be E again),  */
-
-static bitmap_element *
-bitmap_tree_listify_from (bitmap head, bitmap_element *e)
-{
-  bitmap_element *t, *erb;
-
-  /* Detach the right branch from E (all elements with indx > E->indx),
-     and splay E to the root.  */
-  erb = e->next;
-  e->next = NULL;
-  t = bitmap_tree_splay (head, head->first, e->indx);
-  gcc_checking_assert (t == e);
-
-  /* Because E has no right branch, and we rotated it to the root,
-     the left branch is the new root.  */
-  t = e->prev;
-  head->first = t;
-  head->current = t;
-  head->indx = (t != NULL) ? t->indx : 0;
-
-  /* Detach the tree from E, and re-attach the right branch of E.  */
-  e->prev = NULL;
-  e->next = erb;
-
-  /* The tree is now valid again.  Now we need to "un-tree" E.
-     It is imperative that a non-recursive implementation is used
-     for this, because splay trees have a worst case depth of O(N)
-     for a tree with N nodes.  A recursive implementation could
-     result in a stack overflow for a sufficiently large, unbalanced
-     bitmap tree.  */
-
-  auto_vec<bitmap_element *, 32> stack;
-  auto_vec<bitmap_element *, 32> sorted_elements;
-  bitmap_element *n = e;
-
-  while (true)
-    {
-      while (n != NULL)
-	{
-	  stack.safe_push (n);
-	  n = n->prev;
-	}
-
-      if (stack.is_empty ())
-	break;
-
-      n = stack.pop ();
-      sorted_elements.safe_push (n);
-      n = n->next;
-    }
-
-  gcc_assert (sorted_elements[0] == e);
-
-  bitmap_element *prev = NULL;
-  unsigned ix;
-  FOR_EACH_VEC_ELT (sorted_elements, ix, n)
-    {
-      if (prev != NULL)
-        prev->next = n;
-      n->prev = prev;
-      n->next = NULL;
-      prev = n;
-    }
-
-  return e;
-}
-
 /* Convert bitmap HEAD from splay-tree view to linked-list view.  */
 
 void
 bitmap_list_view (bitmap head)
 {
-  bitmap_element *ptr;
-
   gcc_assert (head->tree_form);
 
-  ptr = head->first;
-  if (ptr)
+  if (bitmap_element *node = head->first)
     {
-      while (ptr->prev)
-	bitmap_tree_rotate_right (ptr);
-      head->first = ptr;
-      head->first = bitmap_tree_listify_from (head, ptr);
+      bitmap_element *last = nullptr;
+
+      /* STACK is a stack of nodes linked by their left child.  Each entry N
+	 represents a set of nodes that contains N itself and all nodes in N's
+	 right subtree.  The sets are ordered so that every element of the top
+	 set comes before every element in the next set down, and so on.  */
+      bitmap_element *stack = nullptr;
+
+    add_subtree:
+      /* Add NODE and its left and right subtrees to the list.  Start by
+	 moving down NODE's left spine, pushing each nonterminal node onto
+	 the stack.  */
+      while (bitmap_element *left = node->prev)
+	{
+	  node->prev = stack;
+	  stack = node;
+	  node = left;
+	}
+
+    add_node_and_right_subtree:
+      /* Add NODE and its right subtree to the list.  NODE is therefore the
+	 next entry in the list.  */
+      if (last)
+	last->next = node;
+      else
+	head->first = node;
+      node->prev = last;
+      last = node;
+
+      /* Move to NODE's right child and repeat the process.  */
+      node = node->next;
+      if (node)
+	goto add_subtree;
+
+      /* Pop the top node from the stack and add it to the end of the list.  */
+      if (stack)
+	{
+	  node = stack;
+	  stack = stack->prev;
+	  goto add_node_and_right_subtree;
+	}
+
+      if (!head->current)
+	{
+	  head->current = head->first;
+	  head->indx = head->first->indx;
+	}
     }
 
   head->tree_form = false;
-  if (!head->current)
-    {
-      head->current = head->first;
-      head->indx = head->current ? head->current->indx : 0;
-    }
 }
 
 /* Convert bitmap HEAD from linked-list view to splay-tree view.
@@ -714,16 +700,11 @@ bitmap_clear (bitmap head)
 {
   if (head->first == NULL)
     return;
-  if (head->tree_form)
-    {
-      bitmap_element *e, *t;
-      for (e = head->first; e->prev; e = e->prev)
-	/* Loop to find the element with the smallest index.  */ ;
-      t = bitmap_tree_splay (head, head->first, e->indx);
-      gcc_checking_assert (t == e);
-      head->first = t;
-    }
+  bool tree_form = head->tree_form;
+  if (tree_form)
+    bitmap_list_view (head);
   bitmap_elt_clear_from (head, head->first);
+  head->tree_form = tree_form;
 }
 
 /* Initialize a bitmap obstack.  If BIT_OBSTACK is NULL, initialize
@@ -1233,8 +1214,7 @@ bitmap_first_set_bit_worker (bitmap a, bool clear)
   gcc_checking_assert (elt);
 
   if (a->tree_form)
-    while (elt->prev)
-      elt = elt->prev;
+    elt = a->first = bitmap_splay_tree (elt).min_node ();
 
   bit_no = elt->indx * BITMAP_ELEMENT_ALL_BITS;
   for (ix = 0; ix != BITMAP_ELEMENT_WORDS; ix++)
@@ -1308,34 +1288,34 @@ bitmap_clear_first_set_bit (bitmap a)
   return bitmap_first_set_bit_worker (a, true);
 }
 
-/* Return the bit number of the first set bit in the bitmap.  The
-   bitmap must be non-empty.  */
+/* Return the bit number of the last set bit in the bitmap.  The bitmap
+   must be non-empty.  When CLEAR is true, also clear the bit.  */
 
-unsigned
-bitmap_last_set_bit (const_bitmap a)
+static unsigned
+bitmap_last_set_bit_worker (bitmap a, bool clear)
 {
-  const bitmap_element *elt;
+  bitmap_element *elt;
   unsigned bit_no;
   BITMAP_WORD word;
   int ix;
 
   if (a->tree_form)
-    elt = a->first;
+    elt = a->first = bitmap_splay_tree (a->first).max_node ();
   else
-    elt = a->current ? a->current : a->first;
-  gcc_checking_assert (elt);
-
-  while (elt->next)
-    elt = elt->next;
+    {
+      elt = a->current ? a->current : a->first;
+      while (elt->next)
+	elt = elt->next;
+    }
 
   bit_no = elt->indx * BITMAP_ELEMENT_ALL_BITS;
-  for (ix = BITMAP_ELEMENT_WORDS - 1; ix >= 1; ix--)
+  for (ix = BITMAP_ELEMENT_WORDS - 1; ix >= 0; ix--)
     {
       word = elt->bits[ix];
       if (word)
 	goto found_bit;
     }
-  gcc_assert (elt->bits[ix] != 0);
+  gcc_unreachable ();
  found_bit:
   bit_no += ix * BITMAP_WORD_BITS;
 #if GCC_VERSION >= 3004
@@ -1355,8 +1335,41 @@ bitmap_last_set_bit (const_bitmap a)
   bit_no += bitmap_popcount (x) - 1;
 #endif
 
-  return bit_no;
+ if (clear)
+   {
+     elt->bits[ix] &= ~((BITMAP_WORD) 1 << (bit_no % BITMAP_WORD_BITS));
+     /* If we cleared the entire word, free up the element.  */
+     if (!elt->bits[ix]
+	 && bitmap_element_zerop (elt))
+       {
+	 if (!a->tree_form)
+	   bitmap_list_unlink_element (a, elt);
+	 else
+	   bitmap_tree_unlink_element (a, elt);
+       }
+   }
+
+ return bit_no;
 }
+
+/* Return the bit number of the last set bit in the bitmap.
+   The bitmap must be non-empty.  */
+
+unsigned
+bitmap_last_set_bit (const_bitmap a)
+{
+  return bitmap_last_set_bit_worker (const_cast<bitmap> (a), false);
+}
+
+/* Return and clear the bit number of the last set bit in the bitmap.
+   The bitmap must be non-empty.  */
+
+unsigned
+bitmap_clear_last_set_bit (bitmap a)
+{
+  return bitmap_last_set_bit_worker (a, true);
+}
+
 
 
 /* DST = A & B.  */
@@ -2848,7 +2861,7 @@ dump_bitmap_statistics (void)
   if (!GATHER_STATISTICS)
     return;
 
-  bitmap_mem_desc.dump (BITMAP_ORIGIN);
+  bitmap_mem_desc ().dump (BITMAP_ORIGIN);
 }
 
 DEBUG_FUNCTION void

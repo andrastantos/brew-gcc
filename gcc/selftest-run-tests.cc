@@ -17,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define INCLUDE_VECTOR
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -68,15 +69,18 @@ selftest::run_tests ()
   hash_set_tests_cc_tests ();
   vec_cc_tests ();
   pretty_print_cc_tests ();
+  pretty_print_token_buffer_cc_tests ();
   wide_int_cc_tests ();
   ggc_tests_cc_tests ();
   sreal_cc_tests ();
+  profile_count_cc_tests ();
   fibonacci_heap_cc_tests ();
   typed_splay_tree_cc_tests ();
   opt_suggestions_cc_tests ();
   opts_cc_tests ();
   json_cc_tests ();
   json_parser_cc_tests ();
+  json_pointer_parsing_cc_tests ();
   cgraph_cc_tests ();
   optinfo_emit_json_cc_tests ();
   ordered_hash_map_tests_cc_tests ();
@@ -103,15 +107,18 @@ selftest::run_tests ()
   /* Higher-level tests, or for components that other selftests don't
      rely on.  */
   fold_const_cc_tests ();
+  final_cc_tests ();
   spellcheck_cc_tests ();
   spellcheck_tree_cc_tests ();
   tree_cfg_cc_tests ();
   simple_diagnostic_path_cc_tests ();
   attribs_cc_tests ();
+  stmt_cc_tests ();
   path_coverage_cc_tests ();
 
   /* This one relies on most of the above.  */
   function_tests_cc_tests ();
+  sched_deps_cc_tests ();
 
   /* Run any target-specific selftests.  */
   if (targetm.run_target_selftests)

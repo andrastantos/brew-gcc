@@ -181,15 +181,27 @@
   [(set_attr "op_type" "VRX")])
 
 ; vec_revb (vec_insert_and_zero(x))             bswap-and-replicate-1.c
-; vllebrzh, vllebrzf, vllebrzg
+; vllebrzf, vllebrzg
 (define_insn "*vec_insert_and_zero_bswap<mode>"
-  [(set (match_operand:V_HW_HSD                    0 "register_operand"       "=v")
-	(bswap:V_HW_HSD (unspec:V_HW_HSD
+  [(set (match_operand:V_HW_SD                     0 "register_operand"       "=v")
+	(bswap:V_HW_SD (unspec:V_HW_SD
 			 [(match_operand:<non_vec> 1 "memory_operand"          "R")]
 			 UNSPEC_VEC_INSERT_AND_ZERO)))
    (use (match_operand:V16QI                       2 "permute_pattern_operand" "X"))]
   "TARGET_VXE2"
   "vllebrz<bhfgq>\t%v0,%1"
+  [(set_attr "op_type" "VRX")])
+
+; bswapv8hi does not emit a permutation vector, so this variant has
+; no (use ...) operand.
+; vllebrzh
+(define_insn "*vec_insert_and_zero_bswapv8hi"
+  [(set (match_operand:V8HI                  0 "register_operand" "=v")
+	(bswap:V8HI (unspec:V8HI
+		     [(match_operand:HI      1 "memory_operand"    "R")]
+		     UNSPEC_VEC_INSERT_AND_ZERO)))]
+  "TARGET_VXE2"
+  "vllebrzh\t%v0,%1"
   [(set_attr "op_type" "VRX")])
 
 
@@ -435,8 +447,6 @@
 ; Vector scatter element
 
 ; vscef, vsceg
-
-; A 64 bit target address generated from 32 bit elements
 (define_insn "vec_scatter_element<V_HW_4:mode>_DI"
   [(set (mem:<non_vec>
 	 (plus:DI (zero_extend:DI
@@ -447,27 +457,10 @@
 	(vec_select:<non_vec>
 	 (match_operand:V_HW_4                    0 "register_operand"   "v")
 	 (parallel [(match_dup 3)])))]
-  "TARGET_VX && TARGET_64BIT && UINTVAL (operands[3]) < 4"
+  "TARGET_VX && UINTVAL (operands[3]) < 4"
   "vscef\t%v0,%O2(%v1,%R2),%3"
   [(set_attr "op_type" "VRV")])
 
-; A 31 bit target address is generated from 64 bit elements
-; vsceg
-(define_insn "vec_scatter_element<V_HW_2:mode>_SI"
-  [(set (mem:<non_vec>
-	 (plus:SI (subreg:SI
-		   (vec_select:<non_vec_int>
-		    (match_operand:<TOINTVEC>     1 "register_operand"   "v")
-		    (parallel [(match_operand:QI  3 "const_mask_operand" "C")])) 4)
-	  (match_operand:SI                       2 "address_operand"    "ZQ")))
-    (vec_select:<non_vec>
-     (match_operand:V_HW_2                        0 "register_operand"   "v")
-     (parallel [(match_dup 3)])))]
-  "TARGET_VX && !TARGET_64BIT && UINTVAL (operands[3]) < GET_MODE_NUNITS (<V_HW_2:MODE>mode)"
-  "vsce<V_HW_2:bhfgq>\t%v0,%O2(%v1,%R2),%3"
-  [(set_attr "op_type" "VRV")])
-
-; Element size and target address size is the same
 ; vscef, vsceg
 (define_insn "vec_scatter_element<mode>_<non_vec_int>"
   [(set (mem:<non_vec>
@@ -482,33 +475,6 @@
   "TARGET_VX && UINTVAL (operands[3]) < GET_MODE_NUNITS (<V_HW_32_64:MODE>mode)"
   "vsce<bhfgq>\t%v0,%O2(%v1,%R2),%3"
   [(set_attr "op_type" "VRV")])
-
-; Depending on the address size we have to expand a different pattern.
-; This however cannot be represented in s390-builtins.def so we do the
-; multiplexing here in the expander.
-(define_expand "vec_scatter_element<V_HW_32_64:mode>"
-  [(match_operand:V_HW_32_64 0 "register_operand" "")
-   (match_operand:<TOINTVEC> 1 "register_operand" "")
-   (match_operand 2 "address_operand" "")
-   (match_operand:QI 3 "const_mask_operand" "")]
-  "TARGET_VX"
-{
-  if (TARGET_64BIT)
-    {
-      PUT_MODE (operands[2], DImode);
-      emit_insn (
-	gen_vec_scatter_element<V_HW_32_64:mode>_DI (operands[0], operands[1],
-						     operands[2], operands[3]));
-    }
-  else
-    {
-      PUT_MODE (operands[2], SImode);
-      emit_insn (
-	gen_vec_scatter_element<V_HW_32_64:mode>_SI (operands[0], operands[1],
-						     operands[2], operands[3]));
-    }
-  DONE;
-})
 
 
 ; Vector select
@@ -2097,7 +2063,7 @@
 	(unspec:SI [(reg:CCVFHE CC_REGNUM)] UNSPEC_CC_TO_INT))]
   "TARGET_VX")
 
-; These 3 cannot be merged as the insn defintion above since it also
+; These 3 cannot be merged as the insn definition above since it also
 ; requires to rewrite the RTL equality operator that the same time as
 ; the CC mode.
 
@@ -2168,17 +2134,31 @@
   [(set_attr "op_type" "VRX")])
 
 ; vec_revb (vec_insert (*a, vec_revb (b), 1))      set-element-bswap-1.c
-; vlebrh, vlebrf, vlebrg
+; vlebrf, vlebrg
 (define_insn "*vec_set_bswap_vec<mode>"
-  [(set (match_operand:V_HW_HSD                                     0 "register_operand"       "=v")
-	(bswap:V_HW_HSD
-	 (unspec:V_HW_HSD [(match_operand:<non_vec>                 1 "memory_operand"          "R")
-		           (match_operand:SI                        2 "const_int_operand"       "C")
-			   (bswap:V_HW_HSD (match_operand:V_HW_HSD  3 "register_operand"        "0"))]
+  [(set (match_operand:V_HW_SD                                   0 "register_operand"       "=v")
+	(bswap:V_HW_SD
+	 (unspec:V_HW_SD [(match_operand:<non_vec>               1 "memory_operand"          "R")
+		           (match_operand:SI                     2 "const_int_operand"       "C")
+			   (bswap:V_HW_SD (match_operand:V_HW_SD 3 "register_operand"        "0"))]
 			  UNSPEC_VEC_SET)))
-   (use (match_operand:V16QI                                        4 "permute_pattern_operand" "X"))]
-  "TARGET_VXE2 && UINTVAL (operands[2]) < GET_MODE_NUNITS (<V_HW_HSD:MODE>mode)"
+   (use (match_operand:V16QI                                     4 "permute_pattern_operand" "X"))]
+  "TARGET_VXE2 && UINTVAL (operands[2]) < GET_MODE_NUNITS (<V_HW_SD:MODE>mode)"
   "vlebr<bhfgq>\t%v0,%1,%2"
+  [(set_attr "op_type" "VRX")])
+
+; bswapv8hi does not emit a permutation vector, so this variant has
+; no (use ...) operand.
+; vlebrh
+(define_insn "*vec_set_bswap_vecv8hi"
+  [(set (match_operand:V8HI                            0 "register_operand"   "=v")
+	(bswap:V8HI
+	 (unspec:V8HI [(match_operand:HI               1 "memory_operand"      "R")
+		       (match_operand:SI               2 "const_int_operand"   "C")
+		       (bswap:V8HI (match_operand:V8HI 3 "register_operand"    "0"))]
+		      UNSPEC_VEC_SET)))]
+  "TARGET_VXE2 && UINTVAL (operands[2]) < 8"
+  "vlebrh\t%v0,%1,%2"
   [(set_attr "op_type" "VRX")])
 
 ; *a = vec_extract (vec_revb (b), 1);              get-element-bswap-3.c

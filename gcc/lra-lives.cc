@@ -632,7 +632,7 @@ clear_sparseset_regnos (sparseset set, int regno, enum machine_mode mode)
 {
   if (regno >= FIRST_PSEUDO_REGISTER)
     {
-      sparseset_clear_bit (dead_set, regno);
+      sparseset_clear_bit (set, regno);
       return;
     }
   for (int last = end_hard_regno (mode, regno); regno < last; regno++)
@@ -645,7 +645,7 @@ static bool
 regnos_in_sparseset_p (sparseset set, int regno, enum machine_mode mode)
 {
   if (regno >= FIRST_PSEUDO_REGISTER)
-    return sparseset_bit_p (dead_set, regno);
+    return sparseset_bit_p (set, regno);
   for (int last = end_hard_regno (mode, regno); regno < last; regno++)
     if (!sparseset_bit_p (set, regno))
       return false;
@@ -706,7 +706,6 @@ process_bb_lives (basic_block bb, int &curr_point, bool dead_insn_p)
      it probably doesn't matter much in practice.  */
   FOR_BB_INSNS_REVERSE_SAFE (bb, curr_insn, next)
     {
-      bool call_p;
       int n_alt, dst_regno, src_regno;
       rtx set;
       struct lra_insn_reg *reg;
@@ -786,7 +785,6 @@ process_bb_lives (basic_block bb, int &curr_point, bool dead_insn_p)
 	    lra_hard_reg_usage[regno] += freq;
 	}
 
-      call_p = CALL_P (curr_insn);
 
       /* If we have a simple register copy and the source reg is live after
 	 this instruction, then remove the source reg from the live set so
@@ -911,9 +909,9 @@ process_bb_lives (basic_block bb, int &curr_point, bool dead_insn_p)
 	    /* It is a clobber.  */
 	    make_hard_regno_dead (regno - FIRST_PSEUDO_REGISTER);
 
-      if (call_p)
+      if (auto call = dyn_cast<rtx_call_insn *> (curr_insn))
 	{
-	  function_abi call_abi = insn_callee_abi (curr_insn);
+	  function_abi call_abi = insn_callee_abi (call);
 
 	  if (last_call_abi != call_abi)
 	    EXECUTE_IF_SET_IN_SPARSESET (pseudos_live, j)
@@ -925,7 +923,7 @@ process_bb_lives (basic_block bb, int &curr_point, bool dead_insn_p)
 			 pseudos_live_through_calls, pseudos_live);
 	  if (cfun->has_nonlocal_label
 	      || (!targetm.setjmp_preserves_nonvolatile_regs_p ()
-		  && (find_reg_note (curr_insn, REG_SETJMP, NULL_RTX)
+		  && (find_reg_note (call, REG_SETJMP, NULL_RTX)
 		      != NULL_RTX)))
 	    sparseset_ior (pseudos_live_through_setjumps,
 			   pseudos_live_through_setjumps, pseudos_live);

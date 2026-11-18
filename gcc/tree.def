@@ -265,7 +265,8 @@ DEFTREECODE (LANG_TYPE, "lang_type", tcc_type, 0)
 /* This is for types that will use MODE_OPAQUE in the back end.  They are meant
    to be able to go in a register of some sort but are explicitly not to be
    converted or operated on like INTEGER_TYPE.  They will have size and
-   alignment information only.  */
+   alignment information only.  The C++ FE uses this to represent the
+   std::meta::info type; in that case, it has a scalar integer mode.  */
 DEFTREECODE (OPAQUE_TYPE, "opaque_type", tcc_type, 0)
 
 /* Expressions */
@@ -1460,12 +1461,20 @@ DEFTREECODE (TRANSACTION_EXPR, "transaction_expr", tcc_expression, 1)
 /* Widening dot-product.
    The first two arguments are of type t1.
    The third argument and the result are of type t2, such that t2 is at least
-   twice the size of t1. DOT_PROD_EXPR(arg1,arg2,arg3) is equivalent to:
+   twice the size of t1.
+   All element types must be integral or all floating-point.
+   For integers, DOT_PROD_EXPR(arg1,arg2,arg3) is equivalent to:
    	tmp = WIDEN_MULT_EXPR(arg1, arg2);
    	arg3 = PLUS_EXPR (tmp, arg3);
    or:
 	tmp = WIDEN_MULT_EXPR(arg1, arg2);
-        arg3 = WIDEN_SUM_EXPR (tmp, arg3);		 */
+        arg3 = WIDEN_SUM_EXPR (tmp, arg3);
+   For floating-point dot products, convert the inputs to t2, multiply in
+   t2, and add the products to arg3.  Each product is rounded to t2 before
+   summation.
+   Like WIDEN_SUM_EXPR, this code is only created for a reduction whose
+   summation may be reassociated, so which products are added into which
+   element of arg3 is not observable.  */
 DEFTREECODE (DOT_PROD_EXPR, "dot_prod_expr", tcc_expression, 3)
 
 /* Widening summation.
@@ -1474,7 +1483,16 @@ DEFTREECODE (DOT_PROD_EXPR, "dot_prod_expr", tcc_expression, 3)
    the size of t1. The type of the entire expression is also t2.
    WIDEN_SUM_EXPR is equivalent to first widening (promoting)
    the first argument from type t1 to type t2, and then summing it
-   with the second argument.  */
+   with the second argument.
+
+   This code is only created for a reduction whose summation the vectorizer
+   has established may be reassociated, and the result is reduced to a scalar
+   by a horizontal sum once the loop is done.  Which element of the second
+   argument a given element of the first argument is added to is therefore
+   not observable, and an expander may choose that assignment freely, so long
+   as every element of the first argument is accumulated exactly once and no
+   intermediate sum overflows.  See the reduc_widen_ssum and reduc_widen_usum
+   patterns in md.texi.  */
 DEFTREECODE (WIDEN_SUM_EXPR, "widen_sum_expr", tcc_binary, 2)
 
 /* Widening sad (sum of absolute differences).
@@ -1490,6 +1508,9 @@ DEFTREECODE (WIDEN_SUM_EXPR, "widen_sum_expr", tcc_binary, 2)
        tmp = IFN_VEC_WIDEN_MINUS_EXPR (arg1, arg2)
        tmp2 = ABS_EXPR (tmp)
        arg3 = WIDEN_SUM_EXPR (tmp2, arg3)
+   Like WIDEN_SUM_EXPR, this code is only created for a reduction whose
+   summation may be reassociated, so which absolute differences are added
+   into which element of arg3 is not observable.
  */
 DEFTREECODE (SAD_EXPR, "sad_expr", tcc_expression, 3)
 

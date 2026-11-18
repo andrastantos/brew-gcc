@@ -238,7 +238,7 @@ public:
   virtual bool overflow_free_p (const irange &lh, const irange &rh,
 				relation_trio = TRIO_VARYING) const;
 
-  // Compatability check for operands.
+  // Compatibility check for operands.
   virtual bool operand_check_p (tree, tree, tree) const;
 
 protected:
@@ -304,7 +304,7 @@ public:
   range_op_handler ();
   range_op_handler (unsigned);
   operator bool () const;
-  range_operator *range_op () const;
+  const range_operator *range_op () const;
 
   bool fold_range (vrange &r, tree type,
 		   const vrange &lh,
@@ -338,7 +338,7 @@ protected:
   void discriminator_fail (const vrange &,
 			   const vrange &,
 			   const vrange &) const;
-  range_operator *m_operator;
+  const range_operator *m_operator;
 };
 
 // Cast the range in R to TYPE if R supports TYPE.
@@ -370,7 +370,7 @@ range_cast (value_range &r, tree type)
   varying.set_varying (type);
 
   // Ensure we are in the correct mode for the call to fold.
-  r.set_type (type);
+  r.set_range_class (type);
 
   // Call op_convert, if it fails, the result is varying.
   if (!range_op_handler (CONVERT_EXPR).fold_range (r, type, tmp, varying))
@@ -404,19 +404,19 @@ class range_op_table
 {
 public:
   range_op_table ();
-  inline range_operator *operator[] (unsigned code)
+  inline const range_operator *operator[] (unsigned code) const
     {
       gcc_checking_assert (code < RANGE_OP_TABLE_SIZE);
       return m_range_tree[code];
     }
 protected:
-  inline void set (unsigned code, range_operator &op)
+  inline void set (unsigned code, const range_operator &op)
     {
       gcc_checking_assert (code < RANGE_OP_TABLE_SIZE);
       gcc_checking_assert (m_range_tree[code] == NULL);
       m_range_tree[code] = &op;
     }
-  range_operator *m_range_tree[RANGE_OP_TABLE_SIZE];
+  const range_operator *m_range_tree[RANGE_OP_TABLE_SIZE];
   void initialize_integral_ops ();
   void initialize_pointer_ops ();
   void initialize_float_ops ();

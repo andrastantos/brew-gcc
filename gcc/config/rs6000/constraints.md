@@ -99,6 +99,10 @@
   "@internal Like @code{b}, if @option{-mpowerpc64} is used; otherwise,
    @code{NO_REGS}.")
 
+(define_register_constraint "wD" "rs6000_constraints[RS6000_CONSTRAINT_wD]"
+  "@internal Floating point register @code{FPR} if TARGET_MMA is enabled.
+  1024 bit Dense math register @code{DMR} if TARGET_DMF is enabled.")
+
 ;; wB needs ISA 2.07 VUPKHSW
 (define_constraint "wB"
   "@internal Signed 5-bit constant integer that can be loaded into an
@@ -218,6 +222,16 @@
 (define_constraint "eQ"
   "An IEEE 128-bit constant that can be loaded into VSX registers."
   (match_operand 0 "easy_vector_constant_ieee128"))
+
+(define_constraint "eU"
+  "@internal integer constant that can be loaded with paddis"
+  (and (match_code "const_int")
+       (match_operand 0 "paddis_operand")))
+
+(define_constraint "eV"
+  "@A signed integer constant that paddis and paddi instructions generate."
+  (and (match_code "const_int")
+       (match_operand 0 "paddis_paddi_operand")))
 
 ;; Floating-point constraints.  These two are defined so that insn
 ;; length attributes can be calculated exactly.

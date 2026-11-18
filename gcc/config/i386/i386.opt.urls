@@ -464,6 +464,9 @@ UrlSuffix(gcc/x86-Options.html#index-mstack-protector-guard-symbol)
 mgeneral-regs-only
 UrlSuffix(gcc/x86-Options.html#index-mgeneral-regs-only-2)
 
+m128bit-atomic
+UrlSuffix(gcc/x86-Options.html#index-m128bit-atomic)
+
 mshstk
 UrlSuffix(gcc/x86-Options.html#index-mshstk)
 
@@ -576,7 +579,7 @@ mraoint
 UrlSuffix(gcc/x86-Options.html#index-mraoint)
 
 munroll-only-small-loops
-UrlSuffix(gcc/x86-Options.html#index-munroll-only-small-loops)
+UrlSuffix(gcc/x86-Options.html#index-munroll-only-small-loops-1)
 
 mlam=
 UrlSuffix(gcc/x86-Options.html#index-mlam)
@@ -620,9 +623,6 @@ UrlSuffix(gcc/x86-Options.html#index-mavx10_002e2)
 mamx-avx512
 UrlSuffix(gcc/x86-Options.html#index-mamx-avx512)
 
-mamx-tf32
-UrlSuffix(gcc/x86-Options.html#index-mamx-tf32)
-
 mamx-fp8
 UrlSuffix(gcc/x86-Options.html#index-mamx-fp8)
 
@@ -634,4 +634,13 @@ UrlSuffix(gcc/x86-Options.html#index-mamx-movrs)
 
 mavx512bmm
 UrlSuffix(gcc/x86-Options.html#index-mavx512bmm)
+
+mavx10v2aux
+UrlSuffix(gcc/x86-Options.html#index-mavx10v2aux)
+
+macev1
+UrlSuffix(gcc/x86-Options.html#index-macev1)
+
+mavx10v1aux
+UrlSuffix(gcc/x86-Options.html#index-mavx10v1aux)
 

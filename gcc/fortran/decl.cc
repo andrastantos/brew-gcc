@@ -126,6 +126,7 @@ discard_pending_charlen (gfc_charlen *cl)
   if (!cl || !gfc_current_ns || gfc_current_ns->cl_list != cl)
     return;
 
+  gfc_remove_saved_charlen (cl);
   gfc_current_ns->cl_list = cl->next;
   gfc_free_expr (cl->length);
   free (cl);
@@ -146,6 +147,7 @@ discard_pending_charlens (gfc_charlen *saved_cl)
       gfc_charlen *cl = gfc_current_ns->cl_list;
 
       gcc_assert (cl);
+      gfc_remove_saved_charlen (cl);
       gfc_current_ns->cl_list = cl->next;
       gfc_free_expr (cl->length);
       free (cl);
@@ -1376,6 +1378,7 @@ get_proc_name (const char *name, gfc_symbol **result, bool module_fcn_entry)
 
   if (sym->attr.module_procedure && sym->attr.if_source == IFSRC_IFBODY)
     {
+      gfc_actual_arglist *parms = NULL;
       /* Create a partially populated interface symbol to carry the
 	 characteristics of the procedure and the result.  */
       sym->tlink = gfc_new_symbol (name, sym->ns);
@@ -1383,6 +1386,13 @@ get_proc_name (const char *name, gfc_symbol **result, bool module_fcn_entry)
       gfc_copy_attr (&sym->tlink->attr, &sym->attr, NULL);
       if (sym->attr.dimension)
 	sym->tlink->as = gfc_copy_array_spec (sym->as);
+
+      /* The result parameters coming from the interface have to be copied
+	 to the procedure symbol itself because of the modifications to
+	 the result further downstream. This is required in trans-decl.cc
+	 when the result is initialized.  */
+      if (sym->result && IS_PDT (sym->result) && sym->result->param_list)
+	  parms = gfc_copy_actual_arglist (sym->result->param_list);
 
       /* Ideally, at this point, a copy would be made of the formal
 	 arguments and their namespace. However, this does not appear
@@ -1392,11 +1402,13 @@ get_proc_name (const char *name, gfc_symbol **result, bool module_fcn_entry)
       if (sym->result && sym->result != sym)
 	{
 	  sym->tlink->result = sym->result;
+	  sym->tlink->param_list = parms;
 	  sym->result = NULL;
 	}
       else if (sym->result)
 	{
 	  sym->tlink->result = sym->tlink;
+	  sym->tlink->param_list = parms;
 	}
     }
   else if (sym && !sym->gfc_new
@@ -1463,7 +1475,7 @@ get_proc_name (const char *name, gfc_symbol **result, bool module_fcn_entry)
 	}
     }
 
-  /* C1246 (R1225) MODULE shall appear only in the function-stmt or
+  /* F2023: C1247 (R1526) MODULE shall appear only in the function-stmt or
      subroutine-stmt of a module subprogram or of a nonabstract interface
      body that is declared in the scoping unit of a module or submodule.  */
   if (sym->attr.external
@@ -1472,12 +1484,24 @@ get_proc_name (const char *name, gfc_symbol **result, bool module_fcn_entry)
       && !current_attr.module_procedure
       && sym->attr.proc == PROC_MODULE
       && gfc_state_stack->state == COMP_CONTAINS)
-    {
-      gfc_error_now ("Procedure %qs defined in interface body at %L "
-		     "clashes with internal procedure defined at %C",
-		     name, &sym->declared_at);
-      return true;
-    }
+    gfc_error_now ("Procedure %qs defined in interface body at %L "
+		   "clashes with internal procedure defined at %C",
+		   name, &sym->declared_at);
+
+  /* This is the converse requirement: The separate-module-subprogram for a
+     module procedure shall have the MODULE prefix or be declared a MODULE
+     PROCEDURE, otherwise it would be ambiguous.  */
+  if (sym->attr.module_procedure
+      && (sym->attr.subroutine || sym->attr.function)
+      && sym->attr.if_source == IFSRC_IFBODY
+      && !current_attr.module_procedure
+      && sym->attr.proc == PROC_MODULE
+      && gfc_state_stack->state == COMP_CONTAINS
+      && gfc_state_stack->previous
+      && gfc_state_stack->previous->state == COMP_SUBMODULE)
+    gfc_error_now ("Procedure %qs at %C requires the MODULE prefix because "
+		   "it is a module procedure declared in module %qs",
+		   name, sym->module ? sym->module : "");
 
   if (sym && !sym->gfc_new
       && sym->attr.flavor != FL_UNKNOWN
@@ -2503,7 +2527,12 @@ build_struct (const char *name, gfc_charlen *cl, gfc_expr **init,
 
   c->ts = current_ts;
   if (c->ts.type == BT_CHARACTER)
-    c->ts.u.cl = cl;
+    {
+      c->ts.u.cl = cl;
+      /* The component struct is not tracked by the symbol undo mechanism,
+	 so free the charlen here to prevent a double-free.  */
+      gfc_remove_saved_charlen (cl);
+    }
 
   if (c->ts.type != BT_CLASS && c->ts.type != BT_DERIVED
       && (c->ts.kind == 0 || c->ts.type == BT_CHARACTER)
@@ -2533,6 +2562,24 @@ build_struct (const char *name, gfc_charlen *cl, gfc_expr **init,
   *as = NULL;
 
   gfc_apply_init (&c->ts, &c->attr, c->initializer);
+
+  /* Convert a class, PDT component of a non-derived type to a specific instance
+     before gfc_build_class_symbol gets to work on it.  */
+  if (c->ts.type == BT_CLASS
+      && !(gfc_current_block ()->attr.pdt_template
+	   || gfc_current_block ()->attr.pdt_type)
+      && c->ts.u.derived->attr.pdt_template)
+    {
+      match m = gfc_get_pdt_instance (decl_type_param_list, &c->ts.u.derived, NULL);
+      if (m != MATCH_YES)
+	{
+	  if (!gfc_error_check ())
+	    gfc_error ("Parameterized component of a non-parameterized "
+		       "derived type at %C could not be converted to a valid "
+		       "instance");
+	  return false;
+	}
+    }
 
   /* Check array components.  */
   if (!c->attr.dimension)
@@ -3086,6 +3133,25 @@ variable_decl (int elem)
 	{
 	  gfc_free_array_spec (cp_as);
 	}
+    }
+  else
+    {
+      /* Check to see if this is the declaration of the type and/or attributes
+	 of an implicit function result, emanating from a module function
+	 interface declared within the parent module or submodule of a
+	 containing submodule.  */
+      gfc_find_symbol (name, gfc_current_ns, 0, &sym);
+      if (gfc_current_state () == COMP_FUNCTION
+	  && sym == gfc_current_block ()
+	  && sym->attr.if_source == IFSRC_DECL
+	  && sym->attr.used_in_submodule
+	  && sym == sym->result
+	  && sym->ts.type != BT_UNKNOWN)
+	{
+	  m = MATCH_YES;
+	  goto cleanup;
+	}
+      sym = NULL;
     }
 
   /* Procedure pointer as function result.  */
@@ -4267,6 +4333,7 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
 	  gfc_get_sym_tree (instance->name, gfc_current_ns, &s, false,
 			    &gfc_current_locus);
 	  s->n.sym = instance;
+	  instance->refs++;
 	}
       s->n.sym->attr.imported = 1;
       s->import_only = 1;
@@ -4386,6 +4453,9 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
 	    }
 	  instance->attr.extension = c2->ts.u.derived->attr.extension + 1;
 
+	  /* Add the parent initializer.  */
+	  if (!IS_PDT (c2) && !c2->ts.u.derived->attr.alloc_comp)
+	    c2->initializer = gfc_generate_initializer (&c2->ts, false);
 	  continue;
 	}
 
@@ -4447,6 +4517,11 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
 	      c2->param_list->next = NULL;
 	    }
 
+	  /* Initializer expressions in PDT templates, such as character_kinds(1),
+	     can end up being mutilated when use associated. Simplify now.  */
+	  if (c1->initializer && c1->initializer->expr_type != EXPR_CONSTANT)
+	    gfc_simplify_expr (c1->initializer, 1);
+
 	  if (!c2->initializer && c1->initializer)
 	    c2->initializer = gfc_copy_expr (c1->initializer);
 
@@ -4472,6 +4547,7 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
       if (c1->as && c1->as->type == AS_EXPLICIT)
 	{
 	  bool pdt_array = false;
+	  bool all_constant = true;
 
 	  /* Are the bounds of the array parameterized?  */
 	  for (i = 0; i < c1->as->rank; i++)
@@ -4494,15 +4570,19 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
 		gfc_replace_expr (c2->as->lower[i], e);
 	      else
 		gfc_free_expr (e);
+	      if (c2->as->lower[i]->expr_type != EXPR_CONSTANT)
+		all_constant = false;
 	      e = gfc_copy_expr (c1->as->upper[i]);
 	      gfc_insert_kind_parameter_exprs (e);
 	      if (gfc_simplify_expr (e, 1))
 		gfc_replace_expr (c2->as->upper[i], e);
 	      else
 		gfc_free_expr (e);
+	      if (c2->as->upper[i]->expr_type != EXPR_CONSTANT)
+		all_constant = false;
 	    }
 
-	  c2->attr.pdt_array = 1;
+	  c2->attr.pdt_array = all_constant ? 0 : 1;
 	  if (c1->initializer)
 	    {
 	      c2->initializer = gfc_copy_expr (c1->initializer);
@@ -4523,7 +4603,12 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
 	    gfc_replace_expr (c2->ts.u.cl->length, e);
 	  else
 	    gfc_free_expr (e);
-	  c2->attr.pdt_string = 1;
+	  if (c2->ts.u.cl->length->expr_type != EXPR_CONSTANT)
+	    c2->attr.pdt_string = 1;
+	  if (c1->as && c1->as->type == AS_EXPLICIT)
+	    c2->attr.pdt_array = 1;
+	  else if (c1->attr.allocatable)
+	    c2->ts.deferred = 1;
 	}
 
       /* Recurse into this function for PDT components.  */
@@ -4571,7 +4656,9 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
 		}
 	    }
 
-	  if (c2->attr.allocatable)
+	  if (c2->attr.allocatable
+	      || (c2->ts.type == BT_DERIVED && c2->ts.u.derived
+		  && c2->ts.u.derived->attr.alloc_comp && !c2->attr.pointer))
 	    instance->attr.alloc_comp = 1;
 	}
       else if (!(c2->attr.pdt_kind || c2->attr.pdt_len || c2->attr.pdt_string
@@ -4591,6 +4678,18 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
 	    }
 	  gfc_simplify_expr (c2->initializer, 1);
 	}
+
+      /* Pick up any remaining initializers that could be simplified.  */
+      if (c1->initializer)
+	{
+	  if (!c2->initializer)
+	    c2->initializer = gfc_copy_expr (c1->initializer);
+	  if (gfc_derived_parameter_expr (c2->initializer))
+	    gfc_insert_parameter_exprs (c2->initializer, type_param_spec_list);
+	  c2->initializer->ts = c2->ts;
+	  if (!gfc_is_constant_expr (c2->initializer))
+	    gfc_simplify_expr (c2->initializer, 1);
+	}
     }
 
   if (alloc_seen)
@@ -4598,8 +4697,9 @@ gfc_get_pdt_instance (gfc_actual_arglist *param_list, gfc_symbol **sym,
   if (ptr_seen)
     instance->attr.pointer_comp = 1;
 
-
+  gfc_set_sym_referenced (instance);
   gfc_commit_symbol (instance);
+
   if (ext_param_list)
     *ext_param_list = type_param_spec_list;
   *sym = instance;
@@ -6535,8 +6635,7 @@ bool
 gfc_verify_c_interop (gfc_typespec *ts)
 {
   if (ts->type == BT_DERIVED && ts->u.derived != NULL)
-    return (ts->u.derived->ts.is_c_interop || ts->u.derived->attr.is_bind_c)
-	   ? true : false;
+    return ts->u.derived->ts.is_c_interop || ts->u.derived->attr.is_bind_c;
   else if (ts->type == BT_CLASS)
     return false;
   else if (ts->is_c_interop != 1 && ts->type != BT_ASSUMED)
@@ -7271,7 +7370,7 @@ copy_prefix (symbol_attribute *dest, locus *where)
 	dest->recursive = 1;
 
       /* Module procedures are unusual in that the 'dest' is copied from
-	 the interface declaration. However, this is an oportunity to
+	 the interface declaration. However, this is an opportunity to
 	 check that the submodule declaration is compliant with the
 	 interface.  */
       if (dest->elemental && !current_attr.elemental)
@@ -7821,6 +7920,13 @@ match_procedure_decl (void)
   m = match_attr_spec();
   if (m == MATCH_ERROR)
     return MATCH_ERROR;
+
+  if (current_attr.allocatable)
+    {
+      current_attr.procedure = 1;
+      gfc_check_conflict (&current_attr, NULL, &gfc_current_locus);
+      return MATCH_ERROR;
+    }
 
   if (proc_if && proc_if->attr.is_bind_c && !current_attr.is_bind_c)
     {
@@ -8409,7 +8515,7 @@ add_global_entry (const char *name, const char *binding_label, bool sub,
       else
 	{
 	  s->type = type;
-	  s->sym_name = name;
+	  s->sym_name = gfc_get_string ("%s", name);
 	  s->binding_label = binding_label;
 	  s->where = *where;
 	  s->defined = 1;
@@ -10715,6 +10821,7 @@ gfc_match_submod_proc (void)
 	      st->n.sym = sym->result;
 	      sym->result->refs++;
 	    }
+	  sym->param_list = gfc_copy_actual_arglist (sym->tlink->param_list);
 	}
       else
 	sym->result = sym;
@@ -12844,11 +12951,13 @@ const ext_attr_t ext_attr_list[] = {
   { "cdecl",        EXT_ATTR_CDECL,        "cdecl"     },
   { "stdcall",      EXT_ATTR_STDCALL,      "stdcall"   },
   { "fastcall",     EXT_ATTR_FASTCALL,     "fastcall"  },
-  { "no_arg_check", EXT_ATTR_NO_ARG_CHECK, NULL        },
+  { "no_arg_check", EXT_ATTR_NO_ARG_CHECK, NULL	       },
   { "deprecated",   EXT_ATTR_DEPRECATED,   NULL	       },
   { "noinline",     EXT_ATTR_NOINLINE,     NULL	       },
   { "noreturn",     EXT_ATTR_NORETURN,     NULL	       },
   { "weak",	    EXT_ATTR_WEAK,	   NULL	       },
+  { "inline",       EXT_ATTR_INLINE,       NULL	       },
+  { "always_inline",EXT_ATTR_ALWAYS_INLINE,NULL	       },
   { NULL,           EXT_ATTR_LAST,         NULL        }
 };
 
@@ -12924,6 +13033,27 @@ gfc_match_gcc_attributes (void)
 	return MATCH_ERROR;
 
       sym->attr.ext_attr |= attr.ext_attr;
+
+      /* INLINE and ALWAYS_INLINE are incompatible with NOINLINE.  In the
+	 middle-end the DECL_UNINLINABLE flag set by NOINLINE always wins, so
+	 the inline request would be silently ignored.  Warn and drop it.  */
+      if (sym->attr.ext_attr & (1 << EXT_ATTR_NOINLINE))
+	{
+	  if (sym->attr.ext_attr & (1 << EXT_ATTR_ALWAYS_INLINE))
+	    {
+	      gfc_warning (0, "Attribute %<ALWAYS_INLINE%> at %C is "
+			   "incompatible with %<NOINLINE%> for %qs and will "
+			   "be ignored", sym->name);
+	      sym->attr.ext_attr &= ~(1 << EXT_ATTR_ALWAYS_INLINE);
+	    }
+	  if (sym->attr.ext_attr & (1 << EXT_ATTR_INLINE))
+	    {
+	      gfc_warning (0, "Attribute %<INLINE%> at %C is incompatible "
+			   "with %<NOINLINE%> for %qs and will be ignored",
+			   sym->name);
+	      sym->attr.ext_attr &= ~(1 << EXT_ATTR_INLINE);
+	    }
+	}
 
       if (gfc_match_eos () == MATCH_YES)
 	break;

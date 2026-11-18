@@ -131,7 +131,7 @@ private:
 
   std::tuple<std::string, int, bool> parse_in_decimal ();
   std::pair<std::string, int> parse_in_exponent_part ();
-  std::pair<PrimitiveCoreType, int> parse_in_type_suffix ();
+  std::pair<std::string, int> parse_in_suffix ();
   std::tuple<char, int, bool> parse_escape (char opening_char);
   std::tuple<Codepoint, int, bool> parse_utf8_escape ();
   int parse_partial_string_continue ();
@@ -147,6 +147,7 @@ private:
   TokenPtr parse_string (location_t loc);
   TokenPtr maybe_parse_raw_string (location_t loc);
   TokenPtr parse_raw_string (location_t loc, int initial_hash_count);
+  TokenPtr parse_c_string (location_t loc);
   TokenPtr parse_non_decimal_int_literals (location_t loc);
   TokenPtr parse_decimal_int_or_float (location_t loc);
   TokenPtr parse_char_or_lifetime (location_t loc);
@@ -154,7 +155,8 @@ private:
 
   template <typename IsDigitFunc>
   TokenPtr parse_non_decimal_int_literal (location_t loc,
-					  IsDigitFunc is_digit_func, int base);
+					  IsDigitFunc is_digit_func,
+					  IntegerLiteralBase base);
 
 public:
   // Construct lexer with input file and filename provided
@@ -205,7 +207,13 @@ public:
   void split_current_token (std::vector<TokenPtr> new_tokens);
 
   Linemap *get_line_map () { return line_map; }
-  std::string get_filename () { return std::string (input.get_filename ()); }
+  std::string get_filename ()
+  {
+    if (input.ok ())
+      return std::string (input.get_filename ());
+    else
+      return "";
+  }
 
 private:
   void start_line (int current_line, int current_column);

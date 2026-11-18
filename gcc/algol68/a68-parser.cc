@@ -92,7 +92,7 @@
        does not check VICTAL correctness of declarers. This is done separately.
 
   The parser sets up symbol tables and populates them as far as needed to parse
-  the source. After the bottom-up parser terminates succesfully, the symbol tables
+  the source. After the bottom-up parser terminates successfully, the symbol tables
   are completed.
 
    (4) Next, modes are collected and rules for well-formedness and structural
@@ -298,6 +298,82 @@ a68_is_loop_keyword (NODE_T *p)
     }
 }
 
+/* Whether the construct denoted by P is a declaration that introduces some
+   defining identifier or indicant.  */
+
+bool
+a68_is_declaration (NODE_T *p)
+{
+  switch (ATTRIBUTE (p))
+    {
+    case IDENTITY_DECLARATION:
+    case VARIABLE_DECLARATION:
+    case PROCEDURE_DECLARATION:
+    case PROCEDURE_VARIABLE_DECLARATION:
+    case PRIORITY_DECLARATION:
+    case BRIEF_OPERATOR_DECLARATION:
+    case OPERATOR_DECLARATION:
+    case MODE_DECLARATION:
+      return true;
+    default:
+      return false;
+    }
+}
+
+/* Whether the construct denoted by P yields a value.  */
+
+bool
+a68_yields_value (NODE_T *p)
+{
+  switch (ATTRIBUTE (p))
+    {
+    case ACCESS_CLAUSE:
+    case ASSERTION:
+    case UNIT:
+    case ROUTINE_TEXT:
+    case ASSIGNATION:
+    case TERTIARY:
+    case MONADIC_FORMULA:
+    case FORMULA:
+    case SECONDARY:
+    case SLICE:
+    case SELECTION:
+    case PRIMARY:
+    case GENERATOR:
+    case CALL:
+    case CAST:
+    case AND_FUNCTION:
+    case OR_FUNCTION:
+    case FORMAL_HOLE:
+    case IDENTITY_RELATION:
+    case EMPTY_SYMBOL:
+    case NIHIL:
+    case SKIP:
+    case PARALLEL_CLAUSE:
+    case SERIAL_CLAUSE:
+    case CLOSED_CLAUSE:
+    case ENCLOSED_CLAUSE:
+    case LOOP_CLAUSE:
+    case CONDITIONAL_CLAUSE:
+    case CASE_CLAUSE:
+    case CONFORMITY_CLAUSE:
+    case COLLATERAL_CLAUSE:
+    case DENOTATION:
+    case IDENTIFIER:
+    case DEREFERENCING:
+    case DEPROCEDURING:
+    case PROCEDURING:
+    case WIDENING:
+    case UNITING:
+    case ROWING:
+    case VOIDING:
+    case JUMP:
+      return true;
+    default:
+      return false;
+    }
+}
+
 /* Get good attribute.  */
 
 enum a68_attribute
@@ -345,7 +421,6 @@ a68_dont_mark_here (NODE_T *p)
     case CLOSE_SYMBOL:
     case COLON_SYMBOL:
     case COMMA_SYMBOL:
-    case COMPLEX_SYMBOL:
     case COMPL_SYMBOL:
     case DO_SYMBOL:
     case ELIF_SYMBOL:
@@ -599,6 +674,15 @@ a68_parser (const char *filename)
       a68_serial_dsa (TOP_NODE (&A68_JOB));
     }
 
+  /* Static properties.  */
+  if (ERROR_COUNT (&A68_JOB) == 0)
+    {
+      a68_sprops (TOP_NODE (&A68_JOB));
+    }
+
+  // XXX
+  //  a68_dump_parse_tree (TOP_NODE (&A68_JOB), false, false, true);
+
   /* Finalise syntax tree.  */
   if (ERROR_COUNT (&A68_JOB) == 0)
     {
@@ -671,6 +755,8 @@ a68_new_node (void)
   DYNAMIC_STACK_ALLOCS (z) = false;
   PUBLICIZED (z) = false;
   NEGATED (z) = false;
+  ORIGIN (z) = NO_ORIGIN;
+  ACCESS (z) = ACCESS_DIR;
   return z;
 }
 
@@ -788,12 +874,15 @@ a68_new_tag (void)
   PORTABLE (z) = true;
   VARIABLE (z) = false;
   IS_RECURSIVE (z) = false;
-  PUBLICIZED (z) = true; /* XXX */
+  PUBLICIZED (z) = false;
   ASCRIBED_ROUTINE_TEXT (z) = false;
   LOWERER (z) = NO_LOWERER;
+  ORIGIN (z) = NO_ORIGIN;
+  ACCESS (z) = ACCESS_DIR;
   TAX_TREE_DECL (z) = NULL_TREE;
   MOIF (z) = NO_MOIF;
   EXTERN_SYMBOL (z) = NO_TEXT;
+  CTYPE (z) = NULL_TREE;
   NUMBER (z) = ++A68_PARSER (tag_number);
   return z;
 }
@@ -1153,18 +1242,16 @@ a68_get_node_location (NODE_T *p)
   if (line == NO_LINE)
     return UNKNOWN_LOCATION;
 
-  unsigned line_number = NUMBER (line);
-  unsigned column_number = CHAR_IN_LINE (INFO (p)) - STRING (line) + 1;
-  const char *filename = FILENAME (line);
+  const char *start_pos = CHAR_IN_LINE (INFO (p));
+  location_t start_loc = a68_get_line_location (line, start_pos);
 
-  location_t gcc_location;
+  if (NSYMBOL (p) == NO_TEXT)
+    return start_loc;
 
-  linemap_add (line_table, LC_ENTER, 0, filename, line_number);
-  linemap_line_start (line_table, line_number, 0);
-  gcc_location = linemap_position_for_column (line_table, column_number);
-  linemap_add (line_table, LC_LEAVE, 0, NULL, 0);
+  const char *end_pos = start_pos + strlen (NSYMBOL (p)) - 1;
+  location_t end_loc = a68_get_line_location (line, end_pos);
 
-  return gcc_location;
+  return make_location (start_loc, start_loc, end_loc);
 }
 
 /* Get the location of POS inside LINE as a GCC location.  */
@@ -1172,11 +1259,9 @@ a68_get_node_location (NODE_T *p)
 location_t
 a68_get_line_location (LINE_T *line, const char *pos)
 {
-  location_t loc;
-
-  linemap_add (line_table, LC_ENTER, 0, FILENAME (line), NUMBER (line));
-  linemap_line_start (line_table, NUMBER (line), 0);
-  loc = linemap_position_for_column (line_table, pos - STRING (line) + 1);
-  linemap_add (line_table, LC_LEAVE, 0, NULL, 0);
+  unsigned column_number = pos - STRING (line) + 1;
+  location_t loc = linemap_position_for_loc_and_offset (line_table,
+							LOCATION(line),
+							column_number);
   return loc;
 }

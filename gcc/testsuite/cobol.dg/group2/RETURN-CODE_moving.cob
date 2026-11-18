@@ -1,5 +1,7 @@
+      *> Do not edit this generated file.  See README.txt
        *> { dg-do run }
        *> { dg-xfail-run-if "" { *-*-* }  }
+       *> { dg-options "-dialect ibm" }
 
        IDENTIFICATION   DIVISION.
        PROGRAM-ID.      prog.

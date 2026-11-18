@@ -20,7 +20,7 @@
 #ifndef GCC_AARCH64_SVE_BUILTINS_SME_H
 #define GCC_AARCH64_SVE_BUILTINS_SME_H
 
-namespace aarch64_sve
+namespace aarch64_acle
 {
   namespace functions
   {
@@ -51,6 +51,8 @@ namespace aarch64_sve
     extern const function_base *const svmla_lane_za;
     extern const function_base *const svmls_za;
     extern const function_base *const svmls_lane_za;
+    extern const function_base *const svmop4a_za;
+    extern const function_base *const svmop4s_za;
     extern const function_base *const svmopa_za;
     extern const function_base *const svmops_za;
     extern const function_base *const svread_za;
@@ -70,6 +72,7 @@ namespace aarch64_sve
     extern const function_base *const svsuvdot_lane_za;
     extern const function_base *const svsumopa_za;
     extern const function_base *const svsumops_za;
+    extern const function_base *const svtmopa_lane_za;
     extern const function_base *const svusdot_za;
     extern const function_base *const svusdot_lane_za;
     extern const function_base *const svusvdot_lane_za;

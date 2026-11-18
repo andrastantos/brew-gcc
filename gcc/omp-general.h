@@ -189,7 +189,7 @@ extern void omp_adjust_for_condition (location_t loc, enum tree_code *cond_code,
 extern tree omp_get_for_step_from_incr (location_t loc, tree incr);
 extern void omp_extract_for_data (gomp_for *for_stmt, struct omp_for_data *fd,
 				  struct omp_for_data_loop *loops);
-extern gimple *omp_build_barrier (tree lhs);
+extern gimple *omp_build_barrier (tree lhs, int kind);
 extern tree find_combined_omp_for (tree *, int *, void *);
 extern poly_uint64 omp_max_vf (bool);
 extern int omp_max_simt_vf (void);
@@ -416,5 +416,7 @@ extern bool omp_parse_expr (vec<omp_addr_token *> &, tree);
 
 extern tree omp_loop_number_of_iterations (tree, int, tree * = NULL);
 extern void omp_maybe_apply_loop_xforms (tree *, tree);
+
+extern tree omp_remove_duplicate_maps (tree, bool);
 
 #endif /* GCC_OMP_GENERAL_H */

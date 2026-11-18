@@ -42,7 +42,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-iterator.h"
 #include "gimple-fold.h"
 #include "tree-eh.h"
-#include "gimplify.h"
 #include "flags.h"
 #include "dojump.h"
 #include "explow.h"
@@ -329,6 +328,10 @@ typedef struct vn_tables_s
   vn_nary_op_table_type *nary;
   vn_phi_table_type *phis;
   vn_reference_table_type *references;
+  /* Expressions inserted by vn_nary_build_or_lookup_1, keyed on the
+     operands of the inserted statement rather than their value numbers.
+     This is not unwound on iteration.  Only allocated when iterating.  */
+  vn_nary_op_table_type *inserted_exprs;
 } *vn_tables_t;
 
 
@@ -380,6 +383,9 @@ static vn_tables_t valid_info;
 static class eliminate_dom_walker *rpo_avail;
 basic_block vn_context_bb;
 int *vn_bb_to_rpo;
+static int *vn_exec_idom;
+static int vn_bb_in_region_flag;
+static edge vn_entry_edge;
 
 
 /* Valueization hook for simplify_replace_tree.  Valueize NAME if it is
@@ -840,7 +846,7 @@ vn_reference_eq (const_vn_reference_t const vr1, const_vn_reference_t const vr2,
       /* Vector boolean types can have padding, verify we are dealing with
 	 the same number of elements, aka the precision of the types.
 	 For example, In most architecture the precision_size of vbool*_t
-	 types are caculated like below:
+	 types are calculated like below:
 	 precision_size = type_size * 8
 
 	 Unfortunately, the RISC-V will adjust the precision_size for the
@@ -930,6 +936,8 @@ vn_reference_eq (const_vn_reference_t const vr1, const_vn_reference_t const vr2,
 		      || ! TYPE_SIZE (vro2->type)
 		      || ! operand_equal_p (TYPE_SIZE (vro1->type),
 					    TYPE_SIZE (vro2->type))))
+	      || vro1->clique != vro2->clique
+	      || vro1->base != vro2->base
 	      || (get_deref_alias_set (vro1->opcode == MEM_REF
 				       ? TREE_TYPE (vro1->op0)
 				       : TREE_TYPE (vro1->op2))
@@ -1004,9 +1012,6 @@ copy_reference_ops_from_ref (tree ref, vec<vn_reference_op_s> *result)
 	  temp.reverse = REF_REVERSE_STORAGE_ORDER (ref);
 	  break;
 	case COMPONENT_REF:
-	  /* The field decl is enough to unambiguously specify the field,
-	     so use its type here.  */
-	  temp.type = TREE_TYPE (TREE_OPERAND (ref, 1));
 	  temp.op0 = TREE_OPERAND (ref, 1);
 	  temp.op1 = TREE_OPERAND (ref, 2);
 	  temp.reverse = (AGGREGATE_TYPE_P (TREE_TYPE (TREE_OPERAND (ref, 0)))
@@ -1508,6 +1513,9 @@ vn_reference_maybe_forwprop_address (vec<vn_reference_op_s> *ops,
 		      = wide_int_to_tree (TREE_TYPE (mem_op->op0),
 					  wi::to_poly_wide (new_mem_op->op0));
 		}
+	      /* Do not forward addresses of TARGET_MEM_REF.  */
+	      else if (tem[0].opcode == TARGET_MEM_REF)
+		return changed;
 	      else
 		gcc_assert (tem.last ().opcode == STRING_CST);
 	      ops->pop ();
@@ -1725,7 +1733,7 @@ contains_storage_order_barrier_p (vec<vn_reference_op_s> ops)
 /* Return true if OPS represent an access with reverse storage order.  */
 
 static bool
-reverse_storage_order_for_component_p (vec<vn_reference_op_s> ops)
+reverse_storage_order_for_component_p (const vec<vn_reference_op_s> &ops)
 {
   unsigned i = 0;
   if (ops[i].opcode == REALPART_EXPR || ops[i].opcode == IMAGPART_EXPR)
@@ -1933,13 +1941,13 @@ struct vn_walk_cb_data
 {
   vn_walk_cb_data (vn_reference_t vr_, tree orig_ref_, tree *last_vuse_ptr_,
 		   vn_lookup_kind vn_walk_kind_, bool tbaa_p_, tree mask_,
-		   bool redundant_store_removal_p_)
+		   gimple *redundant_store_)
     : vr (vr_), last_vuse_ptr (last_vuse_ptr_), last_vuse (NULL_TREE),
       mask (mask_), masked_result (NULL_TREE), same_val (NULL_TREE),
       vn_walk_kind (vn_walk_kind_),
-      tbaa_p (tbaa_p_), redundant_store_removal_p (redundant_store_removal_p_),
+      tbaa_p (tbaa_p_), redundant_store (redundant_store_),
       saved_operands (vNULL), first_range (), first_set (-2),
-      first_base_set (-2)
+      first_base_set (-2), using_dummy_vr (false)
   {
     if (!last_vuse_ptr)
       last_vuse_ptr = &last_vuse;
@@ -1986,7 +1994,7 @@ struct vn_walk_cb_data
       }
   }
   ~vn_walk_cb_data ();
-  void *finish (alias_set_type, alias_set_type, tree);
+  void *finish (alias_set_type, alias_set_type, tree, bool insert = true);
   void *push_partial_def (pd_data pd,
 			  alias_set_type, alias_set_type, HOST_WIDE_INT,
 			  HOST_WIDE_INT);
@@ -2000,7 +2008,7 @@ struct vn_walk_cb_data
   tree same_val;
   vn_lookup_kind vn_walk_kind;
   bool tbaa_p;
-  bool redundant_store_removal_p;
+  gimple *redundant_store;
   vec<vn_reference_op_s> saved_operands;
 
   /* The VDEFs of partial defs we come along.  */
@@ -2012,6 +2020,9 @@ struct vn_walk_cb_data
   default_splay_tree<pd_range *> known_ranges;
   obstack ranges_obstack;
   static constexpr HOST_WIDE_INT bufsize = 64;
+
+  bool using_dummy_vr;
+  vn_reference_s dummy_vr;
 };
 
 vn_walk_cb_data::~vn_walk_cb_data ()
@@ -2022,7 +2033,8 @@ vn_walk_cb_data::~vn_walk_cb_data ()
 }
 
 void *
-vn_walk_cb_data::finish (alias_set_type set, alias_set_type base_set, tree val)
+vn_walk_cb_data::finish (alias_set_type set, alias_set_type base_set, tree val,
+			 bool insert)
 {
   if (first_set != -2)
     {
@@ -2036,6 +2048,13 @@ vn_walk_cb_data::finish (alias_set_type set, alias_set_type base_set, tree val)
     }
   if (same_val && !operand_equal_p (val, same_val))
     return (void *) -1;
+  if (!insert || same_val)
+    {
+      memset (&dummy_vr, 0, sizeof (vn_reference_s));
+      dummy_vr.result = val;
+      using_dummy_vr = true;
+      return &dummy_vr;
+    }
   vec<vn_reference_op_s> &operands
     = saved_operands.exists () ? saved_operands : vr->operands;
   return vn_reference_lookup_or_insert_for_pieces (last_vuse, set, base_set,
@@ -2078,8 +2097,10 @@ vn_walk_cb_data::push_partial_def (pd_data pd,
 	  pd.size -= o;
 	  pd.offset += o;
 	}
-      if (pd.size > maxsizei)
-	pd.size = maxsizei + ((pd.size - maxsizei) % BITS_PER_UNIT);
+      if (pd.size + pd.offset > offseti + maxsizei)
+	pd.size = ((offseti - pd.offset + maxsizei)
+		   + ((pd.size + pd.offset - (offseti + maxsizei))
+		      % BITS_PER_UNIT));
     }
 
   pd.offset -= offseti;
@@ -2350,7 +2371,7 @@ vn_walk_cb_data::push_partial_def (pd_data pd,
      access size.  */
   if (INTEGRAL_TYPE_P (vr->type) && maxsizei != TYPE_PRECISION (vr->type))
     {
-      if (TREE_CODE (vr->type) == BITINT_TYPE
+      if (BITINT_TYPE_P (vr->type)
 	  && maxsizei > MAX_FIXED_MODE_SIZE)
 	type = build_bitint_type (maxsizei, TYPE_UNSIGNED (type));
       else
@@ -2397,9 +2418,7 @@ vn_walk_cb_data::push_partial_def (pd_data pd,
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file,
 		 "Successfully combined %u partial definitions\n", ndefs);
-      /* We are using the alias-set of the first store we encounter which
-	 should be appropriate here.  */
-      return finish (first_set, first_base_set, val);
+      return finish (-2, -2, val, false);
     }
   else
     {
@@ -2517,6 +2536,44 @@ vn_reference_lookup_or_insert_for_pieces (tree vuse,
 				     type, operands.copy (), value, value_id);
 }
 
+/* Return true if RES_OP is a CONSTRUCTOR in GENERIC form.  ???  We're
+   arriving here with SCCVNs view, decomposed CONSTRUCTOR and GIMPLEs /
+   match-and-simplifies, CONSTRUCTOR as GENERIC tree.  */
+
+static bool
+match_op_generic_constructor_p (gimple_match_op *res_op)
+{
+  return (res_op->code == CONSTRUCTOR
+	  && TREE_CODE (res_op->ops[0]) == CONSTRUCTOR);
+}
+
+/* Return the number of operands for a vn_nary ops structure from RES_OP.  */
+
+static unsigned int
+vn_nary_length_from_match_op (gimple_match_op *res_op)
+{
+  if (match_op_generic_constructor_p (res_op))
+    return CONSTRUCTOR_NELTS (res_op->ops[0]);
+  return res_op->num_ops;
+}
+
+/* Initialize VNO from RES_OP.  The operands are taken as-is, they are
+   not valueized.  */
+
+static void
+init_vn_nary_op_from_match_op (vn_nary_op_t vno, gimple_match_op *res_op)
+{
+  vno->opcode = (tree_code) res_op->code;
+  vno->length = vn_nary_length_from_match_op (res_op);
+  vno->type = res_op->type;
+  if (match_op_generic_constructor_p (res_op))
+    for (unsigned i = 0; i < vno->length; ++i)
+      vno->op[i] = CONSTRUCTOR_ELT (res_op->ops[0], i)->value;
+  else
+    memcpy (&vno->op[0], res_op->ops, sizeof (tree) * vno->length);
+  vno->predicated_values = 0;
+}
+
 /* Return a value-number for RCODE OPS... either by looking up an existing
    value-number for the possibly simplified result or by inserting the
    operation if INSERT is true.  If SIMPLIFY is false, return a value
@@ -2555,6 +2612,7 @@ vn_nary_build_or_lookup_1 (gimple_match_op *res_op, bool insert,
       mprts_hook = NULL;
     }
   gimple *new_stmt = NULL;
+  bool reused = false;
   if (res
       && gimple_simplified_result_is_gimple_val (res_op))
     {
@@ -2569,15 +2627,54 @@ vn_nary_build_or_lookup_1 (gimple_match_op *res_op, bool insert,
       tree val = vn_lookup_simplify_result (res_op);
       /* ???  In weird cases we can end up with internal-fn calls,
 	 but this isn't expected so throw the result away.  See
-	 PR123040 for an example.  */
-      if (!val && insert && res_op->code.is_tree_code ())
+	 PR123040 for an example.  Likewise we can end up with
+	 &MEM[ptr_1 + CST] which would be a vn_reference (PR127000).  */
+      if (!val
+	  && insert
+	  && res_op->code.is_tree_code ()
+	  && (tree_code) res_op->code != ADDR_EXPR)
 	{
-	  gimple_seq stmts = NULL;
-	  result = maybe_push_res_to_seq (res_op, &stmts);
-	  if (result)
+	  /* When iterating, re-use the SSA name we created for the same
+	     expression in a previous iteration instead of creating a new
+	     one each time.  */
+	  vn_nary_op_t vno1 = NULL;
+	  vn_nary_op_s **slot = NULL;
+	  if (valid_info->inserted_exprs)
 	    {
-	      gcc_assert (gimple_seq_singleton_p (stmts));
-	      new_stmt = gimple_seq_first_stmt (stmts);
+	      vno1 = XALLOCAVAR (struct vn_nary_op_s,
+				 sizeof_vn_nary_op
+				   (vn_nary_length_from_match_op (res_op)));
+	      init_vn_nary_op_from_match_op (vno1, res_op);
+	      vno1->hashcode = vn_nary_op_compute_hash (vno1);
+	      slot = valid_info->inserted_exprs->find_slot_with_hash
+		       (vno1, vno1->hashcode, NO_INSERT);
+	    }
+	  if (slot)
+	    {
+	      result = (*slot)->u.result;
+	      new_stmt = gimple_seq_first_stmt (VN_INFO (result)->expr);
+	      reused = true;
+	    }
+	  else
+	    {
+	      gimple_seq stmts = NULL;
+	      result = maybe_push_res_to_seq (res_op, &stmts);
+	      if (result)
+		{
+		  gcc_assert (gimple_seq_singleton_p (stmts));
+		  new_stmt = gimple_seq_first_stmt (stmts);
+		  if (vno1)
+		    {
+		      slot = valid_info->inserted_exprs->find_slot_with_hash
+			       (vno1, vno1->hashcode, INSERT);
+		      vn_nary_op_t entry
+			= alloc_vn_nary_op_noinit (vno1->length,
+						   &vn_tables_insert_obstack);
+		      memcpy (entry, vno1, sizeof_vn_nary_op (vno1->length));
+		      entry->u.result = result;
+		      *slot = entry;
+		    }
+		}
 	    }
 	}
       else
@@ -2588,14 +2685,17 @@ vn_nary_build_or_lookup_1 (gimple_match_op *res_op, bool insert,
     {
       /* The expression is not yet available, value-number lhs to
 	 the new SSA_NAME we created.  */
-      /* Initialize value-number information properly.  */
-      vn_ssa_aux_t result_info = VN_INFO (result);
-      result_info->valnum = result;
-      result_info->value_id = get_next_value_id ();
-      result_info->visited = 1;
-      gimple_seq_add_stmt_without_update (&VN_INFO (result)->expr,
-					  new_stmt);
-      result_info->needs_insertion = true;
+      if (!reused)
+	{
+	  /* Initialize value-number information properly.  */
+	  vn_ssa_aux_t result_info = VN_INFO (result);
+	  result_info->valnum = result;
+	  result_info->value_id = get_next_value_id ();
+	  result_info->visited = 1;
+	  gimple_seq_add_stmt_without_update (&VN_INFO (result)->expr,
+					      new_stmt);
+	  result_info->needs_insertion = true;
+	}
       /* ???  PRE phi-translation inserts NARYs without corresponding
          SSA name result.  Re-use those but set their result according
 	 to the stmt we just built.  */
@@ -2606,31 +2706,17 @@ vn_nary_build_or_lookup_1 (gimple_match_op *res_op, bool insert,
 	  gcc_assert (! nary->predicated_values && nary->u.result == NULL_TREE);
 	  nary->u.result = gimple_assign_lhs (new_stmt);
 	}
-      /* As all "inserted" statements are singleton SCCs, insert
-	 to the valid table.  This is strictly needed to
-	 avoid re-generating new value SSA_NAMEs for the same
-	 expression during SCC iteration over and over (the
-	 optimistic table gets cleared after each iteration).
-	 We do not need to insert into the optimistic table, as
-	 lookups there will fall back to the valid table.  */
       else
 	{
-	  unsigned int length = vn_nary_length_from_stmt (new_stmt);
-	  vn_nary_op_t vno1
-	    = alloc_vn_nary_op_noinit (length, &vn_tables_insert_obstack);
-	  vno1->value_id = result_info->value_id;
-	  vno1->length = length;
-	  vno1->predicated_values = 0;
-	  vno1->u.result = result;
-	  init_vn_nary_op_from_stmt (vno1, as_a <gassign *> (new_stmt));
-	  vn_nary_op_insert_into (vno1, valid_info->nary);
-	  /* Also do not link it into the undo chain.  */
-	  last_inserted_nary = vno1->next;
-	  vno1->next = (vn_nary_op_t)(void *)-1;
+	  /* Record the expression in the hashtable.  The entry is keyed
+	     on the current, possibly optimistic, value numbers of the
+	     operands, so unlike the inserted_exprs entry it has to be
+	     unwound on iteration like any other entry.  */
+	  vn_nary_op_insert_stmt (new_stmt, result);
 	}
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
-	  fprintf (dump_file, "Inserting name ");
+	  fprintf (dump_file, reused ? "Re-using name " : "Inserting name ");
 	  print_generic_expr (dump_file, result);
 	  fprintf (dump_file, " for expression ");
 	  print_gimple_expr (dump_file, new_stmt, 0, TDF_SLIM);
@@ -2689,7 +2775,7 @@ class eliminate_dom_walker : public dom_walker
 {
 public:
   eliminate_dom_walker (cdi_direction, bitmap);
-  ~eliminate_dom_walker ();
+  virtual ~eliminate_dom_walker ();
 
   edge before_dom_children (basic_block) final override;
   void after_dom_children (basic_block) final override;
@@ -2790,6 +2876,15 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
   bool lhs_ref_ok = false;
   poly_int64 copy_size;
 
+  /* If def_stmt is the redundant store itself, we can ignore it:
+     we can only reach it via a backedge, and if we eliminate it, it no longer
+     executes on any iteration.  */
+  if (def_stmt == data->redundant_store)
+    {
+      *disambiguate_only = TR_DISAMBIGUATE;
+      return NULL;
+    }
+
   /* First try to disambiguate after value-replacing in the definitions LHS.  */
   if (is_gimple_assign (def_stmt))
     {
@@ -2822,7 +2917,7 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 	 Avoid this for obvious must aliases to save compile-time though.
 	 We also may not do this when the query is used for redundant
 	 store removal.  */
-      if (!data->redundant_store_removal_p
+      if (!data->redundant_store
 	  && gimple_clobber_p (def_stmt)
 	  && !operand_equal_p (ao_ref_base (&lhs_ref), base, OEP_ADDRESS_OF))
 	{
@@ -2866,6 +2961,7 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 	      || TREE_CODE (gimple_assign_rhs1 (def_stmt)) == CONSTRUCTOR)
 	  && (ref->ref || data->orig_ref.ref)
 	  && !data->mask
+	  && !data->redundant_store
 	  && data->partial_defs.is_empty ()
 	  && multiple_p (get_object_alignment
 			   (ref->ref ? ref->ref : data->orig_ref.ref),
@@ -3263,10 +3359,14 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 	  && size2.is_constant (&size2i))
 	{
 	  if (data->partial_defs.is_empty ()
+	      && (maxsizei
+		  <= (HOST_WIDE_INT) vn_walk_cb_data::bufsize * BITS_PER_UNIT)
 	      && known_subrange_p (offseti, maxsizei, offset2, size2))
 	    {
-	      /* We support up to 512-bit values (for V8DFmode).  */
-	      unsigned char buffer[65];
+	      /* We support up to 512-bit values (for V8DFmode).  An
+		 unaligned access can need one more byte from the
+		 encoding, plus one for the shift carry-over.  */
+	      unsigned char buffer[vn_walk_cb_data::bufsize + 2];
 	      int len;
 
 	      tree rhs = gimple_assign_rhs1 (def_stmt);
@@ -3275,7 +3375,9 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 	      len = native_encode_expr (rhs,
 					buffer, sizeof (buffer) - 1,
 					(offseti - offset2i) / BITS_PER_UNIT);
-	      if (len > 0 && len * BITS_PER_UNIT >= maxsizei)
+	      if (len > 0
+		  && (len * BITS_PER_UNIT
+		      >= ((offseti - offset2i) % BITS_PER_UNIT) + maxsizei))
 		{
 		  tree type = vr->type;
 		  unsigned char *buf = buffer;
@@ -3286,7 +3388,7 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 		      && maxsizei != TYPE_PRECISION (vr->type))
 		    {
 		      bool uns = TYPE_UNSIGNED (type);
-		      if (TREE_CODE (vr->type) == BITINT_TYPE
+		      if (BITINT_TYPE_P (vr->type)
 			  && maxsizei > MAX_FIXED_MODE_SIZE)
 			type = build_bitint_type (maxsizei, uns);
 		      else
@@ -3773,6 +3875,17 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
       tree rhs1 = gimple_assign_rhs1 (def_stmt);
       copy_reference_ops_from_ref (rhs1, &rhs);
 
+      /* When none of the original operands survives the storage order of
+	 the translated reference is the one of the RHS of the copy.  The
+	 operands we folded into a constant offset above may well have
+	 specified a reverse storage order, which is a property of the
+	 component and not of its position, so it is not recoverable from
+	 that offset.  Punt unless both accesses are in natural order.  */
+      if (i < 0
+	  && (reverse_storage_order_for_component_p (vr->operands)
+	      || reverse_storage_order_for_component_p (rhs)))
+	return (void *)-1;
+
       /* Apply an extra offset to the inner MEM_REF of the RHS.  */
       bool force_no_tbaa = false;
       if (maybe_ne (extra_off, 0))
@@ -4083,9 +4196,22 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 static bool
 vn_is_backedge (edge e, void *)
 {
-  /* During PRE elimination we no longer have access to this info.  */
-  return (!vn_bb_to_rpo
-	  || vn_bb_to_rpo[e->dest->index] <= vn_bb_to_rpo[e->src->index]);
+  /* During PRE elimination and ANTIC compute we no longer have
+     vn_bb_to_rpo and the region is no longer marked.  */
+  if (!vn_bb_to_rpo)
+    return true;
+
+  gcc_assert (vn_bb_in_region_flag != 0);
+
+  /* The entry edge is a forward edge.  */
+  if (e == vn_entry_edge)
+    return false;
+  /* For out-of region edges conservatively return true.  */
+  if (!(e->src->flags & vn_bb_in_region_flag))
+    return true;
+  /* We should never ask for region exit edges.  */
+  gcc_checking_assert (e->dest->flags & vn_bb_in_region_flag);
+  return vn_bb_to_rpo[e->dest->index] <= vn_bb_to_rpo[e->src->index];
 }
 
 /* Return a reference op vector from OP that can be used for
@@ -4147,7 +4273,7 @@ vn_reference_lookup_pieces (tree vuse, alias_set_type set,
       ao_ref r;
       unsigned limit = param_sccvn_max_alias_queries_per_access;
       vn_walk_cb_data data (&vr1, NULL_TREE, NULL, kind, true, NULL_TREE,
-			    false);
+			    NULL);
       vec<vn_reference_op_s> ops_for_ref;
       if (!valueized_p)
 	ops_for_ref = vr1.operands;
@@ -4181,6 +4307,12 @@ vn_reference_lookup_pieces (tree vuse, alias_set_type set,
 	{
 	  *vnresult = NULL;
 	  return NULL_TREE;
+	}
+      if (data.using_dummy_vr)
+	{
+	  tree val = (*vnresult)->result;
+	  *vnresult = NULL;
+	  return val;
 	}
     }
 
@@ -4242,7 +4374,7 @@ tree
 vn_reference_lookup (tree op, tree vuse, vn_lookup_kind kind,
 		     vn_reference_t *vnresult, bool tbaa_p,
 		     tree *last_vuse_ptr, tree mask,
-		     bool redundant_store_removal_p)
+		     gimple *redundant_store)
 {
   vec<vn_reference_op_s> operands;
   struct vn_reference_s vr1;
@@ -4310,7 +4442,7 @@ vn_reference_lookup (tree op, tree vuse, vn_lookup_kind kind,
 	}
       vn_walk_cb_data data (&vr1, r.ref ? NULL_TREE : op,
 			    last_vuse_ptr, kind, tbaa_p, mask,
-			    redundant_store_removal_p);
+			    redundant_store);
 
       wvnresult
 	= ((vn_reference_t)
@@ -4325,6 +4457,8 @@ vn_reference_lookup (tree op, tree vuse, vn_lookup_kind kind,
 	      && (!wvnresult->result
 		  || !operand_equal_p (wvnresult->result, data.same_val)))
 	    return NULL_TREE;
+	  if (data.using_dummy_vr)
+	    return wvnresult->result;
 	  if (vnresult)
 	    *vnresult = wvnresult;
 	  return wvnresult->result;
@@ -4357,7 +4491,7 @@ vn_reference_lookup_call (gcall *call, vn_reference_t *vnresult,
   vr->vuse = vuse ? SSA_VAL (vuse) : NULL_TREE;
   vr->operands = valueize_shared_reference_ops_from_call (call);
   tree lhs = gimple_call_lhs (call);
-  /* For non-SSA return values the referece ops contain the LHS.  */
+  /* For non-SSA return values the reference ops contain the LHS.  */
   vr->type = ((lhs && TREE_CODE (lhs) == SSA_NAME)
 	      ? TREE_TYPE (lhs) : NULL_TREE);
   vr->punned = false;
@@ -4545,7 +4679,7 @@ vn_nary_op_eq (const_vn_nary_op_t const vno1, const_vn_nary_op_t const vno2)
     if (!expressions_equal_p (vno1->op[i], vno2->op[i]))
       return false;
 
-  /* BIT_INSERT_EXPR has an implict operand as the type precision
+  /* BIT_INSERT_EXPR has an implicit operand as the type precision
      of op1.  Need to check to make sure they are the same.  */
   if (vno1->opcode == BIT_INSERT_EXPR
       && TREE_CODE (vno1->op[1]) == INTEGER_CST
@@ -4852,7 +4986,7 @@ vn_nary_op_insert_into (vn_nary_op_t vno, vn_nary_op_table_type *table)
 	return *slot;
     }
 
-  /* ???  There's also optimistic vs. previous commited state merging
+  /* ???  There's also optimistic vs. previous committed state merging
      that is problematic for the case of unwinding.  */
 
   /* ???  We should return NULL if we do not use 'vno' and have the
@@ -4938,7 +5072,7 @@ vn_nary_op_insert_pieces_predicated (unsigned int length, enum tree_code code,
 }
 
 static bool
-dominated_by_p_w_unex (basic_block bb1, basic_block bb2, bool);
+dominated_by_p_w_unex (basic_block bb1, basic_block bb2);
 
 static tree
 vn_nary_op_get_predicated_value (vn_nary_op_t vno, basic_block bb,
@@ -4951,10 +5085,7 @@ vn_nary_op_get_predicated_value (vn_nary_op_t vno, basic_block bb,
       {
 	basic_block cand
 	  = BASIC_BLOCK_FOR_FN (cfun, val->valid_dominated_by_p[i]);
-	/* Do not handle backedge executability optimistically since
-	   when figuring out whether to iterate we do not consider
-	   changed predication.
-	   When asking for predicated values on an edge avoid looking
+	/* When asking for predicated values on an edge avoid looking
 	   at edge executability for edges forward in our iteration
 	   as well.  */
 	if (e && (e->flags & EDGE_DFS_BACK))
@@ -4962,7 +5093,7 @@ vn_nary_op_get_predicated_value (vn_nary_op_t vno, basic_block bb,
 	    if (dominated_by_p (CDI_DOMINATORS, bb, cand))
 	      return val->result;
 	  }
-	else if (dominated_by_p_w_unex (bb, cand, false))
+	else if (dominated_by_p_w_unex (bb, cand))
 	  return val->result;
       }
   return NULL_TREE;
@@ -5293,128 +5424,102 @@ vn_phi_insert (gimple *phi, tree result, bool backedges_varying_p)
 }
 
 
-/* Return true if BB1 is dominated by BB2 taking into account edges
-   that are not executable.  When ALLOW_BACK is false consider not
-   executable backedges as executable.  */
+/* Find the nearest common dominator of R1 and R2 in the IDOMS tree
+   using Reverse Postorder (RPO) numbers.  Both walks terminate latest
+   at the root (RPO number 0, whose IDOMS entry is -1) because callers
+   maintain the invariant IDOMS[x] < x for every x they store into
+   IDOMS.  */
 
-static bool
-dominated_by_p_w_unex (basic_block bb1, basic_block bb2, bool allow_back)
+static int
+exec_idom_intersect (int *idoms, int r1, int r2)
 {
+  while (r1 != r2)
+    {
+      if (r1 > r2)
+	r1 = idoms[r1];
+      else
+	r2 = idoms[r2];
+    }
+  return r1;
+}
+
+/* Update the immediate dominator of BB based on its executable predecessors.
+
+   This performs one step of a Cooper-Harvey-Kennedy style dominator
+   computation, but unlike the textbook algorithm we do not have the
+   luxury of iterating over a fixed graph to a fixpoint: the executable
+   subgraph is discovered incrementally as the RPO walk proceeds (edges
+   only ever turn executable, never back), and BB can be visited before
+   every one of its predecessors has reached its final executable state.
+
+   We can only trust an edges executable state if it is not a backedge
+   in the RPO order.  Any other predecessor edge is folded in as BB's
+   immediate dominator in the static (whole-graph, CDI_DOMINATORS)
+   dominator tree.  */
+
+static void
+update_exec_idom (basic_block bb)
+{
+  int rpo = vn_bb_to_rpo[bb->index];
+  /* Skip the entry block (RPO number zero) as its predecessors are
+     not covered by the region.  */
+  if (rpo == 0)
+    return;
+
   edge_iterator ei;
   edge e;
+  int idom = -1;
+  FOR_EACH_EDGE (e, ei, bb->preds)
+    {
+      int pred_rpo = vn_bb_to_rpo[e->src->index];
+      /* For backedges fall back to the static immediate dominator.  */
+      if (pred_rpo >= rpo)
+	/* We initialize to the static immediate dominator and this is
+	   never overwritten to another value since we either visit each
+	   block exactly once or iterate in the same order.  */
+	return;
 
+      if (e->flags & EDGE_EXECUTABLE)
+	{
+	  if (idom == -1)
+	    idom = pred_rpo;
+	  else
+	    idom = exec_idom_intersect (vn_exec_idom, idom, pred_rpo);
+	}
+    }
+
+  gcc_checking_assert (idom != -1);
+  vn_exec_idom[rpo] = idom;
+}
+
+/* Return true if BB1 is dominated by BB2 taking into account edges
+   that are known executable, including those that are not executable
+   only because they are backedges not yet proven to be taken (see
+   the commentary on update_exec_idom for why folding those in
+   unconditionally is always sound, and why it used to be handled by
+   a second, separate optimistic/pessimistic pair of trees here).
+
+   Note: It is assumed that both BB1 and BB2 are inside the region
+   currently being value-numbered.  */
+
+static bool
+dominated_by_p_w_unex (basic_block bb1, basic_block bb2)
+{
   if (dominated_by_p (CDI_DOMINATORS, bb1, bb2))
     return true;
 
-  /* Before iterating we'd like to know if there exists a
-     (executable) path from bb2 to bb1 at all, if not we can
-     directly return false.  For now simply iterate once.  */
+  if (!vn_exec_idom)
+    return false;
 
-  /* Iterate to the single executable bb1 predecessor.  */
-  if (EDGE_COUNT (bb1->preds) > 1)
-    {
-      edge prede = NULL;
-      FOR_EACH_EDGE (e, ei, bb1->preds)
-	if ((e->flags & EDGE_EXECUTABLE)
-	    || (!allow_back && (e->flags & EDGE_DFS_BACK)))
-	  {
-	    if (prede)
-	      {
-		prede = NULL;
-		break;
-	      }
-	    prede = e;
-	  }
-      if (prede)
-	{
-	  bb1 = prede->src;
+  int rpo2 = vn_bb_to_rpo[bb2->index];
+  int rpo1 = vn_bb_to_rpo[bb1->index];
 
-	  /* Re-do the dominance check with changed bb1.  */
-	  if (dominated_by_p (CDI_DOMINATORS, bb1, bb2))
-	    return true;
-	}
-    }
+  int curr = rpo1;
+  int limit = 32;
+  while (curr > rpo2 && limit-- > 0)
+    curr = vn_exec_idom[curr];
 
-  /* Iterate to the single executable bb2 successor.  */
-  if (EDGE_COUNT (bb2->succs) > 1)
-    {
-      edge succe = NULL;
-      FOR_EACH_EDGE (e, ei, bb2->succs)
-	if ((e->flags & EDGE_EXECUTABLE)
-	    || (!allow_back && (e->flags & EDGE_DFS_BACK)))
-	  {
-	    if (succe)
-	      {
-		succe = NULL;
-		break;
-	      }
-	    succe = e;
-	  }
-      if (succe
-	  /* Limit the number of edges we check, we should bring in
-	     context from the iteration and compute the single
-	     executable incoming edge when visiting a block.  */
-	  && EDGE_COUNT (succe->dest->preds) < 8)
-	{
-	  /* Verify the reached block is only reached through succe.
-	     If there is only one edge we can spare us the dominator
-	     check and iterate directly.  */
-	  if (EDGE_COUNT (succe->dest->preds) > 1)
-	    {
-	      FOR_EACH_EDGE (e, ei, succe->dest->preds)
-		if (e != succe
-		    && ((e->flags & EDGE_EXECUTABLE)
-			|| (!allow_back && (e->flags & EDGE_DFS_BACK))))
-		  {
-		    succe = NULL;
-		    break;
-		  }
-	    }
-	  if (succe)
-	    {
-	      bb2 = succe->dest;
-
-	      /* Re-do the dominance check with changed bb2.  */
-	      if (dominated_by_p (CDI_DOMINATORS, bb1, bb2))
-		return true;
-	    }
-	}
-    }
-  /* Iterate to the single successor of bb2 with only a single executable
-     incoming edge.  */
-  else if (EDGE_COUNT (bb2->succs) == 1
-	   && EDGE_COUNT (single_succ (bb2)->preds) > 1
-	   /* Limit the number of edges we check, we should bring in
-	      context from the iteration and compute the single
-	      executable incoming edge when visiting a block.  */
-	   && EDGE_COUNT (single_succ (bb2)->preds) < 8)
-    {
-      edge prede = NULL;
-      FOR_EACH_EDGE (e, ei, single_succ (bb2)->preds)
-	if ((e->flags & EDGE_EXECUTABLE)
-	    || (!allow_back && (e->flags & EDGE_DFS_BACK)))
-	  {
-	    if (prede)
-	      {
-		prede = NULL;
-		break;
-	      }
-	    prede = e;
-	  }
-      /* We might actually get to a query with BB2 not visited yet when
-	 we're querying for a predicated value.  */
-      if (prede && prede->src == bb2)
-	{
-	  bb2 = prede->dest;
-
-	  /* Re-do the dominance check with changed bb2.  */
-	  if (dominated_by_p (CDI_DOMINATORS, bb1, bb2))
-	    return true;
-	}
-    }
-
-  /* We could now iterate updating bb1 / bb2.  */
-  return false;
+  return curr == rpo2;
 }
 
 /* Set the value number of FROM to TO, return true if it has changed
@@ -5640,6 +5745,37 @@ valueized_wider_op (tree wide_type, tree op, bool allow_truncate)
   return NULL_TREE;
 }
 
+/* Return true if RESULT, the result of a value-number lookup, may be
+   used at the statement being visited.  A result of wrapping type can
+   be inserted for code hoisting without introducing undefined
+   overflow; anything else has to be available.  See PR86554.  */
+
+static bool
+vn_nary_result_avail_or_insertable_p (tree result)
+{
+  return (TYPE_OVERFLOW_WRAPS (TREE_TYPE (result))
+	  || (rpo_avail && vn_context_bb
+	      && rpo_avail->eliminate_avail (vn_context_bb, result)));
+}
+
+/* If OP is an SSA name defined by a conversion from an integral type,
+   return the valueized source of the conversion, otherwise return
+   NULL_TREE.  */
+
+static tree
+ssa_integral_conversion_op (tree op)
+{
+  if (TREE_CODE (op) != SSA_NAME)
+    return NULL_TREE;
+  gassign *def = dyn_cast <gassign *> (SSA_NAME_DEF_STMT (op));
+  if (!def || !CONVERT_EXPR_CODE_P (gimple_assign_rhs_code (def)))
+    return NULL_TREE;
+  const tree src = gimple_assign_rhs1 (def);
+  if (!INTEGRAL_TYPE_P (TREE_TYPE (src)))
+    return NULL_TREE;
+  return vn_valueize (src);
+}
+
 /* Visit a nary operator RHS, value number it, and return true if the
    value number of LHS has changed as a result.  */
 
@@ -5696,15 +5832,7 @@ visit_nary_op (tree lhs, gassign *stmt)
 		  ops[0] = vn_nary_op_lookup_pieces
 		      (2, gimple_assign_rhs_code (def), type, ops, NULL);
 		  /* We have wider operation available.  */
-		  if (ops[0]
-		      /* If the leader is a wrapping operation we can
-		         insert it for code hoisting w/o introducing
-			 undefined overflow.  If it is not it has to
-			 be available.  See PR86554.  */
-		      && (TYPE_OVERFLOW_WRAPS (TREE_TYPE (ops[0]))
-			  || (rpo_avail && vn_context_bb
-			      && rpo_avail->eliminate_avail (vn_context_bb,
-							     ops[0]))))
+		  if (ops[0] && vn_nary_result_avail_or_insertable_p (ops[0]))
 		    {
 		      unsigned lhs_prec = TYPE_PRECISION (type);
 		      unsigned rhs_prec = TYPE_PRECISION (TREE_TYPE (rhs1));
@@ -5745,6 +5873,72 @@ visit_nary_op (tree lhs, gassign *stmt)
 	    }
 	}
       break;
+    case PLUS_EXPR:
+    case MINUS_EXPR:
+      {
+	/* Match (T)A +- B against an existing (T)(A +- B'), the inverse
+	   of the conversion case above, so the redundancy is detected
+	   regardless of the order the two forms appear in the IL.
+	   See PR124545.  The narrow operation is only ever looked up,
+	   never created: assuming no overflow is only valid for
+	   operations the program actually executes, so the narrow
+	   leader has to be available.  Creating the narrow operation
+	   instead is wrong-code, see PR126415.  */
+	const tree narrow1 = ssa_integral_conversion_op (vn_valueize (rhs1));
+	if (!INTEGRAL_TYPE_P (type) || !narrow1)
+	  break;
+	const tree ntype = TREE_TYPE (narrow1);
+	/* A sign-change keeps the value bit-identical; a widening is
+	   only handled when the narrow operation cannot wrap.  */
+	const bool sign_change_p
+	  = TYPE_PRECISION (ntype) == TYPE_PRECISION (type);
+	const bool nowrap_widening_p
+	  = (TYPE_PRECISION (ntype) < TYPE_PRECISION (type)
+	     && TYPE_OVERFLOW_UNDEFINED (ntype));
+	if (!sign_change_p && !nowrap_widening_p)
+	  break;
+	/* Determine the narrow variant of the second operand: a
+	   constant that narrows and extends back unchanged, or a
+	   conversion from the same narrow type.  */
+	const tree rhs2 = gimple_assign_rhs2 (stmt);
+	tree narrow2 = NULL_TREE;
+	if (TREE_CODE (rhs2) == INTEGER_CST)
+	  {
+	    const widest_int cst = wi::to_widest (rhs2);
+	    const widest_int narrowed
+	      = wi::ext (cst, TYPE_PRECISION (ntype), TYPE_SIGN (ntype));
+	    const widest_int extended
+	      = wi::ext (narrowed, TYPE_PRECISION (type), TYPE_SIGN (type));
+	    if (cst == extended)
+	      narrow2 = fold_convert (ntype, rhs2);
+	  }
+	else if (TREE_CODE (rhs2) == SSA_NAME)
+	  {
+	    const tree op = ssa_integral_conversion_op (vn_valueize (rhs2));
+	    if (op && types_compatible_p (TREE_TYPE (op), ntype))
+	      narrow2 = op;
+	  }
+	if (!narrow2)
+	  break;
+	tree ops[3] = { narrow1, narrow2 };
+	const tree narrow_val
+	  = vn_nary_op_lookup_pieces (2, code, ntype, ops, NULL);
+	/* We have a narrower or sign-changed operation available.  */
+	if (narrow_val && vn_nary_result_avail_or_insertable_p (narrow_val))
+	  {
+	    gimple_match_op match_op (gimple_match_cond::UNCOND,
+				      NOP_EXPR, type, narrow_val);
+	    result = vn_nary_build_or_lookup (&match_op);
+	    if (result)
+	      {
+		const bool changed = set_ssa_val_to (lhs, result);
+		if (TREE_CODE (result) == SSA_NAME)
+		  vn_nary_op_insert_stmt (stmt, result);
+		return changed;
+	      }
+	  }
+      }
+      break;
     case BIT_AND_EXPR:
       if (INTEGRAL_TYPE_P (type)
 	  && TREE_CODE (rhs1) == SSA_NAME
@@ -5779,9 +5973,10 @@ visit_nary_op (tree lhs, gassign *stmt)
     case BIT_FIELD_REF:
       if (TREE_CODE (TREE_OPERAND (rhs1, 0)) == SSA_NAME)
 	{
-	  tree op0 = TREE_OPERAND (rhs1, 0);
-	  gassign *ass = dyn_cast <gassign *> (SSA_NAME_DEF_STMT (op0));
-	  if (ass
+	  tree op0 = vn_valueize (TREE_OPERAND (rhs1, 0));
+	  gassign *ass;
+	  if (TREE_CODE (op0) == SSA_NAME
+	      && (ass = dyn_cast <gassign *> (SSA_NAME_DEF_STMT (op0)))
 	      && !gimple_has_volatile_ops (ass)
 	      && vn_get_stmt_kind (ass) == VN_REFERENCE)
 	    {
@@ -5826,13 +6021,16 @@ visit_nary_op (tree lhs, gassign *stmt)
 	}
       break;
     case TRUNC_DIV_EXPR:
-      if (TYPE_UNSIGNED (type))
+      /* (-a) / b == -(a / b) does not hold for INT_MIN.  */
+      if (!TYPE_OVERFLOW_UNDEFINED (type))
 	break;
       /* Fallthru.  */
     case RDIV_EXPR:
     case MULT_EXPR:
       /* Match up ([-]a){/,*}([-])b with v=a{/,*}b, replacing it with -v.  */
-      if (! HONOR_SIGN_DEPENDENT_ROUNDING (type))
+      if (! HONOR_SIGN_DEPENDENT_ROUNDING (type)
+	  && (! COMPLEX_FLOAT_TYPE_P (type)
+	      || ! HONOR_SIGNED_ZEROS (type)))
 	{
 	  tree rhs[2];
 	  rhs[0] = rhs1;
@@ -5841,9 +6039,22 @@ visit_nary_op (tree lhs, gassign *stmt)
 	    {
 	      unsigned j = i == 0 ? 1 : 0;
 	      tree ops[2];
-	      gimple_match_op match_op (gimple_match_cond::UNCOND,
-					NEGATE_EXPR, type, rhs[i]);
-	      ops[i] = vn_nary_build_or_lookup_1 (&match_op, false, true);
+	      if (!ANY_INTEGRAL_TYPE_P (type)
+		  || TYPE_OVERFLOW_WRAPS (type))
+		{
+		  gimple_match_op match_op (gimple_match_cond::UNCOND,
+					    NEGATE_EXPR, type, rhs[i]);
+		  ops[i] = vn_nary_build_or_lookup_1 (&match_op, false, true);
+		}
+	      else
+		{
+		  /* Do not simplify as if -rhs[i] were in the IL, instead
+		     see if such an operation is available.  */
+		  ops[i] = vn_nary_op_lookup_pieces (1, NEGATE_EXPR, type,
+						     &rhs[i], NULL);
+		  if (ops[i] && !vn_nary_result_avail_or_insertable_p (ops[i]))
+		    ops[i] = NULL_TREE;
+		}
 	      ops[j] = rhs[j];
 	      if (ops[i]
 		  && (ops[0] = vn_nary_op_lookup_pieces (2, code,
@@ -5929,7 +6140,7 @@ visit_reference_op_call (tree lhs, gcall *stmt)
 	   && summary->load_accesses < accesses_limit)
 	  || gimple_call_flags (stmt) & ECF_CONST))
     {
-      /* First search if we can do someting useful and build a
+      /* First search if we can do something useful and build a
 	 vector of all loads we have to check.  */
       bool unknown_memory_access = false;
       auto_vec<ao_ref, accesses_limit> accesses;
@@ -6476,7 +6687,7 @@ visit_phi (gimple *phi, bool *inserted, bool backedges_varying_p)
        the hashes.  */
     result = PHI_RESULT (phi);
   /* If none of the edges was executable keep the value-number at VN_TOP,
-     if only a single edge is exectuable use its value.  */
+     if only a single edge is executable use its value.  */
   else if (n_executable <= 1)
     result = seen_undef ? seen_undef : sameval;
   /* If we saw only undefined values and VN_TOP use one of the
@@ -6759,6 +6970,7 @@ allocate_vn_table (vn_tables_t table, unsigned size)
   table->phis = new vn_phi_table_type (size);
   table->nary = new vn_nary_op_table_type (size);
   table->references = new vn_reference_table_type (size);
+  table->inserted_exprs = NULL;
 }
 
 /* Free a value number table.  */
@@ -6777,6 +6989,8 @@ free_vn_table (vn_tables_t table)
   table->nary = NULL;
   delete table->references;
   table->references = NULL;
+  delete table->inserted_exprs;
+  table->inserted_exprs = NULL;
 }
 
 /* Set *ID according to RESULT.  */
@@ -6905,11 +7119,18 @@ vn_nary_may_trap (vn_nary_op_t nary)
   bool handled, ret;
   unsigned i;
 
+  if (nary->opcode == COND_EXPR || nary->opcode == VEC_COND_EXPR)
+    return false;
+
   if (TREE_CODE_CLASS (nary->opcode) == tcc_comparison
       || TREE_CODE_CLASS (nary->opcode) == tcc_unary
       || TREE_CODE_CLASS (nary->opcode) == tcc_binary)
     {
-      type = nary->type;
+      if (TREE_CODE_CLASS (nary->opcode) == tcc_comparison
+	  || nary->opcode == FIX_TRUNC_EXPR)
+	type = TREE_TYPE (nary->op[0]);
+      else
+	type = nary->type;
       fp_operation = FLOAT_TYPE_P (type);
       if (fp_operation)
 	{
@@ -7394,7 +7615,7 @@ eliminate_dom_walker::eliminate_stmt (basic_block b, gimple_stmt_iterator *gsi)
 	      || !DECL_BIT_FIELD_TYPE (TREE_OPERAND (lhs, 1)))
 	  && !type_has_mode_precision_p (TREE_TYPE (lhs)))
 	{
-	  if (TREE_CODE (TREE_TYPE (lhs)) == BITINT_TYPE
+	  if (BITINT_TYPE_P (TREE_TYPE (lhs))
 	      && TYPE_PRECISION (TREE_TYPE (lhs)) > MAX_FIXED_MODE_SIZE)
 	    lookup_lhs = NULL_TREE;
 	  else if (TREE_CODE (lhs) == COMPONENT_REF
@@ -7405,16 +7626,17 @@ eliminate_dom_walker::eliminate_stmt (basic_block b, gimple_stmt_iterator *gsi)
 				 TYPE_UNSIGNED (TREE_TYPE (lhs)));
 	      if (TREE_CODE (lhs) == COMPONENT_REF)
 		{
-		  tree foff = component_ref_field_offset (lhs);
+		  tree bpos, foff = component_ref_field_offset (lhs);
 		  tree f = TREE_OPERAND (lhs, 1);
-		  if (!poly_int_tree_p (foff))
+		  if (!poly_int_tree_p (foff)
+		      || !tree_fits_poly_uint64_p
+			   (bpos = bit_from_pos (foff,
+						 DECL_FIELD_BIT_OFFSET (f))))
 		    lookup_lhs = NULL_TREE;
 		  else
 		    lookup_lhs = build3 (BIT_FIELD_REF, ltype,
 					 TREE_OPERAND (lhs, 0),
-					 TYPE_SIZE (TREE_TYPE (lhs)),
-					 bit_from_pos
-					   (foff, DECL_FIELD_BIT_OFFSET (f)));
+					 TYPE_SIZE (TREE_TYPE (lhs)), bpos);
 		}
 	      else
 		lookup_lhs = build2 (MEM_REF, ltype,
@@ -7428,7 +7650,7 @@ eliminate_dom_walker::eliminate_stmt (basic_block b, gimple_stmt_iterator *gsi)
       if (lookup_lhs)
 	val = vn_reference_lookup (lookup_lhs, gimple_vuse (stmt),
 				   VN_WALKREWRITE, &vnresult, false,
-				   NULL, NULL_TREE, true);
+				   NULL, NULL_TREE, stmt);
       if (TREE_CODE (rhs) == SSA_NAME)
 	rhs = VN_INFO (rhs)->valnum;
       gassign *ass;
@@ -7449,14 +7671,13 @@ eliminate_dom_walker::eliminate_stmt (basic_block b, gimple_stmt_iterator *gsi)
 		  && tree_nop_conversion_p (TREE_TYPE (rhs), TREE_TYPE (val)))))
 	{
 	  /* We can only remove the later store if the former aliases
-	     at least all accesses the later one does or if the store
-	     was to readonly memory storing the same value.  */
+	     at least all accesses the later one does.  */
 	  ao_ref lhs_ref;
 	  ao_ref_init (&lhs_ref, lhs);
 	  alias_set_type set = ao_ref_alias_set (&lhs_ref);
 	  alias_set_type base_set = ao_ref_base_alias_set (&lhs_ref);
-	  if (! vnresult
-	      || ((vnresult->set == set
+	  if (vnresult
+	      && ((vnresult->set == set
 		   || alias_set_subset_of (set, vnresult->set))
 		  && (vnresult->base_set == base_set
 		      || alias_set_subset_of (base_set, vnresult->base_set))))
@@ -7559,7 +7780,7 @@ eliminate_dom_walker::eliminate_stmt (basic_block b, gimple_stmt_iterator *gsi)
       gsi_prev (&prev);
       if (fold_stmt (gsi, follow_all_ssa_edges))
 	{
-	  /* fold_stmt may have created new stmts inbetween
+	  /* fold_stmt may have created new stmts in between
 	     the previous stmt and the folded stmt.  Mark
 	     all defs created there as varying to not confuse
 	     the SCCVN machinery as we're using that even during
@@ -7916,7 +8137,7 @@ eliminate_dom_walker::eliminate_cleanup (bool region_p)
 
   /* Fixup stmts that became noreturn calls.  This may require splitting
      blocks and thus isn't possible during the dominator walk.  Do this
-     in reverse order so we don't inadvertedly remove a stmt we want to
+     in reverse order so we don't inadvertently remove a stmt we want to
      fixup by visiting a dominating now noreturn call first.  */
   while (!to_fixup.is_empty ())
     {
@@ -7949,7 +8170,7 @@ eliminate_dom_walker::eliminate_cleanup (bool region_p)
 
 /* Eliminate fully redundant computations.  */
 
-unsigned
+static unsigned
 eliminate_with_rpo_vn (bitmap inserted_exprs)
 {
   eliminate_dom_walker walker (CDI_DOMINATORS, inserted_exprs);
@@ -7962,16 +8183,11 @@ eliminate_with_rpo_vn (bitmap inserted_exprs)
   return walker.eliminate_cleanup ();
 }
 
-static unsigned
-do_rpo_vn_1 (function *fn, edge entry, bitmap exit_bbs,
-	     bool iterate, bool eliminate, bool skip_entry_phis,
-	     vn_lookup_kind kind);
+/* Give every value a value id, for PRE.  */
 
-void
-run_rpo_vn (vn_lookup_kind kind)
+static void
+assign_value_ids ()
 {
-  do_rpo_vn_1 (cfun, NULL, NULL, true, false, false, kind);
-
   /* ???  Prune requirement of these.  */
   constant_to_value_id = new hash_table<vn_constant_hasher> (23);
 
@@ -8022,7 +8238,7 @@ run_rpo_vn (vn_lookup_kind kind)
 
 /* Free VN associated data structures.  */
 
-void
+static void
 free_rpo_vn (void)
 {
   free_vn_table (valid_info);
@@ -8049,21 +8265,12 @@ vn_lookup_simplify_result (gimple_match_op *res_op)
 {
   if (!res_op->code.is_tree_code ())
     return NULL_TREE;
-  tree *ops = res_op->ops;
-  unsigned int length = res_op->num_ops;
-  if (res_op->code == CONSTRUCTOR
-      /* ???  We're arriving here with SCCVNs view, decomposed CONSTRUCTOR
-         and GIMPLEs / match-and-simplifies, CONSTRUCTOR as GENERIC tree.  */
-      && TREE_CODE (res_op->ops[0]) == CONSTRUCTOR)
-    {
-      length = CONSTRUCTOR_NELTS (res_op->ops[0]);
-      ops = XALLOCAVEC (tree, length);
-      for (unsigned i = 0; i < length; ++i)
-	ops[i] = CONSTRUCTOR_ELT (res_op->ops[0], i)->value;
-    }
+  vn_nary_op_t vno1 = XALLOCAVAR (struct vn_nary_op_s,
+				  sizeof_vn_nary_op
+				    (vn_nary_length_from_match_op (res_op)));
+  init_vn_nary_op_from_match_op (vno1, res_op);
   vn_nary_op_t vnresult = NULL;
-  tree res = vn_nary_op_lookup_pieces (length, (tree_code) res_op->code,
-				       res_op->type, ops, &vnresult);
+  tree res = vn_nary_op_lookup_1 (vno1, &vnresult);
   /* If this is used from expression simplification make sure to
      return an available expression.  */
   if (res && TREE_CODE (res) == SSA_NAME && mprts_hook && rpo_avail)
@@ -8113,7 +8320,7 @@ rpo_elim::eliminate_avail (basic_block bb, tree op)
 	     may also be able to "pre-compute" (bits of) the next immediate
 	     (non-)dominator during the RPO walk when marking edges as
 	     executable.  */
-	  if (dominated_by_p_w_unex (bb, abb, true))
+	  if (dominated_by_p_w_unex (bb, abb))
 	    {
 	      tree leader = ssa_name (av->leader);
 	      /* Prevent eliminations that break loop-closed SSA.  */
@@ -8323,6 +8530,13 @@ insert_predicates_for_cond (tree_code code, tree lhs, tree rhs,
 	    tree_code nc = gimple_assign_rhs_code (def_stmt);
 	    tree nlhs = vn_valueize (gimple_assign_rhs1 (def_stmt));
 	    tree nrhs = vn_valueize (gimple_assign_rhs2 (def_stmt));
+	    // Canonicalize the comparison before the check below,
+	    // it might be the case where nlhs is a constant now.
+	    if (tree_swap_operands_p (nlhs, nrhs))
+	      {
+		std::swap (nlhs, nrhs);
+		nc = swap_tree_comparison (nc);
+	      }
 	    edge nt = true_e;
 	    edge nf = false_e;
 	    if (code == EQ_EXPR)
@@ -8367,6 +8581,8 @@ process_bb (rpo_elim &avail, basic_block bb,
   edge e;
 
   vn_context_bb = bb;
+
+  update_exec_idom (bb);
 
   /* If we are in loop-closed SSA preserve this state.  This is
      relevant when called on regions from outside of FRE/PRE.  */
@@ -8530,7 +8746,7 @@ process_bb (rpo_elim &avail, basic_block bb,
 	    tree val = gimple_simplify (cmpcode,
 					boolean_type_node, lhs, rhs,
 					NULL, vn_valueize);
-	    /* If the condition didn't simplfy see if we have recorded
+	    /* If the condition didn't simplify see if we have recorded
 	       an expression from sofar taken edges.  */
 	    if (! val || TREE_CODE (val) != INTEGER_CST)
 	      {
@@ -8707,6 +8923,18 @@ struct unwind_state
   vn_avail *avail_top;
 };
 
+/* Record in TO the RPO VN state do_unwind unwinds to.  */
+
+static void
+record_unwind_state (unwind_state *to)
+{
+  to->ob_top = obstack_alloc (&vn_tables_obstack, 0);
+  to->ref_top = last_inserted_ref;
+  to->phi_top = last_inserted_phi;
+  to->nary_top = last_inserted_nary;
+  to->avail_top = last_pushed_avail ? last_pushed_avail->avail : NULL;
+}
+
 /* Unwind the RPO VN state for iteration.  */
 
 static void
@@ -8760,12 +8988,16 @@ do_unwind (unwind_state *to, rpo_elim &avail)
    If ITERATE is true then treat backedges optimistically as not
    executed and iterate.  If ELIMINATE is true then perform
    elimination, otherwise leave that to the caller.  If SKIP_ENTRY_PHIS
-   is true then force PHI nodes in ENTRY->dest to VARYING.  */
+   is true then force PHI nodes in ENTRY->dest to VARYING.  AVAIL,
+   BB_TO_RPO, EXEC_IDOM and ELIMINATOR belong to the caller, which can
+   keep them past the walk.  Elimination stops short of eliminate_cleanup, which
+   is left to the caller.  */
 
 static unsigned
 do_rpo_vn_1 (function *fn, edge entry, bitmap exit_bbs,
 	     bool iterate, bool eliminate, bool skip_entry_phis,
-	     vn_lookup_kind kind)
+	     vn_lookup_kind kind, rpo_elim &avail, int *bb_to_rpo,
+	     int *exec_idom, eliminate_dom_walker *eliminator)
 {
   unsigned todo = 0;
   default_vn_walk_kind = kind;
@@ -8811,46 +9043,25 @@ do_rpo_vn_1 (function *fn, edge entry, bitmap exit_bbs,
 	     "the entry block, skipping its PHIs.\n");
   skip_entry_phis |= e != NULL;
 
-  int *bb_to_rpo = XNEWVEC (int, last_basic_block_for_fn (fn));
   for (int i = 0; i < n; ++i)
     bb_to_rpo[rpo[i]] = i;
   vn_bb_to_rpo = bb_to_rpo;
 
+  /* When not iterating we can end up with executable edges from unvisited
+     but backward reachable blocks, so we cannot rely on the idom being
+     up-to-date.  Initialize it with a conservative default.  */
+  vn_exec_idom = exec_idom;
+  vn_exec_idom[0] = -1;
+  for (int i = 1; i < n; ++i)
+    {
+      basic_block bb = BASIC_BLOCK_FOR_FN (fn, rpo[i]);
+      vn_exec_idom[i]
+	= bb_to_rpo[get_immediate_dominator (CDI_DOMINATORS, bb)->index];
+    }
+
   unwind_state *rpo_state = XNEWVEC (unwind_state, n);
 
-  rpo_elim avail (entry->dest);
   rpo_avail = &avail;
-
-  /* Verify we have no extra entries into the region.  */
-  if (flag_checking && do_region)
-    {
-      auto_bb_flag bb_in_region (fn);
-      for (int i = 0; i < n; ++i)
-	{
-	  basic_block bb = BASIC_BLOCK_FOR_FN (fn, rpo[i]);
-	  bb->flags |= bb_in_region;
-	}
-      /* We can't merge the first two loops because we cannot rely
-         on EDGE_DFS_BACK for edges not within the region.  But if
-	 we decide to always have the bb_in_region flag we can
-	 do the checking during the RPO walk itself (but then it's
-	 also easy to handle MEME conservatively).  */
-      for (int i = 0; i < n; ++i)
-	{
-	  basic_block bb = BASIC_BLOCK_FOR_FN (fn, rpo[i]);
-	  edge e;
-	  edge_iterator ei;
-	  FOR_EACH_EDGE (e, ei, bb->preds)
-	    gcc_assert (e == entry
-			|| (skip_entry_phis && bb == entry->dest)
-			|| (e->src->flags & bb_in_region));
-	}
-      for (int i = 0; i < n; ++i)
-	{
-	  basic_block bb = BASIC_BLOCK_FOR_FN (fn, rpo[i]);
-	  bb->flags &= ~bb_in_region;
-	}
-    }
 
   /* Create the VN state.  For the initial size of the various hashtables
      use a heuristic based on region size and number of SSA names.  */
@@ -8867,6 +9078,10 @@ do_rpo_vn_1 (function *fn, edge entry, bitmap exit_bbs,
   gcc_obstack_init (&vn_tables_insert_obstack);
   valid_info = XCNEW (struct vn_tables_s);
   allocate_vn_table (valid_info, region_size);
+  /* Without iteration nothing is unwound so there's no need to remember
+     inserted expressions for re-use.  */
+  if (iterate)
+    valid_info->inserted_exprs = new vn_nary_op_table_type (16);
   last_inserted_ref = NULL;
   last_inserted_phi = NULL;
   last_inserted_nary = NULL;
@@ -8874,11 +9089,17 @@ do_rpo_vn_1 (function *fn, edge entry, bitmap exit_bbs,
 
   vn_valueize = rpo_vn_valueize;
 
+  /* The blocks in the value-numbered region are marked with bb_in_region.  */
+  auto_bb_flag bb_in_region (fn);
+  vn_bb_in_region_flag = bb_in_region;
+  vn_entry_edge = entry;
+
   /* Initialize the unwind state and edge/BB executable state.  */
   unsigned curr_scc = 0;
   for (int i = 0; i < n; ++i)
     {
       basic_block bb = BASIC_BLOCK_FOR_FN (fn, rpo[i]);
+      bb->flags |= bb_in_region;
       rpo_state[i].visited = 0;
       rpo_state[i].max_rpo = i;
       if (!iterate && curr_scc < toplevel_scc_extents.length ())
@@ -8905,6 +9126,23 @@ do_rpo_vn_1 (function *fn, edge entry, bitmap exit_bbs,
     }
   entry->flags |= EDGE_EXECUTABLE;
   entry->dest->flags |= BB_EXECUTABLE;
+
+  /* Verify we have no extra entries into the region.  */
+  if (flag_checking && do_region)
+    {
+      /* We can't merge the first two loops because we cannot rely
+	 on EDGE_DFS_BACK for edges not within the region.  */
+      for (int i = 0; i < n; ++i)
+	{
+	  basic_block bb = BASIC_BLOCK_FOR_FN (fn, rpo[i]);
+	  edge e;
+	  edge_iterator ei;
+	  FOR_EACH_EDGE (e, ei, bb->preds)
+	    gcc_assert (e == entry
+			|| (skip_entry_phis && bb == entry->dest)
+			|| (e->src->flags & bb_in_region));
+	}
+    }
 
   /* As heuristic to improve compile-time we handle only the N innermost
      loops and the outermost one optimistically.  */
@@ -8958,14 +9196,7 @@ do_rpo_vn_1 (function *fn, edge entry, bitmap exit_bbs,
 	   not iterate where we then handle PHIs conservatively.  We do that
 	   heuristically to reduce compile-time for degenerate cases.  */
 	if (rpo_state[idx].iterate)
-	  {
-	    rpo_state[idx].ob_top = obstack_alloc (&vn_tables_obstack, 0);
-	    rpo_state[idx].ref_top = last_inserted_ref;
-	    rpo_state[idx].phi_top = last_inserted_phi;
-	    rpo_state[idx].nary_top = last_inserted_nary;
-	    rpo_state[idx].avail_top
-	      = last_pushed_avail ? last_pushed_avail->avail : NULL;
-	  }
+	  record_unwind_state (&rpo_state[idx]);
 
 	if (!(bb->flags & BB_EXECUTABLE))
 	  {
@@ -9164,17 +9395,26 @@ do_rpo_vn_1 (function *fn, edge entry, bitmap exit_bbs,
 	  /* Note we can't use avail.walk here because that gets confused
 	     by the existing availability and it will be less efficient
 	     as well.  */
-	  todo |= eliminate_with_rpo_vn (NULL);
+	  rpo_avail = eliminator;
+	  eliminator->walk (ENTRY_BLOCK_PTR_FOR_FN (fn));
 	}
-      else
-	todo |= avail.eliminate_cleanup (do_region);
+    }
+
+  /* Clear the bb_in_region flag.  */
+  for (int i = 0; i < n; ++i)
+    {
+      basic_block bb = BASIC_BLOCK_FOR_FN (fn, rpo[i]);
+      bb->flags &= ~bb_in_region;
     }
 
   vn_valueize = NULL;
   rpo_avail = NULL;
   vn_bb_to_rpo = NULL;
+  vn_bb_in_region_flag = 0;
+  vn_entry_edge = NULL;
 
-  XDELETEVEC (bb_to_rpo);
+  vn_exec_idom = NULL;
+
   XDELETEVEC (rpo);
   XDELETEVEC (rpo_state);
 
@@ -9197,10 +9437,74 @@ do_rpo_vn (function *fn, edge entry, bitmap exit_bbs,
 	   vn_lookup_kind kind)
 {
   auto_timevar tv (TV_TREE_RPO_VN);
-  unsigned todo = do_rpo_vn_1 (fn, entry, exit_bbs, iterate, eliminate,
-			       skip_entry_phis, kind);
+
+  vn_driver vn (fn, entry, exit_bbs, iterate, eliminate,
+		skip_entry_phis, kind);
+  return vn.finalize ();
+}
+
+vn_driver::vn_driver (function *fn, bool iterate, bool eliminate,
+		      bool want_value_ids, vn_lookup_kind kind)
+  : vn_driver (fn, NULL, NULL, iterate, eliminate, false, kind)
+{
+  if (want_value_ids)
+    assign_value_ids ();
+}
+
+/* Value-number the region ENTRY leads into, which exits to EXIT_BBS, or all of
+   FN if ENTRY is NULL.  */
+
+vn_driver::vn_driver (function *fn, edge entry, bitmap exit_bbs,
+		      bool iterate, bool eliminate, bool skip_entry_phis,
+		      vn_lookup_kind kind)
+  : m_eliminate (eliminate), m_region_p (entry != NULL)
+{
+  basic_block entry_bb
+    = entry ? entry->dest : single_succ (ENTRY_BLOCK_PTR_FOR_FN (fn));
+  m_avail = new rpo_elim (entry_bb);
+  m_bb_to_rpo = XNEWVEC (int, last_basic_block_for_fn (fn));
+  m_exec_idom = XNEWVEC (int, n_basic_blocks_for_fn (fn));
+  /* When iterating, elimination is a walk of its own.  */
+  m_eliminator = (iterate && eliminate
+		  ? new eliminate_dom_walker (CDI_DOMINATORS, NULL) : m_avail);
+  m_todo = do_rpo_vn_1 (fn, entry, exit_bbs, iterate, eliminate,
+			skip_entry_phis, kind, *m_avail, m_bb_to_rpo,
+			m_exec_idom, m_eliminator);
+}
+
+vn_driver::~vn_driver ()
+{
   free_rpo_vn ();
-  return todo;
+  XDELETEVEC (m_bb_to_rpo);
+  XDELETEVEC (m_exec_idom);
+  if (m_eliminator != m_avail)
+    delete m_eliminator;
+  delete m_avail;
+}
+
+/* Finish elimination and return the TODO flags.  */
+
+unsigned
+vn_driver::finalize (bitmap inserted_exprs)
+{
+  /* If ELIMINATE was passed to the constructor, finish the elimination.  */
+  if (m_eliminate)
+    {
+      vn_bb_to_rpo = m_bb_to_rpo;
+      vn_exec_idom = m_exec_idom;
+      unsigned todo = m_todo | m_eliminator->eliminate_cleanup (m_region_p);
+      vn_bb_to_rpo = NULL;
+      vn_exec_idom = NULL;
+      return todo;
+    }
+
+  /* PRE eliminates after its insertions, when the RPO map no longer
+     describes the IL.  Return only its flags, as PRE always has, to avoid
+     an extra CFG cleanup.  */
+  if (inserted_exprs)
+    return eliminate_with_rpo_vn (inserted_exprs);
+
+  return m_todo;
 }
 
 
@@ -9252,10 +9556,13 @@ pass_fre::execute (function *fun)
   bool iterate_p = may_iterate && (optimize > 1);
   calculate_dominance_info (CDI_DOMINATORS);
   if (iterate_p)
-    loop_optimizer_init (AVOID_CFG_MODIFICATIONS);
+    /* When iterating make sure to minimize the number of backedges.  */
+    loop_optimizer_init (LOOPS_HAVE_SIMPLE_LATCHES);
 
-  todo = do_rpo_vn_1 (fun, NULL, NULL, iterate_p, true, false, VN_WALKREWRITE);
-  free_rpo_vn ();
+  {
+    vn_driver vn (fun, iterate_p, true);
+    todo = vn.finalize ();
+  }
 
   if (iterate_p)
     loop_optimizer_finalize ();

@@ -1,4 +1,4 @@
-// { dg-do compile }
+// { dg-do compile { target { c || c++11 } } }
 // { dg-additional-options "-fdump-tree-gimple" }
 
 #include <stdlib.h>
@@ -14,7 +14,7 @@ int main (int argc, char *argv[])
 {
   int N = 1024;
 #pragma omp declare mapper (mapN:struct S s) map(to:s.ptr, s.size) \
-					     map(s.ptr[ :N])
+					     map(s.ptr[:N])
 
   struct S s;
   s.ptr = (int *) malloc (sizeof (int) * N);

@@ -315,36 +315,6 @@ char __gnat_dir_separator = DIR_SEPARATOR;
 
 char __gnat_path_separator = PATH_SEPARATOR;
 
-/* The GNAT_LIBRARY_TEMPLATE contains a list of expressions that define
-   the base filenames that libraries specified with -lsomelib options
-   may have. This is used by GNATMAKE to check whether an executable
-   is up-to-date or not. The syntax is
-
-     library_template ::= { pattern ; } pattern NUL
-     pattern          ::= [ prefix ] * [ postfix ]
-
-   These should only specify names of static libraries as it makes
-   no sense to determine at link time if dynamic-link libraries are
-   up to date or not. Any libraries that are not found are supposed
-   to be up-to-date:
-
-     * if they are needed but not present, the link
-       will fail,
-
-     * otherwise they are libraries in the system paths and so
-       they are considered part of the system and not checked
-       for that reason.
-
-   ??? This should be part of a GNAT host-specific compiler
-       file instead of being included in all user applications
-       as well. This is only a temporary work-around for 3.11b.  */
-
-#ifndef GNAT_LIBRARY_TEMPLATE
-#define GNAT_LIBRARY_TEMPLATE "lib*.a"
-#endif
-
-const char *__gnat_library_template = GNAT_LIBRARY_TEMPLATE;
-
 #if defined (__vxworks)
 #define GNAT_MAX_PATH_LEN PATH_MAX
 
@@ -444,11 +414,11 @@ __gnat_current_time_string (char *result)
 }
 
 void
-__gnat_to_gm_time (OS_Time *p_time, int *p_year, int *p_month, int *p_day,
+__gnat_to_gm_time (OS_Time date, int *p_year, int *p_month, int *p_day,
 		   int *p_hours, int *p_mins, int *p_secs)
 {
   struct tm *res;
-  time_t time = (time_t) *p_time;
+  time_t time = (time_t) date;
 
   res = gmtime (&time);
   if (res)
@@ -698,51 +668,18 @@ __gnat_get_current_dir (char *dir, int *length)
    dir[*length] = '\0';
 }
 
-/* Return the suffix for object files.  */
+/* Suffix for object files.  */
 
-void
-__gnat_get_object_suffix_ptr (int *len, const char **value)
-{
-  *value = HOST_OBJECT_SUFFIX;
+const char *__gnat_object_suffix = HOST_OBJECT_SUFFIX;
 
-  if (*value == 0)
-    *len = 0;
-  else
-    *len = strlen (*value);
+/* Suffix for executable files.  */
 
-  return;
-}
+const char *__gnat_executable_suffix = HOST_EXECUTABLE_SUFFIX;
 
-/* Return the suffix for executable files.  */
-
-void
-__gnat_get_executable_suffix_ptr (int *len, const char **value)
-{
-  *value = HOST_EXECUTABLE_SUFFIX;
-
-  if (!*value)
-    *len = 0;
-  else
-    *len = strlen (*value);
-
-  return;
-}
-
-/* Return the suffix for debuggable files. Usually this is the same as the
+/* Suffix for debuggable files. Usually this is the same as the
    executable extension.  */
 
-void
-__gnat_get_debuggable_suffix_ptr (int *len, const char **value)
-{
-  *value = HOST_EXECUTABLE_SUFFIX;
-
-  if (*value == 0)
-    *len = 0;
-  else
-    *len = strlen (*value);
-
-  return;
-}
+const char *__gnat_debuggable_suffix = HOST_EXECUTABLE_SUFFIX;
 
 /* Returns the OS filename and corresponding encoding.  */
 
@@ -2050,7 +1987,7 @@ __gnat_set_OWNER_ACL (TCHAR *wname,
 
   if (AccessMode == SET_ACCESS)
     {
-      /*  SET_ACCESS, we want to set an explicte set of permissions, do not
+      /*  SET_ACCESS, we want to set an explicit set of permissions, do not
 	  merge with current DACL.  */
       if (SetEntriesInAcl (1, &ea, NULL, &pNewDACL) != ERROR_SUCCESS)
 	return;
@@ -2209,6 +2146,13 @@ __gnat_is_executable_file_attr (char* name, struct file_attributes* attr)
    if (attr->executable == ATTR_UNSET)
      {
 #if defined (_WIN32)
+       __gnat_is_regular_file_attr (name, attr);
+       if (!attr->regular)
+	 {
+	   attr->executable = 0;
+	   return 0;
+	 }
+
        TCHAR wname [GNAT_MAX_PATH_LEN + 2];
        GENERIC_MAPPING GenericMapping;
 
@@ -2231,9 +2175,7 @@ __gnat_is_executable_file_attr (char* name, struct file_attributes* attr)
 	     while ((l = _tcsstr(last+1, _T(".exe"))))
 	       last = l;
 
-	   attr->executable =
-	     GetFileAttributes (wname) != INVALID_FILE_ATTRIBUTES
-	     && (last - wname) == (int) (_tcslen (wname) - 4);
+	   attr->executable = (last - wname) == (int)(_tcslen (wname) - 4);
 	 }
 #else
        __gnat_stat_to_attr (-1, name, attr);
@@ -3197,18 +3139,6 @@ int __gnat_argument_needs_quote = 1;
 int __gnat_argument_needs_quote = 0;
 #endif
 
-/* This option is used to enable/disable object files handling from the
-   binder file by the GNAT Project module. For example, this is disabled on
-   Windows (prior to GCC 3.4) as it is already done by the mdll module.
-   Stating with GCC 3.4 the shared libraries are not based on mdll
-   anymore as it uses the GCC's -shared option  */
-#if defined (_WIN32) \
-    && ((__GNUC__ < 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ < 4)))
-int __gnat_prj_add_obj_files = 0;
-#else
-int __gnat_prj_add_obj_files = 1;
-#endif
-
 /* char used as prefix/suffix for environment variables */
 #if defined (_WIN32)
 char __gnat_environment_char = '%';
@@ -3240,41 +3170,28 @@ __gnat_copy_attribs (char *from ATTRIBUTE_UNUSED, char *to ATTRIBUTE_UNUSED,
   TCHAR wfrom [GNAT_MAX_PATH_LEN + 2];
   TCHAR wto [GNAT_MAX_PATH_LEN + 2];
   BOOL res;
-  FILETIME fct, flat, flwt;
-  HANDLE hfrom, hto;
+  HANDLE hto;
 
   S2WSC (wfrom, from, GNAT_MAX_PATH_LEN + 2);
   S2WSC (wto, to, GNAT_MAX_PATH_LEN + 2);
 
-  /*  Do we need to copy the timestamp ? */
+  WIN32_FILE_ATTRIBUTE_DATA info;
+  res = GetFileAttributesEx(wfrom, GetFileExInfoStandard, &info);
+  if (res == 0)
+    return -1;
 
   if (mode != 2) {
-     /* retrieve from times */
-
-     hfrom = CreateFile
-       (wfrom, GENERIC_READ, 0, NULL, OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL, NULL);
-
-     if (hfrom == INVALID_HANDLE_VALUE)
-       return -1;
-
-     res = GetFileTime (hfrom, &fct, &flat, &flwt);
-
-     CloseHandle (hfrom);
-
-     if (res == 0)
-       return -1;
-
-     /* retrieve from times */
+     /* Mode is not "None", copy timestamps */
 
      hto = CreateFile
-       (wto, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+       (wto, FILE_WRITE_ATTRIBUTES, 0, NULL, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL, NULL);
 
      if (hto == INVALID_HANDLE_VALUE)
        return -1;
 
-     res = SetFileTime (hto, NULL, &flat, &flwt);
+     res = SetFileTime
+       (hto, &info.ftCreationTime, &info.ftLastAccessTime, &info.ftLastWriteTime);
 
      CloseHandle (hto);
 
@@ -3282,20 +3199,14 @@ __gnat_copy_attribs (char *from ATTRIBUTE_UNUSED, char *to ATTRIBUTE_UNUSED,
        return -1;
   }
 
-  /* Do we need to copy the permissions ? */
-  /* Set file attributes in full mode. */
+  if (mode != 0) {
+    /* Mode is not "Time_Stamps", copy file attributes. */
 
-  if (mode != 0)
-    {
-      DWORD attribs = GetFileAttributes (wfrom);
+    res = SetFileAttributes (wto, info.dwFileAttributes);
 
-      if (attribs == INVALID_FILE_ATTRIBUTES)
-	return -1;
-
-      res = SetFileAttributes (wto, attribs);
-      if (res == 0)
-	return -1;
-    }
+    if (res == 0)
+      return -1;
+  }
 
   return 0;
 
@@ -3570,10 +3481,52 @@ __gnat_cpu_set (int cpu, size_t count ATTRIBUTE_UNUSED, cpu_set_t *set)
 #include <link.h>
 #endif
 
+/* Even though Android is a variant of Linux, it doesn't expose
+   a _r_debug struct so handily as GLIBC.  Program headers from
+   dl_iterate_phdr show name/addr sequences of pairs such as
+
+   dpli_name                                       dpli_addr
+   /system/bin/linker64                            0x720f3d3000
+   /data/data/com.arachnoid.sshelper/home/testone  0x64f217f000 (exe)
+   [vdso]                                          0x720f3d2000
+   /apex/com.android.runtime/lib64/bionic/libc.so  0x720de25000
+   /apex/com.android.runtime/lib64/bionic/libdl.so 0x720ddd6000
+   /system/lib64/libnetd_client.so                 0x720dc83000
+   /system/lib64/libc++.so                         0x720d30b000
+   /apex/com.android.runtime/lib64/bionic/libm.so  0x720dcc3000
+
+   The name is not empty for the executable and there's no documentation
+   saying it would always come second or so, so this provides no obvious
+   reliable means to discriminate the exe load address.
+
+   As a variant of linux, the default link policy for Android authorizes
+   undefined refs when creating shared libs, with resolution deferred at least
+   until the lib is loaded. "main" will have to be available then, so resort
+   to dladdr(&main) to figure out the main module load address from here.
+
+   Achieve this through a local feature macro in case other platforms can use
+   such a facility.  */
+
+#if defined (__ANDROID__)
+#define _USE_DLADDR_MAIN
+#endif
+
 const void *
 __gnat_get_executable_load_address (void)
 {
-#if defined (__APPLE__)
+#if defined (_USE_DLADDR_MAIN)
+  /* We might be in a shared libgnat here, so a ref to "main"
+     cannot be assumed to work on all platforms.  */
+
+  #define _GNU_SOURCE
+  #include <dlfcn.h>
+
+  extern int main();
+  Dl_info info;
+
+  dladdr((void *)&main, &info);
+  return info.dli_fbase;
+#elif defined (__APPLE__)
   return _dyld_get_image_header (0);
 
 #elif defined (__linux__) && (defined (__GLIBC__) || defined (__UCLIBC__))

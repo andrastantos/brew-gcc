@@ -1,4 +1,4 @@
-/* { dg-do compile { target R_flag_in_section } } */
+/* { dg-do compile { target gnu_retain } } */
 /* { dg-options "-O3" } */
 
 static void function_declaration_before(void)
@@ -13,4 +13,4 @@ static void function_declaration_after(void)
 
 /* { dg-final { scan-assembler "function_declaration_before" } } */
 /* { dg-final { scan-assembler "function_declaration_after" } } */
-/* { dg-final { scan-assembler "\.text.*,\"axR\"" { target R_flag_in_section } } } */
+/* { dg-final { scan-assembler "\.text.*,\"axR\"" { target gnu_retain } } } */

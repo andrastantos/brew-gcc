@@ -71,6 +71,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-pretty-print.h"
 #include "cfganal.h"
 #include "gimple-iterator.h"
+#include "gimple-fold.h"
 #include "tree-cfg.h"
 #include "tree-ssa-loop-niter.h"
 #include "tree-ssa-loop.h"
@@ -90,6 +91,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "symtab-clones.h"
 #include "gimple-range.h"
 #include "tree-dfa.h"
+#include "attr-callback.h"
+#include "callback-info.h"
 
 /* Summaries.  */
 fast_function_summary <ipa_fn_summary *, va_gc> *ipa_fn_summaries;
@@ -376,6 +379,318 @@ add_freqcounting_predicate (vec<ipa_freqcounting_predicate, va_gc> **v,
 
    ERROR_MARK value of an argument means compile time invariant.  */
 
+/* Hashmap traits that free the cached sbitmap when an entry is removed.  */
+
+struct string_char_set_hashmap_traits
+  : simple_hashmap_traits<default_hash_traits<tree>, sbitmap>
+{
+  template <typename T>
+  static inline void
+  remove (T &entry)
+  {
+    sbitmap_free (entry.m_value);
+    simple_hashmap_traits<default_hash_traits<tree>, sbitmap>::remove (entry);
+  }
+};
+
+/* Map from unique STRING_CST tree nodes (longer than 256 bytes) to an
+   sbitmap recording which byte values appear in the string.  */
+
+static hash_map<tree, sbitmap, string_char_set_hashmap_traits>
+  *string_char_set_cache;
+
+/* Return the character presence bitmap for STR (with TREE_STRING_LENGTH (STR)
+   > 256), populating and memoizing it on first lookup.  PREC is the character
+   type precision.  */
+
+static const_sbitmap
+get_string_char_set (tree str, unsigned int prec)
+{
+  if (!string_char_set_cache)
+    string_char_set_cache
+      = new hash_map<tree, sbitmap, string_char_set_hashmap_traits>;
+
+  bool existed;
+  sbitmap &bmp = string_char_set_cache->get_or_insert (str, &existed);
+  if (!existed)
+    {
+      unsigned int full = 1U << prec;
+      unsigned int mask = full - 1;
+      bmp = sbitmap_alloc (full);
+      bitmap_clear (bmp);
+      unsigned int len = TREE_STRING_LENGTH (str);
+      const char *p = TREE_STRING_POINTER (str);
+      for (unsigned int i = 0; i < len; i++)
+	bitmap_set_bit (bmp, (unsigned char) p[i] & mask);
+    }
+  return bmp;
+}
+
+/* Return true if BMP contains any character whose ordered value with
+   signedness SGN and precision PREC falls in the inclusive unsigned
+   coordinate range [U_LO, U_HI].
+
+   For UNSIGNED, ordered coordinate == raw byte value.
+   For SIGNED, ordered coordinate == raw byte value ^ (1 << (PREC - 1)), so
+   negative bytes map to [0, half - 1] (raw [half, 2*half - 1]) and
+   non-negative bytes map to [half, 2*half - 1] (raw [0, half - 1]).  */
+
+static bool
+char_set_any_in_range_p (const_sbitmap bmp, unsigned int prec, signop sgn,
+			  unsigned int u_lo, unsigned int u_hi)
+{
+  if (u_lo > u_hi)
+    return false;
+  if (sgn == UNSIGNED)
+    return bitmap_any_bit_in_range_p (bmp, u_lo, u_hi);
+
+  unsigned int half = 1U << (prec - 1);
+  /* Check negative byte values in [u_lo, min (u_hi, half - 1)].  */
+  if (u_lo < half
+      && bitmap_any_bit_in_range_p (bmp, u_lo + half,
+				    MIN (u_hi, half - 1) + half))
+    return true;
+  /* Check non-negative byte values in [max (u_lo, half), u_hi].  */
+  if (u_hi >= half
+      && bitmap_any_bit_in_range_p (bmp, MAX (u_lo, half) - half, u_hi - half))
+    return true;
+  return false;
+}
+
+/* Fold comparison (ch CODE VAL) across every byte ch of constant string STR
+   (interpreted with type CHAR_TYPE, defaulting to the element type of STR when
+   NULL).  Return boolean_true_node or boolean_false_node if the comparison has
+   the same boolean result for all bytes of STR, or NULL_TREE otherwise.  */
+
+static tree
+fold_string_char_compare (tree str, enum tree_code code, tree val,
+			  tree char_type)
+{
+  if (!char_type && str && TREE_TYPE (str)
+      && TREE_CODE (TREE_TYPE (str)) == ARRAY_TYPE)
+    char_type = TREE_TYPE (TREE_TYPE (str));
+
+  if (!str
+      || TREE_CODE (str) != STRING_CST
+      || !val
+      || TREE_CODE (val) != INTEGER_CST
+      || !char_type
+      || TREE_CODE (char_type) != INTEGER_TYPE
+      || TYPE_PRECISION (char_type) != BITS_PER_UNIT)
+    return NULL_TREE;
+
+  unsigned prec = TYPE_PRECISION (char_type);
+  signop sgn = TYPE_SIGN (char_type);
+  tree val_type = TREE_TYPE (val);
+  unsigned val_prec = TYPE_PRECISION (val_type);
+  signop val_sgn = TYPE_SIGN (val_type);
+
+  /* Require VAL to be an integral constant whose type preserves the range
+     and sign of CHAR_TYPE (either the same precision and sign, or a wider
+     type that cannot reinterpret a negative signed char as large positive).  */
+  if (!INTEGRAL_TYPE_P (val_type)
+      || val_prec < prec
+      || (val_prec == prec ? val_sgn != sgn
+			   : (sgn == SIGNED && val_sgn == UNSIGNED)))
+    return NULL_TREE;
+
+  int len = TREE_STRING_LENGTH (str);
+  if (len <= 0)
+    return NULL_TREE;
+
+  /* First test VAL against the full representable [c_min, c_max] range of
+     CHAR_TYPE so out-of-range or boundary comparisons fold without scanning
+     STR.  */
+  wide_int wval = wi::to_wide (val);
+  wide_int c_min = wide_int::from (wi::min_value (prec, sgn), val_prec, sgn);
+  wide_int c_max = wide_int::from (wi::max_value (prec, sgn), val_prec, sgn);
+
+  if (wi::lt_p (wval, c_min, val_sgn))
+    {
+      if (code == EQ_EXPR || code == LT_EXPR || code == LE_EXPR)
+	return constant_boolean_node (false, boolean_type_node);
+      gcc_checking_assert (code == NE_EXPR || code == GT_EXPR
+			   || code == GE_EXPR);
+      return constant_boolean_node (true, boolean_type_node);
+    }
+  if (wi::gt_p (wval, c_max, val_sgn))
+    {
+      if (code == EQ_EXPR || code == GT_EXPR || code == GE_EXPR)
+	return constant_boolean_node (false, boolean_type_node);
+      gcc_checking_assert (code == NE_EXPR || code == LT_EXPR
+			   || code == LE_EXPR);
+      return constant_boolean_node (true, boolean_type_node);
+    }
+  if (wi::eq_p (wval, c_min))
+    {
+      if (code == LT_EXPR)
+	return constant_boolean_node (false, boolean_type_node);
+      if (code == GE_EXPR)
+	return constant_boolean_node (true, boolean_type_node);
+    }
+  if (wi::eq_p (wval, c_max))
+    {
+      if (code == GT_EXPR)
+	return constant_boolean_node (false, boolean_type_node);
+      if (code == LE_EXPR)
+	return constant_boolean_node (true, boolean_type_node);
+    }
+
+  /* For strings longer than 256 bytes, build and memoize an sbitmap of all
+     present byte values and answer queries by probing the target bit or
+     lower/upper ordered coordinate ranges.  */
+  if (len > 256)
+    {
+      const_sbitmap bmp = get_string_char_set (str, prec);
+      unsigned int full = 1U << prec;
+
+      if (code == EQ_EXPR || code == NE_EXPR)
+	{
+	  unsigned int raw_target
+	    = wide_int::from (wval, prec, UNSIGNED).to_uhwi ();
+	  bool has_target = bitmap_bit_p (bmp, raw_target);
+	  if (!has_target)
+	    return constant_boolean_node (code == NE_EXPR, boolean_type_node);
+
+	  bool has_other
+	    = ((raw_target > 0
+		&& bitmap_any_bit_in_range_p (bmp, 0, raw_target - 1))
+	       || (raw_target + 1 < full
+		   && bitmap_any_bit_in_range_p (bmp, raw_target + 1,
+						  full - 1)));
+	  if (!has_other)
+	    return constant_boolean_node (code == EQ_EXPR, boolean_type_node);
+	  return NULL_TREE;
+	}
+
+      gcc_checking_assert (code == LT_EXPR || code == LE_EXPR
+			   || code == GT_EXPR || code == GE_EXPR);
+
+      /* Partition the ordered coordinate domain [0, full - 1] into [0, split]
+	 (values <= wval for LE/GT, or < wval for LT/GE) and
+	 [split + 1, full - 1].  Boundary wval == c_min (with LT) and
+	 wval == c_max (with GT) already folded above, so split >= 0 and
+	 split + 1 <= full - 1 hold.  */
+      unsigned int half = (sgn == SIGNED) ? (full >> 1) : 0;
+      unsigned int u_val
+	= wide_int::from (wval, prec, UNSIGNED).to_uhwi () ^ half;
+      unsigned int split
+	= (code == LE_EXPR || code == GT_EXPR) ? u_val : u_val - 1;
+      bool any_lo = char_set_any_in_range_p (bmp, prec, sgn, 0, split);
+      bool any_hi
+	= char_set_any_in_range_p (bmp, prec, sgn, split + 1, full - 1);
+
+      bool known_true = ((code == LT_EXPR || code == LE_EXPR) ? !any_hi
+							      : !any_lo);
+      bool known_false = ((code == LT_EXPR || code == LE_EXPR) ? !any_lo
+							       : !any_hi);
+      if (known_true)
+	return constant_boolean_node (true, boolean_type_node);
+      if (known_false)
+	return constant_boolean_node (false, boolean_type_node);
+      return NULL_TREE;
+    }
+
+  /* For short strings, check EQ/NE via memchr and inequality comparisons by
+     computing the actual [wmin, wmax] byte bounds of STR.  */
+  const char *ptr = TREE_STRING_POINTER (str);
+  if (code == EQ_EXPR || code == NE_EXPR)
+    {
+      unsigned target = wide_int::from (wval, prec, UNSIGNED).to_uhwi ();
+      bool has_target = memchr (ptr, target, len) != NULL;
+      if (!has_target)
+	return constant_boolean_node (code == NE_EXPR, boolean_type_node);
+
+      bool has_other = false;
+      for (int k = 0; k < len; k++)
+	if ((unsigned char) ptr[k] != target)
+	  {
+	    has_other = true;
+	    break;
+	  }
+      if (!has_other)
+	return constant_boolean_node (code == EQ_EXPR, boolean_type_node);
+      return NULL_TREE;
+    }
+
+  wide_int wmin = wi::uhwi ((unsigned char) ptr[0], prec);
+  wide_int wmax = wmin;
+  for (int k = 1; k < len; k++)
+    {
+      wide_int wk = wi::uhwi ((unsigned char) ptr[k], prec);
+      if (wi::lt_p (wk, wmin, sgn))
+	wmin = wk;
+      if (wi::gt_p (wk, wmax, sgn))
+	wmax = wk;
+    }
+
+  wmin = wide_int::from (wmin, val_prec, sgn);
+  wmax = wide_int::from (wmax, val_prec, sgn);
+
+  bool known_true = false;
+  bool known_false = false;
+  switch (code)
+    {
+    case LT_EXPR:
+      known_true = wi::lt_p (wmax, wval, val_sgn);
+      known_false = wi::ge_p (wmin, wval, val_sgn);
+      break;
+    case LE_EXPR:
+      known_true = wi::le_p (wmax, wval, val_sgn);
+      known_false = wi::gt_p (wmin, wval, val_sgn);
+      break;
+    case GT_EXPR:
+      known_true = wi::gt_p (wmin, wval, val_sgn);
+      known_false = wi::le_p (wmax, wval, val_sgn);
+      break;
+    case GE_EXPR:
+      known_true = wi::ge_p (wmin, wval, val_sgn);
+      known_false = wi::lt_p (wmax, wval, val_sgn);
+      break;
+    default:
+      gcc_unreachable ();
+    }
+
+  if (known_true)
+    return constant_boolean_node (true, boolean_type_node);
+  if (known_false)
+    return constant_boolean_node (false, boolean_type_node);
+  return NULL_TREE;
+}
+
+/* Evaluate condition C (with c->unknown_offset set) against the argument
+   values in AVALS.  If the caller argument resolves to a STRING_CST, try to
+   fold the character comparison over all bytes of the string and return
+   boolean_true_node or boolean_false_node when the result is independent of
+   the offset, or NULL_TREE otherwise.  */
+
+static tree
+evaluate_unknown_offset_condition (struct condition *c,
+				   ipa_auto_call_arg_values *avals)
+{
+  gcc_checking_assert (c->agg_contents && c->unknown_offset);
+
+  /* TODO: Support conversions in c->param_ops.  */
+  if (!vec_safe_is_empty (c->param_ops))
+    return NULL_TREE;
+
+  if (!c->by_ref || !c->val || TREE_CODE (c->val) != INTEGER_CST)
+    return NULL_TREE;
+
+  tree sval = avals->safe_sval_at (c->operand_num);
+  if (!sval || TREE_CODE (sval) != ADDR_EXPR)
+    return NULL_TREE;
+
+  poly_int64 byte_off;
+  tree base = get_addr_base_and_unit_offset (TREE_OPERAND (sval, 0),
+					     &byte_off);
+  /* TODO: Support general constructors of readonly variables.  */
+  if (!base || TREE_CODE (base) != STRING_CST)
+    return NULL_TREE;
+
+  return fold_string_char_compare (base, c->code, c->val, c->type);
+}
+
 static void
 evaluate_conditions_for_known_args (struct cgraph_node *node,
 				    bool inline_p,
@@ -412,16 +727,38 @@ evaluate_conditions_for_known_args (struct cgraph_node *node,
 	{
 	  if (c->code == ipa_predicate::changed
 	      && !c->by_ref
+	      && !c->unknown_offset
 	      && (avals->safe_sval_at(c->operand_num) == error_mark_node))
 	    continue;
 
-	  if (tree sval = avals->safe_sval_at (c->operand_num))
-	    val = ipa_find_agg_cst_from_init (sval, c->offset, c->by_ref);
-	  if (!val)
+	  if (c->unknown_offset)
 	    {
-	      ipa_argagg_value_list avs (avals);
-	      val = avs.get_value (c->operand_num, c->offset / BITS_PER_UNIT,
-				   c->by_ref);
+	      res = evaluate_unknown_offset_condition (c, avals);
+	      if (res && integer_zerop (res))
+		continue;
+	      if (res && integer_onep (res))
+		{
+		  clause |= 1 << (i + ipa_predicate::first_dynamic_condition);
+		  nonspec_clause
+		    |= 1 << (i + ipa_predicate::first_dynamic_condition);
+		  continue;
+		}
+	    }
+	  else
+	    {
+	      if (tree sval = avals->safe_sval_at (c->operand_num))
+		val = ipa_find_agg_cst_from_init (sval, c->offset, c->by_ref,
+						  c->type);
+	      /* ipa_argagg_value_list is indexed by byte offsets, so a
+		 condition which does not start at a byte boundary (a bit-field)
+		 cannot be looked up in it; the containing byte would be
+		 reinterpreted as the whole field below.  */
+	      if (!val && (c->offset % BITS_PER_UNIT) == 0)
+		{
+		  ipa_argagg_value_list avs (avals);
+		  val = avs.get_value (c->operand_num, c->offset / BITS_PER_UNIT,
+				       c->by_ref, c->maybe_modified);
+		}
 	    }
 	}
       else
@@ -452,7 +789,16 @@ evaluate_conditions_for_known_args (struct cgraph_node *node,
 	  continue;
 	}
 
-      if (val && TYPE_SIZE (c->type) == TYPE_SIZE (TREE_TYPE (val)))
+      if (val
+	  && (c->type == TREE_TYPE (val)
+	      || (TYPE_SIZE (c->type) == TYPE_SIZE (TREE_TYPE (val))
+		  /* Avoid precision mismatch like with bit-fields where the
+		     VIEW_CONVERT_EXPR does not truncate excess bits
+		     appropriately.  */
+		  && ((!INTEGRAL_TYPE_P (c->type)
+		       || type_has_mode_precision_p (c->type))
+		      && (!INTEGRAL_TYPE_P (TREE_TYPE (val))
+			  || type_has_mode_precision_p (TREE_TYPE (val)))))))
 	{
 	  if (c->type != TREE_TYPE (val))
 	    val = fold_unary (VIEW_CONVERT_EXPR, c->type, val);
@@ -566,7 +912,7 @@ evaluate_conditions_for_known_args (struct cgraph_node *node,
     *ret_nonspec_clause = nonspec_clause;
 }
 
-/* Return true if VRP will be exectued on the function.
+/* Return true if VRP will be executed on the function.
    We do not want to anticipate optimizations that will not happen.
 
    FIXME: This can be confused with -fdisable and debug counters and thus
@@ -693,7 +1039,8 @@ evaluate_properties_for_edge (struct cgraph_edge *e, bool inline_p,
 			    avals->m_known_value_ranges.safe_grow_cleared (count,
 									   true);
 			    for (int i = 0; i < count; ++i)
-			      avals->m_known_value_ranges[i].set_type (void_type_node);
+			      avals->m_known_value_ranges[i].set_range_class
+				(void_type_node);
 			  }
 			avals->m_known_value_ranges[i] = vr;
 		      }
@@ -1299,8 +1646,11 @@ unmodified_parm_or_parm_agg_item (struct ipa_func_body_info *fbi,
       *index_p = ipa_get_param_decl_index (fbi->info, res);
       if (*index_p < 0)
 	return false;
+      aggpos->offset = 0;
       aggpos->agg_contents = false;
       aggpos->by_ref = false;
+      aggpos->maybe_modified = false;
+      aggpos->unknown_offset = false;
       return true;
     }
 
@@ -1316,13 +1666,22 @@ unmodified_parm_or_parm_agg_item (struct ipa_func_body_info *fbi,
 						 aggpos);
     }
 
+  bool guaranteed_unmodified;
   aggpos->agg_contents = true;
-  return ipa_load_from_parm_agg (fbi, fbi->info->descriptors,
-				 stmt, op, index_p, &aggpos->offset,
-				 size_p, &aggpos->by_ref);
+  if (ipa_load_from_parm_agg (fbi, fbi->info->descriptors,
+			      stmt, op, index_p, &aggpos->offset,
+			      size_p, &aggpos->by_ref,
+			      &guaranteed_unmodified, &aggpos->unknown_offset))
+    {
+      aggpos->maybe_modified = !guaranteed_unmodified;
+      gcc_checking_assert (!aggpos->maybe_modified || aggpos->by_ref);
+      gcc_checking_assert (!aggpos->unknown_offset || aggpos->offset == -1);
+      return true;
+    }
+  return false;
 }
 
-/* If stmt is simple load or store of value pointed to by a function parmaeter,
+/* If stmt is simple load or store of value pointed to by a function parameter,
    return its index.  */
 
 static int
@@ -1713,7 +2072,8 @@ set_cond_stmt_execution_predicate (struct ipa_func_body_info *fbi,
       || gimple_call_num_args (set_stmt) != 1)
     return;
   op2 = gimple_call_arg (set_stmt, 0);
-  if (!decompose_param_expr (fbi, set_stmt, op2, &index, &param_type, &aggpos))
+  if (!decompose_param_expr (fbi, set_stmt, op2, &index, &param_type, &aggpos)
+      || aggpos.unknown_offset)
     return;
   if (!aggpos.by_ref)
     add_builtin_constant_p_parm (summary, index);
@@ -1728,14 +2088,20 @@ set_cond_stmt_execution_predicate (struct ipa_func_body_info *fbi,
 }
 
 
-/* If BB ends by a switch we can turn into predicates, attach corresponding
-   predicates to the CFG edges.   */
+/* Compute predicates for outgoing edges of switch statement SWTCH in BB.
+   When FOR_EXECUTION_P is true, bypass computing predicates for edges whose
+   destination post-dominates BB (since BB's execution predicate already implies
+   execution of its post-dominators).  Populate *EDGE_PREDS with one predicate
+   per edge in BB->succs and return true on success.  */
 
-static void
-set_switch_stmt_execution_predicate (struct ipa_func_body_info *fbi,
-				     class ipa_fn_summary *summary,
-				     class ipa_node_params *params_summary,
-				     basic_block bb)
+static bool
+compute_switch_edge_predicates (struct ipa_func_body_info *fbi,
+				class ipa_fn_summary *summary,
+				class ipa_node_params *params_summary,
+				basic_block bb,
+				gswitch *swtch,
+				bool for_execution_p,
+				vec<ipa_predicate> *edge_preds)
 {
   tree op;
   int index;
@@ -1747,13 +2113,10 @@ set_switch_stmt_execution_predicate (struct ipa_func_body_info *fbi,
   tree param_type;
   expr_eval_ops param_ops;
 
-  gswitch *last = safe_dyn_cast <gswitch *> (*gsi_last_bb (bb));
-  if (!last)
-    return;
-  op = gimple_switch_index (last);
-  if (!decompose_param_expr (fbi, last, op, &index, &param_type, &aggpos,
+  op = gimple_switch_index (swtch);
+  if (!decompose_param_expr (fbi, swtch, op, &index, &param_type, &aggpos,
 			     &param_ops))
-    return;
+    return false;
 
   auto_vec<std::pair<tree, tree> > ranges;
   tree type = TREE_TYPE (op);
@@ -1775,59 +2138,66 @@ set_switch_stmt_execution_predicate (struct ipa_func_body_info *fbi,
   wide_int vr_wmin = wi::to_wide (vr_min);
   wide_int vr_wmax = wi::to_wide (vr_max);
 
+  hash_map<edge, unsigned> edge_map;
+  unsigned edge_idx = 0;
   FOR_EACH_EDGE (e, ei, bb->succs)
     {
-      e->aux = edge_predicate_pool.allocate ();
-      *(ipa_predicate *) e->aux = false;
+      edge_map.put (e, edge_idx++);
+      edge_preds->safe_push (false);
     }
 
-  e = gimple_switch_edge (cfun, last, 0);
+  edge default_edge = gimple_switch_edge (cfun, swtch, 0);
   /* Set BOUND_COUNT to maximum count to bypass computing predicate for
      default case if its target basic block is in convergence point of all
      switch cases, which can be determined by checking whether it
      post-dominates the switch statement.  */
-  if (dominated_by_p (CDI_POST_DOMINATORS, bb, e->dest))
+  if (for_execution_p
+      && dominated_by_p (CDI_POST_DOMINATORS, bb, default_edge->dest))
     bound_count = INT_MAX;
 
-  n = gimple_switch_num_labels (last);
+  n = gimple_switch_num_labels (swtch);
   for (case_idx = 1; case_idx < n; ++case_idx)
     {
-      tree cl = gimple_switch_label (last, case_idx);
+      tree cl = gimple_switch_label (swtch, case_idx);
       tree min = CASE_LOW (cl);
       tree max = CASE_HIGH (cl);
       ipa_predicate p;
 
-      e = gimple_switch_edge (cfun, last, case_idx);
+      e = gimple_switch_edge (cfun, swtch, case_idx);
+      if (!for_execution_p && e == default_edge)
+	continue;
 
       /* The case value might not have same type as switch expression,
 	 extend the value based on the expression type.  */
       if (TREE_TYPE (min) != type)
-	min = wide_int_to_tree (type, wi::to_wide (min));
+	min = wide_int_to_tree (type, wi::to_widest (min));
 
       if (!max)
 	max = min;
       else if (TREE_TYPE (max) != type)
-	max = wide_int_to_tree (type, wi::to_wide (max));
+	max = wide_int_to_tree (type, wi::to_widest (max));
 
       /* The case's target basic block is in convergence point of all switch
 	 cases, its predicate should be at least as that of the switch
 	 statement.  */
-      if (dominated_by_p (CDI_POST_DOMINATORS, bb, e->dest))
+      if (for_execution_p && dominated_by_p (CDI_POST_DOMINATORS, bb, e->dest))
 	p = true;
       else if (min == max)
 	p = add_condition (summary, params_summary, index, param_type,
-		           &aggpos, EQ_EXPR, min, param_ops);
+			   &aggpos, EQ_EXPR, min, param_ops);
       else
 	{
 	  ipa_predicate p1, p2;
 	  p1 = add_condition (summary, params_summary, index, param_type,
 			      &aggpos, GE_EXPR, min, param_ops);
-	  p2 = add_condition (summary,  params_summary,index, param_type,
+	  p2 = add_condition (summary, params_summary, index, param_type,
 			      &aggpos, LE_EXPR, max, param_ops);
 	  p = p1 & p2;
 	}
-      *(ipa_predicate *) e->aux
-	= p.or_with (summary->conds, *(ipa_predicate *) e->aux);
+      unsigned *slot = edge_map.get (e);
+      gcc_checking_assert (slot);
+      (*edge_preds)[*slot]
+	= p.or_with (summary->conds, (*edge_preds)[*slot]);
 
       /* If there are too many disjoint case ranges, predicate for default
 	 case might become too complicated.  So add a limit here.  */
@@ -1870,74 +2240,106 @@ set_switch_stmt_execution_predicate (struct ipa_func_body_info *fbi,
 	}
     }
 
-  e = gimple_switch_edge (cfun, last, 0);
+  unsigned default_slot = *edge_map.get (default_edge);
   if (bound_count > bound_limit)
+    (*edge_preds)[default_slot] = true;
+  else
     {
-      *(ipa_predicate *) e->aux = true;
-      vec_free (param_ops);
-      return;
-    }
+      ipa_predicate p_seg = true;
+      ipa_predicate p_all = false;
 
-  ipa_predicate p_seg = true;
-  ipa_predicate p_all = false;
-
-  if (vr_type != VR_RANGE)
-    {
-      vr_wmin = wi::to_wide (TYPE_MIN_VALUE (type));
-      vr_wmax = wi::to_wide (TYPE_MAX_VALUE (type));
-    }
-
-  /* Construct predicate to represent default range set that is negation of
-     all case ranges.  Case range is classified as containing single/non-single
-     values.  Suppose a piece of case ranges in the following.
-
-                [D1...D2]  [S1] ... [Sn]  [D3...D4]
-
-     To represent default case's range sets between two non-single value
-     case ranges (From D2 to D3), we construct predicate as:
-
-              D2 < x < D3 && x != S1 && ... && x != Sn
-   */
-  for (size_t i = 0; i < ranges.length (); i++)
-    {
-      tree min = ranges[i].first;
-      tree max = ranges[i].second;
-
-      if (min == max)
-	p_seg &= add_condition (summary, params_summary, index,
-		       		param_type, &aggpos, NE_EXPR,
-				min, param_ops);
-      else
+      if (vr_type != VR_RANGE)
 	{
-	  /* Do not create sub-predicate for range that is beyond low bound
-	     of switch index.  */
-	  if (wi::lt_p (vr_wmin, wi::to_wide (min), TYPE_SIGN (type)))
-	    {
-	      p_seg &= add_condition (summary, params_summary, index,
-			     	      param_type, &aggpos,
-				      LT_EXPR, min, param_ops);
-	      p_all = p_all.or_with (summary->conds, p_seg);
-	    }
-
-	  /* Do not create sub-predicate for range that is beyond up bound
-	     of switch index.  */
-	  if (wi::le_p (vr_wmax, wi::to_wide (max), TYPE_SIGN (type)))
-	    {
-	      p_seg = false;
-	      break;
-	    }
-
-	  p_seg = add_condition (summary, params_summary, index,
-				 param_type, &aggpos, GT_EXPR,
-				 max, param_ops);
+	  vr_wmin = wi::to_wide (TYPE_MIN_VALUE (type));
+	  vr_wmax = wi::to_wide (TYPE_MAX_VALUE (type));
 	}
+
+      /* Construct predicate to represent default range set that is negation of
+	 all case ranges.  Case range is classified as containing
+	 single/non-single values.  Suppose a piece of case ranges in the
+	 following.
+
+		    [D1...D2]  [S1] ... [Sn]  [D3...D4]
+
+	 To represent default case's range sets between two non-single value
+	 case ranges (From D2 to D3), we construct predicate as:
+
+		  D2 < x < D3 && x != S1 && ... && x != Sn
+       */
+      for (size_t i = 0; i < ranges.length (); i++)
+	{
+	  tree min = ranges[i].first;
+	  tree max = ranges[i].second;
+
+	  if (min == max)
+	    p_seg &= add_condition (summary, params_summary, index,
+				    param_type, &aggpos, NE_EXPR,
+				    min, param_ops);
+	  else
+	    {
+	      /* Do not create sub-predicate for range that is beyond low
+		 bound of switch index.  */
+	      if (wi::lt_p (vr_wmin, wi::to_wide (min), TYPE_SIGN (type)))
+		{
+		  p_seg &= add_condition (summary, params_summary, index,
+					  param_type, &aggpos,
+					  LT_EXPR, min, param_ops);
+		  p_all = p_all.or_with (summary->conds, p_seg);
+		}
+
+	      /* Do not create sub-predicate for range that is beyond up bound
+		 of switch index.  */
+	      if (wi::le_p (vr_wmax, wi::to_wide (max), TYPE_SIGN (type)))
+		{
+		  p_seg = false;
+		  break;
+		}
+
+	      p_seg = add_condition (summary, params_summary, index,
+				     param_type, &aggpos, GT_EXPR,
+				     max, param_ops);
+	    }
+	}
+
+      p_all = p_all.or_with (summary->conds, p_seg);
+      (*edge_preds)[default_slot]
+	= p_all.or_with (summary->conds, (*edge_preds)[default_slot]);
     }
 
-  p_all = p_all.or_with (summary->conds, p_seg);
-  *(ipa_predicate *) e->aux
-    = p_all.or_with (summary->conds, *(ipa_predicate *) e->aux);
+  if (!for_execution_p && default_slot != 0)
+    std::swap ((*edge_preds)[0], (*edge_preds)[default_slot]);
 
   vec_free (param_ops);
+  return true;
+}
+
+
+/* If BB ends by a switch we can turn into predicates, attach corresponding
+   predicates to the CFG edges.  */
+
+static void
+set_switch_stmt_execution_predicate (struct ipa_func_body_info *fbi,
+				     class ipa_fn_summary *summary,
+				     class ipa_node_params *params_summary,
+				     basic_block bb)
+{
+  gswitch *last = safe_dyn_cast <gswitch *> (*gsi_last_bb (bb));
+  if (!last)
+    return;
+
+  auto_vec<ipa_predicate, 8> edge_preds;
+  if (!compute_switch_edge_predicates (fbi, summary, params_summary,
+				       bb, last, true, &edge_preds))
+    return;
+
+  edge e;
+  edge_iterator ei;
+  unsigned edge_idx = 0;
+  FOR_EACH_EDGE (e, ei, bb->succs)
+    {
+      e->aux = edge_predicate_pool.allocate ();
+      *(ipa_predicate *) e->aux = edge_preds[edge_idx++];
+    }
 }
 
 
@@ -2154,12 +2556,16 @@ will_be_nonconstant_predicate (struct ipa_func_body_info *fbi,
 
   is_load = gimple_assign_load_p (stmt);
 
-  /* Loads can be optimized when the value is known.  */
+  /* Loads can be optimized when the value is known.  An unknown-offset load
+     itself can still read different values across offsets or iterations, so
+     leave nonconstant_names true for it; comparisons of it against an
+     invariant are handled below.  */
   if (is_load)
     {
       tree op = gimple_assign_rhs1 (stmt);
       if (!decompose_param_expr (fbi, stmt, op, &base_index, &param_type,
-				 &aggpos))
+				 &aggpos)
+	  || aggpos.unknown_offset)
 	return p;
     }
   else
@@ -2167,6 +2573,7 @@ will_be_nonconstant_predicate (struct ipa_func_body_info *fbi,
 
   /* See if we understand all operands before we start
      adding conditionals.  */
+  bool understood = true;
   FOR_EACH_SSA_TREE_OPERAND (use, stmt, iter, SSA_OP_USE)
     {
       tree parm = unmodified_parm (fbi, stmt, use, NULL);
@@ -2174,12 +2581,114 @@ will_be_nonconstant_predicate (struct ipa_func_body_info *fbi,
       if (parm && ipa_get_param_decl_index (fbi->info, parm) >= 0)
 	continue;
       if (TREE_CODE (use) != SSA_NAME)
-	return p;
+	{
+	  understood = false;
+	  break;
+	}
       /* If we know when operand is constant,
 	 we still can say something useful.  */
       if (nonconstant_names[SSA_NAME_VERSION (use)] != true)
 	continue;
-      return p;
+      understood = false;
+      break;
+    }
+
+  /* Even if an operand itself is non-constant (such as a load at an unknown
+     or maybe-modified offset), a comparison against an IP-invariant or a
+     switch is constant whenever at most one outcome is possible.  */
+  if (!understood)
+    {
+      if (gswitch *swtch = dyn_cast <gswitch *> (stmt))
+	{
+	  auto_vec<ipa_predicate, 8> edge_preds;
+	  if (!compute_switch_edge_predicates (fbi, summary, params_summary,
+					       gimple_bb (swtch), swtch,
+					       false, &edge_preds))
+	    return p;
+
+	  unsigned n_edges = edge_preds.length ();
+	  if (n_edges < 2)
+	    return false;
+
+	  unsigned n_true = 0;
+	  for (unsigned i = 0; i < n_edges; i++)
+	    if (edge_preds[i] == true && ++n_true >= 2)
+	      return p;
+
+	  /* Switch is non-constant when at least two distinct outgoing edges
+	     may be taken, i.e. for each edge m some edge j != m is not
+	     excluded.  */
+	  auto_vec<ipa_predicate, 8> suffix_or;
+	  suffix_or.safe_grow_cleared (n_edges + 1, true);
+	  suffix_or[n_edges] = false;
+	  for (unsigned i = n_edges; i-- > 0;)
+	    suffix_or[i]
+	      = suffix_or[i + 1].or_with (summary->conds, edge_preds[i]);
+
+	  ipa_predicate prefix_or = false;
+	  op_non_const = true;
+	  for (unsigned m = 0; m < n_edges; m++)
+	    {
+	      ipa_predicate others
+		= prefix_or.or_with (summary->conds, suffix_or[m + 1]);
+	      op_non_const &= others;
+	      prefix_or = prefix_or.or_with (summary->conds, edge_preds[m]);
+	    }
+	  return op_non_const;
+	}
+
+      tree lhs, rhs;
+      enum tree_code code;
+      if (gcond *cond = dyn_cast <gcond *> (stmt))
+	{
+	  code = gimple_cond_code (cond);
+	  lhs = gimple_cond_lhs (cond);
+	  rhs = gimple_cond_rhs (cond);
+	}
+      else if (gimple_code (stmt) == GIMPLE_ASSIGN
+	       && TREE_CODE_CLASS (gimple_assign_rhs_code (stmt))
+		  == tcc_comparison)
+	{
+	  code = gimple_assign_rhs_code (stmt);
+	  lhs = gimple_assign_rhs1 (stmt);
+	  rhs = gimple_assign_rhs2 (stmt);
+	}
+      else
+	return p;
+
+      if (!is_gimple_ip_invariant (rhs) && is_gimple_ip_invariant (lhs))
+	{
+	  std::swap (lhs, rhs);
+	  code = swap_tree_comparison (code);
+	}
+
+      expr_eval_ops param_ops = NULL;
+      if (!is_gimple_ip_invariant (rhs)
+	  || !decompose_param_expr (fbi, stmt, lhs, &base_index, &param_type,
+				    &aggpos, &param_ops))
+	return p;
+
+      enum tree_code inverted_code
+	= invert_tree_comparison (code, HONOR_NANS (lhs));
+      if (inverted_code == ERROR_MARK)
+	{
+	  vec_free (param_ops);
+	  return p;
+	}
+
+      ipa_predicate p1
+	= add_condition (summary, params_summary, base_index, param_type,
+			 &aggpos, code, rhs, param_ops);
+      ipa_predicate p2
+	= add_condition (summary, params_summary, base_index, param_type,
+			 &aggpos, inverted_code, rhs, param_ops);
+      op_non_const = p1 & p2;
+      vec_free (param_ops);
+      if (gimple_code (stmt) == GIMPLE_ASSIGN
+	  && TREE_CODE (gimple_assign_lhs (stmt)) == SSA_NAME)
+	nonconstant_names[SSA_NAME_VERSION (gimple_assign_lhs (stmt))]
+	  = op_non_const;
+      return op_non_const;
     }
 
   if (is_load)
@@ -2384,9 +2893,9 @@ param_change_prob (ipa_func_body_info *fbi, gimple *stmt, int i)
     }
 }
 
-/* Find whether a basic block BB is the final block of a (half) diamond CFG
-   sub-graph and if the predicate the condition depends on is known.  If so,
-   return true and store the pointer the predicate in *P.  */
+/* Find whether a basic block BB is the final block of a (half) diamond or
+   switch CFG sub-graph and if the predicate the condition depends on is known.
+   If so, return true and store the predicate in *P.  */
 
 static bool
 phi_result_unknown_predicate (ipa_func_body_info *fbi,
@@ -2429,14 +2938,14 @@ phi_result_unknown_predicate (ipa_func_body_info *fbi,
   if (!first_bb)
     return false;
 
-  gcond *stmt = safe_dyn_cast <gcond *> (*gsi_last_bb (first_bb));
+  gimple *stmt = *gsi_last_bb (first_bb);
   if (!stmt
-      || !is_gimple_ip_invariant (gimple_cond_rhs (stmt)))
+      || (gimple_code (stmt) != GIMPLE_COND
+	  && gimple_code (stmt) != GIMPLE_SWITCH))
     return false;
 
-  *p = will_be_nonconstant_expr_predicate (fbi, summary, params_summary,
-					   gimple_cond_lhs (stmt),
-					   nonconstant_names);
+  *p = will_be_nonconstant_predicate (fbi, summary, params_summary,
+				      stmt, nonconstant_names);
   if (*p == true)
     return false;
   else
@@ -2629,7 +3138,9 @@ refs_local_or_readonly_memory_p (tree t)
       && auto_var_in_fn_p (t, current_function_decl))
     return true;
 
-  /* Read-only variables are fine.  */
+  /* Read-only variables and constants are fine.  */
+  if (CONSTANT_CLASS_P (t))
+    return true;
   if (DECL_P (t) && TREE_READONLY (t))
     return true;
 
@@ -2744,7 +3255,7 @@ guards_builtin_unreachable (basic_block bb, vec<unsigned char> &cache)
 	if (dump_file && (dump_flags & TDF_DETAILS))
 	  fprintf (dump_file,
 		   "BB %i ends with conditional guarding __builtin_unreachable;"
-		   " conditinal is unnecesary\n", bb->index);
+		   " conditinal is unnecessary\n", bb->index);
 	return true;
       }
   return false;
@@ -3010,7 +3521,7 @@ analyze_function_body (struct cgraph_node *node, bool early)
 	    {
 	      if (dump_file && (dump_flags & TDF_DETAILS))
 		{
-		  fprintf (dump_file, "  skipping unnecesary stmt ");
+		  fprintf (dump_file, "  skipping unnecessary stmt ");
 		  print_gimple_stmt (dump_file, stmt, 0);
 		}
 	      /* TODO: const calls used only to produce values for
@@ -3043,10 +3554,12 @@ analyze_function_body (struct cgraph_node *node, bool early)
 		       this_time);
 	    }
 
+	  struct cgraph_edge *edge;
 	  if (is_gimple_call (stmt)
-	      && !gimple_call_internal_p (stmt))
+	      && (!gimple_call_internal_p (stmt)
+		  || gimple_call_internal_fn (stmt) == IFN_ASSUME)
+	      && (edge = node->get_edge (stmt)))
 	    {
-	      struct cgraph_edge *edge = node->get_edge (stmt);
 	      ipa_call_summary *es = ipa_call_summaries->get_create (edge);
 
 	      /* Special case: results of BUILT_IN_CONSTANT_P will be always
@@ -3132,6 +3645,15 @@ analyze_function_body (struct cgraph_node *node, bool early)
 		      es2->call_stmt_size = 0;
 		      es2->call_stmt_time = 0;
 		    }
+		}
+	      /* Internal calls are not in the callgraph, so edges pointing to
+		 .ASSUME bodies are not covered by the above branch, as the
+		 dispatching edge doesn't exist.  */
+	      else if (edge->callback)
+		{
+		  gcc_checking_assert (edge->callee->assume_function);
+		  es->call_stmt_size = 0;
+		  es->call_stmt_time = 0;
 		}
 	    }
 
@@ -3609,7 +4131,7 @@ estimate_edge_devirt_benefit (struct cgraph_edge *ie,
 /* Increase SIZE, MIN_SIZE (if non-NULL) and TIME for size and time needed to
    handle edge E with probability PROB.  Set HINTS accordingly if edge may be
    devirtualized.  AVALS, if non-NULL, describes the context of the call site
-   as far as values of parameters are concerened.  */
+   as far as values of parameters are concerned.  */
 
 static inline void
 estimate_edge_size_and_time (struct cgraph_edge *e, int *size, int *min_size,
@@ -4389,6 +4911,7 @@ remap_edge_summaries (struct cgraph_edge *inlined_edge,
 		      class ipa_fn_summary *callee_info,
 		      const vec<int> &operand_map,
 		      const vec<HOST_WIDE_INT> &offset_map,
+		      const vec<bool> &agg_preserved_map,
 		      clause_t possible_truths,
 		      ipa_predicate *toplev_predicate)
 {
@@ -4408,7 +4931,8 @@ remap_edge_summaries (struct cgraph_edge *inlined_edge,
 	      p = es->predicate->remap_after_inlining
 				     (info, params_summary,
 				      callee_info, operand_map,
-				      offset_map, possible_truths,
+				      offset_map, agg_preserved_map,
+				      possible_truths,
 				      *toplev_predicate);
 	      edge_set_predicate (e, &p);
 	    }
@@ -4418,8 +4942,8 @@ remap_edge_summaries (struct cgraph_edge *inlined_edge,
       else
 	remap_edge_summaries (inlined_edge, e->callee, info,
 		              params_summary, callee_info,
-			      operand_map, offset_map, possible_truths,
-			      toplev_predicate);
+			      operand_map, offset_map, agg_preserved_map,
+			      possible_truths, toplev_predicate);
     }
   for (e = node->indirect_calls; e; e = next)
     {
@@ -4433,6 +4957,7 @@ remap_edge_summaries (struct cgraph_edge *inlined_edge,
 	  p = es->predicate->remap_after_inlining
 				 (info, params_summary,
 				  callee_info, operand_map, offset_map,
+				  agg_preserved_map,
 			          possible_truths, *toplev_predicate);
 	  edge_set_predicate (e, &p);
 	}
@@ -4450,6 +4975,7 @@ remap_freqcounting_predicate (class ipa_fn_summary *info,
 			      vec<ipa_freqcounting_predicate, va_gc> *v,
 			      const vec<int> &operand_map,
 			      const vec<HOST_WIDE_INT> &offset_map,
+			      const vec<bool> &agg_preserved_map,
 			      clause_t possible_truths,
 			      ipa_predicate *toplev_predicate)
 
@@ -4460,7 +4986,8 @@ remap_freqcounting_predicate (class ipa_fn_summary *info,
       ipa_predicate p
 	= fcp->predicate->remap_after_inlining (info, params_summary,
 						callee_info, operand_map,
-						offset_map, possible_truths,
+						offset_map, agg_preserved_map,
+						possible_truths,
 						*toplev_predicate);
       if (p != false && p != true)
 	*fcp->predicate &= p;
@@ -4480,6 +5007,7 @@ ipa_merge_fn_summary_after_inlining (struct cgraph_edge *edge)
   size_time_entry *e;
   auto_vec<int, 8> operand_map;
   auto_vec<HOST_WIDE_INT, 8> offset_map;
+  auto_vec<bool, 8> agg_preserved_map;
   int i;
   ipa_predicate toplev_predicate;
   class ipa_call_summary *es = ipa_call_summaries->get (edge);
@@ -4509,6 +5037,7 @@ ipa_merge_fn_summary_after_inlining (struct cgraph_edge *edge)
 	{
 	  operand_map.safe_grow_cleared (count, true);
 	  offset_map.safe_grow_cleared (count, true);
+	  agg_preserved_map.safe_grow_cleared (count, true);
 	}
       for (i = 0; i < count; i++)
 	{
@@ -4519,9 +5048,11 @@ ipa_merge_fn_summary_after_inlining (struct cgraph_edge *edge)
 	  if (jfunc->type == IPA_JF_PASS_THROUGH)
 	    {
 	      if (ipa_get_jf_pass_through_operation (jfunc) == NOP_EXPR)
-		map = ipa_get_jf_pass_through_formal_id (jfunc);
-	      if (!ipa_get_jf_pass_through_agg_preserved (jfunc))
-		offset_map[i] = -1;
+		{
+		  map = ipa_get_jf_pass_through_formal_id (jfunc);
+		  agg_preserved_map[i]
+		    = ipa_get_jf_pass_through_agg_preserved (jfunc);
+		}
 	    }
 	  else if (jfunc->type == IPA_JF_ANCESTOR)
 	    {
@@ -4529,9 +5060,9 @@ ipa_merge_fn_summary_after_inlining (struct cgraph_edge *edge)
 	      if (offset >= 0 && offset < INT_MAX)
 		{
 		  map = ipa_get_jf_ancestor_formal_id (jfunc);
-		  if (!ipa_get_jf_ancestor_agg_preserved (jfunc))
-		    offset = -1;
 		  offset_map[i] = offset;
+		  agg_preserved_map[i]
+		    = ipa_get_jf_ancestor_agg_preserved (jfunc);
 		}
 	    }
 	  operand_map[i] = map;
@@ -4550,13 +5081,13 @@ ipa_merge_fn_summary_after_inlining (struct cgraph_edge *edge)
       p = e->exec_predicate.remap_after_inlining
 			     (info, params_summary,
 			      callee_info, operand_map,
-			      offset_map, clause,
+			      offset_map, agg_preserved_map, clause,
 			      toplev_predicate);
       ipa_predicate nonconstp;
       nonconstp = e->nonconst_predicate.remap_after_inlining
 				     (info, params_summary,
 				      callee_info, operand_map,
-				      offset_map, clause,
+				      offset_map, agg_preserved_map, clause,
 				      toplev_predicate);
       if (p != false && nonconstp != false)
 	{
@@ -4576,13 +5107,16 @@ ipa_merge_fn_summary_after_inlining (struct cgraph_edge *edge)
     }
   remap_edge_summaries (edge, edge->callee, info, params_summary,
 		 	callee_info, operand_map,
-			offset_map, clause, &toplev_predicate);
+			offset_map, agg_preserved_map, clause,
+			&toplev_predicate);
   remap_freqcounting_predicate (info, params_summary, callee_info,
 				info->loop_iterations, operand_map,
-				offset_map, clause, &toplev_predicate);
+				offset_map, agg_preserved_map, clause,
+				&toplev_predicate);
   remap_freqcounting_predicate (info, params_summary, callee_info,
 				info->loop_strides, operand_map,
-				offset_map, clause, &toplev_predicate);
+				offset_map, agg_preserved_map, clause,
+				&toplev_predicate);
 
   HOST_WIDE_INT stack_frame_offset = ipa_get_stack_frame_offset (edge->callee);
   HOST_WIDE_INT peak = stack_frame_offset + callee_info->estimated_stack_size;
@@ -4864,8 +5398,14 @@ inline_read_section (struct lto_file_decl_data *file_data, const char *data,
 	  bp = streamer_read_bitpack (&ib);
 	  c.agg_contents = bp_unpack_value (&bp, 1);
 	  c.by_ref = bp_unpack_value (&bp, 1);
-	  if (c.agg_contents)
+	  c.maybe_modified = bp_unpack_value (&bp, 1);
+	  c.unknown_offset = bp_unpack_value (&bp, 1);
+	  if (c.unknown_offset)
+	    c.offset = -1;
+	  else if (c.agg_contents)
 	    c.offset = streamer_read_uhwi (&ib);
+	  else
+	    c.offset = 0;
 	  count3 = streamer_read_uhwi (&ib);
 	  c.param_ops = NULL;
 	  if (info)
@@ -5100,8 +5640,10 @@ ipa_fn_summary_write (void)
 	      bp = bitpack_create (ob->main_stream);
 	      bp_pack_value (&bp, c->agg_contents, 1);
 	      bp_pack_value (&bp, c->by_ref, 1);
+	      bp_pack_value (&bp, c->maybe_modified, 1);
+	      bp_pack_value (&bp, c->unknown_offset, 1);
 	      streamer_write_bitpack (&bp);
-	      if (c->agg_contents)
+	      if (c->agg_contents && !c->unknown_offset)
 		streamer_write_uhwi (ob, c->offset);
 	      streamer_write_uhwi (ob, vec_safe_length (c->param_ops));
 	      for (j = 0; vec_safe_iterate (c->param_ops, j, &op); j++)
@@ -5340,4 +5882,6 @@ ipa_fnsummary_cc_finalize (void)
 {
   ipa_free_fn_summary ();
   ipa_free_size_summary ();
+  delete string_char_set_cache;
+  string_char_set_cache = NULL;
 }

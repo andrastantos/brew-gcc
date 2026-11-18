@@ -328,6 +328,27 @@ package Exp_Util is
    --  operation that has the condition. Adjust_Sloc is True when the sloc of
    --  nodes traversed should be adjusted for the inherited pragma.
 
+   function Build_Component_Assignment
+     (Loc           : Source_Ptr;
+      Prefix        : Entity_Id;
+      Prefix_Type   : Entity_Id;
+      Proc_Id       : Entity_Id;
+      Component_Id  : Entity_Id;
+      Default_Expr  : Node_Id;
+      Is_Incomplete : Boolean := False) return List_Id;
+   --  This helper function is used to build component assignment in
+   --  initialization procedures or constructor prologues. It builds an
+   --  assignment statement that assigns the default expression to its
+   --  corresponding record component, selected with the first formal for
+   --   visibility. The right-hand side of the assignment, cf. the default
+   --  expression, is scoped in the given procedure, the left-hand side is
+   --  marked Assignment_OK so that initialization of limited private records
+   --  works correctly. This routine may also build an adjustment call if the
+   --  component is controlled.
+   --  If Is_Incomplete is true, the entities in the default expression will
+   --  be mapped to the type of the first formal in order to handle "current
+   --  instance" references.
+
    function Build_DIC_Call
      (Loc      : Source_Ptr;
       Obj_Name : Node_Id;
@@ -651,7 +672,13 @@ package Exp_Util is
    --  although they are not master constructs in the language.
 
    function Find_Optional_Prim_Op
-     (T : Entity_Id; Name : Name_Id) return Entity_Id;
+     (T             : Entity_Id;
+      Name          : Name_Id;
+      Controlled_Op : Boolean := False) return Entity_Id;
+   --  Same as Find_Prim_Op but, if Controlled_Op is True, returns a primitive
+   --  only if it has the signature of the three primitives of controlled types
+   --  Initialize/Adjust/Finalize, and returns Empty if not found.
+
    function Find_Optional_Prim_Op
      (T    : Entity_Id;
       Name : TSS_Name_Type) return Entity_Id;
@@ -829,6 +856,13 @@ package Exp_Util is
    function Is_Conversion_Or_Reference_To_Formal (N : Node_Id) return Boolean;
    --  Return True if N is a type conversion, or a dereference thereof, or a
    --  reference to a formal parameter.
+
+   function Is_Distributable_Declaration (N : Node_Id) return Boolean;
+   --  Return True if N is an object declaration that can be distributed into
+   --  the dependent expressions of a conditional expression, given that the
+   --  conditional expression is the initialization expression of N. Such a
+   --  distribution avoids a copy operation and is required for limited types
+   --  and, more generally, desirable for all by-reference types.
 
    function Is_Expanded_Class_Wide_Interface_Object_Decl
       (N : Node_Id) return Boolean;

@@ -354,22 +354,18 @@ begin
       ------------
 
       when Pragma_Ada_83 =>
-         if not Latest_Ada_Only then
-            Ada_Version := Ada_83;
-            Ada_Version_Explicit := Ada_83;
-            Ada_Version_Pragma := Pragma_Node;
-         end if;
+         Ada_Version := Ada_83;
+         Ada_Version_Explicit := Ada_83;
+         Ada_Version_Pragma := Pragma_Node;
 
       ------------
       -- Ada_95 --
       ------------
 
       when Pragma_Ada_95 =>
-         if not Latest_Ada_Only then
-            Ada_Version := Ada_95;
-            Ada_Version_Explicit := Ada_95;
-            Ada_Version_Pragma := Pragma_Node;
-         end if;
+         Ada_Version := Ada_95;
+         Ada_Version_Explicit := Ada_95;
+         Ada_Version_Pragma := Pragma_Node;
 
       ---------------------
       -- Ada_05/Ada_2005 --
@@ -378,7 +374,7 @@ begin
       when Pragma_Ada_05
          | Pragma_Ada_2005
       =>
-         if Arg_Count = 0 and not Latest_Ada_Only then
+         if Arg_Count = 0 then
             Ada_Version := Ada_2005;
             Ada_Version_Explicit := Ada_2005;
             Ada_Version_Pragma := Pragma_Node;
@@ -1490,6 +1486,7 @@ begin
          | Pragma_Interrupt_Handler
          | Pragma_Interrupt_Priority
          | Pragma_Interrupt_State
+         | Pragma_Interrupts_System_By_Default
          | Pragma_Invariant
          | Pragma_Keep_Names
          | Pragma_License
@@ -1510,6 +1507,7 @@ begin
          | Pragma_Max_Entry_Queue_Length
          | Pragma_Max_Queue_Length
          | Pragma_Memory_Size
+         | Pragma_Modifies
          | Pragma_No_Body
          | Pragma_No_Caching
          | Pragma_No_Component_Reordering
@@ -1519,7 +1517,6 @@ begin
          | Pragma_No_Raise
          | Pragma_No_Return
          | Pragma_No_Run_Time
-         | Pragma_Interrupts_System_By_Default
          | Pragma_No_Strict_Aliasing
          | Pragma_No_Tagged_Streams
          | Pragma_Normalize_Scalars

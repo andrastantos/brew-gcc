@@ -567,10 +567,10 @@ enum ext_modified_kind
 struct ext_modified
 {
   /* Mode from which ree has zero or sign extended the destination.  */
-  ENUM_BITFIELD(machine_mode) mode : MACHINE_MODE_BITSIZE;
+  machine_mode mode : MACHINE_MODE_BITSIZE;
 
   /* Kind of modification of the insn.  */
-  ENUM_BITFIELD(ext_modified_kind) kind : 2;
+  enum ext_modified_kind kind : 2;
 
   unsigned int do_not_reextend : 1;
 
@@ -1351,7 +1351,7 @@ find_and_remove_re (void)
 
      It may first appear that the arguments for the copy are reversed.
      Remember that the memory reference will be changed to refer to the
-     destination of the extention.  So we're actually emitting a copy
+     destination of the extension.  So we're actually emitting a copy
      from the new destination to the old destination.  */
   for (unsigned int i = 0; i < reinsn_copy_list.length (); i += 2)
     {

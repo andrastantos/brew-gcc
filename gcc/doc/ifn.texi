@@ -63,8 +63,19 @@ instruction pattern.
 
 @cindex @code{IFN_MASK_LOAD} internal function
 @item @samp{IFN_MASK_LOAD}
-The @code{IFN_MASK_LOAD} internal function directly maps to the @code{maskload}
-instruction pattern.
+The @code{IFN_MASK_LOAD} internal function maps directly to the
+@code{maskload} instruction pattern (@pxref{maskload@var{m}@var{n}}).
+For a vector type @code{v} (with @code{TYPE_MODE} @var{m}), a mask type
+@code{p} (with @code{TYPE_MODE} @var{n}), and pointer type
+@code{aliasptr}, the signature of the internal function is:
+@smallexample
+v IFN_MASK_LOAD (v *addr, aliasptr cookie, p mask, v elseval)
+@end smallexample
+a call to this internal function with lhs @var{r} maps to
+@code{maskload@var{m}@var{n}} with the following operands array:
+@code{[@var{r}, addr, mask, elseval]}.  @code{cookie}'s type
+(@code{aliasptr}) is a pointer type used for type-based alias analysis,
+and its value gives the alignment of the load in bits.
 
 @cindex @code{IFN_LOAD_LANES} internal function
 @item @samp{IFN_LOAD_LANES}
@@ -496,10 +507,10 @@ The @code{IFN_REDUC_SBOOL_IOR} internal function directly maps to the
 The @code{IFN_REDUC_SBOOL_XOR} internal function directly maps to the
 @code{reduc_sbool_xor_scal} instruction pattern.
 
-@cindex @code{IFN_EXTRACT_LAST} internal function
-@item @samp{IFN_EXTRACT_LAST}
-The @code{IFN_EXTRACT_LAST} internal function directly maps to the
-@code{extract_last} instruction pattern.
+@cindex @code{IFN_EXTRACT_LAST_ACTIVE} internal function
+@item @samp{IFN_EXTRACT_LAST_ACTIVE}
+The @code{IFN_EXTRACT_LAST_ACTIVE} internal function directly maps to the
+@code{extract_last_active} instruction pattern.
 
 @cindex @code{IFN_FOLD_EXTRACT_LAST} internal function
 @item @samp{IFN_FOLD_EXTRACT_LAST}
@@ -743,7 +754,7 @@ The @code{IFN_VEC_WIDEN_PLUS} set of internal functions directly map to
 the @code{vec_widen_sadd} and @code{vec_widen_uadd} instruction patterns,
 depending on the sign of the first argument. The @code{IFN_VEC_WIDEN_PLUS_LO}
 and @code{IFN_VEC_WIDEN_PLUS_HI} work on the low and high parts of a vector,
-the @code{IFN_VEC_WIDEN_PLUS_EVEN} and @code {IFN_VEC_WIDEN_PLUS_ODD}
+the @code{IFN_VEC_WIDEN_PLUS_EVEN} and @code{IFN_VEC_WIDEN_PLUS_ODD}
 functions work on the even and odd elements of a vector.
 
 @cindex @code{IFN_VEC_WIDEN_MINUS} internal function
@@ -756,7 +767,7 @@ The @code{IFN_VEC_WIDEN_MINUS} set of internal functions directly map to the
 @code{vec_widen_ssub} and @code{vec_widen_usub} instruction patterns,
 depending on the sign of the first argument. The @code{IFN_VEC_WIDEN_MINUS_LO}
 and @code{IFN_VEC_WIDEN_MINUS_HI} work on the low and high parts of a vector,
-the @code{IFN_VEC_WIDEN_MINUS_EVEN} and @code {IFN_VEC_WIDEN_MINUS_ODD}
+the @code{IFN_VEC_WIDEN_MINUS_EVEN} and @code{IFN_VEC_WIDEN_MINUS_ODD}
 functions work on the even and odd elements of a vector.
 
 @cindex @code{IFN_VEC_WIDEN_ABD} internal function
@@ -769,7 +780,7 @@ The @code{IFN_VEC_WIDEN_ABD} set of internal functions directly map to the
 @code{vec_widen_sabd} and @code{vec_widen_uabd} instruction patterns,
 depending on the sign of the first argument. The @code{IFN_VEC_WIDEN_ABD_LO}
 and @code{IFN_VEC_WIDEN_ABD_HI} work on the low and high parts of a vector,
-the @code{IFN_VEC_WIDEN_ABD_EVEN} and @code {IFN_VEC_WIDEN_ABD_ODD} functions
+the @code{IFN_VEC_WIDEN_ABD_EVEN} and @code{IFN_VEC_WIDEN_ABD_ODD} functions
 work on the even and odd elements of a vector.
 
 @end table
@@ -1077,12 +1088,30 @@ instruction pattern for integer and integer vector modes.
 @cindex @code{IFN_CLZ} internal function
 @item @samp{IFN_CLZ}
 The @code{IFN_CLZ} internal function directly maps to the @code{clz}
-instruction pattern for integer and integer vector modes.
+instruction pattern for integer and integer vector modes.  The first
+argument has an unsigned integer type or an integer vector type with
+unsigned elements.  The optional second argument is an @code{int}
+constant that gives the result for zero.
+Note, this is always a scalar value even for vector modes where it represents
+the scalar value of a lane.  For a scalar call it can be any value.  If the
+instruction gives another value for zero, the expansion compares the first
+argument with zero.  For a vector call it must be the value for which
+@code{CLZ_DEFINED_VALUE_AT_ZERO} returns 2 for the vector mode.  Without
+the second argument the result for zero is undefined.
 
 @cindex @code{IFN_CTZ} internal function
 @item @samp{IFN_CTZ}
 The @code{IFN_CTZ} internal function directly maps to the @code{ctz}
-instruction pattern for integer and integer vector modes.
+instruction pattern for integer and integer vector modes.  The first
+argument has an unsigned integer type or an integer vector type with
+unsigned elements.  The optional second argument is an @code{int}
+constant that gives the result for zero.
+Note, this is always a scalar value even for vector modes where it represents
+the scalar value of a lane.  For a scalar call it can be any value.  If the
+instruction gives another value for zero, the expansion compares the first
+argument with zero.  For a vector call it must be the value for which
+@code{CTZ_DEFINED_VALUE_AT_ZERO} returns 2 for the vector mode.  Without
+the second argument the result for zero is undefined.
 
 @cindex @code{IFN_FFS} internal function
 @item @samp{IFN_FFS}
@@ -1534,6 +1563,12 @@ The @code{IFN_FLOATTOBITINT} internal function is expanded by the
 @item @samp{IFN_BITINTTOFLOAT}
 The @code{IFN_BITINTTOFLOAT} internal function is expanded by the
 @code{expand_BITINTTOFLOAT} function.
+
+@cindex @code{IFN_VARYING} internal function
+@item @samp{IFN_VARYING}
+Use @code{IFN_VARYING} as a temporary placeholder for a value whose
+definition is still being built by the current pass.  The pass that creates
+it must replace it before finishing; the verifier rejects any remaining calls.
 
 @end table
 

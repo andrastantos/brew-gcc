@@ -45,6 +45,10 @@ crc_symbolic_execution::is_used_outside_the_loop (tree def)
   gimple *use_stmt;
   FOR_EACH_IMM_USE_STMT (use_stmt, imm_iter, def)
     {
+      /* Debug uses must not affect whether the loop is recognized.  Stale
+	 outside-loop binds are reset if the loop is transformed.  */
+      if (is_gimple_debug (use_stmt))
+	continue;
       if (!flow_bb_inside_loop_p (m_crc_loop, use_stmt->bb))
 	{
 	  if (is_a<gphi *> (use_stmt)
@@ -1026,7 +1030,8 @@ sb_match (const value *lfsr, const value *crc_value, size_t sb_index,
   else if (sb_index == 0)
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
-	fprintf (dump_file, "Checking %zu bit.\n", it_end);
+	fprintf (dump_file, "Checking " HOST_SIZE_T_PRINT_UNSIGNED " bit.\n",
+		 (fmt_size_t) it_end);
 
       if (!given_sb_match ((*crc_value)[it_end], (*lfsr)[it_end], value))
 	return false;
@@ -1055,7 +1060,8 @@ lfsr_and_crc_bits_match (const value *lfsr, const value *crc_state,
   for (; i < it_end; i++)
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
-	fprintf (dump_file, "Checking %zu bit.\n", i);
+	fprintf (dump_file, "Checking " HOST_SIZE_T_PRINT_UNSIGNED " bit.\n",
+		 (fmt_size_t) i);
 
       /* Check the case when in lfsr we have LFSR (i)^LFSR (SBi),
 	 where 0<i<LFSR_size and SBi is the index of MSB/LSB (LFSR_size-1/0).

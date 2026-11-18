@@ -53,7 +53,6 @@ chrec_fold_plus_poly_poly (enum tree_code code,
   tree left, right;
   class loop *loop0 = get_chrec_loop (poly0);
   class loop *loop1 = get_chrec_loop (poly1);
-  tree rtype = code == POINTER_PLUS_EXPR ? chrec_type (poly1) : type;
 
   gcc_assert (poly0);
   gcc_assert (poly1);
@@ -112,6 +111,7 @@ chrec_fold_plus_poly_poly (enum tree_code code,
 
   if (code == PLUS_EXPR || code == POINTER_PLUS_EXPR)
     {
+      tree rtype = code == POINTER_PLUS_EXPR ? chrec_type (poly1) : type;
       left = chrec_fold_plus
 	(type, CHREC_LEFT (poly0), CHREC_LEFT (poly1));
       right = chrec_fold_plus
@@ -127,6 +127,16 @@ chrec_fold_plus_poly_poly (enum tree_code code,
 
   if (chrec_zerop (right))
     return left;
+  /* When we have an evolution in a non-wrapping type and in the process of
+     accumulating CHREC_RIGHT there was overflow this indicates in the
+     association that happened in accumulating the CHRECs clearly involved UB.
+     Avoid this.  When accumulating two CHRECs we basically turn
+     (a + INCR1) + INCR2 into a + (INCR1 + INCR2) which is not always valid.
+     Note this check only catches few invalid cases.  */
+  else if ((INTEGRAL_TYPE_P (type) && ! TYPE_OVERFLOW_WRAPS (type))
+	   && TREE_CODE (right) == INTEGER_CST
+	   && TREE_OVERFLOW (right))
+    return chrec_dont_know;
   else
     return build_polynomial_chrec
       (CHREC_VARIABLE (poly0), left, right);
@@ -153,22 +163,22 @@ chrec_fold_multiply_poly_poly (tree type,
   gcc_checking_assert (useless_type_conversion_p (type, chrec_type (poly0))
 		       && useless_type_conversion_p (type, chrec_type (poly1)));
 
-  /* {a, +, b}_1 * {c, +, d}_2  ->  {c*{a, +, b}_1, +, d}_2,
-     {a, +, b}_2 * {c, +, d}_1  ->  {a*{c, +, d}_1, +, b}_2,
+  /* {a, +, b}_1 * {c, +, d}_2  ->  {c*{a, +, b}_1, +, d*{a, +, b}_1}_2,
+     {a, +, b}_2 * {c, +, d}_1  ->  {a*{c, +, d}_1, +, b*{c, +, d}_1}_2,
      {a, +, b}_x * {c, +, d}_x  ->  {a*c, +, a*d + b*c + b*d, +, 2*b*d}_x.  */
   if (flow_loop_nested_p (loop0, loop1))
     /* poly0 is a constant wrt. poly1.  */
     return build_polynomial_chrec
       (CHREC_VARIABLE (poly1),
        chrec_fold_multiply (type, CHREC_LEFT (poly1), poly0),
-       CHREC_RIGHT (poly1));
+       chrec_fold_multiply (type, CHREC_RIGHT (poly1), poly0));
 
   if (flow_loop_nested_p (loop1, loop0))
     /* poly1 is a constant wrt. poly0.  */
     return build_polynomial_chrec
       (CHREC_VARIABLE (poly0),
        chrec_fold_multiply (type, CHREC_LEFT (poly0), poly1),
-       CHREC_RIGHT (poly0));
+       chrec_fold_multiply (type, CHREC_RIGHT (poly0), poly1));
 
   if (loop0 != loop1)
     {
@@ -1411,13 +1421,18 @@ nb_vars_in_chrec (tree chrec)
    that the rules for overflow of the given language apply (e.g., that signed
    arithmetics in C does not overflow) -- i.e., to use them to avoid
    unnecessary tests, but also to enforce that the result follows them.
-   FROM is the source variable converted if it's not NULL.  Returns true if
-   the conversion succeeded, false otherwise.  */
+   FROM is the source variable converted if it's not NULL.
+   If NOWRAP_BOUND is nonzero, pass it on to scev_probably_wraps_p etc.
+   to have them determine the bound below which no wrapping occurs.
+   Most other functions just forward NOWRAP_BOUND, therefore it is not
+   documented everywhere.
+   The function returns true if the conversion succeeded, false otherwise.  */
 
 bool
 convert_affine_scev (class loop *loop, tree type,
 		     tree *base, tree *step, gimple *at_stmt,
-		     bool use_overflow_semantics, tree from)
+		     bool use_overflow_semantics, tree from,
+		     tree *nowrap_bound)
 {
   tree ct = TREE_TYPE (*step);
   bool enforce_overflow_semantics;
@@ -1441,6 +1456,11 @@ convert_affine_scev (class loop *loop, tree type,
 	which would confuse optimizers that assume that this does not
 	happen.  */
   must_check_src_overflow = TYPE_PRECISION (ct) < TYPE_PRECISION (type);
+
+  /* MUST_CHECK_SRC_OVERFLOW implies chrec_convert_aggressive later
+     which can prove "no wrap" without assumptions.  */
+  if (!must_check_src_overflow)
+    nowrap_bound = NULL;
 
   enforce_overflow_semantics = (use_overflow_semantics
 				&& nowrap_type_p (type));
@@ -1477,10 +1497,11 @@ convert_affine_scev (class loop *loop, tree type,
 
   if (must_check_src_overflow
       && scev_probably_wraps_p (from, *base, *step, at_stmt, loop,
-				use_overflow_semantics))
+				use_overflow_semantics, nowrap_bound))
     return false;
 
-  new_base = chrec_convert (type, *base, at_stmt, use_overflow_semantics);
+  new_base = chrec_convert (type, *base, at_stmt, nowrap_bound,
+			    use_overflow_semantics);
   /* The step must be sign extended, regardless of the signedness
      of CT and TYPE.  This only needs to be handled specially when
      CT is unsigned -- to avoid e.g. unsigned char [100, +, 255]
@@ -1491,10 +1512,10 @@ convert_affine_scev (class loop *loop, tree type,
   if (TYPE_PRECISION (step_type) > TYPE_PRECISION (ct) && TYPE_UNSIGNED (ct))
     {
       tree signed_ct = signed_type_for (ct);
-      new_step = chrec_convert (signed_ct, new_step, at_stmt,
+      new_step = chrec_convert (signed_ct, new_step, at_stmt, nowrap_bound,
                                 use_overflow_semantics);
     }
-  new_step = chrec_convert (step_type, new_step, at_stmt,
+  new_step = chrec_convert (step_type, new_step, at_stmt, nowrap_bound,
 			    use_overflow_semantics);
 
   if (automatically_generated_chrec_p (new_base)
@@ -1505,7 +1526,7 @@ convert_affine_scev (class loop *loop, tree type,
       /* Note that in this case we cannot use the fact that signed variables
 	 do not overflow, as this is what we are verifying for the new iv.  */
       && scev_probably_wraps_p (NULL_TREE, new_base, new_step,
-				at_stmt, loop, false))
+				at_stmt, loop, false, nowrap_bound))
     return false;
 
   *base = new_base;
@@ -1518,12 +1539,12 @@ convert_affine_scev (class loop *loop, tree type,
    The increment for a pointer type is always sizetype.  */
 
 tree
-chrec_convert_rhs (tree type, tree chrec, gimple *at_stmt)
+chrec_convert_rhs (tree type, tree chrec, gimple *at_stmt, tree *nowrap_bound)
 {
   if (POINTER_TYPE_P (type))
     type = sizetype;
 
-  return chrec_convert (type, chrec, at_stmt);
+  return chrec_convert (type, chrec, at_stmt, nowrap_bound);
 }
 
 /* Convert CHREC to TYPE.  When the analyzer knows the context in
@@ -1542,7 +1563,7 @@ chrec_convert_rhs (tree type, tree chrec, gimple *at_stmt)
 
 static tree
 chrec_convert_1 (tree type, tree chrec, gimple *at_stmt,
-		 bool use_overflow_semantics, tree from)
+		 tree *nowrap_bound, bool use_overflow_semantics, tree from)
 {
   tree ct, res;
   tree base, step;
@@ -1563,7 +1584,7 @@ chrec_convert_1 (tree type, tree chrec, gimple *at_stmt,
   step = CHREC_RIGHT (chrec);
 
   if (convert_affine_scev (loop, type, &base, &step, at_stmt,
-			   use_overflow_semantics, from))
+			   use_overflow_semantics, from, nowrap_bound))
     return build_polynomial_chrec (loop->num, base, step);
 
   /* If we cannot propagate the cast inside the chrec, just keep the cast.  */
@@ -1596,7 +1617,34 @@ keep_cast:
 						  CHREC_LEFT (chrec)),
 				    fold_convert (utype,
 						  CHREC_RIGHT (chrec)));
-      res = chrec_convert_1 (type, res, at_stmt, use_overflow_semantics, from);
+      res = chrec_convert_1 (type, res, at_stmt, nowrap_bound,
+			     use_overflow_semantics, from);
+    }
+  /* Similar perform the trick that (unsigned T)(base + step) can be
+     folded to ((unsigned T)x + (unsigned T)step).  */
+  else if (use_overflow_semantics
+	   && TREE_CODE (chrec) == POLYNOMIAL_CHREC
+	   && INTEGRAL_TYPE_P (ct)
+	   && INTEGRAL_TYPE_P (type)
+	   && TYPE_OVERFLOW_UNDEFINED (type)
+	   /* Must be unsigned so we don't introduce any UB.  */
+	   && TYPE_UNSIGNED (type)
+	   /* The outer type must at least as wide than the inner type so we
+		 don't truncate when we fold and must the inner CHREC must be
+		 non-wrapping so we don't change the behavior when folding to
+		 a wider type.  */
+	  && TYPE_PRECISION (type) >= TYPE_PRECISION (ct)
+	  && (!TYPE_UNSIGNED (ct)
+	      || TYPE_PRECISION (type) == TYPE_PRECISION (ct)
+	      || nonwrapping_chrec_p (chrec)))
+    {
+      res = build_polynomial_chrec (CHREC_VARIABLE (chrec),
+				    fold_convert (type,
+						  CHREC_LEFT (chrec)),
+				    fold_convert (type,
+						  CHREC_RIGHT (chrec)));
+      res = chrec_convert_1 (type, res, at_stmt, nowrap_bound,
+			     use_overflow_semantics, from);
     }
   else
     res = fold_convert (type, chrec);
@@ -1642,6 +1690,11 @@ keep_cast:
 
    {(uint) 0, +, (uint) 260}
 
+   If NOWRAP_BOUND is nonzero it is used to store the bound below which
+   no wrapping occurs.  Here as well as in many other similar functions,
+   it is just passed through to other functions and thus not documented
+   everywhere.
+
    USE_OVERFLOW_SEMANTICS is true if this function should assume that
    the rules for overflow of the given language apply (e.g., that signed
    arithmetics in C does not overflow) -- i.e., to use them to avoid
@@ -1651,9 +1704,10 @@ keep_cast:
 
 tree
 chrec_convert (tree type, tree chrec, gimple *at_stmt,
-	       bool use_overflow_semantics, tree from)
+	       tree *nowrap_bound, bool use_overflow_semantics, tree from)
 {
-  return chrec_convert_1 (type, chrec, at_stmt, use_overflow_semantics, from);
+  return chrec_convert_1 (type, chrec, at_stmt, nowrap_bound,
+			  use_overflow_semantics, from);
 }
 
 /* Convert CHREC to TYPE, without regard to signed overflows.  Returns the new
@@ -1864,7 +1918,7 @@ scev_is_linear_expression (tree scev)
     }
 }
 
-/* Determines whether the expression CHREC contains only interger consts
+/* Determines whether the expression CHREC contains only integer consts
    in the right parts.  */
 
 bool

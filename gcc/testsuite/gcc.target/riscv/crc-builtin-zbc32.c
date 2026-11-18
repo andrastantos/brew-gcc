@@ -3,19 +3,36 @@
 
 #include <stdint-gcc.h>
 
-int8_t crc8_data8 ()
+/* Due to constant folding, use a runtime arg to confirm clmul emitting */
+int8_t crc8_data8 (int8_t x)
 {
-  return __builtin_crc8_data8 (0x34, 'a', 0x12);
+  return __builtin_crc8_data8 (x, 'a', 0x12);
 }
 
-int16_t crc16_data8 ()
+int16_t crc16_data8 (int16_t x)
 {
-  return __builtin_crc16_data8 (0x1234, 'a', 0x1021);
+  return __builtin_crc16_data8 (x, 'a', 0x1021);
 }
 
-int16_t crc16_data16 ()
+int16_t crc16_data16 (int16_t x)
 {
-  return __builtin_crc16_data16 (0x1234, 0x3214, 0x1021);
+  return __builtin_crc16_data16 (x, 0x3214, 0x1021);
 }
 
-/* { dg-final { scan-assembler-times "clmul\t" 6 } } */
+int32_t rev_crc32_data8 (int32_t x)
+{
+  return __builtin_rev_crc32_data8 (x, 'a', 0x04C11DB7);
+}
+
+int32_t rev_crc32_data16 (int32_t x)
+{
+  return __builtin_rev_crc32_data16 (x, 0x3214, 0x04C11DB7);
+}
+
+int32_t rev_crc32_data32 (int32_t x)
+{
+  return __builtin_rev_crc32_data32 (x, 0x123546ff, 0x04C11DB7);
+}
+
+/* { dg-final { scan-assembler-times "clmul\t" 9 } } */
+/* { dg-final { scan-assembler-times "clmulr\t" 3 } } */

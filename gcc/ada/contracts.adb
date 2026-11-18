@@ -230,6 +230,7 @@ package body Contracts is
       --    Exceptional_Cases
       --    Extensions_Visible
       --    Global
+      --    Modifies
       --    Interrupt_Handler
       --    Postcondition
       --    Precondition
@@ -266,6 +267,7 @@ package body Contracts is
                          | Name_Contract_Cases
                          | Name_Exceptional_Cases
                          | Name_Exit_Cases
+                         | Name_Modifies
                          | Name_Program_Exit
                          | Name_Subprogram_Variant
                          | Name_Test_Case
@@ -452,6 +454,8 @@ package body Contracts is
 
          if Nkind (Decl) in N_Abstract_Subprogram_Declaration
                           | N_Entry_Declaration
+                          | N_Formal_Abstract_Subprogram_Declaration
+                          | N_Formal_Concrete_Subprogram_Declaration
                           | N_Generic_Subprogram_Declaration
                           | N_Subprogram_Declaration
          then
@@ -647,9 +651,9 @@ package body Contracts is
       end if;
 
       --  Deal with preconditions, [refined] postconditions, Always_Terminates,
-      --  Contract_Cases, Exceptional_Cases, Program_Exit, Subprogram_Variant,
-      --  invariants and predicates associated with body and its spec. Do not
-      --  expand the contract of subprogram body stubs.
+      --  Contract_Cases, Exceptional_Cases, Modifies, Program_Exit,
+      --  Subprogram_Variant, invariants and predicates associated with body
+      --  and its spec. Do not expand the contract of subprogram body stubs.
 
       if Nkind (Body_Decl) = N_Subprogram_Body then
          Expand_Subprogram_Contract (Body_Id);
@@ -751,13 +755,13 @@ package body Contracts is
                   if Freeze_Types
                     and then Present (Corresponding_Aspect (Prag))
                   then
-                     Freeze_Expr_Types
-                       (Def_Id => Subp_Id,
-                        Typ    => Standard_Boolean,
+                     Freeze_Full_Expression_Before
+                       (N      => Bod,
                         Expr   =>
                           Expression
                             (First (Pragma_Argument_Associations (Prag))),
-                        N      => Bod);
+                        Def_Id => Subp_Id,
+                        Typ    => Standard_Boolean);
                   end if;
 
                   Analyze_Pre_Post_Condition_In_Decl_Part (Prag, Freeze_Id);
@@ -796,6 +800,9 @@ package body Contracts is
 
             elsif Prag_Nam = Name_Exceptional_Cases then
                Analyze_Exceptional_Cases_In_Decl_Part (Prag);
+
+            elsif Prag_Nam = Name_Modifies then
+               Analyze_Modifies_In_Decl_Part (Prag);
 
             elsif Prag_Nam = Name_Program_Exit then
                Analyze_Program_Exit_In_Decl_Part (Prag);
@@ -1422,6 +1429,7 @@ package body Contracts is
       --    Depends
       --    Exceptional_Cases
       --    Global
+      --    Modifies
       --    Postcondition
       --    Precondition
       --    Program_Exit
@@ -1522,9 +1530,10 @@ package body Contracts is
       Body_Decl : constant Entity_Id  := Unit_Declaration_Node (Body_Id);
       Loc       : constant Source_Ptr := Sloc (Body_Decl);
       Spec_Id   : constant Entity_Id  := Corresponding_Spec (Body_Decl);
-      Subp_Id   : Entity_Id;
-      Ret_Type  : Entity_Id;
 
+      Extra_Decl   : Node_Id;
+      Ret_Type     : Entity_Id;
+      Subp_Id      : Entity_Id;
       Wrapper_Id   : Entity_Id;
       Wrapper_Body : Node_Id;
       Wrapper_Spec : Node_Id;
@@ -1609,6 +1618,16 @@ package body Contracts is
            Make_Function_Specification (Loc,
              Defining_Unit_Name => Wrapper_Id,
              Result_Definition  => New_Occurrence_Of (Ret_Type, Loc));
+      end if;
+
+      --  Do not move the declaration of the Extra_Accessibility_Of_Subprogram
+      --  constant, if any, since it really belongs in the original subprogram.
+
+      if Present (Extra_Accessibility_Of_Subprogram (Subp_Id)) then
+         Extra_Decl :=
+           Declaration_Node (Extra_Accessibility_Of_Subprogram (Subp_Id));
+         Remove (Extra_Decl);
+         Prepend_To (Decls, Extra_Decl);
       end if;
 
       --  Create the wrapper body using Body_Id's statements and declarations
@@ -2329,7 +2348,7 @@ package body Contracts is
                --  An Initialization procedure must be considered visible even
                --  though it is internally generated.
 
-               if Is_Init_Proc (Defining_Entity (Subp_Decl)) then
+               if Is_Init_Proc (Subp_Id) then
                   return True;
 
                elsif Ekind (Scope (Typ)) /= E_Package then
@@ -2341,10 +2360,8 @@ package body Contracts is
                --  last check.
 
                elsif not Comes_From_Source (Subp_Decl)
-                 and then
-                   (Nkind (Original_Node (Subp_Decl)) /= N_Expression_Function
-                      or else not
-                        Comes_From_Source (Defining_Entity (Subp_Decl)))
+                 and then (not Is_Expression_Function (Subp_Id)
+                            or else not Comes_From_Source (Subp_Id))
                then
                   return False;
 
@@ -2356,8 +2373,7 @@ package body Contracts is
                   declare
                      Decls      : constant List_Id   :=
                                     List_Containing (Subp_Decl);
-                     Subp_Scope : constant Entity_Id :=
-                                    Scope (Defining_Entity (Subp_Decl));
+                     Subp_Scope : constant Entity_Id := Scope (Subp_Id);
                      Typ_Scope  : constant Entity_Id := Scope (Typ);
 
                   begin
@@ -2385,8 +2401,7 @@ package body Contracts is
                     (Nkind (Parent (Subp_Decl)) = N_Compilation_Unit);
 
                   declare
-                     Subp_Scope : constant Entity_Id :=
-                                    Scope (Defining_Entity (Subp_Decl));
+                     Subp_Scope : constant Entity_Id := Scope (Subp_Id);
                      Typ_Scope  : constant Entity_Id := Scope (Typ);
 
                   begin
@@ -3104,13 +3119,13 @@ package body Contracts is
                      if Freeze_T
                        and then Present (Corresponding_Aspect (Prag))
                      then
-                        Freeze_Expr_Types
-                          (Def_Id => Subp_Id,
-                           Typ    => Standard_Boolean,
+                        Freeze_Full_Expression_Before
+                          (N      => Body_Decl,
                            Expr   =>
                              Expression
                                (First (Pragma_Argument_Associations (Prag))),
-                           N      => Body_Decl);
+                           Def_Id => Subp_Id,
+                           Typ    => Standard_Boolean);
                      end if;
 
                      Prepend_Pragma_To_Decls (Prag);
@@ -3379,12 +3394,12 @@ package body Contracts is
       --  Step 6: Construct subprogram _wrapped_statements
 
       --  When no statements are present we still need to insert contract
-      --  related declarations.
+      --  related declarations. There's also no need to create the contracts
+      --  wrapper when the subprogram is marked as not returning, since
+      --  postconditions and invariant checks won't be reached in that case.
 
-      if No (Stmts) then
+      if No (Stmts) or else No_Return (Subp_Id) then
          Prepend_List_To (Declarations (Body_Decl), Decls);
-
-      --  Otherwise, we need a wrapper
 
       else
          Build_Subprogram_Contract_Wrapper (Body_Id, Stmts, Decls, Result);
@@ -4231,7 +4246,8 @@ package body Contracts is
       then
          pragma Assert
            (Comes_From_Source (Subp_Id)
-              or else Is_Dispatch_Table_Wrapper (Subp_Id));
+             or else Is_Dispatch_Table_Wrapper (Subp_Id)
+             or else Is_Primitive_Wrapper (Subp_Id));
 
          if No (Dynamic_Call_Helper (Subp_Id)) then
 

@@ -23,8 +23,9 @@
 #include "rust-hir-map.h"
 #include "rust-hir-pattern.h"
 #include "rust-mapping-common.h"
+#include "rust-rib.h"
 #include "rust-system.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
 #include "rust-tyty.h"
 
 namespace Rust {
@@ -63,9 +64,8 @@ ReadonlyChecker::visit (PathInExpression &expr)
   NodeId ast_node_id = expr.get_mappings ().get_nodeid ();
   NodeId def_id;
 
-  auto &nr_ctx
-    = Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
-  if (auto id = nr_ctx.lookup (ast_node_id))
+  auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
+  if (auto id = nr_ctx.lookup (ast_node_id, Resolver2_0::Namespace::Values))
     def_id = *id;
   else
     return;
@@ -75,7 +75,7 @@ ReadonlyChecker::visit (PathInExpression &expr)
     return;
 
   // Check if the local variable is mutable.
-  auto maybe_pattern = mappings.lookup_hir_pattern (*hir_id);
+  auto maybe_pattern = mappings.hir.patterns.lookup (*hir_id);
   if (maybe_pattern
       && maybe_pattern.value ()->get_pattern_type ()
 	   == HIR::Pattern::PatternType::IDENTIFIER)
@@ -83,7 +83,7 @@ ReadonlyChecker::visit (PathInExpression &expr)
 		    expr.get_locus ());
 
   // Check if the static item is mutable.
-  auto maybe_item = mappings.lookup_hir_item (*hir_id);
+  auto maybe_item = mappings.hir.items.lookup (*hir_id);
   if (maybe_item
       && maybe_item.value ()->get_item_kind () == HIR::Item::ItemKind::Static)
     {

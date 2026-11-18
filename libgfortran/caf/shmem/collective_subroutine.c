@@ -187,44 +187,79 @@ collsub_init_supervisor (collsub_shared *cis, allocator *al,
   const size_t init_size = 1U << 10;
 
   cis->curr_size = init_size;
-  cis->collsub_buf = allocator_shared_malloc (al, init_size);
+  cis->collsub_buf = allocator_shared_malloc_or_die (al, init_size);
+  cis->alloc_failed = false;
 
   counter_barrier_init (&cis->barrier, init_num_images);
   initialize_shared_mutex (&cis->mutex);
 }
 
-static void *
-get_collsub_buf (size_t size)
+/* Point *BUF to the current team's buffer, grown to SIZE bytes if needed.
+   Returns false on every image of the collective when it cannot be grown.  */
+
+static bool
+get_collsub_buf (size_t size, void **buf)
 {
-  void *ret;
+  collsub_shared *cs = &caf_current_team->u.image_info->collsub;
+  allocator *a = alloc_get_allocator (&local->ai);
+  bool ok;
 
-  caf_shmem_mutex_lock (&caf_current_team->u.image_info->collsub.mutex);
-  /* curr_size is always at least sizeof(double), so we don't need to worry
-     about size == 0.  */
-  if (size > caf_current_team->u.image_info->collsub.curr_size)
+  caf_shmem_mutex_lock (&cs->mutex);
+  /* curr_size is at least sizeof(double) unless growing failed, so we don't
+     need to worry about size == 0.  */
+  if (size > cs->curr_size && !cs->alloc_failed)
     {
-      allocator_shared_free (
-	alloc_get_allocator (&local->ai),
-	caf_current_team->u.image_info->collsub.collsub_buf,
-	caf_current_team->u.image_info->collsub.curr_size);
-      caf_current_team->u.image_info->collsub.collsub_buf
-	= allocator_shared_malloc (alloc_get_allocator (&local->ai), size);
-      caf_current_team->u.image_info->collsub.curr_size = size;
+      allocator_lock (a);
+      if (!SHMPTR_IS_NULL (cs->collsub_buf))
+	allocator_shared_free (a, cs->collsub_buf, cs->curr_size);
+      cs->collsub_buf = allocator_shared_malloc (a, size);
+      allocator_unlock (a);
+      if (SHMPTR_IS_NULL (cs->collsub_buf))
+	{
+	  cs->curr_size = 0;
+	  cs->alloc_failed = true;
+	}
+      else
+	cs->curr_size = size;
     }
-
-  ret = SHMPTR_AS (void *, caf_current_team->u.image_info->collsub.collsub_buf,
-		   &local->sm);
-  caf_shmem_mutex_unlock (&caf_current_team->u.image_info->collsub.mutex);
-  return ret;
+  ok = !cs->alloc_failed;
+  if (ok)
+    *buf = SHMPTR_AS (void *, cs->collsub_buf, &local->sm);
+  caf_shmem_mutex_unlock (&cs->mutex);
+  return ok;
 }
 
 /* This function syncs all images with one another.  It will only return once
-   all images have called it.  */
+   all images have called it.  The reduction is laid out over a fixed set of
+   images, so it cannot be completed once an image of the team terminated.
+   Returns false in that case.  */
 
-static void
+static bool
 collsub_sync (void)
 {
-  counter_barrier_wait (&caf_current_team->u.image_info->collsub.barrier);
+  counter_barrier *barrier = &caf_current_team->u.image_info->collsub.barrier;
+
+  return counter_barrier_wait_abortable (barrier, NULL);
+}
+
+/* Finish a collective whose buffer could not be grown.  alloc_failed is
+   cleared between two rounds, so that every image has seen it and none has
+   started the next collective.  */
+
+static collsub_result
+collsub_no_memory (void)
+{
+  collsub_shared *cs = &caf_current_team->u.image_info->collsub;
+
+  if (!collsub_sync ())
+    return COLLSUB_TERMINATED;
+  if (caf_current_team->index == 0)
+    {
+      caf_shmem_mutex_lock (&cs->mutex);
+      cs->alloc_failed = false;
+      caf_shmem_mutex_unlock (&cs->mutex);
+    }
+  return collsub_sync () ? COLLSUB_NO_MEMORY : COLLSUB_TERMINATED;
 }
 
 typedef void *(*red_op) (void *, void *);
@@ -315,7 +350,7 @@ gen_reduction (const int type, const size_t sz, const int flags)
 
 /* Having result_image == -1 means allreduce.  */
 
-void
+collsub_result
 collsub_reduce_array (gfc_descriptor_t *desc, int result_image,
 		      void *(*op) (void *, void *), int opr_flags,
 		      int str_len __attribute__ ((unused)))
@@ -327,19 +362,26 @@ collsub_reduce_array (gfc_descriptor_t *desc, int result_image,
   int imoffset;
   index_type elem_size;
   index_type this_image_size_bytes;
+  size_t buf_size;
   void *this_image_buf, *roll_iter, *src_iter;
   ass_op assign;
   const int this_img_id = caf_current_team->index;
 
   packed = pack_array_prepare (&pi, desc);
   if (pi.num_elem == 0)
-    return;
+    return COLLSUB_DONE;
 
-  elem_size = GFC_DESCRIPTOR_SPAN (desc);
+  elem_size = GFC_DESCRIPTOR_SIZE (desc);
   this_image_size_bytes = elem_size * pi.num_elem;
 
-  buffer = get_collsub_buf (
-    this_image_size_bytes * caf_current_team->u.image_info->image_count.count);
+  /* Saturate at SIZE_MAX so the allocation fails instead of wrapping.  */
+  if (__builtin_mul_overflow ((size_t) this_image_size_bytes,
+			      (size_t) caf_current_team->u.image_info
+					 ->image_map_size,
+			      &buf_size))
+    buf_size = SIZE_MAX;
+  if (!get_collsub_buf (buf_size, &buffer))
+    return collsub_no_memory ();
   this_image_buf = buffer + this_image_size_bytes * this_img_id;
 
   if (packed)
@@ -348,15 +390,16 @@ collsub_reduce_array (gfc_descriptor_t *desc, int result_image,
     pack_array_finish (&pi, desc, this_image_buf);
 
   assign = gen_reduction (GFC_DESCRIPTOR_TYPE (desc), elem_size, opr_flags);
-  collsub_sync ();
+  if (!collsub_sync ())
+    return COLLSUB_TERMINATED;
 
   for (; ((this_img_id >> cbit) & 1) == 0
-	 && (caf_current_team->u.image_info->image_count.count >> cbit) != 0;
+	 && (caf_current_team->u.image_info->image_map_size >> cbit) != 0;
        cbit++)
     {
       imoffset = 1 << cbit;
       if (this_img_id + imoffset
-	  < caf_current_team->u.image_info->image_count.count)
+	  < caf_current_team->u.image_info->image_map_size)
 	{
 	  /* Reduce arrays elementwise.  */
 	  roll_iter = this_image_buf;
@@ -365,11 +408,13 @@ collsub_reduce_array (gfc_descriptor_t *desc, int result_image,
 	       ++i, roll_iter += elem_size, src_iter += elem_size)
 	    assign (op, roll_iter, src_iter, elem_size);
 	}
-      collsub_sync ();
+      if (!collsub_sync ())
+	return COLLSUB_TERMINATED;
     }
-  for (; (caf_current_team->u.image_info->image_count.count >> cbit) != 0;
+  for (; (caf_current_team->u.image_info->image_map_size >> cbit) != 0;
        cbit++)
-    collsub_sync ();
+    if (!collsub_sync ())
+      return COLLSUB_TERMINATED;
 
   if (result_image < 0 || result_image == this_image.image_num)
     {
@@ -379,14 +424,14 @@ collsub_reduce_array (gfc_descriptor_t *desc, int result_image,
 	unpack_array_finish (&pi, desc, buffer);
     }
 
-  collsub_sync ();
+  return collsub_sync () ? COLLSUB_DONE : COLLSUB_TERMINATED;
 }
 
 /* Do not use sync_all(), because the program should deadlock in the case that
  * some images are on a sync_all barrier while others are in a collective
  * subroutine.  */
 
-void
+collsub_result
 collsub_broadcast_array (gfc_descriptor_t *desc, int source_image)
 {
   void *buffer;
@@ -397,7 +442,7 @@ collsub_broadcast_array (gfc_descriptor_t *desc, int source_image)
 
   packed = pack_array_prepare (&pi, desc);
   if (pi.num_elem == 0)
-    return;
+    return COLLSUB_DONE;
 
   if (GFC_DESCRIPTOR_TYPE (desc) == BT_CHARACTER)
     {
@@ -407,11 +452,10 @@ collsub_broadcast_array (gfc_descriptor_t *desc, int source_image)
 	elem_size = strlen (desc->base_addr);
     }
   else
-    elem_size = GFC_DESCRIPTOR_SPAN (desc) != 0
-		  ? ((index_type) GFC_DESCRIPTOR_SPAN (desc))
-		  : ((index_type) GFC_DESCRIPTOR_SIZE (desc));
+    elem_size = (index_type) GFC_DESCRIPTOR_SIZE (desc);
   size_bytes = elem_size * pi.num_elem;
-  buffer = get_collsub_buf (size_bytes);
+  if (!get_collsub_buf (size_bytes, &buffer))
+    return collsub_no_memory ();
 
   if (source_image == this_image.image_num)
     {
@@ -419,16 +463,18 @@ collsub_broadcast_array (gfc_descriptor_t *desc, int source_image)
 	memcpy (buffer, GFC_DESCRIPTOR_DATA (desc), size_bytes);
       else
 	pack_array_finish (&pi, desc, buffer);
-      collsub_sync ();
+      if (!collsub_sync ())
+	return COLLSUB_TERMINATED;
     }
   else
     {
-      collsub_sync ();
+      if (!collsub_sync ())
+	return COLLSUB_TERMINATED;
       if (packed)
 	memcpy (GFC_DESCRIPTOR_DATA (desc), buffer, size_bytes);
       else
 	unpack_array_finish (&pi, desc, buffer);
     }
 
-  collsub_sync ();
+  return collsub_sync () ? COLLSUB_DONE : COLLSUB_TERMINATED;
 }

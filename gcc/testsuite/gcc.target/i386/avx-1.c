@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -Werror-implicit-function-declaration -march=k8 -m3dnow -mavx -mavx2 -maes -mpclmul -mgfni -mprefetchi -mavx10.2 -mmovrs" } */
+/* { dg-options "-O2 -Werror-implicit-function-declaration -march=k8 -m3dnow -mavx -mavx2 -maes -mpclmul -mgfni -mprefetchi -mavx10.2 -mmovrs -mavx10v2aux -macev1" } */
 /* { dg-add-options bind_pic_locally } */
 
 #include <mm_malloc.h>
@@ -848,7 +848,7 @@
 #define __builtin_ia32_mpsadbw256_mask(A, B, C, D, E) __builtin_ia32_mpsadbw256_mask (A, B, 1, D, E)
 #define __builtin_ia32_mpsadbw128_mask(A, B, C, D, E) __builtin_ia32_mpsadbw128_mask (A, B, 1, D, E)
 
-/* avx10_2convertintrin.h */
+/* avx10v1auxintrin.h */
 #define __builtin_ia32_vcvt2ps2phx512_mask_round(A, B, C, D, E) __builtin_ia32_vcvt2ps2phx512_mask_round(A, B, C, D, 8)
 
 /* avx10_2bf16intrin.h */
@@ -912,6 +912,34 @@
 #define __builtin_ia32_minmaxsd_mask_round(A, B, C, D, E, F) __builtin_ia32_minmaxsd_mask_round (A, B, 4, D, E, 4)
 #define __builtin_ia32_minmaxsh_mask_round(A, B, C, D, E, F) __builtin_ia32_minmaxsh_mask_round (A, B, 4, D, E, 4)
 #define __builtin_ia32_minmaxss_mask_round(A, B, C, D, E, F) __builtin_ia32_minmaxss_mask_round (A, B, 4, D, E, 4)
+
+/* avx10v2auxintrin.h */
+#define __builtin_ia32_vunpackb128_mask(A, B, C, D) __builtin_ia32_vunpackb128_mask(A, 8, C, D)
+#define __builtin_ia32_vunpackb256_mask(A, B, C, D) __builtin_ia32_vunpackb256_mask(A, 8, C, D)
+#define __builtin_ia32_vunpackb512_mask(A, B, C, D) __builtin_ia32_vunpackb512_mask(A, 8, C, D)
+
+/* acev1intrin.h */
+#ifdef __x86_64__
+#define __builtin_ia32_tilezero(A) __builtin_ia32_tilezero (1)
+#define __builtin_ia32_tcvtrowd2ps(A, B) __builtin_ia32_tcvtrowd2ps (1, B)
+#define __builtin_ia32_tcvtrowps2bf16h(A, B) __builtin_ia32_tcvtrowps2bf16h (1, B)
+#define __builtin_ia32_tcvtrowps2bf16l(A, B) __builtin_ia32_tcvtrowps2bf16l (1, B)
+#define __builtin_ia32_tcvtrowps2phh(A, B) __builtin_ia32_tcvtrowps2phh (1, B)
+#define __builtin_ia32_tcvtrowps2phl(A, B) __builtin_ia32_tcvtrowps2phl (1, B)
+#define __builtin_ia32_tilemovrowextract(A, B) __builtin_ia32_tilemovrowextract (1, B)
+#define __builtin_ia32_tilemovrowinsert(A, B, C) __builtin_ia32_tilemovrowinsert (1, B, C)
+#define __builtin_ia32_tilemovcolinsert(A, B, C) __builtin_ia32_tilemovcolinsert (1, B, C)
+#define __builtin_ia32_top2bf16ps(W, A, B) __builtin_ia32_top2bf16ps (1, A, B)
+#define __builtin_ia32_top4bssd(W, A, B) __builtin_ia32_top4bssd (1, A, B)
+#define __builtin_ia32_top4bsud(W, A, B) __builtin_ia32_top4bsud (1, A, B)
+#define __builtin_ia32_top4busd(W, A, B) __builtin_ia32_top4busd (1, A, B)
+#define __builtin_ia32_top4buud(W, A, B) __builtin_ia32_top4buud (1, A, B)
+#define __builtin_ia32_top4mxbf8ps(W, A, B, C) __builtin_ia32_top4mxbf8ps (1, A, B, 9)
+#define __builtin_ia32_top4mxbhf8ps(W, A, B, C) __builtin_ia32_top4mxbhf8ps (1, A, B, 9)
+#define __builtin_ia32_top4mxhbf8ps(W, A, B, C) __builtin_ia32_top4mxhbf8ps (1, A, B, 9)
+#define __builtin_ia32_top4mxhf8ps(W, A, B, C) __builtin_ia32_top4mxhf8ps (1, A, B, 9)
+#define __builtin_ia32_top4mxbssps(W, A, B, C) __builtin_ia32_top4mxbssps (1, A, B, 9)
+#endif
 
 #include <wmmintrin.h>
 #include <immintrin.h>

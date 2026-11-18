@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/Occurs_DEPENDING_ON__source_and_dest.out" }
         identification              division.
         program-id.                 prog.

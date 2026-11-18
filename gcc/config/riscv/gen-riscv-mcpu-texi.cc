@@ -20,24 +20,24 @@ main ()
   puts ("@opindex mcpu");
   puts ("@item -mcpu=@var{processor-string}");
   puts ("Use architecture of and optimize the output for the given processor, specified");
-  puts ("by particular CPU name. Permissible values for this option are:");
+  puts ("by particular CPU name.  Permissible values for this option are:");
   puts ("");
   puts ("");
 
   std::vector<std::string> coreNames;
 
-#define RISCV_CORE(CORE_NAME, ARCH, MICRO_ARCH) \
+#define RISCV_CORE(CORE_NAME, ARCH, MICRO_ARCH, MVENDORID, MARCHID, MIMPID) \
   coreNames.push_back (CORE_NAME);
 #include "riscv-cores.def"
 #undef RISCV_CORE
 
-  for (size_t i = 0; i < coreNames.size(); ++i) {
-    if (i == coreNames.size() - 1) {
-      printf("@samp{%s}.\n", coreNames[i].c_str());
-    } else {
-      printf("@samp{%s},\n\n", coreNames[i].c_str());
+  for (size_t i = 0; i < coreNames.size (); ++i)
+    {
+      if (i == coreNames.size () - 1)
+	printf ("@samp{%s}.\n", coreNames[i].c_str ());
+      else
+	printf ("@samp{%s},\n\n", coreNames[i].c_str ());
     }
-  }
 
   return 0;
 }

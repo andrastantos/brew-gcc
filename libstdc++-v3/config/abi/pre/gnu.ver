@@ -434,7 +434,9 @@ GLIBCXX_3.4 {
     _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE15*;
     _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE16*;
     _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE19*;
-    _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE2*;
+    _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE22_M_convert_to_externalEP[cw][ilx];
+    _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE26_M_destroy_internal_buffer*;
+    _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE27_M_allocate_internal_buffer*;
     _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE3*;
     _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE4openEPKc*;
     _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE4sync*;
@@ -1775,7 +1777,7 @@ GLIBCXX_3.4.21 {
     _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE12_M_constructI[NP]*;
     _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE13*;
     _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE14_M_replace_aux*;
-    _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE1[68-9]*;
+    _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE1[68]*;
     _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE2at*;
     _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE3end*;
     _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE4back*;
@@ -2622,6 +2624,29 @@ GLIBCXX_3.4.35 {
     _ZGIW3stdW6compat;
 
 } GLIBCXX_3.4.34;
+
+# GCC 16.2.0
+GLIBCXX_3.4.36 {
+
+    _ZNSt6chrono8__detail25__recent_leap_second_infoERNS_16leap_second_infoEj;
+
+    # basic_format_arg<format_context>::handle basic_format_arg<format_context>::_M_handle_unrecognized() const;
+    # basic_format_arg<wformat_context>::handle basic_format_arg<wformat_context>::_M_handle_unrecognized() const;
+    _ZNKSt16basic_format_argISt20basic_format_contextINSt8__format10_Sink_iterI[cw]EE[cw]EE22_M_handle_unrecognizedEv;
+
+} GLIBCXX_3.4.35;
+
+# GCC 17.1.0
+GLIBCXX_3.4.37 {
+
+    # basic_string::allocate_at_least
+    _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE*_S_allocate_*;
+    _ZNSt7__cxx1112basic_stringI[cw]St11char_traitsI[cw]ESaI[cw]EE*_M_create_*;
+
+    # basic_filebuf::_M_convert_to_external(const C*, streamsize)
+    _ZNSt13basic_filebufI[cw]St11char_traitsI[cw]EE22_M_convert_to_externalEPK[cw][ilx];
+
+} GLIBCXX_3.4.36;
 
 # Symbols in the support library (libsupc++) have their own tag.
 CXXABI_1.3 {

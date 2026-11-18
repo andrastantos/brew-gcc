@@ -115,7 +115,7 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
   /* "-lm" or "-lmath" if it appears on the command line.  */
   const struct cl_decoded_option *saw_math = NULL;
 
-  /* "-lrt" or eqivalent if it appears on the command line.  */
+  /* "-lrt" or equivalent if it appears on the command line.  */
   const struct cl_decoded_option *saw_time = NULL;
 
   /* "-lc" if it appears on the command line.  */
@@ -166,7 +166,13 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
 
       switch (decoded_options[i].opt_index)
 	{
+	  /* Contracts support requires -lstdc++exp, and c_common_post_options
+	     enables it by default in C++26 and above.  */
 	case OPT_fcontracts:
+	case OPT_std_c__26:
+	case OPT_std_c__29:
+	case OPT_std_gnu__26:
+	case OPT_std_gnu__29:
 	  need_experimental = true;
 	  break;
 

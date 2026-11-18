@@ -224,7 +224,7 @@ reload_pseudo_compare_func (const void *v1p, const void *v2p)
   if ((diff = regno_assign_info[r1].first - regno_assign_info[r2].first) != 0)
     return diff;
   /* Prefer pseudos with longer live ranges.  It sets up better
-     prefered hard registers for the thread pseudos and decreases
+     preferred hard registers for the thread pseudos and decreases
      register-register moves between the thread pseudos.  */
   if ((diff = regno_live_length[r2] - regno_live_length[r1]) != 0)
     return diff;
@@ -629,6 +629,29 @@ find_hard_regno_for_1 (int regno, int *cost, int try_only_hard_regno,
 		 lra_reg_info[conflict_regno].preferred_hard_regno_profit2);
 	  }
       }
+
+  /* If a reference/partner pseudo already has a hardreg, restrict this one
+     to what the filter permits.  */
+  if (!lra_reg_info[regno].dependent_filters.is_empty ())
+    {
+      unsigned int i;
+      dependent_filter *filter;
+      FOR_EACH_VEC_ELT (lra_reg_info[regno].dependent_filters, i, filter)
+	{
+	  int partner_regno = live_pseudos_reg_renumber[filter->partner_regno];
+	  if (partner_regno < 0)
+	    partner_regno = reg_renumber[filter->partner_regno];
+	  if (partner_regno < 0)
+	    continue;
+
+	  const HARD_REG_SET *allowed
+	    = lra_get_dependent_filter (filter->id, filter->mode,
+					(unsigned int) partner_regno,
+					filter->partner_mode, filter->is_ref);
+	  conflict_set |= ~*allowed;
+	}
+    }
+
   /* Make sure that all registers in a multi-word pseudo belong to the
      required class.  */
   conflict_set |= ~reg_class_contents[rclass];

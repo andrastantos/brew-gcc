@@ -97,7 +97,7 @@ sel_sched_p (void)
 extern int get_rgn_sched_max_insns_priority (void);
 
 /* Increases effective priority for INSN by AMOUNT.  */
-extern void sel_add_to_insn_priority (rtx, int);
+extern void sel_add_to_insn_priority (rtx_insn *, int);
 
 /* True if during selective scheduling we need to emulate some of haifa
    scheduler behavior.  */
@@ -115,7 +115,7 @@ extern vec<int> sched_luids;
 /* The highest INSN_LUID.  */
 extern int sched_max_luid;
 
-extern int insn_luid (rtx);
+extern int insn_luid (rtx_insn *);
 
 /* This list holds ripped off notes from the current block.  These notes will
    be attached to the beginning of the block when its scheduling is
@@ -131,12 +131,9 @@ extern void *xrecalloc (void *, size_t, size_t, size_t);
 
 extern void reemit_notes (rtx_insn *);
 
-/* Functions in haifa-sched.cc.  */
-extern int haifa_classify_insn (const_rtx);
-
 /* Functions in sel-sched-ir.cc.  */
 extern void sel_find_rgns (void);
-extern void sel_mark_hard_insn (rtx);
+extern void sel_mark_hard_insn (rtx_insn *);
 
 extern size_t dfa_state_size;
 
@@ -146,7 +143,7 @@ extern void setup_sched_dump (void);
 extern void sched_init (void);
 extern void sched_finish (void);
 
-extern bool sel_insn_is_speculation_check (rtx);
+extern bool sel_insn_is_speculation_check (rtx_insn *);
 
 /* Describe the ready list of the scheduler.
    VEC holds space enough for all insns in the current region.  VECLEN
@@ -170,7 +167,7 @@ extern struct ready_list ready;
 
 extern int max_issue (struct ready_list *, int, state_t, bool, int *);
 
-extern void ebb_compute_jump_reg_dependencies (rtx, regset);
+extern void ebb_compute_jump_reg_dependencies (rtx_insn *, regset);
 
 extern edge find_fallthru_edge_from (basic_block);
 
@@ -230,7 +227,7 @@ struct _dep
 
   /* Dependency major type.  This field is superseded by STATUS above.
      Though, it is still in place because some targets use it.  */
-  ENUM_BITFIELD(reg_note) type:6;
+  enum reg_note type:6;
 
   unsigned nonreg:1;
   unsigned multiple:1;
@@ -567,12 +564,31 @@ public:
      in reg_last[N].{uses,sets,clobbers}.  */
   regset_head reg_last_in_use;
 
+  /* Barriers whose "this insn sets every register" effect has not been written
+     into the per-register entries yet, newest first.  Empty after reload and
+     under selective scheduling, where the barrier path writes every entry
+     instead.
+
+     A register in reg_last_in_use has a literal entry that evolves
+     independently.  Every other register has an empty reg_last entry whose
+     sets list is logically pending_barriers, because a barrier makes every
+     reg_last_dirty entry that still holds a list literal before pushing itself
+     here.  Thus, outside reg_last_in_use there is never a live uses, clobbers,
+     implicit_sets or control_uses list.  */
+  rtx_insn_list *pending_barriers;
+
+  /* Element N is set for each register whose reg_last[N] was written on a
+     path that does not record it in reg_last_in_use, namely debug insn uses
+     and control uses.  Barrier handling reconciles these entries with
+     reg_last_in_use, and free_deps releases any that remain.  */
+  regset_head reg_last_dirty;
+
   /* Shows the last value of reg_pending_barrier associated with the insn.  */
   enum reg_pending_barrier_mode last_reg_pending_barrier;
 
   /* True when this context should be treated as a readonly by
      the analysis.  */
-  BOOL_BITFIELD readonly : 1;
+  bool readonly : 1;
 };
 
 typedef class deps_desc *deps_t;
@@ -800,7 +816,7 @@ struct reg_set_data
   /* Regno used in the insn.  */
   int regno;
   /* Insn setting the regno.  */
-  rtx insn;
+  rtx_insn *insn;
   /* List of elements with the same insn.  */
   struct reg_set_data *next_insn_set;
 };
@@ -1291,7 +1307,7 @@ struct sched_deps_info_def
   /* Called when computing dependencies for a JUMP_INSN.  This function
      should store the set of registers that must be considered as set by
      the jump in the regset.  */
-  void (*compute_jump_reg_dependencies) (rtx, regset);
+  void (*compute_jump_reg_dependencies) (rtx_insn *, regset);
 
   /* Start analyzing insn.  */
   void (*start_insn) (rtx_insn *);
@@ -1353,6 +1369,7 @@ extern bool sched_insn_is_legitimate_for_speculation_p (const rtx_insn *, ds_t);
 extern void add_dependence (rtx_insn *, rtx_insn *, enum reg_note);
 extern void sched_analyze (class deps_desc *, rtx_insn *, rtx_insn *);
 extern void init_deps (class deps_desc *, bool);
+extern struct deps_reg *deps_reg_last (class deps_desc *, unsigned int);
 extern void init_deps_reg_last (class deps_desc *);
 extern void free_deps (class deps_desc *);
 extern void init_deps_global (void);
@@ -1396,7 +1413,7 @@ extern void initialize_live_range_shrinkage (void);
 extern void finish_live_range_shrinkage (void);
 extern void sched_init_region_reg_pressure_info (void);
 extern void free_global_sched_pressure_data (void);
-extern int haifa_classify_insn (const_rtx);
+extern int haifa_classify_insn (const rtx_insn *);
 extern void get_ebb_head_tail (basic_block, basic_block,
 			       rtx_insn **, rtx_insn **);
 extern bool no_real_insns_p (const rtx_insn *, const rtx_insn *);
@@ -1556,7 +1573,8 @@ extern void find_modifiable_mems (rtx_insn *, rtx_insn *);
 /* A type to hold above flags.  */
 typedef int sd_list_types_def;
 
-extern void sd_next_list (const_rtx, sd_list_types_def *, deps_list_t *, bool *);
+extern void sd_next_list (const rtx_insn *, sd_list_types_def *,
+			  deps_list_t *, bool *);
 
 /* Iterator to walk through, resolve and delete dependencies.  */
 struct _sd_iterator
@@ -1565,7 +1583,7 @@ struct _sd_iterator
   sd_list_types_def types;
 
   /* Instruction dependencies lists of which will be walked.  */
-  rtx insn;
+  rtx_insn *insn;
 
   /* Pointer to the next field of the previous element.  This is not
      simply a pointer to the next element to allow easy deletion from the
@@ -1591,7 +1609,7 @@ typedef struct _sd_iterator sd_iterator_def;
 
 /* Return initialized iterator.  */
 inline sd_iterator_def
-sd_iterator_start (rtx insn, sd_list_types_def types)
+sd_iterator_start (rtx_insn *insn, sd_list_types_def types)
 {
   /* Some dep_link a pointer to which will return NULL.  */
   static dep_link_t null_link = NULL;
@@ -1666,18 +1684,18 @@ sd_iterator_next (sd_iterator_def *it_ptr)
 #define DISPATCH_INIT 5
 #define ADD_TO_DISPATCH_WINDOW 6
 
-extern int sd_lists_size (const_rtx, sd_list_types_def);
-extern bool sd_lists_empty_p (const_rtx, sd_list_types_def);
+extern int sd_lists_size (const rtx_insn *, sd_list_types_def);
+extern bool sd_lists_empty_p (const rtx_insn *, sd_list_types_def);
 extern void sd_init_insn (rtx_insn *);
 extern void sd_finish_insn (rtx_insn *);
-extern dep_t sd_find_dep_between (rtx, rtx, bool);
+extern dep_t sd_find_dep_between (rtx_insn *, rtx_insn *, bool);
 extern void sd_add_dep (dep_t, bool);
 extern enum DEPS_ADJUST_RESULT sd_add_or_update_dep (dep_t, bool);
 extern void sd_resolve_dep (sd_iterator_def);
 extern void sd_unresolve_dep (sd_iterator_def);
 extern void sd_copy_back_deps (rtx_insn *, rtx_insn *, bool);
 extern void sd_delete_dep (sd_iterator_def);
-extern void sd_debug_lists (rtx, sd_list_types_def);
+extern void sd_debug_lists (rtx_insn *, sd_list_types_def);
 
 extern int dep_list_size (rtx_insn *, sd_list_types_def);
 

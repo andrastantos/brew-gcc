@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>Implementation</title><meta name="generator" content="DocBook XSL Stylesheets Vsnapshot" /><meta name="keywords" content="ISO C++, allocator" /><meta name="keywords" content="ISO C++, library" /><meta name="keywords" content="ISO C++, runtime, library" /><link rel="home" href="../index.html" title="The GNU C++ Library" /><link rel="up" href="bitmap_allocator.html" title="Chapter 20. The bitmap_allocator" /><link rel="prev" href="bitmap_allocator.html" title="Chapter 20. The bitmap_allocator" /><link rel="next" href="policy_data_structures.html" title="Chapter 21. Policy-Based Data Structures" /></head><body><div class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="3" align="center">Implementation</th></tr><tr><td width="20%" align="left"><a accesskey="p" href="bitmap_allocator.html">Prev</a> </td><th width="60%" align="center">Chapter 20. The bitmap_allocator</th><td width="20%" align="right"> <a accesskey="n" href="policy_data_structures.html">Next</a></td></tr></table><hr /></div><div class="section"><div class="titlepage"><div><div><h2 class="title" style="clear: both"><a id="allocator.bitmap.impl"></a>Implementation</h2></div></div></div><div class="section"><div class="titlepage"><div><div><h3 class="title"><a id="bitmap.impl.free_list_store"></a>Free List Store</h3></div></div></div><p>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>Implementation</title><meta name="generator" content="DocBook XSL Stylesheets Vsnapshot" /><meta name="keywords" content="ISO C++, allocator" /><meta name="keywords" content="ISO C++, library" /><meta name="keywords" content="ISO C++, runtime, library" /><link rel="home" href="../index.html" title="The GNU C++ Library" /><link rel="up" href="bitmap_allocator.html" title="Chapter 21. The bitmap_allocator" /><link rel="prev" href="bitmap_allocator.html" title="Chapter 21. The bitmap_allocator" /><link rel="next" href="policy_data_structures.html" title="Chapter 22. Policy-Based Data Structures" /></head><body><div class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="3" align="center">Implementation</th></tr><tr><td width="20%" align="left"><a accesskey="p" href="bitmap_allocator.html">Prev</a> </td><th width="60%" align="center">Chapter 21. The bitmap_allocator</th><td width="20%" align="right"> <a accesskey="n" href="policy_data_structures.html">Next</a></td></tr></table><hr /></div><div class="section"><div class="titlepage"><div><div><h2 class="title" style="clear: both"><a id="allocator.bitmap.impl"></a>Implementation</h2></div></div></div><div class="section"><div class="titlepage"><div><div><h3 class="title"><a id="bitmap.impl.free_list_store"></a>Free List Store</h3></div></div></div><p>
     The Free List Store (referred to as FLS for the remaining part of this
     document) is the Global memory pool that is shared by all instances of
     the bitmapped allocator instantiated for any type. This maintains a
@@ -75,7 +75,7 @@ else return false.</p></li></ol></div><p>
   </p><p>
     Consider a block of size 64 ints. In memory, it would look like this:
     (assume a 32-bit system where, size_t is a 32-bit entity).
-  </p><div class="table"><a id="table.bitmap_alloc"></a><p class="title"><strong>Table 20.1. Bitmap Allocator Memory Map</strong></p><div class="table-contents"><table class="table" summary="Bitmap Allocator Memory Map" border="1"><colgroup><col align="left" class="c1" /><col align="left" class="c2" /><col align="left" class="c3" /><col align="left" class="c4" /><col align="left" class="c5" /></colgroup><tbody><tr><td align="left">268</td><td align="left">0</td><td align="left">4294967295</td><td align="left">4294967295</td><td align="left">Data -&gt; Space for 64 ints</td></tr></tbody></table></div></div><br class="table-break" /><p>
+  </p><div class="table"><a id="table.bitmap_alloc"></a><p class="title"><strong>Table 21.1. Bitmap Allocator Memory Map</strong></p><div class="table-contents"><table class="table" summary="Bitmap Allocator Memory Map" border="1"><colgroup><col align="left" class="c1" /><col align="left" class="c2" /><col align="left" class="c3" /><col align="left" class="c4" /><col align="left" class="c5" /></colgroup><tbody><tr><td align="left">268</td><td align="left">0</td><td align="left">4294967295</td><td align="left">4294967295</td><td align="left">Data -&gt; Space for 64 ints</td></tr></tbody></table></div></div><br class="table-break" /><p>
     The first Column(268) represents the size of the Block in bytes as
     seen by the Bitmap Allocator. Internally, a global free list is
     used to keep track of the free blocks used and given back by the
@@ -104,8 +104,8 @@ else return false.</p></li></ol></div><p>
     which is 8-bytes, or 2 x sizeof(size_t).
   </p></div><div class="section"><div class="titlepage"><div><div><h3 class="title"><a id="bitmap.impl.max_wasted"></a>Maximum Wasted Percentage</h3></div></div></div><p>
     This has nothing to do with the algorithm per-se,
-    only with some vales that must be chosen correctly to ensure that the
-    allocator performs well in a real word scenario, and maintains a good
+    only with some values that must be chosen correctly to ensure that the
+    allocator performs well in a real world scenario, and maintains a good
     balance between the memory consumption and the allocation/deallocation
     speed.
   </p><p>
@@ -248,7 +248,7 @@ Block a bitmap as well?
       have nothing to do with the memory that is given to the user. As
       I have earlier mentioned, a 1 in the bitmap's bit field
       indicates free, while a 0 indicates allocated. This lets us
-      check 32 bits at a time to check whether there is at lease one
+      check 32 bits at a time to check whether there is at least one
       free block in those 32 blocks by testing for equality with
       (0). Now, the allocate function will given a memory block find
       the corresponding bit in the bitmap, and will reset it (i.e.,
@@ -263,19 +263,19 @@ Block a bitmap as well?
     </p><p>
       Now, when the first request for allocation of a single object
       comes along, the first block in address order is returned. And
-      since the bit-maps in the reverse order to that of the address
+      since the bit-maps are in the reverse order to that of the address
       order, the last bit (LSB if the bit-map is considered as a
       binary word of 64-bits) is re-set to 0.
     </p><p>
       The bit-map now looks like this:
       1111111111111111111111111111111111111111111111111111111111111110
     </p></div></div><div class="section"><div class="titlepage"><div><div><h3 class="title"><a id="bitmap.impl.locality"></a>Locality</h3></div></div></div><p>
-    Another issue would be whether to keep the all bitmaps in a
+    Another issue would be whether to keep all the bitmaps in a
     separate area in memory, or to keep them near the actual blocks
     that will be given out or allocated for the client. After some
     testing, I've decided to keep these bitmaps close to the actual
     blocks. This will help in 2 ways.
-  </p><div class="orderedlist"><ol class="orderedlist" type="1"><li class="listitem"><p>Constant time access for the bitmap themselves, since no kind of
+  </p><div class="orderedlist"><ol class="orderedlist" type="1"><li class="listitem"><p>Constant time access for the bitmaps themselves, since no kind of
 look up will be needed to find the correct bitmap list or its
 equivalent.</p></li><li class="listitem"><p>And also this would preserve the cache as far as possible.</p></li></ol></div><p>
     So in effect, this kind of an allocator might prove beneficial from a
@@ -309,4 +309,4 @@ equivalent.</p></li><li class="listitem"><p>And also this would preserve the cac
     sizeof(size_t) x 8 which is the number of bits in an integer,
     which can fit exactly in a CPU register. Hence, the term given is
     exponential growth of the internal pool.
-  </p></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="bitmap_allocator.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="bitmap_allocator.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="policy_data_structures.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top">Chapter 20. The bitmap_allocator </td><td width="20%" align="center"><a accesskey="h" href="../index.html">Home</a></td><td width="40%" align="right" valign="top"> Chapter 21. Policy-Based Data Structures</td></tr></table></div></body></html>
+  </p></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="bitmap_allocator.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="bitmap_allocator.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="policy_data_structures.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top">Chapter 21. The bitmap_allocator </td><td width="20%" align="center"><a accesskey="h" href="../index.html">Home</a></td><td width="40%" align="right" valign="top"> Chapter 22. Policy-Based Data Structures</td></tr></table></div></body></html>

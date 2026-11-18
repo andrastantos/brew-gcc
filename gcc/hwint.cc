@@ -17,7 +17,14 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+/* This file is compiled twice: once for the generator programs
+   once for the compiler.  */
+#ifdef GENERATOR_FILE
+#include "bconfig.h"
+#else
 #include "config.h"
+#endif
+
 #include "system.h"
 #include "coretypes.h"
 
@@ -189,12 +196,21 @@ least_common_multiple (HOST_WIDE_INT a, HOST_WIDE_INT b)
   return mul_hwi (abs_hwi (a) / gcd (a, b), abs_hwi (b));
 }
 
-/* Reflect (reverse) the bits of a given VALUE within a specified BITWIDTH.  */
+/* Reflect (reverse) the bits of a given VALUE within a specified BITWIDTH <= 64.  */
 
 unsigned HOST_WIDE_INT
 reflect_hwi (unsigned HOST_WIDE_INT value, unsigned bitwidth)
 {
+  if (bitwidth == 0)
+    return 0;
+
+  gcc_checking_assert (bitwidth <= 64);
+
+#if STAGE0_CXX_HAS_BUILTIN (bitreverse64)
+  return __builtin_bitreverse64 (value) >> (64 - bitwidth);
+#else
   unsigned HOST_WIDE_INT reflected_value = 0;
+
   /* Loop through each bit in the specified BITWIDTH.  */
   for (size_t i = 0; i < bitwidth; i++)
     {
@@ -204,5 +220,71 @@ reflect_hwi (unsigned HOST_WIDE_INT value, unsigned bitwidth)
       reflected_value |= (value & 1);
       value >>= 1;
     }
+
   return reflected_value;
+#endif
+}
+
+/* Calculate CRC for the initial CRC, DATA and given POLYNOMIAL.
+   CRC_BITS is CRC size and DATA_BITS is the data size.  */
+
+unsigned HOST_WIDE_INT
+calculate_crc (unsigned HOST_WIDE_INT crc,
+	       unsigned HOST_WIDE_INT data,
+	       unsigned HOST_WIDE_INT polynomial,
+	       unsigned short crc_bits,
+	       unsigned short data_bits)
+{
+  if (data_bits == 0)
+    return crc;
+
+  gcc_checking_assert (crc_bits <= 64);
+  gcc_checking_assert (data_bits <= 64);
+  gcc_checking_assert (crc_bits >= data_bits);
+
+  unsigned HOST_WIDE_INT msb = HOST_WIDE_INT_1U << (crc_bits - 1);
+  crc ^= (data << (crc_bits - data_bits));
+  for (short i = data_bits; i > 0; --i)
+    {
+      if (crc & msb)
+	crc = (crc << 1) ^ polynomial;
+      else
+	crc <<= 1;
+    }
+  /* Zero out bits in crc beyond the specified number of crc_bits.  */
+  if (crc_bits < HOST_BITS_PER_WIDE_INT)
+    crc &= (HOST_WIDE_INT_1U << crc_bits) - 1;
+  return crc;
+}
+
+/* Calculate CRC for the initial CRC, DATA and given POLYNOMIAL.
+   CRC_BITS is CRC size and DATA_BITS is the DATA size.  */
+
+unsigned HOST_WIDE_INT
+calculate_reversed_crc (unsigned HOST_WIDE_INT crc,
+			unsigned HOST_WIDE_INT data,
+			unsigned HOST_WIDE_INT polynomial,
+			unsigned short crc_bits,
+			unsigned short data_bits)
+{
+  if (data_bits == 0)
+    return crc;
+
+  gcc_checking_assert (crc_bits <= 64);
+  gcc_checking_assert (data_bits <= 64);
+  /* allow data_bits > crc_bits for folding _mm_crc32_u64.  */
+
+  unsigned HOST_WIDE_INT rev_polynom = reflect_hwi (polynomial, crc_bits);
+  crc ^= data;
+  for (int j = 0; j < data_bits; j++)
+    {
+      if (crc & 1)
+	crc = (crc >> 1) ^ rev_polynom;
+      else
+	crc >>= 1;
+    }
+  /* Zero out bits in crc beyond the specified number of crc_bits.  */
+  if (crc_bits < HOST_BITS_PER_WIDE_INT)
+    crc &= (HOST_WIDE_INT_1U << crc_bits) - 1;
+  return crc;
 }

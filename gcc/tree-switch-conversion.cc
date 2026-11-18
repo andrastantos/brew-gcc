@@ -105,7 +105,7 @@ can_log2 (tree type, optimization_type opt_type)
 
 /* Assume that OP is a power of two.  Build a sequence of gimple statements
    efficiently computing the base two logarithm of OP using special optabs.
-   Return the ssa name represeting the result of the logarithm through RESULT.
+   Return the ssa name representing the result of the logarithm through RESULT.
 
    Before computing the logarithm, OP may have to be converted to another type.
    This should be specified in TYPE.  Use can_log2 to decide what this type
@@ -117,18 +117,16 @@ static gimple_seq
 gen_log2 (tree op, location_t loc, tree *result, tree type)
 {
   gimple_seq stmts = NULL;
-  gimple_stmt_iterator gsi = gsi_last (stmts);
 
   tree orig_type = TREE_TYPE (op);
   tree tmp1;
   if (type != orig_type)
-    tmp1 = gimple_convert (&gsi, false, GSI_NEW_STMT, loc, type, op);
+    tmp1 = gimple_convert (&stmts, loc, type, op);
   else
     tmp1 = op;
   /* Build FFS (op) - 1.  */
-  tree tmp2 = gimple_build (&gsi, false, GSI_NEW_STMT, loc, IFN_FFS, orig_type,
-			    tmp1);
-  tree tmp3 = gimple_build (&gsi, false, GSI_NEW_STMT, loc, MINUS_EXPR,
+  tree tmp2 = gimple_build (&stmts, loc, IFN_FFS, orig_type, tmp1);
+  tree tmp3 = gimple_build (&stmts, loc, MINUS_EXPR,
 			    orig_type, tmp2, build_one_cst (orig_type));
   *result = tmp3;
   return stmts;
@@ -143,7 +141,6 @@ static gimple_seq
 gen_pow2p (tree op, location_t loc, tree *result)
 {
   gimple_seq stmts = NULL;
-  gimple_stmt_iterator gsi = gsi_last (stmts);
 
   tree type = TREE_TYPE (op);
   tree utype = unsigned_type_for (type);
@@ -153,13 +150,11 @@ gen_pow2p (tree op, location_t loc, tree *result)
   if (types_compatible_p (type, utype))
     tmp1 = op;
   else
-    tmp1 = gimple_convert (&gsi, false, GSI_NEW_STMT, loc, utype, op);
-  tree tmp2 = gimple_build (&gsi, false, GSI_NEW_STMT, loc, MINUS_EXPR, utype,
+    tmp1 = gimple_convert (&stmts, loc, utype, op);
+  tree tmp2 = gimple_build (&stmts, loc, MINUS_EXPR, utype,
 			    tmp1, build_one_cst (utype));
-  tree tmp3 = gimple_build (&gsi, false, GSI_NEW_STMT, loc, BIT_XOR_EXPR,
-			    utype, tmp1, tmp2);
-  *result = gimple_build (&gsi, false, GSI_NEW_STMT, loc, GT_EXPR,
-			  boolean_type_node, tmp3, tmp2);
+  tree tmp3 = gimple_build (&stmts, loc, BIT_XOR_EXPR, utype, tmp1, tmp2);
+  *result = gimple_build (&stmts, loc, GT_EXPR, boolean_type_node, tmp3, tmp2);
 
   return stmts;
 }
@@ -431,7 +426,7 @@ switch_conversion::exp_index_transform (gswitch *swtch)
   gsi_insert_after (&gsi, stmt_cond, GSI_NEW_STMT);
 
   /* We just added an edge going to default bb so fix PHI nodes in that bb:
-     For each PHI add new PHI arg.  It will be the same arg as when comming to
+     For each PHI add new PHI arg.  It will be the same arg as when coming to
      the default bb from the switch bb.  */
   edge default_edge = find_edge (swtch_bb, default_bb);
   for (gphi_iterator gsi = gsi_start_phis (default_bb);
@@ -894,7 +889,7 @@ switch_conversion::array_value_type (tree type, int num)
   type = TYPE_MAIN_VARIANT (type);
 
   if (!INTEGRAL_TYPE_P (type)
-      || (TREE_CODE (type) == BITINT_TYPE
+      || (BITINT_TYPE_P (type)
 	  && (TYPE_PRECISION (type) > MAX_FIXED_MODE_SIZE
 	      || TYPE_MODE (type) == BLKmode)))
     return type;
@@ -1012,8 +1007,7 @@ switch_conversion::build_one_array (int num, tree arr_index_type,
 						    ARTIFICIAL_RODATA_CSWITCH);
       if (!ADDR_SPACE_GENERIC_P (as))
 	{
-	  int quals = (TYPE_QUALS_NO_ADDR_SPACE (value_type)
-		       | ENCODE_QUAL_ADDR_SPACE (as));
+	  qualifier_set quals {TYPE_QUALS_NO_ADDR_SPACE (value_type), as};
 	  value_type = build_qualified_type (value_type, quals);
 	  array_type = build_array_type (value_type, arr_index_type);
 	}
@@ -1086,7 +1080,7 @@ switch_conversion::build_arrays ()
   utype = TREE_TYPE (m_index_expr);
   if (TREE_TYPE (utype))
     utype = lang_hooks.types.type_for_mode (TYPE_MODE (TREE_TYPE (utype)), 1);
-  else if (TREE_CODE (utype) == BITINT_TYPE
+  else if (BITINT_TYPE_P (utype)
 	   && (TYPE_PRECISION (utype) > MAX_FIXED_MODE_SIZE
 	       || TYPE_MODE (utype) == BLKmode))
     utype = unsigned_type_for (utype);
@@ -1548,14 +1542,14 @@ jump_table_cluster::emit (tree index_expr, tree,
   /* For large/huge _BitInt, subtract low from index_expr, cast to unsigned
      DImode type (get_range doesn't support ranges larger than 64-bits)
      and subtract low from all case values as well.  */
-  if (TREE_CODE (TREE_TYPE (index_expr)) == BITINT_TYPE
+  if (BITINT_TYPE_P (TREE_TYPE (index_expr))
       && TYPE_PRECISION (TREE_TYPE (index_expr)) > GET_MODE_PRECISION (DImode))
     {
       bitint = true;
       tree this_low = low, type;
       gimple *g;
       gimple_seq seq = NULL;
-      if (!TYPE_OVERFLOW_WRAPS (TREE_TYPE (index_expr)))
+      if (!TYPE_UNSIGNED (TREE_TYPE (index_expr)))
 	{
 	  type = unsigned_type_for (TREE_TYPE (index_expr));
 	  index_expr = gimple_convert (&seq, type, index_expr);
@@ -1808,8 +1802,9 @@ bit_test_cluster::find_bit_tests (vec<cluster *> &clusters, int max_c)
      Out: List of simple clusters and bit test clusters such that each bit test
      cluster can_be_handled() and is_beneficial()
 
-     Tries to merge consecutive clusters into bigger (bit test) ones.  Tries to
-     end up with as few clusters as possible.  */
+     Merges consecutive clusters into bigger (bit test) clusters.  Produces the
+     optimal solution -- the number of clusters in the output list is
+     minimal.  */
 
   unsigned l = clusters.length ();
 
@@ -1950,8 +1945,8 @@ case_bit_test::cmp (const void *p1, const void *p2)
     return d2->bits - d1->bits;
 
   /* Stabilize the sort.  */
-  return (LABEL_DECL_UID (CASE_LABEL (d2->label))
-	  - LABEL_DECL_UID (CASE_LABEL (d1->label)));
+  return (d2->target_bb->index
+	  - d1->target_bb->index);
 }
 
 /*  Expand a switch statement by a short sequence of bit-wise
@@ -2010,7 +2005,6 @@ bit_test_cluster::emit (tree index_expr, tree index_type,
 	  gcc_checking_assert (count < m_max_case_bit_tests);
 	  test[k].mask = wi::zero (prec);
 	  test[k].target_bb = n->m_case_bb;
-	  test[k].label = n->m_case_label_expr;
 	  test[k].bits = 0;
 	  test[k].prob = profile_probability::never ();
 	  count++;

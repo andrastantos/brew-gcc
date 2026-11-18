@@ -75,6 +75,7 @@ extern bool hook_callee_copies_named
   (cumulative_args_t ca, const function_arg_info &);
 
 extern void default_print_operand (FILE *, rtx, int);
+extern int default_print_operand_modifier (string_slice, bool);
 extern void default_print_operand_address (FILE *, machine_mode, rtx);
 extern bool default_print_operand_punct_valid_p (unsigned char);
 extern tree default_mangle_assembler_name (const char *);
@@ -206,8 +207,7 @@ extern bool default_valid_pointer_mode (scalar_int_mode);
 extern bool default_ref_may_alias_errno (class ao_ref *);
 extern scalar_int_mode default_addr_space_pointer_mode (addr_space_t);
 extern scalar_int_mode default_addr_space_address_mode (addr_space_t);
-extern bool default_addr_space_valid_pointer_mode (scalar_int_mode,
-						   addr_space_t);
+extern bool default_addr_space_valid_pointer_mode (machine_mode, addr_space_t);
 extern bool default_addr_space_legitimate_address_p (machine_mode, rtx, bool,
 						     addr_space_t, code_helper);
 extern rtx default_addr_space_legitimize_address (rtx, rtx, machine_mode,
@@ -222,6 +222,8 @@ extern rtx default_addr_space_convert (rtx, tree, tree);
 extern unsigned int default_case_values_threshold (void);
 extern bool default_have_conditional_execution (void);
 extern bool default_have_ccmp (void);
+extern ccmp_first_kind default_ccmp_first_preference
+  (machine_mode, tree_code, const_tree, const_tree);
 
 extern bool default_libc_has_function (enum function_class, tree);
 extern bool default_libc_has_fast_function (int fcode);
@@ -259,6 +261,9 @@ extern void default_print_patchable_function_entry (FILE *,
 extern bool default_profile_before_prologue (void);
 extern reg_class_t default_preferred_reload_class (rtx, reg_class_t);
 extern reg_class_t default_preferred_output_reload_class (rtx, reg_class_t);
+extern reg_class_t default_base_reg_class (machine_mode, addr_space_t,
+					   enum rtx_code, enum rtx_code,
+					   rtx, rtx_insn *);
 extern reg_class_t default_preferred_rename_class (reg_class_t rclass);
 extern bool default_class_likely_spilled_p (reg_class_t);
 extern unsigned char default_class_max_nregs (reg_class_t, machine_mode);
@@ -320,5 +325,6 @@ extern rtx default_memtag_add_tag (rtx, poly_int64, uint8_t);
 extern rtx default_memtag_set_tag (rtx, rtx, rtx);
 extern rtx default_memtag_extract_tag (rtx, rtx);
 extern rtx default_memtag_untagged_pointer (rtx, rtx);
+extern int default_reassociation_width (tree_code, machine_mode);
 
 #endif /* GCC_TARGHOOKS_H */

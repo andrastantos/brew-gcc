@@ -38,7 +38,7 @@ along with GCC; see the file COPYING3.  If not see
 //      read-only query and prevents any additional lookup.
 //   USE_RANGEOPS is a boolean flag which defaults to false.  if TRUE,
 //      range-ops is invoked to see if any additional side effects are seen
-//      based on the stmt.  ie .x = y * 2 will reigster a side effect for Y
+//      based on the stmt.  ie .x = y * 2 will register a side effect for Y
 //      which is [-INF/2 , +INF/2].  It is not on by default because it
 //      is a relatively expensive operation to do on every statement, and
 //      ranger will already incorporate that range for Y via GORI most of the
@@ -78,7 +78,7 @@ private:
   friend class non_null_wrapper;
 };
 
-// This is the basic infer oracle API.  Default functionaility does nothing.
+// This is the basic infer oracle API.  Default functionality does nothing.
 
 class infer_range_oracle
 {
@@ -89,6 +89,7 @@ public:
   virtual bool has_range_p (basic_block, tree = NULL_TREE) { return false; }
   virtual bool maybe_adjust_range (vrange &, tree, basic_block)
       { return false; }
+  virtual void clear (tree) { }
 };
 
 // This class manages a list of inferred ranges for each basic block.
@@ -101,7 +102,7 @@ public:
 // will want to use. Ranger invokes it with the cache's internal query which
 // can provide better ranges during a DOM walk.
 //
-// add_ranges is used to add inferred range IR assocaited with stmt S.
+// add_ranges is used to add inferred range IR associated with stmt S.
 // has_range_p is used to check if NAME has an inferred range in block BB.
 // maybe_adjust_range will adjust the range R to incorporate any inferred
 //   range NAME may have in block BB.  If there are on inferred ranges in
@@ -115,6 +116,7 @@ public:
   virtual void add_ranges (gimple *s, gimple_infer_range &ir);
   virtual bool has_range_p (basic_block bb, tree name = NULL_TREE);
   virtual bool maybe_adjust_range (vrange &r, tree name, basic_block bb);
+  virtual void clear (tree name);
 private:
   void add_range (tree name, gimple *s, const vrange &r);
   void add_nonzero (tree name, gimple *s);
@@ -126,10 +128,16 @@ private:
     int m_num_ranges;
     exit_range *find_ptr (tree name);
   };
+  class ssa_name_link
+  {
+  public:
+    vrange *nonzero;
+    exit_range *name_link;
+  };
   void register_all_uses (tree name);
   vec <exit_range_head> m_on_exit;
+  vec <ssa_name_link> m_name_info;
   const vrange &get_nonzero (tree name);
-  vec <vrange *> m_nonzero;
   bitmap m_seen;
   bitmap_obstack m_bitmaps;
   struct obstack m_list_obstack;

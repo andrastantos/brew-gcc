@@ -45,7 +45,8 @@ start_condition_str( int sc ) {
   case datetime_fmt: state = "datetime_fmt"; break;
   case dot_state: state = "dot_state"; break;
   case exception: state = "exception"; break;
-  case field_level: state = "field_level"; break;
+  case fd_state: state = "fd_state"; break;
+  case field_data_item: state = "field_data_item"; break;
   case field_state: state = "field_state"; break;
   case function: state = "function"; break;
   case hex_state: state = "hex_state"; break;
@@ -86,7 +87,7 @@ datetime_format_of( const char input[] ) {
   static const char date_fmt_e[] = "YYYY-MM-DD|YYYY-DDD|YYYY-Www-D";
 
   static const char time_fmt_b[] =
-    "hhmmss([.,]s+)?|hhmmss([.,]s+)?Z|hhmmss([.,]s+)?[+]hhmm|";
+    "hhmmss([.,]s+)?|hhmmss([.,]s+)?Z|hhmmss([.,]s+)?[+]hhmm";
   static const char time_fmt_e[] =
     "hh:mm:ss([.,]s+)?|hh:mm:ss([.,]s+)?Z|hh:mm:ss([.,]s+)?[+]hh:mm";
 
@@ -167,6 +168,8 @@ is_cdf_token( int token ) {
   case COPY:
   case TURN:
     return true;
+  case READY: case RESET: case TRACE:
+    return true;
   }
   return false;
 }
@@ -202,6 +205,20 @@ valid_conditional_context( int token ) {
   return true; // all other CDF tokens valid regardless of context
 }
 
+static int ydfparse() {
+  return cdf_parser.parse();
+}
+
+static inline int ydfchar() {
+  auto kind_type = cdf_context.lookahead().kind();
+  return kind_type;
+}
+
+void
+ydfdebug( bool yn ) {
+  cdf_parser.set_debug_level(yn? 1 : 0);
+}
+
 static bool
 run_cdf( int token ) {
   if( ! valid_conditional_context(token) ) {
@@ -211,7 +228,8 @@ run_cdf( int token ) {
 
   parsing.inject_token(token); // because it will be needed by CDF parser
 
-  if( yy_flex_debug ) dbgmsg("CDF parser start with '%s'", keyword_str(token));
+  if( yy_flex_debug )
+    dbgmsg("%s: CDF parser start with '%s'", __func__, keyword_str(token));
 
   parsing.parser_save(ydfparse);
 
@@ -219,32 +237,62 @@ run_cdf( int token ) {
 
   parsing.parser_restore();
 
-  if( YY_START == cdf_state ) yy_pop_state();
-
   if( yy_flex_debug ) {
-    dbgmsg("CDF parser returned %d, scanner SC <%s>", erc, start_condition_is());
+    dbgmsg("%s: CDF parser returned %d, scanner SC <%s>", __func__,
+           erc, start_condition_is());
   }
 
   return  0 == erc;
 }
 
-#include <queue>
-struct pending_token_t {
+struct recent_token_t {
   int token;
   YYSTYPE value;
-  pending_token_t( int token, YYSTYPE value ) : token(token), value(value) {}
+  cbl_loc_t loc;
+  recent_token_t( int token, YYSTYPE value, cbl_loc_t loc )
+    : token(token), value(value), loc(loc) {}
+  // for matching the current token against the token queue
+  recent_token_t( int token, cbl_loc_t loc )
+    : token(token), loc(loc) {}
 };
-#define PENDING(T) pending_token_t( (T), yylval )
 
-static std::queue<pending_token_t> pending_tokens;
-
-int next_token() {
-  int token = lexer();
-  return token;
+namespace cdf {
+  bool had_lookahead();
+  cbl_loc_t location();
+  int last_lexed;
+  bool any_cobol_words = false;
 }
 
-extern int ydfchar;
-bool in_procedure_division(void);
+static int next_token() {
+  int token = cdf::last_lexed = lexer();
+
+  if( cdf::any_cobol_words ) {
+    const char *name = token == NAME? yylval.string : nullptr;
+    token = redefined_token(name, token);
+    if( token != cdf::last_lexed ) {
+      const char *name = 0 < token? keyword_str(token) : "lost";
+      if( cdf::last_lexed == NAME ) {
+        dbgmsg("%s:%d: NAME '%s' became '%s' (%d)", __func__, __LINE__,
+               yylval.string, name, token);
+      } else {
+        dbgmsg("%s:%d: %s (%d) became %d for '%s'", __func__, __LINE__,
+               keyword_str(cdf::last_lexed), cdf::last_lexed,
+               token, yytext);
+      }
+    }
+    if( current_tokens_t::is_reserved(token)  ) {
+      error_msg(yylloc, "RESERVED by COBOL-WORDS: %qs", yytext);
+      token = cdf::last_lexed;
+    }
+    if( current_tokens_t::is_undefined(token)  ) {
+      yylval.string = xstrdup(yytext);
+      token = NAME;
+      dbgmsg("%s:%d: UNDEFINED by COBOL-WORDS: %s becomes user-defined name",
+             __func__, __LINE__, yytext? yytext : "yytext is NULL?");
+    }
+  }
+  return token;
+}
 
 // act on CDF tokens
 int
@@ -262,67 +310,100 @@ prelex() {
   while( is_cdf_token(token) ) {
 
     if( ! run_cdf(token) ) {
-      dbgmsg( ">>CDF parser failed, ydfchar %d", ydfchar );
+      dbgmsg( ">>CDF parser failed, ydfchar %d", cdf::last_lexed );
     }
-    // Return the CDF's discarded lookahead token, if extant.
-    token = ydfchar > 0? ydfchar : next_token();
+
+    // The most recently lexed token was sent to the CDF.  If it was a
+    // lookahead token, it now goes to the main parser, else we get the next
+    // one.
+    if( cdf::had_lookahead() ) {
+      token = cdf::last_lexed;
+      dbgmsg("%s: recovered lookahead token  %s", __func__, keyword_str(token));
+    } else {
+      token = next_token();
+    }
+
     if( token == NO_CONDITION && parsing.at_eof() ) {
+      dbgmsg("scanner at EOF, apparently (%d)", token);
       return YYEOF;
     }
+    dbgmsg("%s: next token  %s", __func__, keyword_str(token));
 
     // Reenter cdf parser only if next token could affect parsing state.
     if( ! parsing.on() && ! is_cdf_condition_token(token) ) break;
   }
 
-  if( yy_flex_debug ) {
-    dbgmsg("scanner SC <%s>", start_condition_is());
-  }
-
-  if( YY_START == copy_state || YY_START == cdf_state ) {
-    if( token == NAME ) {
-      auto tok = keyword_tok(ydflval.string);
-      if( tok ) token = tok;
+  // Do not disturb lexer state while we're not parsing the COBOL.
+  if( parsing.on() ) {
+    if( YY_START == cdf_state ) {
+        yy_pop_state();
     }
-    yy_pop_state();
-    dbgmsg("scanner SC <%s>, token now %s",
-           start_condition_is(), keyword_str(token));
-  }
+    // still parsing.on()
 
-  /*
-   * The final, rejected CDF token might be a LEVEL number.
-   */
-  if( YY_START == field_state && level_needed() ) {
-    switch( token ) {
-    case NUMSTR:
-      dbgmsg("final token is NUMSTR");
-      yylval.number = level_of(yylval.numstr.string);
-      token = LEVEL;
+    if( yy_flex_debug ) {
+      dbgmsg("%s:%d: scanner SC <%s>", __func__, __LINE__, start_condition_is());
+    }
+
+    switch(YY_START) {
+    case FILE_SECT:
+    case WORKING_STORAGE_SECT:
+    case LOCAL_STORAGE_SECT:
+    case LINKAGE_SECT:
+      BEGIN(field_state);
+      if( yy_flex_debug ) {
+        dbgmsg("%s:%d: scanner SC now <%s>", __func__, __LINE__, start_condition_is());
+      }
       break;
-    case YDF_NUMBER:
-      dbgmsg("final token is YDF_NUMBER");
-      yylval.number = ydflval.number;
-      token = LEVEL;
+    case copy_state:
+    case cdf_state:
+    case field_data_item:
+      if( token == NAME ) {
+        auto tok = keyword_tok(ydflval.string);
+        if( tok ) token = tok;
+      }
       break;
     }
-    if( token == LEVEL ) {
-      switch(yylval.number) {
-      case 66:
-        token = LEVEL66;
+
+    if( YY_START == copy_state || YY_START == cdf_state ) {
+      yy_pop_state();
+      dbgmsg("%s:%d: scanner SC <%s>, token now %s", __func__, __LINE__,
+             start_condition_is(), keyword_str(token));
+    }
+
+    /*
+     * The unused CDF token might be a LEVEL number.
+     */
+    if( YY_START == field_state && level_needed() ) {
+      switch( token ) {
+      case NUMSTR:
+        yylval.number = level_of(yylval.numstr.string);
+        token = LEVEL;
         break;
-      case 78:
-        token = LEVEL78;
+      case NUMBER:
+        yylval.number = ydflval.number;
+        token = LEVEL;
         break;
-      case 88:
-        token = LEVEL78;
-        break;
+      }
+      if( token == LEVEL ) {
+        yy_push_state(field_data_item); // do as <field_state> does for LEVEL
+        switch(yylval.number) {
+        case 66:
+          token = LEVEL66;
+          break;
+        case 78:
+          token = LEVEL78;
+          break;
+        case 88:
+          token = LEVEL88;
+          break;
+        }
       }
     }
   }
 
-  dbgmsg( ">>CDF parser done, %s returning "
-          "%s (because final_token %s, lookhead %d) on line %d", __func__,
-          keyword_str(token), keyword_str(final_token),
-          ydfchar, yylineno );
+  dbgmsg( ">>CDF parser done, %s returning %s, conditional compilation %s", __func__,
+          keyword_str(token),
+          parsing.on()? "TRUE" : "FALSE" );
   in_cdf = false;
   return token;
 }
@@ -333,20 +414,33 @@ prelex() {
  *             prelex calls lexer, the scanner produced by flex.
  *                          lexer reads input from yyin via lexer_input.
  *
- * prelex intercepts CDF statements, each of which it parses with ydfparse.
- * ydfparse affects CDF variables, which may affect how yylex treats
+ * prelex intercepts CDF statements, each of which it parses with cdf::parser::parse.
+ * cdf::parser::parse affects CDF variables, which may affect how yylex treats
  * the input stream.
  *
  * Because the lexer is called recursively:
  *
- *   yyparse -> yylex -> ydfparse -> yylex
+ *   yyparse -> yylex -> cdf::parser::parse -> yylex
  *
- * the global state of the scanner has changed when ydfparse returns.  Part of
- * that state is the unused lookahead token that ydfparse discarded, stored in
- * final_token.  prelex then returns final_token as its own, which is duly
- * returned to yyparse.
+ * the global state of the scanner has to be managed, both before and after the
+ * CDF parser runs.
+ *
+ * Before invoking the CDF parser, run_cdf() stashes the CDF token with
+ * inject_token().  When the CDF parser turns around and calls yylex, the first
+ * token returned is that stashed one, because it is the reason the CDF parser
+ * was invoked.  The scanner saves each token returned by lexer() in
+ * cdf::last_lexed.
+ *
+ * When the CDF parser exits it records whether or not there was a lookahead
+ * token (else it was YYEOF or YYEMPTY).
+ *
+ * When the CDF parser returns, the lexer calls cdf::had_lookahead() to see if
+ * there was a lookahead.  (It's true only once because the function clears the
+ * condition.)  If so, the lexer returns cdf::last_lexed to the main parser,
+ * which started the whole thing by calling yylex().  prelex() also compensates
+ * haphazardly for special tokens that depend on start condition, such as LEVEL
+ * versus NUMBER.
  */
-
 int
 yylex(void) {
   static bool produce_next_sentence_target = false;
@@ -372,6 +466,7 @@ yylex(void) {
     produce_next_sentence_target = false;
   }
 
+  int ntoken = -1;
   do {
     token = prelex();
     if( yy_flex_debug ) {
@@ -383,24 +478,44 @@ yylex(void) {
                  keyword_str(token) );
       }
     }
-
+    ntoken++; // increment debug count here; might not loop to skip the token
   } while( token && ! parsing.feed_a_parser() );
+
+  if( 0 < ntoken ) {
+    dbgmsg("%s:%d: ate %d tokens, now returning %s", __func__, __LINE__,
+           ntoken, keyword_str(token));
+  }
 
   if( next_sentence && token == '.' ) {
     produce_next_sentence_target = true;
   }
 
-  if( parsing.normal() ) {
-    final_token = token;
-  }
-
   if( token == YYEOF && parsing.in_cdf() ) {
     if( yy_flex_debug) dbgmsg("deflecting EOF");
     parsing.at_eof(true);
-    return NO_CONDITION;
+    token = NO_CONDITION;
   }
 
   return token;
+}
+
+/*
+ * The CDF parser is a C++ parser.  It passes pointers to the semantic value
+ * and location as parameters to the lexer.  The generated lexer OTOH does not
+ * accept those parameters; rather it works with global variables in the
+ * old-fashioned C-style.
+ *
+ * Below we define the function the CDF parser calls to acquire a token.  It
+ * calls the lexer, which writes to its global variables, copies that output to
+ * the passed parameters, and returns the token.
+ */
+namespace cdf {
+  int cdflex( parser::value_type *value, cbl_loc_t *loc ) {
+    int tok = ::yylex();
+    *value = ydflval;
+    *loc = yylloc;
+    return tok;
+  }
 }
 
 /*
@@ -410,4 +525,5 @@ yylex(void) {
 // tokens.h is generated as needed from parse.h with tokens.h.gen
 current_tokens_t::tokenset_t::tokenset_t() {
 #include "token_names.h"
-};
+  // Reserved words that we don't use as terminals.
+}

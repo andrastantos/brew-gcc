@@ -274,7 +274,7 @@ package body Sem_Ch4 is
    is (Is_Visible_Operator (N => N, Typ => Typ)
          or else
            --  test for a rewritten Foo."+" call
-           (N /= Original_Node (N)
+           (Is_Rewrite_Substitution (N)
              and then Is_Effectively_Visible_Operator
                         (N => Original_Node (N), Typ => Typ))
          or else Checking_Potentially_Static_Expression
@@ -1812,7 +1812,7 @@ package body Sem_Ch4 is
         and then Has_Static_Predicate_Aspect (Exp_Type)
         and then Preanalysis_Active
       then
-         null;
+         Analyze_Choices (Alternatives (N), Exp_Type);
 
       --  Call Analyze_Choices and Check_Choices to do the rest of the work
 
@@ -2482,8 +2482,11 @@ package body Sem_Ch4 is
          Error_Msg_N ("object renaming or constant declaration expected", A);
       end Check_Action_OK;
 
+      --  Local variables
+
       A        : Node_Id;
       EWA_Scop : Entity_Id;
+      SE       : Scope_Stack_Entry;
 
    --  Start of processing for Analyze_Expression_With_Actions
 
@@ -2496,6 +2499,8 @@ package body Sem_Ch4 is
       Set_Scope  (EWA_Scop, Current_Scope);
       Set_Parent (EWA_Scop, N);
       Push_Scope (EWA_Scop);
+
+      Set_Scope_Link (N, EWA_Scop);
 
       --  If this Expression_With_Actions node comes from source, then it
       --  represents a declare_expression; increment the counter to take note
@@ -2514,10 +2519,32 @@ package body Sem_Ch4 is
 
       Analyze_Expression (Expression (N));
       Set_Etype (N, Etype (Expression (N)));
-      End_Scope;
 
       if Comes_From_Source (N) then
          In_Declare_Expr := In_Declare_Expr - 1;
+      end if;
+
+      --  If the analysis of the expression has created a transient
+      --  scope, we first need to save the transient scope and pop it.
+
+      if Scope_Is_Transient then
+         SE := Scope_Stack.Table (Scope_Stack.Last);
+         Scope_Stack.Decrement_Last;
+      else
+         SE.Is_Transient := False;
+      end if;
+
+      --  Remove the scope and its declarations from visibility. Note that
+      --  the scope is purely static and the EWA is not a master construct
+      --  (see AI22-0017) so the lifetime of the objects does not end here.
+
+      pragma Assert (Current_Scope = Scope_Link (N));
+      End_Scope;
+
+      --  Push again the transient scope, if any
+
+      if SE.Is_Transient then
+         Scope_Stack.Append (SE);
       end if;
    end Analyze_Expression_With_Actions;
 
@@ -3062,8 +3089,42 @@ package body Sem_Ch4 is
          Act_List : List_Id;
          Expr     : Node_Id;
          Inst_Id  : Entity_Id;
+         Par      : Node_Id;
+         Prev_Par : Node_Id;
 
       begin
+         Prev_Par := N;
+         Par := Parent (N);
+
+         --  A structural instance cannot be used as a formal package with the
+         --  current implementation of structural instantiation.
+
+         while Present (Par) loop
+            if Nkind (Par) in N_Generic_Declaration
+              and then Is_List_Member (Prev_Par)
+              and then
+                Generic_Formal_Declarations (Par) = List_Containing (Prev_Par)
+            then
+               Error_Msg_N
+                 ("structural instantiation cannot be used in generic formal"
+                  & " part", N);
+               Rewrite (N,
+                 Make_Raise_Program_Error (Sloc (N),
+                   Reason => PE_Explicit_Raise));
+               Analyze (N);
+               return;
+
+            else
+               --  Prevent the search from going too far
+
+               exit when Is_Statement (Par)
+                 or else Is_Body_Or_Package_Declaration (Par);
+            end if;
+
+            Prev_Par := Par;
+            Par := Parent (Par);
+         end loop;
+
          Act_List := New_List;
          Expr := First (Expressions (N));
          while Present (Expr) loop
@@ -3461,6 +3522,18 @@ package body Sem_Ch4 is
          if Nkind (R) = N_Error then
             Found := False;
 
+         elsif Is_Entity_Name (R) and then Is_Type (Entity (R)) then
+            --  If the tested type is tagged, then the tested expression
+            --  shall resolve to be of a type that is convertible to the
+            --  tested type; if untagged, the expected type of the tested
+            --  expression is the tested type (RM 4.5.2(3.1)).
+
+            if Is_Tagged_Type (Entity (R)) then
+               Found := Valid_Tagged_Conversion (N, Entity (R), T, False);
+            else
+               Found := Covers (Entity (R), T);
+            end if;
+
          --  Loop through the interpretations of the right operand
 
          elsif not Is_Overloaded (R) then
@@ -3524,6 +3597,8 @@ package body Sem_Ch4 is
    begin
       Analyze_Expression (L);
 
+      --  If there is no right operand, then a set of alternatives is present
+
       if No (R) then
          pragma Assert (Ada_Version >= Ada_2012);
 
@@ -3549,22 +3624,22 @@ package body Sem_Ch4 is
             end loop;
          end;
 
-      elsif Nkind (R) = N_Range
-        or else (Nkind (R) = N_Attribute_Reference
-                  and then Attribute_Name (R) = Name_Range)
-      then
-         Analyze_Expression (R);
-
-         Dummy := Find_Interp;
-
-      --  If not a range, it can be a subtype mark, or else it is a degenerate
-      --  membership test with a singleton value, i.e. a test for equality,
-      --  if the types are compatible.
+      --  Either a range, or a subtype mark, or else a degenerate membership
+      --  test with a singleton value, i.e. a test for equality.
 
       else
          Analyze_Expression (R);
 
-         if Is_Entity_Name (R) and then Is_Type (Entity (R)) then
+         if Nkind (R) = N_Range
+           or else (Nkind (R) = N_Attribute_Reference
+                     and then Attribute_Name (R) = Name_Range)
+         then
+            --  The error will be given during resolution if no valid
+            --  interpretation of the operands is found.
+
+            Dummy := Find_Interp;
+
+         elsif Is_Entity_Name (R) and then Is_Type (Entity (R)) then
             Find_Type (R);
             Check_Fully_Declared (Entity (R), R);
 
@@ -3573,6 +3648,27 @@ package body Sem_Ch4 is
                  ("subtype& has ghost predicate, "
                   & "not allowed in membership test",
                   R, Entity (R));
+
+            --  If no valid interpretation of the left operand is found, then
+            --  give an error message when the type is tagged; when it is not,
+            --  the error will be given during resolution instead.
+
+            elsif not Find_Interp
+              and then Is_Tagged_Type (Entity (R))
+            then
+               if Is_Class_Wide_Type (Etype (R))
+                 and then Is_Interface (Etype (R))
+               then
+                  Error_Msg_NE ("(Ada 2005) does not implement interface }",
+                                L, Root_Type (Entity (R)));
+
+               elsif From_Limited_With (Entity (R)) then
+                  Error_Msg_NE ("limited view of& not compatible with context",
+                                R, Entity (R));
+
+               else
+                  Error_Msg_N ("incompatible types", N);
+               end if;
             end if;
 
          elsif Ada_Version >= Ada_2012 and then Find_Interp then
@@ -3587,7 +3683,7 @@ package body Sem_Ch4 is
             Analyze (N);
             return;
 
-         else
+         elsif Nkind (R) not in N_Raise_xxx_Error then
             --  In all versions of the language, if we reach this point there
             --  is a previous error that will be diagnosed below.
 
@@ -4528,9 +4624,36 @@ package body Sem_Ch4 is
       Expr : constant Node_Id   := Expression (N);
       Mark : constant Entity_Id := Subtype_Mark (N);
 
-      I    : Interp_Index;
-      It   : Interp;
-      T    : Entity_Id;
+      function Same_Class_Wide_Type (Typ, CW_Typ : Entity_Id) return Boolean;
+      --  Return whether Typ is the same class-wide type as CW_Typ. This is
+      --  essentially an equality test modulo the Non_Limited_View attribute.
+
+      --------------------------
+      -- Same_Class_Wide_Type --
+      --------------------------
+
+      function Same_Class_Wide_Type (Typ, CW_Typ : Entity_Id) return Boolean is
+         Btyp : constant Entity_Id := Base_Type (Typ);
+
+      begin
+         if Ekind (Btyp) /= E_Class_Wide_Type then
+            return False;
+         end if;
+
+         if Has_Non_Limited_View (Btyp) then
+            return Non_Limited_View (Btyp) = Base_Type (CW_Typ);
+         else
+            return Btyp = Base_Type (CW_Typ);
+         end if;
+      end Same_Class_Wide_Type;
+
+      --  Local variables
+
+      I  : Interp_Index;
+      It : Interp;
+      T  : Entity_Id;
+
+   --  Start of processing for Analyze_Qualified_Expression
 
    begin
       Find_Type (Mark);
@@ -4569,7 +4692,7 @@ package body Sem_Ch4 is
 
       if Is_Class_Wide_Type (T) then
          if not Is_Overloaded (Expr) then
-            if Base_Type (Etype (Expr)) /= Base_Type (T)
+            if not Same_Class_Wide_Type (Etype (Expr), T)
               and then Etype (Expr) /= Raise_Type
             then
                if Nkind (Expr) = N_Aggregate then
@@ -4583,7 +4706,7 @@ package body Sem_Ch4 is
             Get_First_Interp (Expr, I, It);
 
             while Present (It.Nam) loop
-               if Base_Type (It.Typ) /= Base_Type (T) then
+               if not Same_Class_Wide_Type (It.Typ, T) then
                   Remove_Interp (I);
                end if;
 
@@ -4637,6 +4760,7 @@ package body Sem_Ch4 is
 
       Cond    : constant Node_Id := Condition (N);
       Loc     : constant Source_Ptr := Sloc (N);
+      Filter  : Node_Id;
       Loop_Id : Entity_Id;
       QE_Scop : Entity_Id;
 
@@ -4732,8 +4856,10 @@ package body Sem_Ch4 is
 
       if Present (Iterator_Specification (N)) then
          Loop_Id := Defining_Identifier (Iterator_Specification (N));
+         Filter  := Iterator_Filter (Iterator_Specification (N));
       else
          Loop_Id := Defining_Identifier (Loop_Parameter_Specification (N));
+         Filter  := Iterator_Filter (Loop_Parameter_Specification (N));
       end if;
 
       declare
@@ -4782,11 +4908,17 @@ package body Sem_Ch4 is
       begin
          if Warn_On_Suspicious_Contract
            and then not Is_Internal_Name (Chars (Loop_Id))
+           and then not Has_Junk_Name (Loop_Id)
          then
-            if not Referenced (Loop_Id, Cond) then
-               Error_Msg_N ("?.t?unused variable &", Loop_Id);
-            else
+            --  If there is a filter, then it is less clear whether the loop
+            --  variable is used or not; just ignore this case, for simplicity.
+
+            if Present (Filter) then
+               null;
+            elsif Referenced (Loop_Id, Cond) then
                Check_Subexpr (Cond, Kind => Full);
+            elsif not Is_Trivial_Boolean (Cond) then
+               Error_Msg_N ("?.t?unused variable &", Loop_Id);
             end if;
          end if;
       end;
@@ -5354,18 +5486,19 @@ package body Sem_Ch4 is
 
          --  Another special case: the type is an extension of a private
          --  type T, either is an actual in an instance or is immediately
-         --  visible, and we are in the body of the instance, which means
-         --  the generic body had a full view of the type declaration for
-         --  T or some ancestor that defines the component in question.
+         --  visible, and we are in an instance, which means the generic
+         --  unit had a full view of the type declaration of T or some
+         --  ancestor that defines the component in question.
+
          --  This happens because Is_Visible_Component returned False on
          --  this component, as T or the ancestor is still private since
          --  the Has_Private_View mechanism is bypassed because T or the
-         --  ancestor is not directly referenced in the generic body.
+         --  ancestor is not directly referenced in the generic unit.
 
          if Is_Derived_Type (Typ)
            and then (Used_As_Generic_Actual (Base_Type (Typ))
                       or else Is_Immediately_Visible (Typ))
-           and then In_Instance_Body
+           and then In_Instance
            and then Present (Parent_Subtype (Typ))
          then
             Find_Component_In_Instance (Parent_Subtype (Typ));
@@ -10623,27 +10756,48 @@ package body Sem_Ch4 is
          function Extended_Primitive_Ops (T : Entity_Id) return Elist_Id is
             Type_Scope : constant Entity_Id := Scope (T);
             Op_List    : Elist_Id := Primitive_Operations (T);
-            Op_Found   : Boolean := False;
+            Op_Found   : Boolean  := False;
+
          begin
             if Needs_Construction (T) then
-               --  to include all constructors iterate over T's entities
-
                declare
-                  Cursor : Entity_Id := Next_Entity (T);
-               begin
-                  while Present (Cursor) loop
-                     if Is_Constructor (Cursor) then
-                        if not Op_Found then
-                           --  Copy list of primitives so it is not affected
-                           --  for other uses.
+                  Callable_Ctors : Elist_Id;
+                  Abstract_Ctors : Elist_Id;
+                  Elmt           : Elmt_Id;
 
-                           Op_List := New_Copy_Elist (Op_List);
-                           Op_Found := True;
-                        end if;
-                        Append_Elmt (Cursor, Op_List);
+               begin
+                  Collect_Constructors (T, Callable_Ctors, Abstract_Ctors);
+
+                  --  Add callable constructors (suppressing abstract
+                  --  constructors to avoid reporting spurious ambiguity);
+                  --  if no callable constructor is available then add
+                  --  abstract constructors; required to allow subprogram
+                  --  Check_Hidden_Abstract_Constructor_Call to detect
+                  --  and report calls to them from outside their enclosing
+                  --  package.
+
+                  declare
+                     Ctors_To_Add : constant Elist_Id :=
+                       (if not Is_Empty_Elmt_List (Callable_Ctors)
+                        then Callable_Ctors
+                        else Abstract_Ctors);
+
+                  begin
+                     Elmt := First_Elmt (Ctors_To_Add);
+
+                     if Present (Elmt) then
+                        --  Copy list of primitives so it is not
+                        --  affected for other uses.
+
+                        Op_List  := New_Copy_Elist (Op_List);
+                        Op_Found := True;
+
+                        while Present (Elmt) loop
+                           Append_Elmt (Node (Elmt), Op_List);
+                           Next_Elmt (Elmt);
+                        end loop;
                      end if;
-                     Next_Entity (Cursor);
-                  end loop;
+                  end;
                end;
             end if;
 
@@ -11286,10 +11440,6 @@ package body Sem_Ch4 is
       E  : Elmt_Id;
 
    begin
-      if not Is_Tagged_Type (T) then
-         return;
-      end if;
-
       E := First_Elmt (Primitive_Operations (Base_Type (T)));
       while Present (E) loop
          Op := Node (E);

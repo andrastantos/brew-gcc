@@ -376,7 +376,7 @@ struct variable
   char n_var_parts;
 
   /* What type of DV this is, according to enum onepart_enum.  */
-  ENUM_BITFIELD (onepart_enum) onepart : CHAR_BIT;
+  enum onepart_enum onepart : CHAR_BIT;
 
   /* True if this variable_def struct is currently in the
      changed_variables hash table.  */
@@ -452,7 +452,7 @@ static inline dvuid
 dv_uid (decl_or_value dv)
 {
   if (dv_is_value_p (dv))
-    return CSELIB_VAL_PTR (dv_as_value (dv))->uid;
+    return CSELIB_VAL_UID (dv_as_value (dv));
   else
     return DECL_UID (dv_as_decl (dv));
 }
@@ -1711,7 +1711,7 @@ shared_hash_find (shared_hash *vars, decl_or_value dv)
   return shared_hash_find_1 (vars, dv, dv_htab_hash (dv));
 }
 
-/* Return true if TVAL is better than CVAL as a canonival value.  We
+/* Return true if TVAL is better than CVAL as a canonical value.  We
    choose lowest-numbered VALUEs, using the RTX address as a
    tie-breaker.  The idea is to arrange them into a star topology,
    such that all of them are at most one step away from the canonical
@@ -1723,8 +1723,7 @@ shared_hash_find (shared_hash *vars, decl_or_value dv)
 static inline bool
 canon_value_cmp (rtx tval, rtx cval)
 {
-  return !cval
-    || CSELIB_VAL_PTR (tval)->uid < CSELIB_VAL_PTR (cval)->uid;
+  return !cval || CSELIB_VAL_UID (tval) < CSELIB_VAL_UID (cval);
 }
 
 static bool dst_can_be_shared;
@@ -4531,7 +4530,8 @@ variable_post_merge_new_vals (variable **slot, dfset_post_merge *dfpm)
 		      if (dump_file)
 			fprintf (dump_file,
 				 "Created new value %u:%u for reg %i\n",
-				 v->uid, v->hash, REGNO (node->loc));
+				 CSELIB_VAL_UID (v->val_rtx), v->hash,
+				 REGNO (node->loc));
 		    }
 
 		  var_reg_decl_set (*dfpm->permp, node->loc,
@@ -5900,7 +5900,7 @@ reverse_op (rtx val, const_rtx expr, rtx_insn *insn)
      prefer non-ENTRY_VALUE locations whenever possible.  */
   for (l = v->locs, count = 0; l; l = l->next, count++)
     if (CONSTANT_P (l->loc)
-	&& (GET_CODE (l->loc) != CONST || !references_value_p (l->loc, 0)))
+	&& (GET_CODE (l->loc) != CONST || !references_value_p (l->loc)))
       return;
     /* Avoid creating too large locs lists.  */
     else if (count == param_max_vartrack_reverse_op_size)
@@ -6253,7 +6253,7 @@ static rtx call_arguments;
 /* Compute call_arguments.  */
 
 static void
-prepare_call_arguments (basic_block bb, rtx_insn *insn)
+prepare_call_arguments (basic_block bb, rtx_call_insn *insn)
 {
   rtx link, x, call;
   rtx prev, cur, next;
@@ -8788,7 +8788,7 @@ emit_note_insn_var_location (variable **varp, emit_note_data *data)
       mode = GET_MODE (var->var_part[i].cur_loc);
       if (mode == VOIDmode && var->onepart)
 	mode = DECL_MODE (decl);
-      /* We ony track subparts of constant-sized objects, since at present
+      /* We only track subparts of constant-sized objects, since at present
 	 there's no representation for polynomial pieces.  */
       if (!GET_MODE_SIZE (mode).is_constant (&size))
 	{
@@ -8898,7 +8898,7 @@ emit_note_insn_var_location (variable **varp, emit_note_data *data)
     {
       note = emit_note_after (NOTE_INSN_VAR_LOCATION, insn);
       if (where == EMIT_NOTE_AFTER_CALL_INSN)
-	NOTE_DURING_CALL_P (note) = true;
+	set_note_during_call_p (note, true);
     }
   else
     {
@@ -10013,7 +10013,7 @@ vt_init_cfa_base (void)
 
 /* Reemit INSN, a MARKER_DEBUG_INSN, as a note.  */
 
-static rtx_insn *
+static rtx_note *
 reemit_marker_as_note (rtx_insn *insn)
 {
   gcc_checking_assert (DEBUG_MARKER_INSN_P (insn));
@@ -10025,7 +10025,7 @@ reemit_marker_as_note (rtx_insn *insn)
     case NOTE_INSN_BEGIN_STMT:
     case NOTE_INSN_INLINE_ENTRY:
       {
-	rtx_insn *note = NULL;
+	rtx_note *note = NULL;
 	if (cfun->debug_nonbind_markers)
 	  {
 	    note = emit_note_before (kind, insn);
@@ -10145,7 +10145,7 @@ vt_initialize (void)
 #endif
       elim = (ira_use_lra_p
 	      ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-	      : eliminate_regs (reg, VOIDmode, NULL_RTX));
+	      : eliminate_regs (reg, VOIDmode, nullptr));
       if (elim != reg)
 	{
 	  if (GET_CODE (elim) == PLUS)
@@ -10167,7 +10167,7 @@ vt_initialize (void)
 #endif
       elim = (ira_use_lra_p
 	      ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-	      : eliminate_regs (reg, VOIDmode, NULL_RTX));
+	      : eliminate_regs (reg, VOIDmode, nullptr));
       if (elim != reg)
 	{
 	  if (GET_CODE (elim) == PLUS)
@@ -10201,7 +10201,7 @@ vt_initialize (void)
 #endif
       elim = (ira_use_lra_p
 	      ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-	      : eliminate_regs (reg, VOIDmode, NULL_RTX));
+	      : eliminate_regs (reg, VOIDmode, nullptr));
       if (elim != reg)
 	{
 	  if (GET_CODE (elim) == PLUS)
@@ -10295,8 +10295,8 @@ vt_initialize (void)
 
 		  if (MAY_HAVE_DEBUG_BIND_INSNS)
 		    {
-		      if (CALL_P (insn))
-			prepare_call_arguments (bb, insn);
+		      if (auto call = dyn_cast<rtx_call_insn *> (insn))
+			prepare_call_arguments (bb, call);
 		      cselib_process_insn (insn);
 		      if (dump_file && (dump_flags & TDF_DETAILS))
 			{

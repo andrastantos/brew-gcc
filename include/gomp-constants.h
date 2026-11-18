@@ -160,7 +160,7 @@ enum gomp_map_kind
 					 | GOMP_MAP_FLAG_SPECIAL_2
 					 | GOMP_MAP_FLAG_SPECIAL | 0),
     /* On a location of a pointer/reference that is assumed to be already mapped
-       earlier, store the translated address of the preceeding mapping.
+       earlier, store the translated address of the preceding mapping.
        No refcount is bumped by this, and the store is done unconditionally.  */
     GOMP_MAP_ALWAYS_POINTER =		(GOMP_MAP_FLAG_SPECIAL_2
 					 | GOMP_MAP_FLAG_SPECIAL | 1),
@@ -194,6 +194,11 @@ enum gomp_map_kind
        by OpenMP.  */
     GOMP_MAP_ATTACH_ZERO_LENGTH_ARRAY_SECTION
       =					(GOMP_MAP_DEEP_COPY | 2),
+
+    /* Used to pass a descriptor for an OpenMP uses_allocators clause,
+       also serves as an effective 'firstprivate' clause for the allocator
+       variable.  */
+    GOMP_MAP_USES_ALLOCATORS =		(GOMP_MAP_DEEP_COPY | 3),
 
     /* Internal to GCC, not used in libgomp.  */
     /* Do not map, but pointer assign a pointer instead.  */
@@ -332,7 +337,7 @@ enum gomp_map_kind
 /* Versions of libgomp and device-specific plugins.  GOMP_VERSION
    should be incremented whenever an ABI-incompatible change is introduced
    to the plugin interface defined in libgomp/libgomp.h.  */
-#define GOMP_VERSION	3
+#define GOMP_VERSION	4
 #define GOMP_VERSION_NVIDIA_PTX 1
 #define GOMP_VERSION_GCN 3
 
@@ -381,7 +386,7 @@ enum gomp_map_kind
 /* Target argument index of THREAD_LIMIT.  */
 #define GOMP_TARGET_ARG_THREAD_LIMIT		(2 << 8)
 
-/* If the value is directly embeded in target argument, it should be a 16-bit
+/* If the value is directly embedded in target argument, it should be a 16-bit
    at most and shifted by this many bits.  */
 #define GOMP_TARGET_ARG_VALUE_SHIFT		16
 
@@ -402,8 +407,10 @@ enum gomp_map_kind
 #define GOMP_OMPX_PREDEF_MEMSPACE_MIN	200
 #define GOMP_OMPX_PREDEF_MEMSPACE_MAX	200
 
-/* Predefined allocator with access == thread.  */
-#define GOMP_OMP_PREDEF_ALLOC_THREADS	8
+/* Predefined allocator with access == cgroup, pteam, and thread.  */
+#define GOMP_OMP_PREDEF_ALLOC_CGROUP	6
+#define GOMP_OMP_PREDEF_ALLOC_PTEAM	7
+#define GOMP_OMP_PREDEF_ALLOC_THREAD	8
 
 /* Flag values for OpenMP 'requires' directive features.  */
 // compiler use only: OMP_REQUIRES_ATOMIC_DEFAULT_MEM_ORDER  0xf
@@ -432,5 +439,11 @@ enum gomp_map_kind
 
 /* Identifiers of device-specific target arguments.  */
 #define GOMP_TARGET_ARG_HSA_KERNEL_ATTRIBUTES	(1 << 8)
+
+/* GOMP_barrier{,_cancel}_ext argument.
+   TODO turn this into an enum?  */
+#define GOMP_BARRIER_IMPLICIT_PARALLEL 0
+#define GOMP_BARRIER_IMPLICIT_WORKSHARE 1
+#define GOMP_BARRIER_EXPLICIT 2
 
 #endif

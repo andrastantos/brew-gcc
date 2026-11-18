@@ -31,7 +31,7 @@
 
 AC_INIT(package-unused, version-unused,, libbacktrace)
 AC_CONFIG_SRCDIR(backtrace.h)
-AC_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS([config.h])
 
 if test -n "${with_target_subdir}"; then
   AM_ENABLE_MULTILIB(, ..)
@@ -83,7 +83,6 @@ AC_CHECK_PROG(DWZ, dwz, dwz)
 AM_CONDITIONAL(HAVE_DWZ, test "$DWZ" != "")
 
 LT_INIT
-AM_PROG_LIBTOOL
 
 AM_CONDITIONAL([ENABLE_DARWIN_AT_RPATH], [test x$enable_darwin_at_rpath = xyes])
 
@@ -546,9 +545,18 @@ AC_LINK_IFELSE([AC_LANG_PROGRAM(,)],
 LDFLAGS=$LDFLAGS_hold])
 AM_CONDITIONAL(HAVE_COMPRESSED_DEBUG_ZLIB_GABI, test "$libgo_cv_ld_compress_zlib_gabi" = yes)
 
-AC_CHECK_LIB([zstd], [ZSTD_compress],
-    [AC_DEFINE(HAVE_ZSTD, 1, [Define if -lzstd is available.])])
-AM_CONDITIONAL(HAVE_ZSTD, test "$ac_cv_lib_zstd_ZSTD_compress" = yes)
+# External libzstd is optional; do not require it for cross-target builds.
+zstd_failure_is_fatal=yes
+if test -n "$with_target_subdir" \
+   && test -n "$with_cross_host" && test "$with_cross_host" != no; then
+  zstd_cross_host=`$SHELL "$ac_aux_dir/config.sub" "$with_cross_host"` \
+    || AC_MSG_ERROR([invalid cross host: $with_cross_host])
+  if test "$zstd_cross_host" != "$host"; then
+    zstd_failure_is_fatal=no
+  fi
+fi
+AC_ZSTD([$zstd_failure_is_fatal])
+AM_CONDITIONAL(HAVE_ZSTD, test "$zstd_enabled" = yes)
 
 dnl Test whether the linker supports --compress-debug-sections=zstd option.
 AC_CACHE_CHECK([whether --compress-debug-sections=zstd is supported],
@@ -564,6 +572,20 @@ AM_CONDITIONAL(HAVE_COMPRESSED_DEBUG_ZSTD, test "$libgo_cv_ld_compress_zstd" = y
 AC_ARG_VAR(OBJCOPY, [location of objcopy])
 AC_CHECK_PROG(OBJCOPY, objcopy, objcopy,)
 AC_CHECK_PROG(READELF, readelf, readelf)
+
+AC_CACHE_CHECK([whether objcopy supports --strip-debug],
+[libbacktrace_cv_objcopy_stripdebug],
+[if test -n "${with_target_subdir}"; then
+  libbacktrace_cv_objcopy_stripdebug=no
+elif ! test -n "${OBJCOPY}"; then
+  libbacktrace_cv_objcopy_stripdebug=no
+elif ${OBJCOPY} --help | grep strip-debug >/dev/null 2>&1; then
+  libbacktrace_cv_objcopy_stripdebug=yes
+else
+  libbacktrace_cv_objcopy_stripdebug=no
+fi])
+AM_CONDITIONAL(HAVE_OBJCOPY_STRIPDEBUG, test "$libbacktrace_cv_objcopy_stripdebug" = yes)
+
 AC_CACHE_CHECK([whether objcopy supports debuglink],
 [libbacktrace_cv_objcopy_debuglink],
 [if test -n "${with_target_subdir}"; then

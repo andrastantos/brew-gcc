@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/debugging_lines__not_active_.out" }
        >>SOURCE FIXED
        IDENTIFICATION   DIVISION.

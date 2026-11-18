@@ -44,7 +44,7 @@ namespace ana {
    Specifically, we want to:
 
    (a) mark asm outputs and certain other regions as having been written to,
-       to avoid false postives from -Wanalyzer-use-of-uninitialized-value.
+       to avoid false positives from -Wanalyzer-use-of-uninitialized-value.
 
    (b) identify some of these stmts as "deterministic" so that we can
        write consistent outputs given consistent inputs, so that we can
@@ -219,7 +219,7 @@ region_model::on_asm_stmt (const gasm *stmt, region_model_context *ctxt)
       const svalue *src_sval = get_rvalue (src_expr, ctxt);
       check_for_poison (src_sval, src_expr, nullptr, ctxt);
       input_svals.quick_push (src_sval);
-      reachable_regs.handle_sval (src_sval);
+      reachable_regs.handle_value (*src_sval);
 
       if (logger)
 	{
@@ -261,10 +261,9 @@ region_model::on_asm_stmt (const gasm *stmt, region_model_context *ctxt)
 	continue;
 
       binding_cluster *cluster
-	= m_store.get_or_create_cluster (*m_mgr->get_store_manager (),
-					 base_reg);
-      cluster->on_asm (stmt, m_mgr->get_store_manager (),
-		       conjured_purge (this, ctxt));
+	= m_store.get_or_create_cluster (base_reg,
+					 get_baseline_state ());
+      cluster->on_asm (stmt, conjured_purge (this, ctxt));
     }
 
   /* Update the outputs.  */

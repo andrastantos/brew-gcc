@@ -366,6 +366,7 @@ public:
   void visit (UseDeclaration &use_decl);
   void visit (Function &function);
   void visit (TypeAlias &type_alias);
+  void visit (TraitAlias &trait_alias);
   void visit (StructStruct &struct_item);
   void visit (TupleStruct &tuple_struct);
   void visit (EnumItem &item);
@@ -424,8 +425,6 @@ public:
   void visit (TuplePatternItemsHasRest &tuple_items);
   void visit (TuplePattern &pattern);
   void visit (GroupedPattern &pattern);
-  void visit (SlicePatternItemsNoRest &items);
-  void visit (SlicePatternItemsHasRest &items);
   void visit (SlicePattern &pattern);
   void visit (AltPattern &pattern);
 

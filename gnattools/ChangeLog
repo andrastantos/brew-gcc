@@ -1,3 +1,46 @@
+2026-11-17  Zhongteng Gui  <dragon-archer@outlook.com>
+
+	* Makefile.in (CXX_LFLAGS): Add XGCC_FLAGS_FOR_TARGET.
+
+2026-11-12  Alexandre Oliva  <oliva@adacore.com>
+
+	* configure: Rebuild.
+	* Makefile.in (ADAC): Use configured value.
+
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* configure: Regenerate.
+
+2026-11-09  Alexandre Oliva  <oliva@adacore.com>
+
+	* Makefile.in (ADAC): New.
+	(TOOLS_FLAGS_TO_PASS_CROSS): Pass it down.
+	(TOOLS_FLAGS_TO_PASS_NATIVE, TOOLS_FLAGS_TO_PASS_RE): Pass
+	xgcc down instead.
+
+2026-10-21  Alexey Pavlov  <alexey.pawlow@gmail.com>
+
+	* Makefile.in: Enable EXTRA_GNATTOOLS for gnattools-native
+	target.
+
+2026-10-21  Zhongteng Gui  <dragon-archer@outlook.com>
+
+	* configure: Regenerate.
+	* configure.ac: Correct cygwin32 to cygwin.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Replace AC_HELP_STRING with AS_HELP_STRING.
+
+2026-05-10  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/125232
+	* Makefile.in (ADA_FOR_BUILD): Delete.
+	(ADA_FOR_TARGET): Likewise.
+	(LDFLAGS): Set to @LDFLAGS@.
+
 2026-01-08  Olivier Hainque  <hainque@adacore.com>
 	    Alexandre Oliva  <oliva@adacore.com>
 

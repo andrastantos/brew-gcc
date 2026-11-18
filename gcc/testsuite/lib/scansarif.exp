@@ -113,7 +113,7 @@ proc verify-sarif-file { args } {
     if { $version == "2.1" } {
 	set schema_file $srcdir/lib/sarif-schema-2.1.0.json
     } elseif { $version == "2.2" } {
-	set schema_file $srcdir/lib/sarif-schema-2.2-prerelease-2024-08-08.json
+	set schema_file $srcdir/lib/sarif-schema-2.2-prerelease-csd01.json
     } else {
 	fail "unrecognized sarif version: $version"
 	return
@@ -173,29 +173,32 @@ proc run-sarif-pytest { args } {
     
     verbose "PYTHONPATH=[getenv PYTHONPATH]" 2
 
-    spawn -noecho python3 -m pytest --color=no -rap -s --tb=no $srcdir/$subdir/$pytest_script
+    spawn -noecho {*}[pytest_invoke] $srcdir/$subdir/$pytest_script
 
     if [info exists old_PYTHONPATH] {
 	setenv PYTHONPATH ${old_PYTHONPATH}
     }
 
     set prefix "\[^\r\n\]*"
+    set timeout 300
     expect {
-      -re "FAILED($prefix)\[^\r\n\]+\r\n" {
+      -re "FAILED($prefix)\r\n" {
        set output [sarif-pytest-format-line $testcase $pytest_script $expect_out(1,string)]
        fail $output
        exp_continue
       }
-      -re "ERROR($prefix)\[^\r\n\]+\r\n" {
+      -re "ERROR($prefix)\r\n" {
        set output [sarif-pytest-format-line $testcase $pytest_script $expect_out(1,string)]
        fail $output
        exp_continue
       }
-      -re "PASSED($prefix)\[^\r\n\]+\r\n" {
+      -re "PASSED($prefix)\r\n" {
        set output [sarif-pytest-format-line $testcase $pytest_script $expect_out(1,string)]
        pass $output
        exp_continue
       }
+      timeout {
+	  fail "$subdir/$testcase $pytest_script timed out"
+      }
     }
 }
-

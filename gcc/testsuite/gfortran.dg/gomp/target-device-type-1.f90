@@ -7,7 +7,7 @@
 !$omp target device_type ( any )
 !$omp end target
 
-!$omp target device_type ( nohost )  ! { dg-message "sorry, unimplemented: only the 'device_type\\(any\\)' is supported" }
+!$omp target device_type ( nohost )
 !$omp end target
 
 !$omp target device_type ( host )

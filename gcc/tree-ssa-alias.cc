@@ -60,7 +60,7 @@ along with GCC; see the file COPYING3.  If not see
    a generation count for memory references.
 
    SSA_NAME pointers may have associated points-to information
-   accessible via the SSA_NAME_PTR_INFO macro.  Flow-insensitive
+   accessible via ssa_name_pt_solution.  Flow-insensitive
    points-to information is (re-)computed by the TODO_rebuild_alias
    pass manager todo.  Points-to information is also used for more
    precise tracking of call-clobbered and call-used variables and
@@ -220,23 +220,47 @@ dump_alias_stats (FILE *s)
 bool
 ptr_deref_may_alias_global_p (tree ptr, bool escaped_local_p)
 {
-  struct ptr_info_def *pi;
+  const pt_solution *pt;
 
   /* If we end up with a pointer constant here that may point
      to global memory.  */
-  if (TREE_CODE (ptr) != SSA_NAME)
+  if (TREE_CODE (ptr) != SSA_NAME || !POINTER_TYPE_P (TREE_TYPE (ptr)))
     return true;
 
-  pi = SSA_NAME_PTR_INFO (ptr);
+  pt = ssa_name_pt_solution (ptr);
 
   /* If we do not have points-to information for this variable,
      we have to punt.  */
-  if (!pi)
+  if (!pt)
     return true;
 
   /* ???  This does not use TBAA to prune globals ptr may not access.  */
-  return pt_solution_includes_global (&pi->pt, escaped_local_p);
+  return pt_solution_includes_global (pt, escaped_local_p);
 }
+
+/* Return true, if dereferencing PTR may alias with a local automatic
+   variable.  */
+
+bool
+ptr_deref_may_alias_auto_p (tree ptr)
+{
+  const pt_solution *pt;
+
+  /* If we end up with a pointer constant here that may point
+     to local stack memory.  */
+  if (TREE_CODE (ptr) != SSA_NAME || !POINTER_TYPE_P (TREE_TYPE (ptr)))
+    return true;
+
+  pt = ssa_name_pt_solution (ptr);
+
+  /* If we do not have points-to information for this variable,
+     we have to punt.  */
+  if (!pt)
+    return true;
+
+  return pt_solution_includes_auto (pt);
+}
+
 
 /* Return true if dereferencing PTR may alias DECL.
    The caller is responsible for applying TBAA to see if PTR
@@ -245,13 +269,13 @@ ptr_deref_may_alias_global_p (tree ptr, bool escaped_local_p)
 static bool
 ptr_deref_may_alias_decl_p (tree ptr, tree decl)
 {
-  struct ptr_info_def *pi;
+  const pt_solution *pt;
 
   /* Conversions are irrelevant for points-to information and
      data-dependence analysis can feed us those.  */
   STRIP_NOPS (ptr);
 
-  /* Anything we do not explicilty handle aliases.  */
+  /* Anything we do not explicitly handle aliases.  */
   if ((TREE_CODE (ptr) != SSA_NAME
        && TREE_CODE (ptr) != ADDR_EXPR
        && TREE_CODE (ptr) != POINTER_PLUS_EXPR)
@@ -302,11 +326,11 @@ ptr_deref_may_alias_decl_p (tree ptr, tree decl)
 
   /* If we do not have useful points-to information for this pointer
      we cannot disambiguate anything else.  */
-  pi = SSA_NAME_PTR_INFO (ptr);
-  if (!pi)
+  pt = ssa_name_pt_solution (ptr);
+  if (!pt)
     return true;
 
-  return pt_solution_includes (&pi->pt, decl);
+  return pt_solution_includes (pt, decl);
 }
 
 /* Return true if dereferenced PTR1 and PTR2 may alias.
@@ -316,7 +340,7 @@ ptr_deref_may_alias_decl_p (tree ptr, tree decl)
 bool
 ptr_derefs_may_alias_p (tree ptr1, tree ptr2)
 {
-  struct ptr_info_def *pi1, *pi2;
+  const pt_solution *pt1, *pt2;
 
   /* Conversions are irrelevant for points-to information and
      data-dependence analysis can feed us those.  */
@@ -389,14 +413,14 @@ ptr_derefs_may_alias_p (tree ptr1, tree ptr2)
 
   /* If we do not have useful points-to information for either pointer
      we cannot disambiguate anything else.  */
-  pi1 = SSA_NAME_PTR_INFO (ptr1);
-  pi2 = SSA_NAME_PTR_INFO (ptr2);
-  if (!pi1 || !pi2)
+  pt1 = ssa_name_pt_solution (ptr1);
+  pt2 = ssa_name_pt_solution (ptr2);
+  if (!pt1 || !pt2)
     return true;
 
   /* ???  This does not use TBAA to prune decls from the intersection
      that not both pointers may access.  */
-  return pt_solutions_intersect (&pi1->pt, &pi2->pt);
+  return pt_solutions_intersect (pt1, pt2);
 }
 
 /* Return true if dereferencing PTR may alias *REF.
@@ -465,13 +489,13 @@ ptrs_compare_unequal (tree ptr1, tree ptr2)
     /* Other code handles this correctly, no need to duplicate it here.  */;
   else if (obj1 && TREE_CODE (ptr2) == SSA_NAME)
     {
-      struct ptr_info_def *pi = SSA_NAME_PTR_INFO (ptr2);
+      const pt_solution *pt = ssa_name_pt_solution (ptr2);
       /* We may not use restrict to optimize pointer comparisons.
          See PR71062.  So we have to assume that restrict-pointed-to
 	 may be in fact obj1.  */
-      if (!pi
-	  || pi->pt.vars_contains_restrict
-	  || pi->pt.vars_contains_interposable)
+      if (!pt
+	  || pt->vars_contains_restrict
+	  || pt->vars_contains_interposable)
 	return false;
       if (VAR_P (obj1)
 	  && (TREE_STATIC (obj1) || DECL_EXTERNAL (obj1)))
@@ -483,34 +507,34 @@ ptrs_compare_unequal (tree ptr1, tree ptr2)
 	      || ! decl_binds_to_current_def_p (obj1))
 	    return false;
 	}
-      return !pt_solution_includes (&pi->pt, obj1);
+      return !pt_solution_includes (pt, obj1);
     }
   else if (TREE_CODE (ptr1) == SSA_NAME)
     {
-      struct ptr_info_def *pi1 = SSA_NAME_PTR_INFO (ptr1);
-      if (!pi1
-	  || pi1->pt.vars_contains_restrict
-	  || pi1->pt.vars_contains_interposable)
+      const pt_solution *pt1 = ssa_name_pt_solution (ptr1);
+      if (!pt1
+	  || pt1->vars_contains_restrict
+	  || pt1->vars_contains_interposable)
 	return false;
-      if (integer_zerop (ptr2) && !pi1->pt.null)
+      if (integer_zerop (ptr2) && ptr_nonnull_p (ptr1))
 	return true;
       if (TREE_CODE (ptr2) == SSA_NAME)
 	{
-	  struct ptr_info_def *pi2 = SSA_NAME_PTR_INFO (ptr2);
-	  if (!pi2
-	      || pi2->pt.vars_contains_restrict
-	      || pi2->pt.vars_contains_interposable)
+	  const pt_solution *pt2 = ssa_name_pt_solution (ptr2);
+	  if (!pt2
+	      || pt2->vars_contains_restrict
+	      || pt2->vars_contains_interposable)
 	    return false;
-	  if ((!pi1->pt.null || !pi2->pt.null)
+	  if ((ptr_nonnull_p (ptr1) || ptr_nonnull_p (ptr2))
 	      /* ???  We do not represent FUNCTION_DECL and LABEL_DECL
 		 in pt.vars but only set pt.vars_contains_nonlocal.  This
 		 makes compares involving those and other nonlocals
 		 imprecise.  */
-	      && (!pi1->pt.vars_contains_nonlocal
-		  || !pi2->pt.vars_contains_nonlocal)
-	      && (!pt_solution_includes_const_pool (&pi1->pt)
-		  || !pt_solution_includes_const_pool (&pi2->pt)))
-	    return !pt_solutions_intersect (&pi1->pt, &pi2->pt);
+	      && (!pt1->vars_contains_nonlocal
+		  || !pt2->vars_contains_nonlocal)
+	      && (!pt_solution_includes_const_pool (pt1)
+		  || !pt_solution_includes_const_pool (pt2)))
+	    return !pt_solutions_intersect (pt1, pt2);
 	}
     }
 
@@ -618,14 +642,14 @@ dump_alias_info (FILE *file)
 
   FOR_EACH_SSA_NAME (i, ptr, cfun)
     {
-      struct ptr_info_def *pi;
+      const pt_solution *pt;
 
       if (!POINTER_TYPE_P (TREE_TYPE (ptr))
 	  || SSA_NAME_IN_FREE_LIST (ptr))
 	continue;
 
-      pi = SSA_NAME_PTR_INFO (ptr);
-      if (pi)
+      pt = ssa_name_pt_solution (ptr);
+      if (pt)
 	dump_points_to_info_for (file, ptr);
     }
 
@@ -645,7 +669,7 @@ debug_alias_info (void)
 /* Dump the points-to set *PT into FILE.  */
 
 void
-dump_points_to_solution (FILE *file, struct pt_solution *pt)
+dump_points_to_solution (FILE *file, const pt_solution *pt)
 {
   if (pt->anything)
     fprintf (file, ", points-to anything");
@@ -658,9 +682,6 @@ dump_points_to_solution (FILE *file, struct pt_solution *pt)
 
   if (pt->ipa_escaped)
     fprintf (file, ", points-to unit escaped");
-
-  if (pt->null)
-    fprintf (file, ", points-to NULL");
 
   if (pt->const_pool)
     fprintf (file, ", points-to const-pool");
@@ -728,12 +749,12 @@ debug (pt_solution *ptr)
 void
 dump_points_to_info_for (FILE *file, tree ptr)
 {
-  struct ptr_info_def *pi = SSA_NAME_PTR_INFO (ptr);
+  const pt_solution *pt = ssa_name_pt_solution (ptr);
 
   print_generic_expr (file, ptr, dump_flags);
 
-  if (pi)
-    dump_points_to_solution (file, &pi->pt);
+  if (pt)
+    dump_points_to_solution (file, pt);
   else
     fprintf (file, ", points-to anything");
 
@@ -854,7 +875,7 @@ ao_ref_alignment (ao_ref *ref, unsigned int *align,
     return get_object_alignment_1 (ref->ref, align, bitpos);
 
   /* When we just have ref->base we cannot use get_object_alignment since
-     that will eventually use the type of the appearant access while for
+     that will eventually use the type of the apparent access while for
      example ao_ref_init_from_ptr_and_range is not careful to adjust that.  */
   *align = BITS_PER_UNIT;
   HOST_WIDE_INT offset;
@@ -1124,7 +1145,7 @@ component_ref_to_zero_sized_trailing_array_p (tree ref)
    (which is a start of possibly aliasing access path REF1).
    If match is found, try to disambiguate.
 
-   Return 0 for sucessful disambiguation.
+   Return 0 for successful disambiguation.
    Return 1 if match was found but disambiguation failed
    Return -1 if there is no match.
    In this case MAYBE_MATCH is set to 0 if there is no type matching TYPE1
@@ -1232,7 +1253,7 @@ access_path_may_continue_p (tree ref_type1, bool end_struct_past_end1,
     {
       if (compare_type_sizes (ref_type1, base_type2) < 0)
 	return false;
-      /* If the path2 contains trailing array access we can strenghten the check
+      /* If the path2 contains trailing array access we can strengthen the check
 	 to verify that also the size of element of the trailing array fits.
 	 In fact we could check for offset + type_size, but we do not track
 	 offsets and this is quite side case.  */
@@ -1462,7 +1483,7 @@ nonoverlapping_component_refs_p_1 (const_tree field1, const_tree field2)
   /* In common case the offsets and bit offsets will be the same.
      However if frontends do not agree on the alignment, they may be
      different even if they actually represent same address.
-     Try the common case first and if that fails calcualte the
+     Try the common case first and if that fails calculate the
      actual bit offset.  */
   if (tree_int_cst_equal (DECL_FIELD_OFFSET (field1),
 			  DECL_FIELD_OFFSET (field2))
@@ -1546,7 +1567,7 @@ nonoverlapping_array_refs_p (tree ref1, tree ref2)
   /* If type sizes are different, give up.
 
      Avoid expensive array_ref_element_size.
-     If operand 3 is present it denotes size in the alignmnet units.
+     If operand 3 is present it denotes size in the alignment units.
      Otherwise size is TYPE_SIZE of the element type.
      Handle only common cases where types are of the same "kind".  */
   if ((TREE_OPERAND (ref1, 3) == NULL) != (TREE_OPERAND (ref2, 3) == NULL))
@@ -2458,7 +2479,7 @@ refs_may_alias_p_2 (ao_ref *ref1, ao_ref *ref2, bool tbaa_p)
     ref2ref = TREE_OPERAND (ref2ref, 0);
 
   /* Defer to simple offset based disambiguation if we have
-     references based on two decls.  Do this before defering to
+     references based on two decls.  Do this before deferring to
      TBAA to handle must-alias cases in conformance with the
      GCC extension of allowing type-punning through unions.  */
   var1_p = DECL_P (base1);
@@ -2807,6 +2828,8 @@ check_fnspec (gcall *call, ao_ref *ref, bool clobber)
 #undef DEF_SYNC_BUILTIN
       case BUILT_IN_GOMP_ATOMIC_START:
       case BUILT_IN_GOMP_ATOMIC_END:
+      case BUILT_IN_GOMP_REDUCTION_START:
+      case BUILT_IN_GOMP_REDUCTION_END:
       case BUILT_IN_GOMP_BARRIER:
       case BUILT_IN_GOMP_BARRIER_CANCEL:
       case BUILT_IN_GOMP_TASKWAIT:
@@ -2891,7 +2914,7 @@ ref_maybe_used_by_call_p_1 (gcall *call, ao_ref *ref, bool tbaa_p)
   if (callee != NULL_TREE)
     {
       struct cgraph_node *node = cgraph_node::get (callee);
-      /* We can not safely optimize based on summary of calle if it does
+      /* We can not safely optimize based on summary of callee if it does
 	 not always bind to current def: it is possible that memory load
 	 was optimized out earlier and the interposed variant may not be
 	 optimized this way.  */
@@ -2980,11 +3003,11 @@ ref_maybe_used_by_call_p_1 (gcall *call, ao_ref *ref, bool tbaa_p)
 	    || TREE_CODE (base) == TARGET_MEM_REF)
 	   && TREE_CODE (TREE_OPERAND (base, 0)) == SSA_NAME)
     {
-      struct ptr_info_def *pi = SSA_NAME_PTR_INFO (TREE_OPERAND (base, 0));
-      if (!pi)
+      const pt_solution *pt = ssa_name_pt_solution (TREE_OPERAND (base, 0));
+      if (!pt)
 	return true;
 
-      if (pt_solutions_intersect (gimple_call_use_set (call), &pi->pt))
+      if (pt_solutions_intersect (gimple_call_use_set (call), pt))
 	return true;
     }
   else
@@ -3240,11 +3263,11 @@ call_may_clobber_ref_p_1 (gcall *call, ao_ref *ref, bool tbaa_p)
 	    || TREE_CODE (base) == TARGET_MEM_REF)
 	   && TREE_CODE (TREE_OPERAND (base, 0)) == SSA_NAME)
     {
-      struct ptr_info_def *pi = SSA_NAME_PTR_INFO (TREE_OPERAND (base, 0));
-      if (!pi)
+      const pt_solution *pt = ssa_name_pt_solution (TREE_OPERAND (base, 0));
+      if (!pt)
 	return true;
 
-      return pt_solutions_intersect (gimple_call_clobber_set (call), &pi->pt);
+      return pt_solutions_intersect (gimple_call_clobber_set (call), pt);
     }
 
   return true;
@@ -3365,15 +3388,15 @@ same_addr_size_stores_p (tree base1, poly_int64 offset1, poly_int64 size1,
   tree ptr = TREE_OPERAND (memref, 0);
   if (TREE_CODE (ptr) != SSA_NAME)
     return false;
-  struct ptr_info_def *pi = SSA_NAME_PTR_INFO (ptr);
+  const pt_solution *pt = ssa_name_pt_solution (ptr);
   unsigned int pt_uid;
-  if (pi == NULL
-      || !pt_solution_singleton_or_null_p (&pi->pt, &pt_uid))
+  if (pt == NULL
+      || !pt_solution_singleton_or_null_p (pt, &pt_uid))
     return false;
 
   /* Be conservative with non-call exceptions when the address might
      be NULL.  */
-  if (cfun->can_throw_non_call_exceptions && pi->pt.null)
+  if (cfun->can_throw_non_call_exceptions && !ptr_nonnull_p (ptr))
     return false;
 
   /* Check that ptr points relative to obj.  */
@@ -3554,7 +3577,7 @@ stmt_kills_ref_p (gimple *stmt, ao_ref *ref)
 	  && node->binds_to_current_def_p ()
 	  && (summary = get_modref_function_summary (node)) != NULL
 	  && summary->kills.length ()
-	  /* Check that we can not trap while evaulating function
+	  /* Check that we can not trap while evaluating function
 	     parameters.  This check is overly conservative.  */
 	  && (!cfun->can_throw_non_call_exceptions
 	      || (!stmt_can_throw_internal (cfun, stmt)
@@ -3733,7 +3756,7 @@ ref_can_have_store_data_races (tree ref)
 static bool
 maybe_skip_until (gimple *phi, tree &target, basic_block target_bb,
 		  ao_ref *ref, tree vuse, bool tbaa_p, unsigned int &limit,
-		  bitmap *visited, bool abort_on_visited,
+		  bitmap *visited,
 		  void *(*translate)(ao_ref *, tree, void *, translate_flags *),
 		  bool (*is_backedge)(edge, void *),
 		  translate_flags disambiguate_only,
@@ -3766,15 +3789,18 @@ maybe_skip_until (gimple *phi, tree &target, basic_block target_bb,
 	  return true;
 	}
 
-      /* Recurse for PHI nodes.  */
-      if (gphi *phi = dyn_cast <gphi *> (def_stmt))
+      /* When we reach the original PHI we are done.  TARGET must be
+	 reached via other edges in the caller.  */
+      if (def_stmt == phi)
+	return true;
+      /* Recurse for other PHI nodes.  */
+      else if (gphi *phi = dyn_cast <gphi *> (def_stmt))
 	{
 	  /* An already visited PHI node ends the walk successfully.  */
 	  if (bitmap_bit_p (*visited, SSA_NAME_VERSION (PHI_RESULT (phi))))
-	    return !abort_on_visited;
+	    return true;
 	  vuse = get_continuation_for_phi (phi, ref, tbaa_p, limit,
-					   visited, abort_on_visited,
-					   translate, data, is_backedge,
+					   visited, translate, data, is_backedge,
 					   disambiguate_only);
 	  if (!vuse)
 	    return false;
@@ -3803,7 +3829,7 @@ maybe_skip_until (gimple *phi, tree &target, basic_block target_bb,
       if (gimple_bb (def_stmt) != bb)
 	{
 	  if (!bitmap_set_bit (*visited, SSA_NAME_VERSION (vuse)))
-	    return !abort_on_visited;
+	    return true;
 	  bb = gimple_bb (def_stmt);
 	}
       vuse = gimple_vuse (def_stmt);
@@ -3811,6 +3837,18 @@ maybe_skip_until (gimple *phi, tree &target, basic_block target_bb,
   return true;
 }
 
+/* qsort comparator for a pair of int and bool.  For same int sort
+   true before false.  */
+
+static int
+cmp_intpair (const void *a_, const void *b_)
+{
+  auto a = (const std::pair<int, bool> *)a_;
+  auto b = (const std::pair<int, bool> *)b_;
+  if (a->first == b->first)
+    return (int)b->second - (int)a->second;
+  return a->first - b->first;
+}
 
 /* Starting from a PHI node for the virtual operand of the memory reference
    REF find a continuation virtual operand that allows to continue walking
@@ -3822,7 +3860,6 @@ maybe_skip_until (gimple *phi, tree &target, basic_block target_bb,
 tree
 get_continuation_for_phi (gphi *phi, ao_ref *ref, bool tbaa_p,
 			  unsigned int &limit, bitmap *visited,
-			  bool abort_on_visited,
 			  void *(*translate)(ao_ref *, tree, void *,
 					     translate_flags *),
 			  void *data,
@@ -3860,21 +3897,34 @@ get_continuation_for_phi (gphi *phi, ao_ref *ref, bool tbaa_p,
      do that for us.  */
   basic_block dom = get_immediate_dominator (CDI_DOMINATORS, phi_bb);
 
+  /* Sort the PHI arguments so we can quickly avoid walking duplicates.
+     Keep pairs of PHI arg and edge backedge state, sorting the backedge
+     case first which is the conservative walk kind in case we have
+     a duplicate PHI arg reachable both via a forward and a backward
+     edge.  */
+  auto_vec<std::pair<int, bool>, 10> args;
+  for (i = 0; i < nargs; ++i)
+    args.safe_push (std::make_pair (SSA_NAME_VERSION (PHI_ARG_DEF (phi, i)),
+				    (!is_backedge
+				     || is_backedge
+					  (gimple_phi_arg_edge (phi, i),
+					   data))));
+  args.qsort (cmp_intpair);
+
   /* Then check against the (to be) found candidate.  */
   for (i = 0; i < nargs; ++i)
     {
-      arg1 = PHI_ARG_DEF (phi, i);
+      arg1 = ssa_name (args[i].first);
       if (arg1 == arg0)
 	;
+      else if (i > 0 && args[i].first == args[i-1].first)
+	/* Already walked paths can be skipped.  */
+	;
       else if (! maybe_skip_until (phi, arg0, dom, ref, arg1, tbaa_p,
-				   limit, visited,
-				   abort_on_visited,
-				   translate, is_backedge,
+				   limit, visited, translate, is_backedge,
 				   /* Do not valueize when walking over
 				      backedges.  */
-				   (is_backedge
-				    && !is_backedge
-					  (gimple_phi_arg_edge (phi, i), data))
+				   !args[i].second
 				   ? disambiguate_only : TR_DISAMBIGUATE,
 				   data))
 	return NULL_TREE;
@@ -3922,7 +3972,6 @@ walk_non_aliased_vuses (ao_ref *ref, tree vuse, bool tbaa_p,
 {
   bitmap visited = NULL;
   void *res;
-  bool translated = false;
 
   timevar_push (TV_ALIAS_STMT_WALK);
 
@@ -3956,7 +4005,7 @@ walk_non_aliased_vuses (ao_ref *ref, tree vuse, bool tbaa_p,
 	break;
       else if (gphi *phi = dyn_cast <gphi *> (def_stmt))
 	vuse = get_continuation_for_phi (phi, ref, tbaa_p, limit,
-					 &visited, translated, translate, data,
+					 &visited, translate, data,
 					 is_backedge);
       else
 	{
@@ -3981,8 +4030,11 @@ walk_non_aliased_vuses (ao_ref *ref, tree vuse, bool tbaa_p,
 	      /* Lookup succeeded.  */
 	      else if (res != NULL)
 		break;
-	      /* Translation succeeded, continue walking.  */
-	      translated = translated || disambiguate_only == TR_TRANSLATE;
+	      /* Translation succeeded, continue walking.  Regions skipped
+		 so far were only verified to not clobber the original ref,
+		 so forget about them.  */
+	      if (disambiguate_only == TR_TRANSLATE && visited)
+		bitmap_clear (visited);
 	    }
 	  vuse = gimple_vuse (def_stmt);
 	}

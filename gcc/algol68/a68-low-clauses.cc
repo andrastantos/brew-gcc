@@ -107,7 +107,7 @@ a68_lower_label (NODE_T *p, LOW_CTX_T ctx)
 
   a68_add_decl (label_decl);
 
-  /* Return the accummulated LABEL_EXPRs.  */
+  /* Return the accumulated LABEL_EXPRs.  */
   tree label_expr = build1 (LABEL_EXPR, void_type_node, label_decl);
   if (expr)
     return fold_build2_loc (a68_get_node_location (p),
@@ -128,7 +128,10 @@ tree
 a68_lower_labeled_unit (NODE_T *p, LOW_CTX_T ctx)
 {
   tree label_expr = a68_lower_tree (SUB (p), ctx);
-  tree unit_expr = a68_lower_tree (NEXT (SUB (p)), ctx);
+  tree unit_expr = a68_lower_tree (NEXT_SUB (p), ctx);
+
+  /* If the labeled unit yields a name, make sure an address is computed.  */
+  unit_expr = a68_consolidate_ref (MOID (NEXT_SUB (p)), unit_expr);
 
   return fold_build2_loc (a68_get_node_location (p),
 			  COMPOUND_EXPR,
@@ -147,7 +150,7 @@ a68_lower_labeled_unit (NODE_T *p, LOW_CTX_T ctx)
    that a completer can only appear inside a serial clause.
 
    This function always returns NULL_TREE, so the traversing code shall always
-   be careful to travese on these nodes explicitly and ignore the returned
+   be careful to traverse on these nodes explicitly and ignore the returned
    value.  */
 
 tree
@@ -161,10 +164,9 @@ a68_lower_completer (NODE_T *p ATTRIBUTE_UNUSED, LOW_CTX_T ctx ATTRIBUTE_UNUSED)
 
    Parse tree:
 
-   initialiser series : serial clause, semi symbol, declaration list;
-                        initialiser series, declaration list;
-			initialiser series, semi symbol, unit;
-			initialiser series, semi symbol, labeled unit;
+   initialiser series : declaration list;
+                        serial clause, semi symbol, declaration list;
+			enquiry clause, semi symbol, declaration list;
 			initialiser series, semi symbol, declaration list.
 
    GENERIC:
@@ -173,7 +175,7 @@ a68_lower_completer (NODE_T *p ATTRIBUTE_UNUSED, LOW_CTX_T ctx ATTRIBUTE_UNUSED)
    BLOCK.
 
    This function always returns NULL_TREE, so the traversing code shall always
-   be careful to travese on these nodes explicitly and ignore the returned
+   be careful to traverse on these nodes explicitly and ignore the returned
    value.  */
 
 tree
@@ -193,7 +195,6 @@ a68_lower_initialiser_series (NODE_T *p, LOW_CTX_T ctx)
                      unit;
 		     serial clause, semi symbol, unit;
 		     serial clause, exit symbol, labeled unit;
-		     serial clause, semi_symbol, declaration list;
 		     initialiser series, semi symbol, unit;
 		     initialiser series, semi symbol, labeled unit.
 
@@ -205,7 +206,7 @@ a68_lower_initialiser_series (NODE_T *p, LOW_CTX_T ctx)
    See the function body to see the lowering actions.
 
    This function always returns NULL_TREE, so the traversing code shall always
-   be careful to travese on these nodes explicitly and ignore the returned
+   be careful to traverse on these nodes explicitly and ignore the returned
    value.  */
 
 tree
@@ -227,8 +228,7 @@ a68_lower_serial_clause (NODE_T *p, LOW_CTX_T ctx)
 	}
       else
 	{
-	  /* Append the result of either the unit or the declarations list in
-	     the current statements list.  */
+	  /* Append the result of the unit in the current statements list.  */
 	  a68_add_stmt (a68_lower_tree (NEXT (NEXT (SUB (p))), ctx));
 	}
     }
@@ -237,8 +237,8 @@ a68_lower_serial_clause (NODE_T *p, LOW_CTX_T ctx)
       /* Traverse down for side-effects.  */
       (void) a68_lower_tree (SUB (p), ctx);
 
-      /* Append the result of either the unit or the declarations list in the
-	 current statements list.  */
+      /* Append the result of the unit or labeled unit in the current
+	 statements list.  */
       a68_add_stmt (a68_lower_tree (NEXT (NEXT (SUB (p))), ctx));
     }
   else
@@ -375,7 +375,7 @@ a68_lower_loop_clause (NODE_T *p ATTRIBUTE_UNUSED,
       to_part = a68_lower_tmpvar ("to_part%", TREE_TYPE (to_part), to_part);
 
       /* We need to detect overflow/underflow of the iterator.  */
-      overflow = a68_lower_tmpvar ("overflow%", boolean_type_node,
+      overflow = a68_lower_tmpvar ("overflow%", a68_bool_type,
 				   boolean_false_node);
     }
 
@@ -403,7 +403,7 @@ a68_lower_loop_clause (NODE_T *p ATTRIBUTE_UNUSED,
 	tree exit_condition = NULL_TREE;
 	/* IF overflow OREL (by_part < 0 THEN iterator < to_part ELSE iterator > to_part) FI */
 	if (has_iterator)
-	  exit_condition = fold_build2 (TRUTH_ORIF_EXPR, boolean_type_node,
+	  exit_condition = fold_build2 (TRUTH_ORIF_EXPR, a68_bool_type,
 					overflow,
 					fold_build3 (COND_EXPR,
 						     a68_bool_type,
@@ -449,9 +449,9 @@ a68_lower_loop_clause (NODE_T *p ATTRIBUTE_UNUSED,
 	tree a = iterator;
 	tree b = save_expr (by_part);
 	tree sum = fold_build2 (PLUS_EXPR, type, a, b);
-	a68_add_stmt (fold_build2 (MODIFY_EXPR, boolean_type_node,
+	a68_add_stmt (fold_build2 (MODIFY_EXPR, a68_bool_type,
 				   overflow,
-				   fold_build2 (LT_EXPR, boolean_type_node,
+				   fold_build2 (LT_EXPR, a68_bool_type,
 						fold_build2 (BIT_AND_EXPR, type,
 							     fold_build1 (BIT_NOT_EXPR, type,
 									  fold_build2 (BIT_XOR_EXPR, type,
@@ -537,14 +537,14 @@ lower_unite_case_unit (NODE_T *p,
 		{
 		  int index = a68_united_mode_index (enquiry_mode, MOID (pack));
 		  tree expr = fold_build2 (EQ_EXPR,
-					   boolean_type_node,
+					   a68_bool_type,
 					   overhead,
 					   build_int_cst (TREE_TYPE (overhead), index));
 		  if (entry_selected == NULL_TREE)
 		    entry_selected = expr;
 		  else
 		    entry_selected = fold_build2 (TRUTH_OR_EXPR,
-						  boolean_type_node,
+						  a68_bool_type,
 						  entry_selected,
 						  expr);
 		}
@@ -858,7 +858,7 @@ a68_lower_case_clause (NODE_T *p ATTRIBUTE_UNUSED,
    clause.
 
    This function always returns NULL_TREE, so the traversing code shall always
-   be careful to travese on these nodes explicitly and ignore the returned
+   be careful to traverse on these nodes explicitly and ignore the returned
    value.  */
 
 tree
@@ -1072,7 +1072,12 @@ a68_lower_collateral_clause (NODE_T *p ATTRIBUTE_UNUSED,
   /* Lower the constituent units into a statements list.  */
   a68_push_stmt_list (mode);
   if (!clause_is_empty)
-    (void) a68_lower_tree (NEXT (SUB (p)), ctx);
+    {
+      if (a68_lower_tree (NEXT (SUB (p)), ctx) != NULL_TREE)
+	/* unit lists always lower to NULL_TREE and, as a side-effect,
+	   append the units to the current statements list.  */
+	gcc_unreachable ();
+    }
   tree units = a68_pop_stmt_list ();
 
   /* The collateral clause lowers to different constructions depending on its
@@ -1132,8 +1137,7 @@ a68_lower_collateral_clause (NODE_T *p ATTRIBUTE_UNUSED,
 	  for (tree_stmt_iterator si = tsi_start (units); !tsi_end_p (si); tsi_next (&si))
 	    {
 	      tree unit = tsi_stmt (si);
-	      if (A68_TYPE_HAS_ROWS_P (TREE_TYPE (unit)))
-		unit = a68_low_dup (unit);
+	      unit = a68_low_dup (unit);
 	      CONSTRUCTOR_APPEND_ELT (ve, size_int (num_units), unit);
 	      num_units += 1;
 	    }
@@ -1362,9 +1366,7 @@ a68_lower_parallel_clause (NODE_T *p ATTRIBUTE_UNUSED,
 /* Lower a closed clause.
 
      closed clause : open symbol, serial clause, close symbol;
-                     open symbol, initialiser series, close symbol;
-		     begin symbol, serial clause, end symbol;
-		     begin symbol, initialiser series, end symbol;
+		     begin symbol, serial clause, end symbol.
 
   This function returns a BIND_EXPR.  */
 

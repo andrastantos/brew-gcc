@@ -270,7 +270,7 @@ package body Treepr is
    begin
       case F is
          --  We special case the following; otherwise the compiler will use
-         --  the usual Mixed_Case convention.
+         --  the usual Mixed_Case convention or we override the name entirely.
 
          when F_Assignment_OK =>
             return "Assignment_OK";
@@ -300,6 +300,8 @@ package body Treepr is
             return "SCIL_Tag_Value";
          when F_SCIL_Target_Prim =>
             return "SCIL_Target_Prim";
+         when F_Scope_Raw =>
+            return "Scope";
          when F_Shift_Count_OK =>
             return "Shift_Count_OK";
          when F_TSS_Elist =>
@@ -444,6 +446,34 @@ package body Treepr is
 
       Pop_Output;
    end rpec;
+
+   ----------
+   -- pech --
+   ----------
+
+   procedure pech (From : Entity_Id) is
+   begin
+      Push_Output;
+      Set_Standard_Output;
+
+      Print_Entity_Chain (From, Rev => False, Only_Header => True);
+
+      Pop_Output;
+   end pech;
+
+   ----------
+   -- rpech --
+   ----------
+
+   procedure rpech (From : Entity_Id) is
+   begin
+      Push_Output;
+      Set_Standard_Output;
+
+      Print_Entity_Chain (From, Rev => True, Only_Header => True);
+
+      Pop_Output;
+   end rpech;
 
    --------
    -- pl --
@@ -634,7 +664,11 @@ package body Treepr is
    -- Print_Entity_Chain --
    ------------------------
 
-   procedure Print_Entity_Chain (From : Entity_Id; Rev : Boolean := False) is
+   procedure Print_Entity_Chain (
+     From : Entity_Id;
+     Rev : Boolean := False;
+     Only_Header : Boolean := False)
+   is
       Ent : Entity_Id := From;
    begin
       Printing_Descendants := False;
@@ -648,14 +682,35 @@ package body Treepr is
             Prefix_Char : constant Character :=
               (if Present (Next_Ent) then '|' else ' ');
          begin
-            Print_Node (Ent, "", Prefix_Char);
+            if Only_Header then
+               Print_Str ("- ");
+               Print_Node_Header (Node_Id (Ent));
+            else
+               Print_Node (Ent, "", Prefix_Char);
+            end if;
+
+            if Present (Next_Ent) then
+               if not Rev
+                 and then Prev_Entity (Next_Ent) /= Ent
+               then
+                  Print_Str (" !! - Prev (Next (^^^^)) = ");
+                  Print_Node_Header (Prev_Entity (Next_Ent));
+               elsif Rev
+                 and then Next_Entity (Next_Ent) /= Ent
+               then
+                  Print_Str (" !! - Next (Prev (^^^^)) = ");
+                  Print_Node_Header (Next_Entity (Next_Ent));
+               end if;
+            end if;
 
             exit when No (Next_Ent);
 
             Ent := Next_Ent;
 
-            Print_Char ('|');
-            Print_Eol;
+            if not Only_Header then
+               Print_Char ('|');
+               Print_Eol;
+            end if;
          end;
       end loop;
    end Print_Entity_Chain;

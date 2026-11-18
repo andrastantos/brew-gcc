@@ -31,6 +31,7 @@
 #ifndef _RANDOM_H
 #define _RANDOM_H 1
 
+#include <bit>     // std::__bit_width
 #include <vector>
 #include <bits/ios_base.h>
 #include <bits/uniform_int_dist.h>
@@ -68,13 +69,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 #endif
 
   /// @cond undocumented
-  // Implementation-space details.
-  namespace __detail
-  {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wc++17-extensions"
 
 #ifndef __SIZEOF_INT128__
+  // Implementation-space details.
+  namespace __detail
+  {
     // Emulate 128-bit integer type, for the arithmetic ops used in <random>.
     // The __detail::__mod function needs: (type(a) * x + c) % m.
     // std::philox_engine needs multiplication and bitwise ops.
@@ -89,6 +90,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 
       __rand_uint128(const __rand_uint128&) = default;
       __rand_uint128& operator=(const __rand_uint128&) = default;
+
+      constexpr explicit
+      operator bool() const noexcept
+      { return _M_lo || _M_hi; }
 
       _GLIBCXX14_CONSTEXPR type&
       operator=(uint64_t __x) noexcept
@@ -134,6 +139,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       operator+(type __l, uint64_t __r) noexcept
       { return __l += type(__r); }
 
+      _GLIBCXX14_CONSTEXPR type&
+      operator-=(const type& __r) noexcept
+      {
+	_M_hi -= __r._M_hi + __builtin_sub_overflow(_M_lo, __r._M_lo, &_M_lo);
+	return *this;
+      }
+
       // Subtraction with 64-bit operand
       _GLIBCXX14_CONSTEXPR type&
       operator-=(uint64_t __r) noexcept
@@ -141,6 +153,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	_M_hi -= __builtin_sub_overflow(_M_lo, __r, &_M_lo);
 	return *this;
       }
+
+      friend _GLIBCXX14_CONSTEXPR type
+      operator-(type __l, const type& __r) noexcept
+      { return __l -= __r; }
 
       friend _GLIBCXX14_CONSTEXPR type
       operator-(type __l, uint64_t __r) noexcept
@@ -172,7 +188,6 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       }
 
       // Multiplication with a 64-bit operand is simpler.
-      // pre: _M_hi == 0
       _GLIBCXX14_CONSTEXPR type&
       operator*=(uint64_t __x) noexcept
       {
@@ -190,7 +205,9 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	// These bits are the low half of _M_hi and the high half of _M_lo.
 	uint64_t __mid
 	  = (__l0x1 & __mask) + (__l1x0 & __mask) + (__l1x1 >> 32);
-	_M_hi = __l0x0 + (__l0x1 >> 32) + (__l1x0 >> 32) + (__mid >> 32);
+
+	_M_hi *= __x;
+	_M_hi += __l0x0 + (__l0x1 >> 32) + (__l1x0 >> 32) + (__mid >> 32);
 	_M_lo = (__mid << 32) + (__l1x1 & __mask);
 	return *this;
       }
@@ -296,6 +313,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	return *this;
       }
 
+      _GLIBCXX14_CONSTEXPR type&
+      operator/=(uint64_t __r) noexcept
+      { return *this /= type(__r); }
+
       // Currently only supported for 64-bit operands.
       _GLIBCXX14_CONSTEXPR type&
       operator%=(uint64_t __m) noexcept
@@ -343,6 +364,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 
       friend _GLIBCXX14_CONSTEXPR type
       operator/(type __l, const type& __r) noexcept
+      { return __l /= __r; }
+
+      friend _GLIBCXX14_CONSTEXPR type
+      operator/(type __l, uint64_t __r) noexcept
       { return __l /= __r; }
 
       friend _GLIBCXX14_CONSTEXPR type
@@ -498,8 +523,42 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       uint64_t _M_hi = 0;
       uint64_t _M_lo = 0;
     };
-#endif // ! __SIZEOF_INT128__
+  } // namespace __detail
 
+  template<>
+    constexpr int
+    __countl_zero(__detail::__rand_uint128 __val) noexcept
+    {
+      return __val._M_hi ? std::__countl_zero(__val._M_hi)
+			 : std::__countl_zero(__val._M_lo) + 64;
+    }
+
+  template<>
+    constexpr int
+    __countr_zero(__detail::__rand_uint128 __val) noexcept
+    {
+      return __val._M_lo ? std::__countr_zero(__val._M_lo)
+			 : std::__countr_zero(__val._M_hi) + 64;
+    }
+
+  template<>
+    constexpr int
+    __popcount(__detail::__rand_uint128 __val) noexcept
+    {
+      return std::__popcount(__val._M_hi) + std::__popcount(__val._M_lo);
+    }
+
+  template<>
+    constexpr int
+    __bit_width(__detail::__rand_uint128 __val) noexcept
+    {
+      return __val._M_hi ? std::__bit_width(__val._M_hi) + 64
+			 : std::__bit_width(__val._M_lo);
+    }
+
+#endif // ! __SIZEOF_INT128__
+  namespace __detail
+  {
     template<typename _UIntType, size_t __w,
 	     bool = __w < static_cast<size_t>
 			  (std::numeric_limits<_UIntType>::digits)>
@@ -510,36 +569,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       struct _Shift<_UIntType, __w, true>
       { static constexpr _UIntType __value = _UIntType(1) << __w; };
 
-    template<int __s,
-	     int __which = ((__s <= __CHAR_BIT__ * sizeof (int))
-			    + (__s <= __CHAR_BIT__ * sizeof (long))
-			    + (__s <= __CHAR_BIT__ * sizeof (long long))
-			    /* assume long long no bigger than __int128 */
-			    + (__s <= 128))>
-      struct _Select_uint_least_t
-      {
-	static_assert(__which < 0, /* needs to be dependent */
-		      "sorry, would be too much trouble for a slow result");
-      };
-
-    template<int __s>
-      struct _Select_uint_least_t<__s, 4>
-      { using type = unsigned int; };
-
-    template<int __s>
-      struct _Select_uint_least_t<__s, 3>
-      { using type = unsigned long; };
-
-    template<int __s>
-      struct _Select_uint_least_t<__s, 2>
-      { using type = unsigned long long; };
-
-#if __SIZEOF_INT128__ > __SIZEOF_LONG_LONG__
-    template<int __s>
-      struct _Select_uint_least_t<__s, 1>
-      { __extension__ using type = unsigned __int128; };
-#elif __has_builtin(__builtin_add_overflow) \
-    && __has_builtin(__builtin_sub_overflow) \
+// Primary template and other specializations are defined in bits/uniform_int_dist.h.
+#if __SIZEOF_INT128__ <= __SIZEOF_LONG_LONG__ \
+    && __has_builtin(__builtin_add_overflow)  \
+    && __has_builtin(__builtin_sub_overflow)  \
     && defined __UINT64_TYPE__
     template<int __s>
       struct _Select_uint_least_t<__s, 1>
@@ -3500,9 +3533,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       param(const param_type& __param)
       {
 	_M_param = __param;
-	typedef typename std::gamma_distribution<result_type>::param_type
-	  param_type;
-	_M_gd.param(param_type{__param.n() / 2});
+
+	using param_type
+	  = typename std::gamma_distribution<result_type>::param_type;
+	_M_gd.param(param_type(__param.n() / 2));
       }
 
       /**
@@ -3956,7 +3990,14 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
        */
       void
       param(const param_type& __param)
-      { _M_param = __param; }
+     {
+	_M_param = __param;
+
+	using param_type
+	  = typename std::gamma_distribution<result_type>::param_type;
+	_M_gd_x.param(param_type(__param.m() / 2));
+	_M_gd_y.param(param_type(__param.n() / 2));
+      }
 
       /**
        * @brief Returns the greatest lower bound value of the distribution.
@@ -4185,7 +4226,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
        */
       void
       param(const param_type& __param)
-      { _M_param = __param; }
+      {
+	_M_param = __param;
+
+	using param_type
+	  = typename std::gamma_distribution<result_type>::param_type;
+	_M_gd.param(param_type(__param.n() / 2, 2));
+      }
 
       /**
        * @brief Returns the greatest lower bound value of the distribution.
@@ -5116,7 +5163,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
        */
       void
       param(const param_type& __param)
-      { _M_param = __param; }
+      {
+	_M_param = __param;
+
+	using param_type
+	  = typename std::gamma_distribution<double>::param_type;
+	_M_gd.param(param_type(__param.k(), (1.0 - __param.p()) / __param.p()));
+      }
 
       /**
        * @brief Returns the greatest lower bound value of the distribution.
@@ -6385,6 +6438,43 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
     { return !(__d1 == __d2); }
 #endif
 
+  namespace __detail
+  {
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS == 0
+    template<typename _Tp>
+      using __piecewise_distributions_storage_t = double;
+#elif _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS == 2
+    template<typename _Tp>
+      using __piecewise_distributions_storage_t = _Tp;
+#else
+    template<typename _Tp>
+      struct __piecewise_distributions_storage
+      { using type = _Tp; };
+
+    template<>
+      struct __piecewise_distributions_storage<float>
+      { using type = double; };
+
+# ifdef _GLIBCXX_LONG_DOUBLE_ALT128_COMPAT
+    template<>
+      struct __piecewise_distributions_storage<__ibm128>
+      { using type = double; };
+
+    template<>
+      struct __piecewise_distributions_storage<__ieee128>
+      { using type = double; };
+# elif __LDBL_MANT_DIG__ != __DBL_MANT_DIG__
+    template<>
+      struct __piecewise_distributions_storage<long double>
+      { using type = double; };
+# endif
+
+    template<typename _Tp>
+       using __piecewise_distributions_storage_t
+	= typename __piecewise_distributions_storage<_Tp>::type;
+#endif // _GLIBCXX_USE_RESULT_TYPE_FOR_PIECEWISE_DENSITIES
+  }
+
   /**
    * @brief A piecewise_constant_distribution random number distribution.
    *
@@ -6406,6 +6496,14 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
     {
       static_assert(std::is_floating_point<_RealType>::value,
 		    "result_type must be a floating point type");
+
+      using _StorageType
+	= __detail::__piecewise_distributions_storage_t<_RealType>;
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
+      using _CalcType = _RealType;
+#else
+      using _CalcType = double;
+#endif
 
     public:
       /** The type of the range of the distribution. */
@@ -6437,7 +6535,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	param_type(const param_type&) = default;
 	param_type& operator=(const param_type&) = default;
 
-	std::vector<_RealType>
+	std::vector<result_type>
 	intervals() const
 	{
 	  if (_M_int.empty())
@@ -6450,9 +6548,28 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	    return _M_int;
 	}
 
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
+	// _GLIBCXX_RESOLVE_LIB_DEFECTS
+	// 1439. Return from densities() functions?
+	[[__gnu__::__abi_tag__("__rt")]]
+	std::vector<result_type>
+	densities() const
+	{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wc++17-extensions"
+	  if (_M_den.empty())
+	    return std::vector<_RealType>(1, _RealType(1));
+	  else if constexpr (is_same<_RealType, _StorageType>::value)
+	    return _M_den;
+	  else
+	    return std::vector<_RealType>(_M_den.begin(), _M_den.end());
+#pragma GCC diagnostic pop
+	}
+#else
 	std::vector<double>
 	densities() const
 	{ return _M_den.empty() ? std::vector<double>(1, 1.0) : _M_den; }
+#endif
 
 	friend bool
 	operator==(const param_type& __p1, const param_type& __p2)
@@ -6466,11 +6583,19 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 
       private:
 	void
-	_M_initialize();
+	_M_configure();
+
+	void
+	_M_initialize2(const _RealType* __ints, _CalcType __den);
 
 	std::vector<_RealType> _M_int;
-	std::vector<double> _M_den;
-	std::vector<double> _M_cp;
+	std::vector<_StorageType> _M_den;
+	std::vector<_StorageType> _M_cp;
+
+	template<typename _RealType1, typename _CharT, typename _Traits>
+	  friend std::basic_ostream<_CharT, _Traits>&
+	  operator<<(std::basic_ostream<_CharT, _Traits>&,
+		     const std::piecewise_constant_distribution<_RealType1>&);
       };
 
       piecewise_constant_distribution()
@@ -6512,28 +6637,23 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       /**
        * @brief Returns a vector of the intervals.
        */
-      std::vector<_RealType>
+      std::vector<result_type>
       intervals() const
-      {
-	if (_M_param._M_int.empty())
-	  {
-	    std::vector<_RealType> __tmp(2);
-	    __tmp[1] = _RealType(1);
-	    return __tmp;
-	  }
-	else
-	  return _M_param._M_int;
-      }
+      { return _M_param.intervals(); }
 
       /**
        * @brief Returns a vector of the probability densities.
        */
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
+      [[__gnu__::__always_inline__]]
+      std::vector<result_type>
+      densities() const
+      { return _M_param.densities(); }
+#else
       std::vector<double>
       densities() const
-      {
-	return _M_param._M_den.empty()
-	  ? std::vector<double>(1, 1.0) : _M_param._M_den;
-      }
+      { return _M_param.densities(); }
+#endif
 
       /**
        * @brief Returns the parameter set of the distribution.
@@ -6647,6 +6767,11 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 		   std::piecewise_constant_distribution<_RealType1>& __x);
 
     private:
+      template<typename _AdaptedUniformRandomNumberGenerator>
+	result_type
+	__generate_one(_AdaptedUniformRandomNumberGenerator& __aurng,
+		       const param_type& __param);
+
       template<typename _ForwardIterator,
 	       typename _UniformRandomNumberGenerator>
 	void
@@ -6687,6 +6812,14 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       static_assert(std::is_floating_point<_RealType>::value,
 		    "result_type must be a floating point type");
 
+      using _StorageType
+	= __detail::__piecewise_distributions_storage_t<_RealType>;
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
+      using _CalcType = _RealType;
+#else
+      using _CalcType = double;
+#endif
+
     public:
       /** The type of the range of the distribution. */
       typedef _RealType result_type;
@@ -6717,7 +6850,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	param_type(const param_type&) = default;
 	param_type& operator=(const param_type&) = default;
 
-	std::vector<_RealType>
+	std::vector<result_type>
 	intervals() const
 	{
 	  if (_M_int.empty())
@@ -6730,9 +6863,28 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	    return _M_int;
 	}
 
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
+	// _GLIBCXX_RESOLVE_LIB_DEFECTS
+	// 1439. Return from densities() functions?
+	[[__gnu__::__abi_tag__("__rt")]]
+	std::vector<result_type>
+	densities() const
+	{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wc++17-extensions"
+	  if (_M_den.empty())
+	    return std::vector<_RealType>(2, _RealType(1));
+	  else if constexpr (is_same<_RealType, _StorageType>::value)
+	    return _M_den;
+	  else
+	    return std::vector<_RealType>(_M_den.begin(), _M_den.end());
+#pragma GCC diagnostic pop
+	}
+#else
 	std::vector<double>
 	densities() const
 	{ return _M_den.empty() ? std::vector<double>(2, 1.0) : _M_den; }
+#endif
 
 	friend bool
 	operator==(const param_type& __p1, const param_type& __p2)
@@ -6746,12 +6898,20 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 
       private:
 	void
-	_M_initialize();
+	_M_configure();
+
+	void
+	_M_initialize2(const _RealType* __ints, const _CalcType* __dens);
 
 	std::vector<_RealType> _M_int;
-	std::vector<double> _M_den;
-	std::vector<double> _M_cp;
-	std::vector<double> _M_m;
+	std::vector<_StorageType> _M_den;
+	std::vector<_StorageType> _M_cp;
+	std::vector<_StorageType> _M_m;
+
+	template<typename _RealType1, typename _CharT, typename _Traits>
+	  friend std::basic_ostream<_CharT, _Traits>&
+	  operator<<(std::basic_ostream<_CharT, _Traits>&,
+		     const std::piecewise_linear_distribution<_RealType1>&);
       };
 
       piecewise_linear_distribution()
@@ -6793,29 +6953,24 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       /**
        * @brief Return the intervals of the distribution.
        */
-      std::vector<_RealType>
+      std::vector<result_type>
       intervals() const
-      {
-	if (_M_param._M_int.empty())
-	  {
-	    std::vector<_RealType> __tmp(2);
-	    __tmp[1] = _RealType(1);
-	    return __tmp;
-	  }
-	else
-	  return _M_param._M_int;
-      }
+      { return _M_param.intervals(); }
 
       /**
        * @brief Return a vector of the probability densities of the
        *        distribution.
        */
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
+      [[__gnu__::__always_inline__]]
+      std::vector<result_type>
+      densities() const
+      { return _M_param.densities(); }
+#else
       std::vector<double>
       densities() const
-      {
-	return _M_param._M_den.empty()
-	  ? std::vector<double>(2, 1.0) : _M_param._M_den;
-      }
+      { return _M_param.densities(); }
+#endif
 
       /**
        * @brief Returns the parameter set of the distribution.
@@ -6929,6 +7084,11 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 		   std::piecewise_linear_distribution<_RealType1>& __x);
 
     private:
+      template<typename _AdaptedUniformRandomNumberGenerator>
+	result_type
+	__generate_one(_AdaptedUniformRandomNumberGenerator& __aurng,
+		       const param_type& __param);
+
       template<typename _ForwardIterator,
 	       typename _UniformRandomNumberGenerator>
 	void

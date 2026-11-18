@@ -21,8 +21,10 @@ along with GCC; see the file COPYING3.  If not see
 #define GCC_TREE_H
 
 #include "tree-core.h"
+#include "coretypes.h"
 #include "options.h"
 #include "vec.h"
+#include "stdbackport/expectedfwd"
 
 /* Convert a target-independent built-in function code to a combined_fn.  */
 
@@ -617,6 +619,13 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
    || TREE_CODE (TYPE) == INTEGER_TYPE \
    || TREE_CODE (TYPE) == BITINT_TYPE)
 
+/* Nonzero if TYPE represents an integral type (non-boolean).  */
+
+#define INTEGRAL_NB_TYPE_P(TYPE)  \
+  (TREE_CODE (TYPE) == ENUMERAL_TYPE  \
+   || TREE_CODE (TYPE) == INTEGER_TYPE \
+   || TREE_CODE (TYPE) == BITINT_TYPE)
+
 /* Nonzero if TYPE represents an integral type, including complex
    and vector integer types.  */
 
@@ -626,9 +635,14 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
         || VECTOR_TYPE_P (TYPE))		\
        && INTEGRAL_TYPE_P (TREE_TYPE (TYPE))))
 
-/* Nonzero if TYPE is bit-precise integer type.  */
+/* Nonzero if TYPE is bit-precise integer type or enumeral type
+   with bit-precise integer type as underlying type.  */
 
-#define BITINT_TYPE_P(TYPE) (TREE_CODE (TYPE) == BITINT_TYPE)
+#define BITINT_TYPE_P(TYPE) \
+  (TREE_CODE (TYPE) == BITINT_TYPE			\
+   || (TREE_CODE (TYPE) == ENUMERAL_TYPE		\
+       && TREE_TYPE (TYPE)				\
+       && TREE_CODE (TREE_TYPE (TYPE)) == BITINT_TYPE))
 
 /* Nonzero if TYPE represents a non-saturating fixed-point type.  */
 
@@ -993,7 +1007,7 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
 
 /* True if an overflow is to be preserved for sanitization.  */
 #define TYPE_OVERFLOW_SANITIZED(TYPE)			\
-  (INTEGRAL_TYPE_P (TYPE)				\
+  (ANY_INTEGRAL_TYPE_P (TYPE)				\
    && !TYPE_OVERFLOW_WRAPS (TYPE)			\
    && (flag_sanitize & SANITIZE_SI_OVERFLOW))
 
@@ -1687,6 +1701,24 @@ class auto_suppress_location_wrappers
 					      OMP_CLAUSE_FROM,		\
 					      OMP_CLAUSE_MAP), 2)
 
+/* An iterator modifier on a clause is represented as a vector.
+   Unexpanded iterators produced by the front-end parsers have 6
+   elements; after expansion, they have 10.  See also the
+   make_omp_iterator and make_expanded_omp_iterator constructors
+   below.  */
+#define OMP_ITERATOR_VAR(NODE)		TREE_VEC_ELT (NODE, 0)
+#define OMP_ITERATOR_BEGIN(NODE)	TREE_VEC_ELT (NODE, 1)
+#define OMP_ITERATOR_END(NODE)		TREE_VEC_ELT (NODE, 2)
+#define OMP_ITERATOR_STEP(NODE)	TREE_VEC_ELT (NODE, 3)
+#define OMP_ITERATOR_ORIG_STEP(NODE)	TREE_VEC_ELT (NODE, 4)
+#define OMP_ITERATOR_BLOCK(NODE)	TREE_VEC_ELT (NODE, 5)
+#define OMP_ITERATOR_LABEL(NODE)	TREE_VEC_ELT (NODE, 6)
+#define OMP_ITERATOR_INDEX(NODE)	TREE_VEC_ELT (NODE, 7)
+#define OMP_ITERATOR_ELEMS(NODE)	TREE_VEC_ELT (NODE, 8)
+#define OMP_ITERATOR_COUNT(NODE)	TREE_VEC_ELT (NODE, 9)
+
+#define OMP_ITERATOR_EXPANDED_P(NODE)	(TREE_VEC_LENGTH (NODE) > 6)
+
 /* True on OMP_FOR and other OpenMP/OpenACC looping constructs if the loop nest
    is non-rectangular.  */
 #define OMP_FOR_NON_RECTANGULAR(NODE) \
@@ -1834,6 +1866,16 @@ class auto_suppress_location_wrappers
   TREE_PRIVATE (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_GRAINSIZE))
 #define OMP_CLAUSE_NUM_TASKS_STRICT(NODE) \
   TREE_PRIVATE (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_NUM_TASKS))
+#define OMP_CLAUSE_NUM_THREADS_STRICT(NODE) \
+  TREE_PRIVATE (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_NUM_THREADS))
+#define OMP_CLAUSE_THREAD_LIMIT_STRICT(NODE) \
+  TREE_PRIVATE (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_THREAD_LIMIT))
+#define OMP_CLAUSE_NUM_TEAMS_DIMS(NODE) \
+  TREE_PROTECTED (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_NUM_TEAMS))
+#define OMP_CLAUSE_NUM_THREADS_DIMS(NODE) \
+  TREE_PROTECTED (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_NUM_THREADS))
+#define OMP_CLAUSE_THREAD_LIMIT_DIMS(NODE) \
+  TREE_PROTECTED (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_THREAD_LIMIT))
 
 /* OpenACC clause expressions  */
 #define OMP_CLAUSE_EXPR(NODE, CLAUSE) \
@@ -1878,6 +1920,17 @@ class auto_suppress_location_wrappers
 /* True if DOACROSS clause is spelled as DEPEND.  */
 #define OMP_CLAUSE_DOACROSS_DEPEND(NODE) \
   TREE_PROTECTED (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_DOACROSS))
+
+/* If the string passed to the 'message' clause is not null terminated,
+   OMP_CLAUSE_MESSAGE_LEN must be set.  */
+#define OMP_CLAUSE_MESSAGE_EXPR(NODE) \
+  OMP_CLAUSE_OPERAND ( \
+    OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MESSAGE), 0)
+#define OMP_CLAUSE_MESSAGE_LEN(NODE) \
+  OMP_CLAUSE_OPERAND ( \
+    OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MESSAGE), 1)
+#define OMP_CLAUSE_MESSAGE_SEVERITY_WARN(NODE) \
+  (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MESSAGE)->base.public_flag)
 
 #define OMP_CLAUSE_MAP_KIND(NODE) \
   ((enum gomp_map_kind) OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MAP)->omp_clause.subcode.map_kind)
@@ -2112,6 +2165,12 @@ class auto_suppress_location_wrappers
 #define OMP_CLAUSE_SIMDLEN_EXPR(NODE) \
   OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_SIMDLEN), 0)
 
+#define OMP_CLAUSE_SIMDLEN_TYPE(NODE) \
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_SIMDLEN), 1)
+
+#define OMP_CLAUSE_SIMDLEN_DIVISOR(NODE) \
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_SIMDLEN), 2)
+
 #define OMP_CLAUSE__SIMDUID__DECL(NODE) \
   OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE__SIMDUID_), 0)
 
@@ -2265,13 +2324,9 @@ class auto_suppress_location_wrappers
 #define SSA_NAME_POINTS_TO_READONLY_MEMORY(NODE) \
     SSA_NAME_CHECK (NODE)->base.deprecated_flag
 
-/* Attributes for SSA_NAMEs for pointer-type variables.  */
-#define SSA_NAME_PTR_INFO(N) \
-   SSA_NAME_CHECK (N)->ssa_name.info.ptr_info
-
-/* Value range info attributes for SSA_NAMEs of non pointer-type variables.  */
-#define SSA_NAME_RANGE_INFO(N) \
-    SSA_NAME_CHECK (N)->ssa_name.info.range_info
+/* Value range info for an SSA_NAME, of any type.  */
+#define SSA_NAME_RANGE_INFO(N)  \
+    SSA_NAME_CHECK (N)->ssa_name.range_info
 
 /* Return the immediate_use information for an SSA_NAME. */
 #define SSA_NAME_IMM_USE_NODE(NODE) SSA_NAME_CHECK (NODE)->ssa_name.imm_uses
@@ -2528,39 +2583,267 @@ extern tree vector_element_bits_tree (const_tree);
 /* The address space the type is in.  */
 #define TYPE_ADDR_SPACE(NODE) (TYPE_CHECK (NODE)->base.u.bits.address_space)
 
-/* Encode/decode the named memory support as part of the qualifier.  If more
-   than 8 qualifiers are added, these macros need to be adjusted.  */
-#define ENCODE_QUAL_ADDR_SPACE(NUM) ((NUM & 0xFF) << 8)
-#define DECODE_QUAL_ADDR_SPACE(X) (((X) >> 8) & 0xFF)
+/* A qualifier set is the aggregate of all qualifiers on a given type.  It
+   consists of the 'const', 'volatile', 'restrict', and 'atomic' qualification,
+   which are all either present or absent, and an address space qualifier,
+   which is always present (but possibly ADDR_SPACE_GENERIC).  */
 
-/* Return all qualifiers except for the address space qualifiers.  */
-#define CLEAR_QUAL_ADDR_SPACE(X) ((X) & ~0xFF00)
+struct qualifier_set
+{
+  /* Construct an empty qualifier set with the generic address space.  Such a
+     qualifier set corresponds to unqualified types.
 
-/* Only keep the address space out of the qualifiers and discard the other
-   qualifiers.  */
-#define KEEP_QUAL_ADDR_SPACE(X) ((X) & 0xFF00)
+     This constructor is guaranteed to be trivial, so that it is possible to
+     initialize an empty qualifier set in a given location using a zeroing
+     'memset'.
 
-/* The set of type qualifiers for this type.  */
-#define TYPE_QUALS(NODE)					\
-  ((int) ((TYPE_READONLY (NODE) * TYPE_QUAL_CONST)		\
-	  | (TYPE_VOLATILE (NODE) * TYPE_QUAL_VOLATILE)		\
-	  | (TYPE_ATOMIC (NODE) * TYPE_QUAL_ATOMIC)		\
-	  | (TYPE_RESTRICT (NODE) * TYPE_QUAL_RESTRICT)		\
-	  | (ENCODE_QUAL_ADDR_SPACE (TYPE_ADDR_SPACE (NODE)))))
+     This is currently relied on for 'c_declarator' and 'cp_declarator', which
+     are initialized via 'memset', and which store qualifier sets in unions.
+
+     Note that this means that a declaration like:
+
+       qualifier_set qs;
+
+     ... leaves 'qs' uninitialized.  Always specify an initializer, like so:
+
+       qualifier_set qs {};  */
+  qualifier_set () = default;
+
+  /* Construct a qualifier set containing the qualifiers CV_QUALS and the
+     generic address space.  */
+  constexpr
+  qualifier_set (cv_qualifier cv_quals)
+    : m_cv_quals {cv_quals}
+    , m_addr_space {ADDR_SPACE_GENERIC}
+  {}
+
+  /* Construct a qualifier set containing the qualifiers CV_QUALS and the
+     address space AS.  */
+  constexpr
+  qualifier_set (cv_qualifier cv_quals, addr_space_t as)
+    : m_cv_quals {cv_quals}
+    , m_addr_space {as}
+  {}
+
+  /* Add QUAL to this qualifier set.  */
+  constexpr void
+  add (cv_qualifier qual)
+  {
+    m_cv_quals |= qual;
+  }
+
+  /* Remove QUAL from this qualifier set.  */
+  constexpr void
+  remove (cv_qualifier qual)
+  {
+    m_cv_quals &= ~qual;
+  }
+
+  /* Set the address space of this qualifier set to AS.  */
+  constexpr void
+  set_as (addr_space_t as)
+  {
+    this->m_addr_space = as;
+  }
+
+  /* Returns a new qualifier set, with QUAL added (as with 'add').  */
+  WARN_UNUSED_RESULT constexpr qualifier_set
+  with (cv_qualifier qual) const
+  {
+    auto ret = *this;
+    ret.add (qual);
+    return ret;
+  }
+
+  /* Returns a new qualifier set, with QUAL removed (as with 'remove').  */
+  WARN_UNUSED_RESULT constexpr qualifier_set
+  without (cv_qualifier qual) const
+  {
+    auto ret = *this;
+    ret.remove (qual);
+    return ret;
+  }
+
+  /* Return this qualifier set, with address space set to AS.  */
+  WARN_UNUSED_RESULT constexpr qualifier_set
+  with_as (addr_space_t as) const
+  {
+    auto ret = *this;
+    ret.set_as (as);
+    return ret;
+  }
+
+  /* Get CV qualifiers of this qualifier set.
+
+     Using this getter alone is usually a mistake; most of the time, where
+     there is a qualifier_set, there should be handling for all its components,
+     rather than just one of them.  Prefer using 'split' at least once in a
+     given hunk.  */
+  constexpr cv_qualifier
+  cv_quals () const
+  { return m_cv_quals; }
+
+  /* Get address space qualifier of this qualifier set.
+
+     Using this getter alone is usually a mistake; most of the time, where
+     there is a qualifier_set, there should be handling for all its components,
+     rather than just one of them.  Prefer using 'split' at least once in a
+     given hunk.  */
+  constexpr addr_space_t
+  addr_space () const
+  { return m_addr_space; }
+
+  /* Return all qualifiers both in this qualifier set and in OTHER_CV.  */
+  WARN_UNUSED_RESULT constexpr cv_qualifier
+  intersect (cv_qualifier other_cv) const
+  { return cv_quals () & other_cv; }
+
+  /* Return true iff any of OTHER_CV are contained in THIS.  */
+  constexpr bool
+  has (cv_qualifier other_cv) const
+  { return intersect (other_cv); }
+
+  /* Get the symmetric difference of this qualifier set with CV-qualifiers
+     QUAL.  Of course, as QUAL lacks an address space, the address space of
+     this qualifier set is preserved.  */
+  WARN_UNUSED_RESULT constexpr qualifier_set
+  symmetric_difference (cv_qualifier qual) const
+  {
+    return {cv_quals () ^ qual, addr_space ()};
+  }
+
+  bool superset_of (qualifier_set subset, bool nop_only = false) const;
+
+  enum class merge_error : unsigned char
+  {
+    /* The address spaces of the to-be-merged qualifier sets were disjoint,
+       i.e. neither contained the other.  */
+    disjoint_address_spaces,
+
+    /* The to-be-merged qualifier sets differed in TYPE_QUAL_ATOMIC.  */
+    atomic_mismatch,
+  };
+
+  gcc::expected<qualifier_set, merge_error>
+  merge (qualifier_set other, bool strict_addr_space = false) const;
+
+  enum class join_error : unsigned char
+  {
+    /* The joined qualifier set would've contained two address space
+       qualifiers.  */
+    double_addr_space,
+  };
+
+  gcc::expected<qualifier_set, join_error> join (qualifier_set other) const;
+
+  friend constexpr bool
+  operator== (const qualifier_set &a, const qualifier_set &b)
+  {
+    return ((a.cv_quals () == b.cv_quals ())
+	    && (a.addr_space () == b.addr_space ()));
+  }
+
+  friend constexpr bool
+  operator!= (const qualifier_set &a, const qualifier_set &b)
+  {
+    return !(a == b);
+  }
+
+  /* Split this qualifier set into its constituent parts.  Useful where you
+     need to make sure you've handled all the components of a qualifier
+     set.  */
+
+  constexpr std::pair<cv_qualifier, addr_space_t>
+  split () const
+  { return std::make_pair (cv_quals (), addr_space ()); }
+
+  /* True iff this qualifier set is different to {ADDR_SPACE_GENERIC} (i.e. if
+     it is syntactically non-empty).  */
+  constexpr bool
+  nonempty_p () const
+  { return *this != qualifier_set {}; }
+
+  /* Shorthand for 'nonempty_p', for use in conditions.  */
+  explicit constexpr
+  operator bool () const
+  { return nonempty_p (); }
+
+  /* Dump the contents of this qualifier set to stderr.  */
+  void debug () const;
+
+private:
+  cv_qualifier m_cv_quals;
+  addr_space_t m_addr_space;
+};
+static_assert (std::is_trivially_copyable<qualifier_set>::value, "");
+static_assert (std::is_trivially_destructible<qualifier_set>::value, "");
+static_assert (std::is_trivially_default_constructible<qualifier_set>::value,
+	       "");
+static_assert ((qualifier_set {}
+		== qualifier_set {TYPE_UNQUALIFIED,
+				  ADDR_SPACE_GENERIC}),
+	       "We want the trivial default constructor to create a "
+	       "syntactically-empty qualifier set");
+
+/* Operators & and &= are intentionally omitted, as they permit losing
+   information too easily, and silently changed the meaning of existing code.
+   Use 'superset_of', 'intersect' and 'has' instead.  */
+
+/* For OR (union) and XOR (mutual difference) operations, we could keep an
+   address space, ergo we must return qualifier_sets.  */
+
+constexpr qualifier_set
+operator| (qualifier_set qs, cv_qualifier cvs)
+{
+  return qs.with (cvs);
+}
+
+constexpr qualifier_set
+operator| (cv_qualifier cvs, qualifier_set qs)
+{
+  return qs.with (cvs);
+}
+
+constexpr qualifier_set
+operator^ (qualifier_set qs, cv_qualifier cvs)
+{
+  return qs.symmetric_difference (cvs);
+}
+
+constexpr qualifier_set
+operator^ (cv_qualifier cvs, qualifier_set qs)
+{
+  return qs.symmetric_difference (cvs);
+}
+
+constexpr qualifier_set &
+operator|= (qualifier_set &qs, cv_qualifier quals)
+{
+  return qs = qs | quals;
+}
+constexpr qualifier_set &
+operator^= (qualifier_set &qs, cv_qualifier quals)
+{
+  return qs = qs ^ quals;
+}
 
 /* The same as TYPE_QUALS without the address space qualifications.  */
-#define TYPE_QUALS_NO_ADDR_SPACE(NODE)				\
-  ((int) ((TYPE_READONLY (NODE) * TYPE_QUAL_CONST)		\
-	  | (TYPE_VOLATILE (NODE) * TYPE_QUAL_VOLATILE)		\
-	  | (TYPE_ATOMIC (NODE) * TYPE_QUAL_ATOMIC)		\
-	  | (TYPE_RESTRICT (NODE) * TYPE_QUAL_RESTRICT)))
+#define TYPE_QUALS_NO_ADDR_SPACE(NODE)					\
+  (cv_qualifier ((TYPE_READONLY (NODE) * TYPE_QUAL_CONST)		\
+		 | (TYPE_VOLATILE (NODE) * TYPE_QUAL_VOLATILE)		\
+		 | (TYPE_ATOMIC (NODE) * TYPE_QUAL_ATOMIC)		\
+		 | (TYPE_RESTRICT (NODE) * TYPE_QUAL_RESTRICT)))
+
+/* The set of type qualifiers for this type.  */
+#define TYPE_QUALS(NODE)			\
+  (qualifier_set {(TYPE_QUALS_NO_ADDR_SPACE (NODE)), (TYPE_ADDR_SPACE (NODE))})
 
 /* The same as TYPE_QUALS without the address space and atomic
    qualifications.  */
-#define TYPE_QUALS_NO_ADDR_SPACE_NO_ATOMIC(NODE)		\
-  ((int) ((TYPE_READONLY (NODE) * TYPE_QUAL_CONST)		\
-	  | (TYPE_VOLATILE (NODE) * TYPE_QUAL_VOLATILE)		\
-	  | (TYPE_RESTRICT (NODE) * TYPE_QUAL_RESTRICT)))
+#define TYPE_QUALS_NO_ADDR_SPACE_NO_ATOMIC(NODE)			\
+  (cv_qualifier ((TYPE_READONLY (NODE) * TYPE_QUAL_CONST)		\
+		 | (TYPE_VOLATILE (NODE) * TYPE_QUAL_VOLATILE)		\
+		 | (TYPE_RESTRICT (NODE) * TYPE_QUAL_RESTRICT)))
 
 /* These flags are available for each language front end to use internally.  */
 #define TYPE_LANG_FLAG_0(NODE) (TYPE_CHECK (NODE)->type_common.lang_flag_0)
@@ -3682,7 +3965,7 @@ extern vec<tree, va_gc> **decl_debug_args_insert (tree);
    (FUNCTION_DECL_CHECK (NODE)->function_decl.versioned_function)
 
 /* In FUNCTION_DECL, this is set if this function is a C++ constructor.
-   Devirtualization machinery uses this knowledge for determing type of the
+   Devirtualization machinery uses this knowledge for determining type of the
    object constructed.  Also we assume that constructor address is not
    important.  */
 #define DECL_CXX_CONSTRUCTOR_P(NODE)\
@@ -5171,7 +5454,7 @@ strip_pointer_types (const_tree type)
   return type;
 }
 
-/* Desription of the reason why the argument of valid_constant_size_p
+/* Description of the reason why the argument of valid_constant_size_p
    is not a valid size.  */
 enum cst_size_error {
   cst_size_ok,
@@ -5230,18 +5513,18 @@ extern bool check_base_type (const_tree cand, const_tree base);
 /* Check whether CAND is suitable to be returned from get_qualified_type
    (BASE, TYPE_QUALS).  */
 
-extern bool check_qualified_type (const_tree, const_tree, int);
+extern bool check_qualified_type (const_tree, const_tree, qualifier_set);
 
 /* Return a version of the TYPE, qualified as indicated by the
    TYPE_QUALS, if one exists.  If no qualified version exists yet,
    return NULL_TREE.  */
 
-extern tree get_qualified_type (tree, int);
+extern tree get_qualified_type (tree, qualifier_set);
 
 /* Like get_qualified_type, but creates the type if it does not
    exist.  This function never returns NULL_TREE.  */
 
-extern tree build_qualified_type (tree, int CXX_MEM_STAT_INFO);
+extern tree build_qualified_type (tree, qualifier_set CXX_MEM_STAT_INFO);
 
 /* Create a variant of type T with alignment ALIGN.  */
 
@@ -5253,9 +5536,10 @@ extern tree build_aligned_type (tree, unsigned int);
    build_qualified_type instead.  */
 
 #define build_type_variant(TYPE, CONST_P, VOLATILE_P)			\
-  build_qualified_type ((TYPE),						\
-			((CONST_P) ? TYPE_QUAL_CONST : 0)		\
-			| ((VOLATILE_P) ? TYPE_QUAL_VOLATILE : 0))
+  (build_qualified_type							\
+   ((TYPE),								\
+    (((CONST_P) ? TYPE_QUAL_CONST : TYPE_UNQUALIFIED)			\
+     | ((VOLATILE_P) ? TYPE_QUAL_VOLATILE : TYPE_UNQUALIFIED))))
 
 /* Make a copy of a type node.  */
 
@@ -5359,6 +5643,11 @@ extern tree ssa_uniform_vector_p (tree);
    return NULL_TREE.  */
 
 extern tree uniform_integer_cst_p (tree);
+
+/* Return the uniform difference between two INTEGER_CSTs or corresponding
+   elements of two VECTOR_CSTs or NULL_TREE if no such difference exists.  */
+
+extern tree uniform_vector_difference_p (const_tree, const_tree);
 
 extern int single_nonzero_element (const_tree);
 
@@ -5637,6 +5926,9 @@ extern tree decl_type_context (const_tree);
 /* Return true if EXPR is the real constant zero.  */
 extern bool real_zerop (const_tree);
 
+/* Return true if EXPR is the real constant negative zero.  */
+extern bool real_negzerop (const_tree);
+
 /* Initialize the iterator I with arguments from function FNDECL  */
 
 inline void
@@ -5733,6 +6025,7 @@ extern bool auto_var_p (const_tree);
 extern bool auto_var_in_fn_p (const_tree, const_tree);
 extern tree build_low_bits_mask (tree, unsigned);
 extern bool tree_nop_conversion_p (const_tree, const_tree);
+extern bool vector_nop_conversion_p (const_tree, const_tree);
 extern tree tree_strip_nop_conversions (tree);
 extern tree tree_strip_sign_nop_conversions (tree);
 extern const_tree strip_invariant_refs (const_tree);
@@ -5791,6 +6084,27 @@ inline bool
 trunc_or_exact_div_p (tree_code code)
 {
   return code == TRUNC_DIV_EXPR || code == EXACT_DIV_EXPR;
+}
+
+/* Return true if CODE is an integer division or integer mod code. */
+inline bool
+int_divide_or_mod_p (const code_helper &code)
+{
+  switch (code.get_rep())
+    {
+    case TRUNC_DIV_EXPR:
+    case CEIL_DIV_EXPR:
+    case FLOOR_DIV_EXPR:
+    case ROUND_DIV_EXPR:
+    case EXACT_DIV_EXPR:
+    case TRUNC_MOD_EXPR:
+    case FLOOR_MOD_EXPR:
+    case CEIL_MOD_EXPR:
+    case ROUND_MOD_EXPR:
+      return true;
+    default:
+      return false;
+    }
 }
 
 /* Return nonzero if CODE is a tree code that represents a truth value.  */
@@ -5896,6 +6210,7 @@ extern void init_ttree (void);
 extern void build_common_tree_nodes (bool);
 extern void build_common_builtin_nodes (void);
 extern void tree_cc_finalize (void);
+extern tree unsigned_integer_tree_node_for_type (const char *);
 extern tree build_nonstandard_integer_type (unsigned HOST_WIDE_INT, int);
 extern tree build_nonstandard_boolean_type (unsigned HOST_WIDE_INT);
 extern tree build_bitint_type (unsigned HOST_WIDE_INT, int);
@@ -6791,20 +7106,22 @@ wi::to_poly_wide (const_tree t)
   return t;
 }
 
+/* The precision of extended_tree does not depend on the type of the tree,
+   so any zero INTEGER_CST is a valid zero.  */
 template <int N>
 inline generic_wide_int <wi::extended_tree <N> >
 wi::ints_for <generic_wide_int <wi::extended_tree <N> >,
-	      wi::INL_CONST_PRECISION>::zero (const extended &x)
+	      wi::INL_CONST_PRECISION>::zero (const extended &)
 {
-  return build_zero_cst (TREE_TYPE (x.get_tree ()));
+  return integer_zero_node;
 }
 
 template <int N>
 inline generic_wide_int <wi::extended_tree <N> >
 wi::ints_for <generic_wide_int <wi::extended_tree <N> >,
-	      wi::CONST_PRECISION>::zero (const extended &x)
+	      wi::CONST_PRECISION>::zero (const extended &)
 {
-  return build_zero_cst (TREE_TYPE (x.get_tree ()));
+  return integer_zero_node;
 }
 
 inline generic_wide_int <wi::unextended_tree>
@@ -6967,6 +7284,7 @@ extern void gt_pch_nx (tree_raw_data *, gt_pointer_operator, void *);
 extern bool nonnull_arg_p (const_tree);
 extern bool is_empty_type (const_tree);
 extern bool default_is_empty_record (const_tree);
+extern bool flexible_array_member_type_p (const_tree);
 extern bool flexible_array_type_p (const_tree);
 extern HOST_WIDE_INT arg_int_size_in_bytes (const_tree);
 extern tree arg_size_in_bytes (const_tree);
@@ -7196,5 +7514,28 @@ extern auto_vec<string_slice> get_clone_attr_versions
 extern bool disjoint_version_decls (tree, tree);
 /* Checks if two overlapping decls are not mergeable.  */
 extern bool diagnose_versioned_decls (tree, tree);
+
+/* Unshare tree if needed.  */
+extern tree unshare_expr (tree);
+
+/* Unshare tree if needed.
+   Removing the locations if an expr.  */
+extern tree unshare_expr_without_location (tree);
+
+extern void copy_if_shared (tree *, void * = NULL);
+
+/* Make a vector to hold an unexpanded omp iterator vector.  */
+inline tree
+make_omp_iterator (void)
+{
+  return make_tree_vec (6);
+}
+
+/* Make a vector to hold an expanded omp iterator vector.  */
+inline tree
+make_expanded_omp_iterator (void)
+{
+  return make_tree_vec (10);
+}
 
 #endif  /* GCC_TREE_H  */

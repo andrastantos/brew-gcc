@@ -30,10 +30,6 @@ namespace AST {
 std::unique_ptr<Expr>
 DeriveClone::clone_call (std::unique_ptr<Expr> &&to_clone)
 {
-  // $crate::core::clone::Clone::clone for the fully qualified path - we don't
-  // link with `core` yet so that might be an issue. Use `Clone::clone` for now?
-  // TODO: Factor this function inside the DeriveAccumulator
-
   // Interestingly, later versions of Rust have a `clone_fn` lang item which
   // corresponds to this. But because we are first targeting 1.49, we cannot use
   // it yet. Once we target a new, more recent version of the language, we'll
@@ -45,7 +41,11 @@ DeriveClone::clone_call (std::unique_ptr<Expr> &&to_clone)
   auto args = std::vector<std::unique_ptr<Expr>> ();
   args.emplace_back (std::move (to_clone));
 
-  return builder.qualified_call ({"Clone", "clone"}, std::move (args));
+  // FIXME: Misses :: prefix to avoid collision with potential core module
+  return builder.qualified_call ({builder.get_path_start (), "clone", "Clone",
+				  "clone"},
+				 builder.has_opening_scope (),
+				 std::move (args));
 }
 
 /**
@@ -101,8 +101,8 @@ DeriveClone::clone_impl (
 			     std::move (generics.impl));
 }
 
-DeriveClone::DeriveClone (location_t loc)
-  : DeriveVisitor (loc), expanded (nullptr)
+DeriveClone::DeriveClone (location_t loc, Builder::Source item_source)
+  : DeriveVisitor (loc, item_source), expanded (nullptr)
 {}
 
 std::unique_ptr<AST::Item>
@@ -171,12 +171,12 @@ DeriveClone::clone_enum_identifier (PathInExpression variant_path,
   auto pattern = std::unique_ptr<Pattern> (new ReferencePattern (
     std::unique_ptr<Pattern> (new PathInExpression (
       variant_path.get_segments (), {}, variant_path.get_locus (),
-      variant_path.opening_scope_resolution ())),
+      variant_path.has_opening_scope_resolution ())),
     false, false, loc));
   auto expr = std::unique_ptr<Expr> (
     new PathInExpression (variant_path.get_segments (), {},
 			  variant_path.get_locus (),
-			  variant_path.opening_scope_resolution ()));
+			  variant_path.has_opening_scope_resolution ()));
 
   return builder.match_case (std::move (pattern), std::move (expr));
 }
@@ -211,14 +211,14 @@ DeriveClone::clone_enum_tuple (PathInExpression variant_path,
     std::unique_ptr<Pattern> (new TupleStructPattern (
       PathInExpression (variant_path.get_segments (), {},
 			variant_path.get_locus (),
-			variant_path.opening_scope_resolution ()),
+			variant_path.has_opening_scope_resolution ()),
       std::move (pattern_items))),
     false, false, loc));
 
   auto expr = builder.call (std::unique_ptr<Expr> (new PathInExpression (
 			      variant_path.get_segments (), {},
 			      variant_path.get_locus (),
-			      variant_path.opening_scope_resolution ())),
+			      variant_path.has_opening_scope_resolution ())),
 			    std::move (cloned_patterns));
 
   return builder.match_case (std::move (pattern), std::move (expr));
@@ -291,7 +291,7 @@ DeriveClone::clone_enum_struct (PathInExpression variant_path,
   PathInExpression new_path (variant_path.get_segments (),
 			     variant_path.get_outer_attrs (),
 			     variant_path.get_locus (),
-			     variant_path.opening_scope_resolution ());
+			     variant_path.has_opening_scope_resolution ());
 
   auto expr = std::unique_ptr<Expr> (
     new StructExprStructFields (new_path, std::move (cloned_fields), loc));

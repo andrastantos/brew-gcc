@@ -24,7 +24,8 @@
 #include "rust-hir-type-check-item.h"
 #include "rust-hir-type-check-pattern.h"
 #include "rust-hir-type-check-struct-field.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
+#include "rust-rib.h"
 
 extern bool saw_errors (void);
 
@@ -154,10 +155,20 @@ TraitItemReference::get_type_from_fn (/*const*/ HIR::TraitItemFunc &fn) const
 {
   auto binder_pin = context->push_clean_lifetime_resolver ();
 
+  auto &mappings = Analysis::Mappings::get ();
+  auto *trait
+    = mappings.lookup_trait_item_mapping (get_mappings ().get_hirid ());
+  rust_assert (trait != nullptr);
+  for (auto &param : trait->get_generic_params ())
+    if (param->get_kind () == HIR::GenericParam::GenericKind::LIFETIME)
+      {
+	auto &lifetime_param = static_cast<HIR::LifetimeParam &> (*param);
+	context->intern_and_insert_lifetime (lifetime_param.get_lifetime ());
+      }
+
   std::vector<TyTy::SubstitutionParamMapping> substitutions
     = inherited_substitutions;
 
-  TyTy::RegionConstraints region_constraints;
   HIR::TraitFunctionDecl &function = fn.get_decl ();
   if (function.has_generics ())
     {
@@ -168,12 +179,9 @@ TraitItemReference::get_type_from_fn (/*const*/ HIR::TraitItemFunc &fn) const
 					   ABI::RUST);
     }
 
-  if (function.has_where_clause ())
-    {
-      for (auto &where_clause_item : function.get_where_clause ().get_items ())
-	ResolveWhereClauseItem::Resolve (*where_clause_item,
-					 region_constraints);
-    }
+  TyTy::RegionConstraints region_constraints;
+  ResolveWhereClauseItem::Resolve (function.get_where_clause (),
+				   region_constraints);
 
   TyTy::BaseType *ret_type = nullptr;
   if (!function.has_return_type ())
@@ -198,7 +206,7 @@ TraitItemReference::get_type_from_fn (/*const*/ HIR::TraitItemFunc &fn) const
     {
       // these are implicit mappings and not used
       auto &mappings = Analysis::Mappings::get ();
-      auto crate_num = mappings.get_current_crate ();
+      auto crate_num = mappings.crate.get_current_crate ();
       Analysis::NodeMapping mapping (crate_num, mappings.get_next_node_id (),
 				     mappings.get_next_hir_id (crate_num),
 				     UNKNOWN_LOCAL_DEFID);
@@ -275,11 +283,11 @@ TraitItemReference::get_type_from_fn (/*const*/ HIR::TraitItemFunc &fn) const
 			   param_tyty);
     }
 
-  auto &nr_ctx
-    = Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
+  auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
 
   CanonicalPath canonical_path
-    = nr_ctx.to_canonical_path (fn.get_mappings ().get_nodeid ());
+    = nr_ctx.to_canonical_path (fn.get_mappings ().get_nodeid (),
+				Resolver2_0::Namespace::Types);
 
   RustIdent ident{canonical_path, fn.get_locus ()};
   auto resolved = new TyTy::FnType (

@@ -184,17 +184,17 @@
        (eq_attr "type" "vialu,vicalu,vshift,viminmax,vicmp,vimov,\
 			vsalu,vaalu,vmov,vector,vimerge"))
   "andes_25_vpu_pipe + andes_25_vpu_alu")
-  
+
 (define_insn_reservation "andes_25_widen_vialu" 2
   (and (eq_attr "tune" "andes_25_series")
        (eq_attr "type" "viwalu, vext, vsshift"))
   "andes_25_vpu_pipe + andes_25_vpu_alu")
-  
+
 (define_insn_reservation "andes_25_narrow_vialu" 3
   (and (eq_attr "tune" "andes_25_series")
        (eq_attr "type" "vnshift,vnclip"))
   "andes_25_vpu_pipe + andes_25_vpu_alu")
-  
+
 (define_insn_reservation "andes_25_vimul" 2
   (and (eq_attr "tune" "andes_25_series")
        (eq_attr "type" "vimul,vimuladd,vsmul"))
@@ -210,7 +210,7 @@
        (eq_attr "type" "vslideup,vslidedown,vislide1up,vislide1down,\
 			vfslide1up,vfslide1down,vgather"))
   "andes_25_vpu_pipe + andes_25_vpu_perm")
-  
+
 (define_insn_reservation "andes_25_vcompress" 4
   (and (eq_attr "tune" "andes_25_series")
        (eq_attr "type" "vcompress"))
@@ -318,5 +318,7 @@
 			vaeskf1,vandn,vaesdm,vclmul,vclmulh,vrol,vcpop,vbrev8,
 			vsm3me,vbrev,vctz,vgmul,vsha2ms,vaesz,vrev8,
 			vaeskf2,vsha2cl,vwsll,vaesdf,vaesem,vfwmaccbf16,
-			sf_vqmacc,sf_vc,sf_vc_se,sf_vfnrclip"))
+			sf_vqmacc,sf_vc,sf_vc_se,sf_vfnrclip,
+			xt_vgmulxor,xt_vcrcfold,xt_vile,xt_vilo,
+			vidota,vfdota,vibdota,vfbdota"))
   "andes_25_vector_dummies")

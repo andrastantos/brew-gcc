@@ -650,7 +650,7 @@ cksum_test (char * pz_data, tTestDesc * p_test, char * fname)
     char * fnm = strrchr(fname, '/');
     if (fnm != NULL)
       fname = fnm + 1;
-    
+
     errno = 0;
     cksum = (unsigned int)strtoul(p_test->pz_test_text, &fnm, 10);
     if (errno != 0)
@@ -691,7 +691,7 @@ cksum_test (char * pz_data, tTestDesc * p_test, char * fname)
 
 static int
 quoted_file_exists (const char* pz_src_path,
-                    const char* pz_file_path, 
+                    const char* pz_file_path,
                     const char* pz_file)
 {
   char z[ MAXPATHLEN ];
@@ -730,7 +730,7 @@ quoted_file_exists (const char* pz_src_path,
    emits a triple of:
 
     1.  source directory of the original file
-    2.  the relative path file name of the #includ-ed file
+    2.  the relative path file name of the #include-d file
     3.  the full destination path for this file
 
    Input:  the text of the file, the file name and a pointer to the
@@ -740,19 +740,20 @@ quoted_file_exists (const char* pz_src_path,
 
 
 static void
-extract_quoted_files (char* pz_data, 
-                      const char* pz_fixed_file,
+extract_quoted_files (char* pz_data,
+                      char* pz_file,
                       regmatch_t* p_re_match)
 {
-  char *pz_dir_end = strrchr (pz_fixed_file, '/');
+  char *pz_dir_end = strrchr (pz_file, '/');
   char *pz_incl_quot = pz_data;
 
   if (VLEVEL( VERB_APPLIES ))
-    fprintf (stderr, "Quoted includes in %s\n", pz_fixed_file);
+    fprintf (stderr, "Quoted includes in %s\n", pz_file);
 
   /*  Set "pz_fixed_file" to point to the containing subdirectory of the source
       If there is none, then it is in our current directory, ".".   */
 
+  const char *pz_fixed_file = pz_file;
   if (pz_dir_end == (char *) NULL)
     pz_fixed_file = ".";
   else
@@ -941,7 +942,7 @@ fix_with_system (tFixDesc* p_fixd,
       argsize = sizeof( z_cmd_fmt ) + strlen( pz_temp_file )
               + strlen( pz_file_source );
       parg_size = argsize;
-      
+
       if (p_fixd->fd_flags & FD_SHELL_SCRIPT)
         {
           argsize += strlen( z_subshell_start ) + strlen ( z_subshell_end );

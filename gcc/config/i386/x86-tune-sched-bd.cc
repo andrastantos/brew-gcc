@@ -114,7 +114,7 @@ enum insn_path {
    Windows are allocated for each basic block and are linked
    together.  */
 typedef struct sched_insn_info_s {
-  rtx insn;
+  rtx_insn *insn;
   enum dispatch_group group;
   enum insn_path path;
   int byte_len;
@@ -143,7 +143,7 @@ typedef struct dispatch_windows_s {
   struct dispatch_windows_s *prev;
 } dispatch_windows;
 
-/* Immediate valuse used in an insn.  */
+/* Immediate values used in an insn.  */
 typedef struct imm_info_s
   {
     int imm;
@@ -332,10 +332,9 @@ allocate_next_window (int window_num)
 /* Compute number of immediate operands of an instruction.  */
 
 static void
-find_constant (rtx in_rtx, imm_info *imm_values)
+find_constant (rtx_insn *insn, imm_info *imm_values)
 {
-  if (INSN_P (in_rtx))
-    in_rtx = PATTERN (in_rtx);
+  rtx in_rtx = INSN_P (insn) ? PATTERN (insn) : insn;
   subrtx_iterator::array_type array;
   FOR_EACH_SUBRTX (iter, array, in_rtx, ALL)
     if (const_rtx x = *iter)
@@ -372,7 +371,7 @@ find_constant (rtx in_rtx, imm_info *imm_values)
 
 /* Return total size of immediate operands of an instruction along with number
    of corresponding immediate-operands.  It initializes its parameters to zero
-   befor calling FIND_CONSTANT.
+   before calling FIND_CONSTANT.
    INSN is the input instruction.  IMM is the total of immediates.
    IMM32 is the number of 32 bit immediates.  IMM64 is the number of 64
    bit immediates.  */

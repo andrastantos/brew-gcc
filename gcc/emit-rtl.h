@@ -89,7 +89,7 @@ struct GTY(()) rtl_data {
   rtx return_rtx;
 
   /* Vector of initial-value pairs.  Each pair consists of a pseudo
-     register of approprite mode that stores the initial value a hard
+     register of appropriate mode that stores the initial value a hard
      register REGNO, and that hard register itself.  */
   /* ??? This could be a VEC but there is currently no way to define an
 	 opaque VEC type.  */
@@ -482,6 +482,7 @@ extern void set_decl_incoming_rtl (tree, rtx, bool);
    (VOIDmode means don't change the mode.
    NULL for ADDR means don't change the address.)  */
 extern rtx change_address (rtx, machine_mode, rtx);
+extern rtx change_address_nv (rtx, machine_mode, rtx);
 
 /* Return a memory reference like MEMREF, but with its mode changed
    to MODE and its address offset by OFFSET bytes.  */
@@ -527,7 +528,7 @@ extern rtx adjust_automodify_address_1 (rtx, machine_mode, rtx,
    how reload pseudos are created.  */
 struct address_reload_context
 {
-  /* Can be overriden by derived classes.  */
+  /* Can be overridden by derived classes.  */
   virtual rtx get_reload_reg () const { return gen_reg_rtx (Pmode); }
 
   /* Emit insns to reload VALUE into a new register.  VALUE is an
@@ -552,13 +553,16 @@ extern rtx offset_address (rtx, rtx, unsigned HOST_WIDE_INT);
 
 /* Given REF, a MEM, and T, either the type of X or the expression
    corresponding to REF, set the memory attributes.  OBJECTP is nonzero
-   if we are making a new object of this type.  */
-extern void set_mem_attributes (rtx, tree, int);
+   if we are making a new object of this type.  MAY_STORE_P is true when REF
+   can be the destination of a store.  */
+extern void set_mem_attributes (rtx, tree, int, bool = true);
 
 /* Similar, except that BITPOS has not yet been applied to REF, so if
    we alter MEM_OFFSET according to T then we should subtract BITPOS
-   expecting that it'll be added back in later.  */
-extern void set_mem_attributes_minus_bitpos (rtx, tree, int, poly_int64);
+   expecting that it'll be added back in later.  MAY_STORE_P is true when REF
+   can be the destination of a store.  */
+extern void set_mem_attributes_minus_bitpos (rtx, tree, int, poly_int64,
+				     bool = true);
 
 /* Return OFFSET if XEXP (MEM, 0) - OFFSET is known to be ALIGN
    bits aligned for 0 <= OFFSET < ALIGN / BITS_PER_UNIT, or

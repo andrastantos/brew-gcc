@@ -22,3 +22,10 @@ SHLIB_EXT = .sl
 SHLIB_SOLINK = @shlib_base_name@$(SHLIB_EXT)
 SHLIB_SONAME = @shlib_base_name@.$(SHLIB_SOVERSION)
 SHLIB_LC =
+
+SHLIB_LDFLAGS = -Wl,+h,$(SHLIB_SONAME)
+
+INSTALL_SHLIB = $(INSTALL_DATA) -m 555
+
+SHLIB_MKMAP = $(srcdir)/mkmap-flat.awk
+SHLIB_MAPFILES = libgcc-std.ver

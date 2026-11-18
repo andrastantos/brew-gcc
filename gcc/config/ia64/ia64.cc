@@ -178,7 +178,7 @@ static bool ia64_skip_rtx_p (const_rtx);
 static int ia64_speculate_insn (rtx_insn *, ds_t, rtx *);
 static bool ia64_needs_block_p (ds_t);
 static rtx ia64_gen_spec_check (rtx_insn *, rtx_insn *, ds_t);
-static int ia64_spec_check_p (rtx);
+static int ia64_spec_check_p (rtx_insn *);
 static int ia64_spec_check_src_p (rtx);
 static rtx gen_tls_get_addr (void);
 static rtx gen_thread_pointer (void);
@@ -266,7 +266,7 @@ static int insert_bundle_state (struct bundle_state *);
 static void initiate_bundle_state_table (void);
 static void finish_bundle_state_table (void);
 static int try_issue_nops (struct bundle_state *, int);
-static int try_issue_insn (struct bundle_state *, rtx);
+static int try_issue_insn (struct bundle_state *, rtx_insn *);
 static void issue_nops_and_insn (struct bundle_state *, int, rtx_insn *,
 				 int, int);
 static int get_max_pos (state_t);
@@ -1584,7 +1584,8 @@ ia64_split_tmode (rtx out[2], rtx in, bool reversed, bool dead)
 void
 ia64_split_tmode_move (rtx operands[])
 {
-  rtx in[2], out[2], insn;
+  rtx in[2], out[2];
+  rtx_insn *insn;
   rtx fixup[2];
   bool dead = false;
   bool reversed = false;
@@ -2375,7 +2376,7 @@ ia64_expand_atomic_op (enum rtx_code code, rtx mem, rtx val,
 		       rtx old_dst, rtx new_dst, enum memmodel model)
 {
   machine_mode mode = GET_MODE (mem);
-  rtx old_reg, new_reg, cmp_reg, ar_ccv, label;
+  rtx old_reg, new_reg, cmp_reg, ar_ccv;
   enum insn_code icode;
 
   /* Special case for using fetchadd.  */
@@ -2438,7 +2439,7 @@ ia64_expand_atomic_op (enum rtx_code code, rtx mem, rtx val,
 
   old_reg = gen_reg_rtx (DImode);
   cmp_reg = gen_reg_rtx (DImode);
-  label = gen_label_rtx ();
+  rtx_code_label *label = gen_label_rtx ();
 
   if (mode != DImode)
     {
@@ -8256,7 +8257,7 @@ ia64_skip_rtx_p (const_rtx x)
 /* If INSN is a speculative load, return its UNSPEC code.
    Return -1 otherwise.  */
 static int
-get_insn_spec_code (const_rtx insn)
+get_insn_spec_code (const rtx_insn *insn)
 {
   rtx pat, reg, mem;
 
@@ -8333,7 +8334,7 @@ ia64_get_insn_checked_ds (rtx_insn *insn)
    MODE_NO and with ZERO_EXTEND (if EXTEND_P is true).
    If GEN_P is false, just calculate the index of needed speculation check.  */
 static rtx
-ia64_gen_spec_load (rtx insn, ds_t ts, int mode_no)
+ia64_gen_spec_load (rtx_insn *insn, ds_t ts, int mode_no)
 {
   rtx pat, new_pat;
   gen_func_t gen_load;
@@ -8572,9 +8573,9 @@ ia64_gen_spec_check (rtx_insn *insn, rtx_insn *label, ds_t ds)
 
 /* Return nonzero, if X is branchy recovery check.  */
 static int
-ia64_spec_check_p (rtx x)
+ia64_spec_check_p (rtx_insn *insn)
 {
-  x = PATTERN (x);
+  rtx x = PATTERN (insn);
   if (GET_CODE (x) == COND_EXEC)
     x = COND_EXEC_CODE (x);
   if (GET_CODE (x) == SET)
@@ -8848,7 +8849,7 @@ try_issue_nops (struct bundle_state *curr_state, int nops_num)
    function returns FALSE and frees the current state.  */
 
 static int
-try_issue_insn (struct bundle_state *curr_state, rtx insn)
+try_issue_insn (struct bundle_state *curr_state, rtx_insn *insn)
 {
   if (insn && state_transition (curr_state->dfa_state, insn) >= 0)
     {
@@ -9150,7 +9151,7 @@ ia64_add_bundle_selector_before (int template0, rtx_insn *insn)
 /* The following function does insn bundling.  Bundling means
    inserting templates and nop insns to fit insn groups into permitted
    templates.  Instruction scheduling uses NDFA (non-deterministic
-   finite automata) encoding informations about the templates and the
+   finite automata) encoding information about the templates and the
    inserted nops.  Nondeterminism of the automata permits follows
    all possible insn sequences very fast.
 
@@ -9286,8 +9287,8 @@ bundling (FILE *dump, int verbose, rtx_insn *prev_head_insn, rtx_insn *tail)
 	   curr_state = curr_state->next)
 	if (verbose >= 2 && dump)
 	  {
-	    /* This structure is taken from generated code of the
-	       pipeline hazard recognizer (see file insn-attrtab.cc).
+	    /* This structure is taken from the generated pipeline hazard
+	       recognizer code.
 	       Please don't forget to change the structure if a new
 	       automaton is added to .md file.  */
 	    struct DFA_chip

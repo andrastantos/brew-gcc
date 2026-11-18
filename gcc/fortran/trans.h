@@ -455,7 +455,8 @@ tree gfc_get_class_from_gfc_expr (gfc_expr *);
 tree gfc_get_class_from_expr (tree);
 tree gfc_get_vptr_from_expr (tree);
 tree gfc_copy_class_to_class (tree, tree, tree, bool);
-bool gfc_add_finalizer_call (stmtblock_t *, gfc_expr *, tree = NULL_TREE);
+bool gfc_add_finalizer_call (stmtblock_t *, gfc_expr *, tree = NULL_TREE,
+			     bool = false);
 bool gfc_add_comp_finalizer_call (stmtblock_t *, tree, gfc_component *, bool);
 void gfc_finalize_tree_expr (gfc_se *, gfc_symbol *, const symbol_attribute &,
 			     int);
@@ -560,11 +561,13 @@ int gfc_is_intrinsic_libcall (gfc_expr *);
 int gfc_conv_procedure_call (gfc_se *, gfc_symbol *, gfc_actual_arglist *,
 			     gfc_expr *, vec<tree, va_gc> *);
 
-void gfc_conv_subref_array_arg (gfc_se *, gfc_expr *, int, sym_intent, bool,
+void gfc_conv_subref_array_arg (gfc_se *, gfc_expr *, int, sym_intent,
 				const gfc_symbol *fsym = NULL,
 				const char *proc_name = NULL,
 				gfc_symbol *sym = NULL,
-				bool check_contiguous = false);
+				bool check_contiguous = false,
+				bool deep_copy = false,
+				bool span_only = false);
 
 void gfc_conv_is_contiguous_expr (gfc_se *, gfc_expr *);
 
@@ -640,6 +643,9 @@ tree gfc_build_array_ref (tree, tree, tree,
 
 /* Build an array ref using pointer arithmetic.  */
 tree gfc_build_spanned_array_ref (tree base, tree offset, tree span);
+
+/* Return the descriptor holding the span of a pointer array decl.  */
+tree gfc_get_span_descriptor (tree);
 
 /* Creates a label.  Decl is artificial if label_id == NULL_TREE.  */
 tree gfc_build_label_decl (tree);
@@ -754,7 +760,7 @@ tree gfc_call_free (tree);
 tree gfc_call_malloc (stmtblock_t *, tree, tree);
 
 /* Build a memcpy call.  */
-tree gfc_build_memcpy_call (tree, tree, tree);
+tree gfc_build_memcpy_call (tree, tree, tree, bool use_memmove = false);
 
 /* Register memory with the coarray library.  */
 void gfc_allocate_using_caf_lib (stmtblock_t *, tree, tree, tree, tree, tree,
@@ -764,7 +770,7 @@ void gfc_allocate_using_caf_lib (stmtblock_t *, tree, tree, tree, tree, tree,
 void gfc_allocate_allocatable (stmtblock_t*, tree, tree, tree, tree,
 			       tree, tree, tree, gfc_expr*, int,
 			       tree = NULL_TREE, tree = NULL_TREE,
-			       tree = NULL_TREE);
+			       tree = NULL_TREE, tree = NULL_TREE);
 
 /* Allocate memory, with optional status variable.  */
 void gfc_allocate_using_malloc (stmtblock_t *, tree, tree, tree,
@@ -827,6 +833,7 @@ tree gfc_omp_call_is_alloc (tree);
 bool gfc_omp_is_allocatable_or_ptr (const_tree);
 tree gfc_omp_check_optional_argument (tree, bool);
 tree gfc_omp_array_data (tree, bool);
+bool gfc_omp_array_data_privatize (tree);
 tree gfc_omp_array_size (tree, gimple_seq *);
 bool gfc_omp_privatize_by_reference (const_tree);
 enum omp_clause_default_kind gfc_omp_predetermined_sharing (tree);
@@ -1015,12 +1022,6 @@ extern GTY(()) tree gfor_fndecl_cfi_deep_copy_array;
 /* gfortran-specific declaration information, the _CONT versions denote
    arrays with CONTIGUOUS attribute.  */
 
-#define GFC_DTYPE_ELEM_LEN 0
-#define GFC_DTYPE_VERSION 1
-#define GFC_DTYPE_RANK 2
-#define GFC_DTYPE_TYPE 3
-#define GFC_DTYPE_ATTRIBUTE 4
-
 enum gfc_array_kind
 {
   GFC_ARRAY_UNKNOWN,
@@ -1056,6 +1057,8 @@ struct GTY(())	lang_type	 {
 struct GTY(()) lang_decl {
   /* Dummy variables.  */
   tree saved_descriptor;
+  /* Element spacing of a span addressed dummy, loaded once on entry.  */
+  tree span;
   /* Assigned integer nodes.  Stringlength is the IO format string's length.
      Addr is the address of the string or the target label. Stringlength is
      initialized to -2 and assigned to -1 when addr is assigned to the
@@ -1068,6 +1071,9 @@ struct GTY(()) lang_decl {
   unsigned int scalar_pointer : 1;
   unsigned int scalar_target : 1;
   unsigned int optional_arg : 1;
+  /* The element spacing of this dummy is held by the strides of its
+     descriptor rather than by its span.  */
+  unsigned int span_normalized : 1;
 };
 
 
@@ -1077,6 +1083,13 @@ struct GTY(()) lang_decl {
 #define GFC_DECL_CAF_OFFSET(node) DECL_LANG_SPECIFIC(node)->caf_offset
 #define GFC_DECL_SAVED_DESCRIPTOR(node) \
   (DECL_LANG_SPECIFIC(node)->saved_descriptor)
+#define GFC_DECL_SPAN(node) (DECL_LANG_SPECIFIC(node)->span)
+#define GFC_DECL_SPAN_NORMALIZED(node) \
+  (DECL_LANG_SPECIFIC(node)->span_normalized)
+/* Return the cached span of a span addressed dummy, or NULL_TREE.  */
+#define GFC_DECL_GET_SPAN(node) \
+  (DECL_P (node) && DECL_LANG_SPECIFIC (node) \
+   ? GFC_DECL_SPAN (node) : NULL_TREE)
 #define GFC_DECL_SCALAR_ALLOCATABLE(node) \
   (DECL_LANG_SPECIFIC (node)->scalar_allocatable)
 #define GFC_DECL_SCALAR_POINTER(node) \

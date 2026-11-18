@@ -38,17 +38,38 @@
 #include <ctime>
 
 #include <algorithm>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 #include <langinfo.h>
 
+#if defined(IN_GCC_FRONTEND)
+#include "cobol-system.h"
+#include "coretypes.h"
+#include "tree.h"
+#include "tree-iterator.h"
+#include "stringpool.h"
+#include "diagnostic-core.h"
+#include "target.h"
+#include "tm.h"
+#include "../../libgcobol/ec.h"
+#include "../../libgcobol/common-defs.h"
+#include "../../libgcobol/io.h"
+#include "../../libgcobol/gcobolio.h"
+#include "../../libgcobol/valconv.h"
+#include "../../libgcobol/cobol-endian.h"
+#include "../../libgcobol/charmaps.h"
+#include "../../libgcobol/encodings.h"
+#else
 #include "ec.h"
 #include "common-defs.h"
 #include "io.h"
 #include "gcobolio.h"
 #include "valconv.h"
+#include "cobol-endian.h"
 #include "charmaps.h"
 #include "encodings.h"
+#endif
 
 // These values are in the ASCII space.
 int __gg__decimal_point        = '.'  ;
@@ -62,6 +83,71 @@ uint32_t   __gg__wsclear       = NOT_A_CHARACTER;
 std::vector<std::string> __gg__currency_signs(256) ;
 int __gg__default_currency_sign;
 char *__gg__ct_currency_signs[256];  // Compile-time currency signs
+
+// Each program's currency setup creates one state.  Completed states are
+// immutable; only their vector storage changes owners on activation.
+struct currency_state
+  {
+  std::vector<std::string> signs;
+  const char *debug_signs[256] = {};
+
+  currency_state() : signs(256)
+    {
+    }
+  };
+
+// Heap allocation keeps views stable when this ownership registry grows.
+// Retain the states for the lifetime of their programs, including saved
+// callers whose tables are temporarily inactive.
+static std::vector<std::unique_ptr<currency_state>> currency_states;
+currency_state *__gg__active_currency_state = nullptr;
+
+extern "C"
+  {
+  const char *const *__gg__debug_currency_signs = nullptr;
+  }
+
+extern "C"
+currency_state *
+__gg__get_currency_state()
+  {
+  return __gg__active_currency_state;
+  }
+
+extern "C"
+void
+__gg__activate_currency_state(currency_state *state)
+  {
+  if( state != __gg__active_currency_state )
+    {
+    if( __gg__active_currency_state != nullptr )
+      {
+      __gg__currency_signs.swap(__gg__active_currency_state->signs);
+      }
+    __gg__currency_signs.swap(state->signs);
+    __gg__active_currency_state = state;
+    }
+
+  // std::vector::swap preserves the string objects and their c_str pointers,
+  // including short strings.  Publish the existing view with one store.
+  __gg__debug_currency_signs = state->debug_signs;
+  }
+
+void
+__gg__new_currency_state()
+  {
+  std::unique_ptr<currency_state> state(new currency_state);
+  currency_states.push_back(std::move(state));
+  __gg__activate_currency_state(currency_states.back().get());
+  }
+
+void
+__gg__update_debug_currency_sign(unsigned symbol)
+  {
+  const std::string &sign = __gg__currency_signs[symbol];
+  __gg__active_currency_state->debug_signs[symbol] =
+    sign.empty() ? nullptr : sign.c_str();
+  }
 
 cbl_encoding_t __gg__console_encoding  = no_encoding_e    ;
 cbl_encoding_t __gg__display_encoding  = no_encoding_e;
@@ -1417,29 +1503,6 @@ static encodings_t encodings[] = {
   { false, iconv_YU_e, "YU" },
 };
 
-/*
- * Because this variable is static, the contructor runs before main and is
- * guaranted to run.
- */
-static class rt_encoding_t
-  {
-  const char *ctype, *lc_ctype;
-  public:
-  rt_encoding_t() : ctype( setlocale(LC_CTYPE, "") )
-    {
-    lc_ctype =  nl_langinfo(CODESET);
-    // Let's learn what the computer is using for the console:
-    // We need to establish the codeset used by the system console:
-  __gg__console_encoding = use_locale();
-    }
-  cbl_encoding_t use_locale() const
-    {
-    auto encoding = strstr(ctype, "UTF-8") ?
-      iconv_UTF_8_e : __gg__encoding_iconv_type(lc_ctype);
-    return encoding;
-    }
-  } rt_encoding;
-
 static const encodings_t *
 encoding_descr( cbl_encoding_t encoding ) {
   static encodings_t *eoencodings = encodings + COUNT_OF(encodings);
@@ -1455,7 +1518,11 @@ static const encodings_t *
 encoding_descr( const char name[] ) {
   static encodings_t *eoencodings = encodings + COUNT_OF(encodings);
 
+#if defined(IN_GCC_FRONTEND)
+  char *slashless = xstrdup(name);
+#else
   char *slashless = strdup(name);
+#endif
   assert(slashless);
   char *pslash = strchr(slashless, '/');
   if( pslash )
@@ -1532,13 +1599,25 @@ __gg__iconverter( cbl_encoding_t from,
   charmap_t *charmap_to = __gg__get_charmap(to);
 
   static size_t retsize = 1;
+
+#if defined(IN_GCC_FRONTEND)
+  static char *retval = static_cast<char *>(xmalloc(retsize));
+#else
   static char *retval = static_cast<char *>(malloc(retsize));
+#endif
+
+  if( outlength_p ) *outlength_p = 0;
+  if( iconv_retval_p ) *iconv_retval_p = 0;
 
   size_t needed = 4*(length+1);
   if( retsize < needed )
     {
     retsize = needed;
+#if defined(IN_GCC_FRONTEND)
+    retval = static_cast<char *>(xrealloc(retval, retsize));
+#else
     retval = static_cast<char *>(realloc(retval, retsize));
+#endif
     }
 
   size_t outlength;
@@ -1555,8 +1634,10 @@ __gg__iconverter( cbl_encoding_t from,
     }
   else
     {
-    // We attempt to minimize overhead by using a map to call
-    // iconv_open but once for each from/to pairing.
+    // We minimize overhead by using a map to call iconv_open but once for
+    // each from/to pairing.  Do not remove this map.  It was once removed, and
+    // the execution time for Coughlan Listion17-3 went from half a second to
+    // one-and-a-half seconds.
 
     iconv_t cd;
 
@@ -1568,10 +1649,17 @@ __gg__iconverter( cbl_encoding_t from,
     if( it == pairings.end() )
       {
       // This pairing is new to us.
+      static cbl_iconv_t cbl_iconv;
+
       assert(to   > custom_encoding_e);
       assert(from > custom_encoding_e);
-      cd = iconv_open(__gg__encoding_iconv_name(to),
-                      __gg__encoding_iconv_name(from));
+
+      cd = cbl_iconv.open(to, from);
+
+      if( ! cbl_iconv.valid(cd) )
+        {
+        return retval;
+        }
       pairings[pairing] = cd;
       }
     else
@@ -1600,7 +1688,11 @@ __gg__iconverter( cbl_encoding_t from,
       const charmap_t *map_from = __gg__get_charmap(from);
       if( map_from->is_like_ebcdic() )
         {
+#if defined(IN_GCC_FRONTEND)
+        inbuf_cpy = static_cast<char *>(xmalloc(length));
+#else
         inbuf_cpy = static_cast<char *>(malloc(length));
+#endif
         assert(inbuf_cpy);
         memcpy(inbuf_cpy, inbuf, length);
         inbuf = inbuf_cpy;
@@ -1617,12 +1709,13 @@ __gg__iconverter( cbl_encoding_t from,
     // When the caller supplies iconv_retval_p, we only try to convert once,
     // because they are telling us they will handle errors.
 
-    // Otherwise, we just keep trying to convert, replacing unconvertable
+    // Otherwise, we just keep trying to convert, replacing unconvertible
     // characters with a replacement.
 
     iconv_retval = 1; // This primes the pump:
     for(;;)
       {
+      errno = 0;
       iconv_retval = iconv( cd,
                             &inbuf, &inbytesleft,
                             &outbuf, &outbytesleft);
@@ -1718,7 +1811,11 @@ __gg__miconverter( cbl_encoding_t from,
                                            length,
                                            outlength_p,
                                            iconv_retval_p);
+#if defined(IN_GCC_FRONTEND)
+  char *retval = static_cast<char *>(xmalloc(*outlength_p + 4));
+#else
   char *retval = static_cast<char *>(malloc(*outlength_p + 4));
+#endif
   assert(retval);
   memcpy(retval, converted, *outlength_p);
   // Tack on four zeros to be a NUL in any encoding.
@@ -1726,8 +1823,13 @@ __gg__miconverter( cbl_encoding_t from,
   return retval;
   }
 
-static
-std::unordered_map<cbl_encoding_t, charmap_t *>map_of_encodings;
+// I switched to this wasteful table when I learned that unordered_map.find(),
+// fast though it is, at something like 23 nanoseconds was annoyingly longer
+// than some of my efficient MOVE conversion routines.
+
+// Using 1500 is, I suppose, sloppy.  Right now the biggest entry in the
+// cbl_encodings_t enum is about 1,150.
+static charmap_t *maps_weve_seen[iconv_LAST] = {};
 
 charmap_t *
 __gg__get_charmap(cbl_encoding_t encoding)
@@ -1749,17 +1851,122 @@ __gg__get_charmap(cbl_encoding_t encoding)
     }
 
   charmap_t *retval;
-  std::unordered_map<cbl_encoding_t, charmap_t *>::const_iterator it
-                          = map_of_encodings.find(encoding);
-  if( it != map_of_encodings.end() )
+
+  if( maps_weve_seen[encoding] )
     {
-    retval = it->second;
+    retval = maps_weve_seen[encoding];
     }
   else
     {
     retval = new charmap_t(encoding);
-    map_of_encodings[encoding] = retval;
+    maps_weve_seen[encoding] = retval;
     }
   return retval;
   }
 
+static void
+fixcode( char *ach, size_t N )
+  {
+  if(    strncasecmp(ach, "UTF16", N) == 0
+      || strncasecmp(ach, "UTF-16", N) == 0 )
+    {
+    strcpy(ach, "UTF-16" );
+    if( cobol_target_big_endian() ) // cppcheck-suppress knownConditionTrueFalse
+      {
+      strcat(ach, "BE");
+      }
+    else
+      {
+      strcat(ach, "LE");
+      }
+    }
+  else if(    strncasecmp(ach, "UTF32", N) == 0
+           || strncasecmp(ach, "UTF-32", N) == 0 )
+    {
+    strcpy(ach, "UTF-32" );
+    if( cobol_target_big_endian() ) // cppcheck-suppress knownConditionTrueFalse
+      {
+      strcat(ach, "BE");
+      }
+    else
+      {
+      strcat(ach, "LE");
+      }
+    }
+  else if( strncasecmp(ach, "UTF16BE", N) == 0 )
+    {
+    strcpy(ach, "UTF-16BE");
+    }
+  else if( strncasecmp(ach, "UTF16LE", N) == 0 )
+    {
+    strcpy(ach, "UTF-16LE");
+    }
+  else if( strncasecmp(ach, "UTF32BE", N) == 0 )
+    {
+    strcpy(ach, "UTF-32BE");
+    }
+  else if( strncasecmp(ach, "UTF32LE", N) == 0 )
+    {
+    strcpy(ach, "UTF-32LE");
+    }
+  }
+
+iconv_t
+helpful_iconv_open(const char *tocode, const char *fromcode)
+  {
+  // This routine is helpful in two ways.  FreeBSD systems provide for
+  // "utf-16le" as an iconv_open(3) input, but not "utf16le", as does Ubuntu.
+  // So it converts "utf16" to "utf-16"
+
+  // It also provides for converting "utf-16" to either "utf-16be" or "utf16le"
+  // depending on the endianness of the target machine.  Because we can't
+  // handle an unspecified "utf-16" because of the Byte Order Marker, this is
+  // my justification for forcing it to one or the other.
+
+  // When the programmer specifies "le" or "be", we let that be forced through.
+  // Specify disaster, and you get disaster.
+
+  char ach_to[32];
+  char ach_from[32];
+
+  snprintf(ach_to, sizeof ach_to, "%s", tocode);
+  snprintf(ach_from, sizeof ach_from, "%s", fromcode);
+
+  fixcode(ach_to, sizeof(ach_to));
+  fixcode(ach_from, sizeof(ach_from));
+
+  iconv_t cd = iconv_open(ach_to, ach_from);
+
+  return cd;
+  }
+
+char
+char_from_figconst(cbl_figconst_t figconst)
+  {
+  char retval = 0;
+  switch(figconst)
+    {
+    case normal_value_e :
+      retval = 0;
+      break;
+    case low_value_e    :
+      retval = __gg__low_value_character;
+      break;
+    case null_value_e   :
+      retval = '\0';
+      break;
+    case zero_value_e   :
+      retval = ascii_zero;
+      break;
+    case space_value_e  :
+      retval = ascii_space;
+      break;
+    case quote_value_e  :
+      retval = __gg__quote_character;
+      break;
+    case high_value_e   :
+      retval = __gg__high_value_character;
+      break;
+    }
+  return retval;
+  }

@@ -37,13 +37,13 @@
 #include "gimplify.h"
 #include "explow.h"
 #include "emit-rtl.h"
-#include "aarch64-sve-builtins.h"
+#include "aarch64-acle-builtins.h"
 #include "aarch64-sve-builtins-shapes.h"
 #include "aarch64-sve-builtins-base.h"
 #include "aarch64-sve-builtins-sme.h"
 #include "aarch64-sve-builtins-functions.h"
 
-using namespace aarch64_sve;
+using namespace aarch64_acle;
 
 namespace {
 
@@ -60,7 +60,7 @@ public:
 class read_write_za_base : public function_base
 {
 public:
-  constexpr read_write_za_base (int unspec) : m_unspec (unspec) {}
+  constexpr read_write_za_base (unspec unspec) : m_unspec (unspec) {}
 
   rtx
   expand (function_expander &e) const override
@@ -73,7 +73,7 @@ public:
     return e.use_exact_insn (icode);
   }
 
-  int m_unspec;
+  unspec m_unspec;
 };
 
 using load_za_base = add_call_properties<load_store_za_zt0_base,
@@ -176,7 +176,7 @@ expand_ldr_str_zt0 (function_expander &e, insn_code icode)
    IS_LOAD is true if E is a load, false if it is a store.  */
 
 static rtx
-expand_ld1_st1 (function_expander &e, int unspec, bool is_load)
+expand_ld1_st1 (function_expander &e, unspec unspec, bool is_load)
 {
   bool is_vnum = has_in_range_vnum_arg (e, e.vector_mode (0), 4);
   auto icode = (is_vnum
@@ -298,7 +298,7 @@ public:
 class svld1_za_impl : public load_za_base
 {
 public:
-  constexpr svld1_za_impl (int unspec) : m_unspec (unspec) {}
+  constexpr svld1_za_impl (unspec unspec) : m_unspec (unspec) {}
 
   rtx
   expand (function_expander &e) const override
@@ -306,7 +306,7 @@ public:
     return expand_ld1_st1 (e, m_unspec, true);
   }
 
-  int m_unspec;
+  unspec m_unspec;
 };
 
 class svldr_za_impl : public load_za_base
@@ -339,7 +339,7 @@ public:
 class svluti_lane_zt_impl : public read_zt0<function_base>
 {
 public:
-  CONSTEXPR svluti_lane_zt_impl (unsigned int bits) : m_bits (bits) {}
+  constexpr svluti_lane_zt_impl (unsigned int bits) : m_bits (bits) {}
 
   rtx
   expand (function_expander &e) const override
@@ -359,7 +359,7 @@ public:
 class svluti_zt_impl : public read_zt0<function_base>
 {
 public:
-  CONSTEXPR svluti_zt_impl (unsigned int bits) : m_bits (bits) {}
+  constexpr svluti_zt_impl (unsigned int bits) : m_bits (bits) {}
 
   unsigned int call_properties (const function_instance &) const override
   {
@@ -404,7 +404,7 @@ using svreadz_za_tile_impl = add_call_properties<read_write_za_base,
 class svst1_za_impl : public store_za_base
 {
 public:
-  constexpr svst1_za_impl (int unspec) : m_unspec (unspec) {}
+  constexpr svst1_za_impl (unspec unspec) : m_unspec (unspec) {}
 
   rtx
   expand (function_expander &e) const override
@@ -412,7 +412,7 @@ public:
     return expand_ld1_st1 (e, m_unspec, false);
   }
 
-  int m_unspec;
+  unspec m_unspec;
 };
 
 class svstr_za_impl : public store_za_base
@@ -458,6 +458,41 @@ public:
     return e.use_exact_insn (code_for_aarch64_sme (UNSPEC_SME_USDOT,
 						   e.vector_mode (0),
 						   e.tuple_mode (1)));
+  }
+};
+
+class svtmopa_lane_za_impl : public read_write_za<function_base>
+{
+public:
+  int
+  unspec_for (const function_instance &instance) const
+  {
+    if (instance.fpm_mode == FPM_set)
+      return UNSPEC_SME_FTMOPA_FP8;
+    const auto &suffix1 = instance.type_suffix (1);
+    if (!suffix1.integer_p)
+      return UNSPEC_SME_FTMOPA;
+    const auto &suffix2 = instance.type_suffix (2);
+    if (suffix1.unsigned_p && suffix2.unsigned_p)
+      return UNSPEC_SME_UTMOPA;
+    else if (!suffix1.unsigned_p && !suffix2.unsigned_p)
+      return UNSPEC_SME_STMOPA;
+    else if (suffix1.unsigned_p && !suffix2.unsigned_p)
+      return UNSPEC_SME_USTMOPA;
+    else
+      return UNSPEC_SME_SUTMOPA;
+  }
+
+  rtx
+  expand (function_expander &e) const override
+  {
+    machine_mode za_mode = e.vector_mode (0);
+    machine_mode v_mode = e.tuple_mode (1);
+    if (GET_MODE_UNIT_BITSIZE (za_mode) == GET_MODE_UNIT_BITSIZE (v_mode))
+      za_mode = v_mode;
+    insn_code icode
+      = code_for_aarch64_sme_lane (unspec_for (e), za_mode, v_mode);
+    return e.use_exact_insn (icode);
   }
 };
 
@@ -609,20 +644,20 @@ public:
 
 } /* end anonymous namespace */
 
-namespace aarch64_sve {
+namespace aarch64_acle {
 
 FUNCTION (arm_has_sme, arm_has_sme_impl, )
 FUNCTION (arm_in_streaming_mode, arm_in_streaming_mode_impl, )
 FUNCTION (svadd_za, sme_1mode_function, (UNSPEC_SME_ADD, UNSPEC_SME_ADD,
 					 UNSPEC_SME_FADD))
 FUNCTION (svadd_write_za, sme_1mode_function, (UNSPEC_SME_ADD_WRITE,
-					       UNSPEC_SME_ADD_WRITE, -1))
+					       UNSPEC_SME_ADD_WRITE))
 FUNCTION (svaddha_za, sme_1mode_function, (UNSPEC_SME_ADDHA,
-					   UNSPEC_SME_ADDHA, -1))
+					   UNSPEC_SME_ADDHA))
 FUNCTION (svaddva_za, sme_1mode_function, (UNSPEC_SME_ADDVA,
-					  UNSPEC_SME_ADDVA, -1))
-FUNCTION (svbmopa_za, sme_2mode_function, (-1, UNSPEC_SME_BMOPA, -1))
-FUNCTION (svbmops_za, sme_2mode_function, (-1, UNSPEC_SME_BMOPS, -1))
+					  UNSPEC_SME_ADDVA))
+FUNCTION (svbmopa_za, sme_2mode_function, (UNSPEC_NONE, UNSPEC_SME_BMOPA))
+FUNCTION (svbmops_za, sme_2mode_function, (UNSPEC_NONE, UNSPEC_SME_BMOPS))
 FUNCTION (svcntsb, svcnts_bhwd_impl, (VNx16QImode))
 FUNCTION (svcntsd, svcnts_bhwd_impl, (VNx2DImode))
 FUNCTION (svcntsh, svcnts_bhwd_impl, (VNx8HImode))
@@ -652,6 +687,12 @@ FUNCTION (svmls_za, sme_2mode_function, (UNSPEC_SME_SMLS, UNSPEC_SME_UMLS,
 FUNCTION (svmls_lane_za, sme_2mode_lane_function, (UNSPEC_SME_SMLS,
 						   UNSPEC_SME_UMLS,
 						   UNSPEC_SME_FMLS))
+FUNCTION (svmop4a_za, sme_mop4,
+	  (UNSPEC_SME_SMOP4A, UNSPEC_SME_UMOP4A, UNSPEC_SME_FMOP4A,
+	   UNSPEC_SME_SUMOP4A, UNSPEC_SME_USMOP4A))
+FUNCTION (svmop4s_za, sme_mop4,
+	  (UNSPEC_SME_SMOP4S, UNSPEC_SME_UMOP4S, UNSPEC_SME_FMOP4S,
+	   UNSPEC_SME_SUMOP4S, UNSPEC_SME_USMOP4S))
 FUNCTION (svmopa_za, sme_2mode_function, (UNSPEC_SME_SMOPA, UNSPEC_SME_UMOPA,
 					  UNSPEC_SME_FMOPA, UNSPEC_SME_FMOPA))
 FUNCTION (svmops_za, sme_2mode_function, (UNSPEC_SME_SMOPS, UNSPEC_SME_UMOPS,
@@ -669,28 +710,27 @@ FUNCTION (svstr_zt, svstr_zt_impl, )
 FUNCTION (svsub_za, sme_1mode_function, (UNSPEC_SME_SUB, UNSPEC_SME_SUB,
 					 UNSPEC_SME_FSUB))
 FUNCTION (svsub_write_za, sme_1mode_function, (UNSPEC_SME_SUB_WRITE,
-					       UNSPEC_SME_SUB_WRITE, -1))
+					       UNSPEC_SME_SUB_WRITE))
 FUNCTION (svsudot_za, svsudot_za_impl,)
-FUNCTION (svsudot_lane_za, sme_2mode_lane_function, (UNSPEC_SME_SUDOT, -1, -1))
-FUNCTION (svsuvdot_lane_za, sme_2mode_lane_function, (UNSPEC_SME_SUVDOT,
-						      -1, -1))
-FUNCTION (svsumopa_za, sme_2mode_function, (UNSPEC_SME_SUMOPA, -1, -1))
-FUNCTION (svsumops_za, sme_2mode_function, (UNSPEC_SME_SUMOPS, -1, -1))
+FUNCTION (svsudot_lane_za, sme_2mode_lane_function, (UNSPEC_SME_SUDOT))
+FUNCTION (svsuvdot_lane_za, sme_2mode_lane_function, (UNSPEC_SME_SUVDOT))
+FUNCTION (svsumopa_za, sme_2mode_function, (UNSPEC_SME_SUMOPA))
+FUNCTION (svsumops_za, sme_2mode_function, (UNSPEC_SME_SUMOPS))
+FUNCTION (svtmopa_lane_za, svtmopa_lane_za_impl,)
 FUNCTION (svundef_za, svundef_za_impl, )
-FUNCTION (svusdot_za, sme_2mode_function, (-1, UNSPEC_SME_USDOT, -1))
-FUNCTION (svusdot_lane_za, sme_2mode_lane_function, (-1, UNSPEC_SME_USDOT, -1))
-FUNCTION (svusvdot_lane_za, sme_2mode_lane_function, (-1, UNSPEC_SME_USVDOT,
-						      -1))
-FUNCTION (svusmopa_za, sme_2mode_function, (-1, UNSPEC_SME_USMOPA, -1))
-FUNCTION (svusmops_za, sme_2mode_function, (-1, UNSPEC_SME_USMOPS, -1))
+FUNCTION (svusdot_za, sme_2mode_function, (UNSPEC_NONE, UNSPEC_SME_USDOT))
+FUNCTION (svusdot_lane_za, sme_2mode_lane_function, (UNSPEC_NONE, UNSPEC_SME_USDOT))
+FUNCTION (svusvdot_lane_za, sme_2mode_lane_function, (UNSPEC_NONE, UNSPEC_SME_USVDOT))
+FUNCTION (svusmopa_za, sme_2mode_function, (UNSPEC_NONE, UNSPEC_SME_USMOPA))
+FUNCTION (svusmops_za, sme_2mode_function, (UNSPEC_NONE, UNSPEC_SME_USMOPS))
 FUNCTION (svvdot_lane_za, sme_2mode_lane_function, (UNSPEC_SME_SVDOT,
 						    UNSPEC_SME_UVDOT,
 						    UNSPEC_SME_FVDOT,
 						    UNSPEC_SME_FVDOT_FP8))
 FUNCTION (svvdotb_lane_za, svvdot_half_impl,
-	  (-1, -1, -1, UNSPEC_SME_FVDOTB_FP8))
+	  (UNSPEC_NONE, UNSPEC_NONE, UNSPEC_NONE, UNSPEC_SME_FVDOTB_FP8))
 FUNCTION (svvdott_lane_za, svvdot_half_impl,
-	  (-1, -1, -1, UNSPEC_SME_FVDOTT_FP8))
+	  (UNSPEC_NONE, UNSPEC_NONE, UNSPEC_NONE, UNSPEC_SME_FVDOTT_FP8))
 FUNCTION (svwrite_za, svwrite_za_impl,)
 FUNCTION (svwrite_hor_za, svwrite_za_tile_impl, (UNSPEC_SME_WRITE_HOR))
 FUNCTION (svwrite_ver_za, svwrite_za_tile_impl, (UNSPEC_SME_WRITE_VER))
@@ -700,4 +740,4 @@ FUNCTION (svzero_mask_za, svzero_mask_za_impl, )
 FUNCTION (svzero_za, svzero_za_impl, )
 FUNCTION (svzero_zt, svzero_zt_impl, )
 
-} /* end namespace aarch64_sve */
+}

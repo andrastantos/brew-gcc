@@ -1,4 +1,4 @@
-/* Handle initialization things in -*- C++ -*-
+/* Handle initialization things in C++.
    Copyright (C) 1987-2026 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com)
 
@@ -30,7 +30,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimplify.h"
 #include "c-family/c-ubsan.h"
 #include "intl.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "asan.h"
 #include "stor-layout.h"
@@ -445,6 +444,14 @@ build_value_init_noctor (tree type, tsubst_flags_t complain)
 		  && integer_zerop (DECL_SIZE (field)))
 		continue;
 
+	      /* Zero-initialize anonymous union and struct members.  The
+		 default constructor doesn't exist for those and if NSDMIs
+		 are used, the containing type's default constructor is
+		 non-trivial.  */
+	      if (ANON_AGGR_TYPE_P (ftype))
+		value = build_zero_init (ftype, NULL_TREE,
+					 /*static_storage_p=*/false);
+
 	      /* We could skip vfields and fields of types with
 		 user-defined constructors, but I think that won't improve
 		 performance at all; it should be simpler in general just
@@ -455,13 +462,16 @@ build_value_init_noctor (tree type, tsubst_flags_t complain)
 		 corresponding to base classes as well.  Thus, iterating
 		 over TYPE_FIELDs will result in correct initialization of
 		 all of the subobjects.  */
-	      value = build_value_init (ftype, complain);
-	      value = maybe_constant_init (value);
+	      else
+		{
+		  value = build_value_init (ftype, complain);
+		  value = maybe_constant_init (value);
+		}
 
 	      if (value == error_mark_node)
 		return error_mark_node;
 
-	      CONSTRUCTOR_APPEND_ELT(v, field, value);
+	      CONSTRUCTOR_APPEND_ELT (v, field, value);
 
 	      /* We shouldn't have gotten here for anything that would need
 		 non-trivial initialization, and gimplify_init_ctor_preeval
@@ -995,9 +1005,6 @@ perform_member_init (tree member, tree init, hash_set<tree> &uninitialized)
     init = get_nsdmi (member, /*ctor*/true, tf_warning_or_error);
 
   if (init == error_mark_node)
-    return;
-
-  if (check_out_of_consteval_use (init))
     return;
 
   /* Effective C++ rule 12 requires that all data members be
@@ -2601,7 +2608,7 @@ constant_value_1 (tree decl, bool strict_p, bool return_aggregate_cst_ok_p,
 	init = TREE_VALUE (init);
       /* Instantiate a non-dependent initializer for user variables.  We
 	 mustn't do this for the temporary for an array compound literal;
-	 trying to instatiate the initializer will keep creating new
+	 trying to instantiate the initializer will keep creating new
 	 temporaries until we crash.  Probably it's not useful to do it for
 	 other artificial variables, either.  */
       if (!DECL_ARTIFICIAL (decl))
@@ -3890,14 +3897,12 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
       /* The Standard is unclear here, but the right thing to do
 	 is to use the same method for finding deallocation
 	 functions that we use for finding allocation functions.  */
-      cleanup = (build_op_delete_call
-		 (dcode,
-		  alloc_node,
-		  size,
-		  globally_qualified_p,
-		  placement_allocation_fn_p ? alloc_call : NULL_TREE,
-		  alloc_fn,
-		  complain));
+      cleanup
+	= build_op_delete_call (dcode, alloc_node, size, globally_qualified_p,
+				placement_allocation_fn_p
+				? alloc_call : NULL_TREE,
+				placement_allocation_fn_p ? *placement : NULL,
+				alloc_fn, complain);
 
       if (cleanup && init_expr && !processing_template_decl)
 	/* Ack!  First we allocate the memory.  Then we set our sentry
@@ -3959,6 +3964,12 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
     rval = TARGET_EXPR_INITIAL (alloc_expr);
   else
     {
+      /* Skip the null-check when rval == data_addr: the resulting conditional
+	 would be "alloc_node != nullptr ? alloc_node : alloc_node", triggering
+	 -Wduplicated-branches (PR125422).  */
+      if (rval == data_addr)
+	check_new = 0;
+
       if (check_new)
 	{
 	  tree ifexp = cp_build_binary_op (input_location,
@@ -4087,7 +4098,7 @@ build_new (location_t loc, vec<tree, va_gc> **placement, tree type,
       /* The expression in a noptr-new-declarator is erroneous if it's of
 	 non-class type and its value before converting to std::size_t is
 	 less than zero. ... If the expression is a constant expression,
-	 the program is ill-fomed.  */
+	 the program is ill-formed.  */
       if (TREE_CODE (cst_nelts) == INTEGER_CST
 	  && !valid_array_size_p (nelts_loc, cst_nelts, NULL_TREE,
 				  complain & tf_error))
@@ -4366,12 +4377,11 @@ build_vec_delete_1 (location_t loc, tree base, tree maxindex, tree type,
 	  virtual_size = size_binop (PLUS_EXPR, virtual_size, cookie_size);
 	}
 
-      deallocate_expr = build_op_delete_call (VEC_DELETE_EXPR,
-					      base_tbd, virtual_size,
-					      use_global_delete & 1,
-					      /*placement=*/NULL_TREE,
-					      /*alloc_fn=*/NULL_TREE,
-					      complain);
+      deallocate_expr
+	= build_op_delete_call (VEC_DELETE_EXPR, base_tbd, virtual_size,
+				use_global_delete & 1, /*placement=*/NULL_TREE,
+				/*placement_args=*/NULL,
+				/*alloc_fn=*/NULL_TREE, complain);
     }
 
   body = loop;
@@ -5348,7 +5358,7 @@ build_vec_init (tree base, tree maxindex, tree init,
 	      && !vec_safe_is_empty (*cleanup_flags))
 	    {
 	      auto l = (*cleanup_flags)->last ();
-	      gcc_assert (TREE_PURPOSE (l) == iterator);
+	      gcc_assert (TREE_PURPOSE (l) == rval);
 	      (*cleanup_flags)->pop ();
 	    }
 	  tree const_init = build_constructor (atype, const_vec);
@@ -5569,13 +5579,11 @@ build_delete (location_t loc, tree otype, tree addr,
     {
       head = get_internal_target_expr (build_headof (addr));
       /* Delete the object.  */
-      do_delete = build_op_delete_call (DELETE_EXPR,
-					head,
-					cxx_sizeof_nowarn (type),
-					/*global_p=*/true,
-					/*placement=*/NULL_TREE,
-					/*alloc_fn=*/NULL_TREE,
-					complain);
+      do_delete
+	= build_op_delete_call (DELETE_EXPR, head, cxx_sizeof_nowarn (type),
+				/*global_p=*/true, /*placement=*/NULL_TREE,
+				/*placement_args=*/NULL,
+				/*alloc_fn=*/NULL_TREE, complain);
       /* Otherwise, treat this like a complete object destructor
 	 call.  */
       auto_delete = sfk_complete_destructor;
@@ -5586,13 +5594,11 @@ build_delete (location_t loc, tree otype, tree addr,
   else if (!virtual_p)
     {
       /* Build the call.  */
-      do_delete = build_op_delete_call (DELETE_EXPR,
-					addr,
-					cxx_sizeof_nowarn (type),
-					/*global_p=*/false,
-					/*placement=*/NULL_TREE,
-					/*alloc_fn=*/NULL_TREE,
-					complain);
+      do_delete
+	= build_op_delete_call (DELETE_EXPR, addr, cxx_sizeof_nowarn (type),
+				/*global_p=*/false, /*placement=*/NULL_TREE,
+				/*placement_args=*/NULL,
+				/*alloc_fn=*/NULL_TREE, complain);
       /* Call the complete object destructor.  */
       auto_delete = sfk_complete_destructor;
       if (do_delete != error_mark_node)
@@ -5602,15 +5608,12 @@ build_delete (location_t loc, tree otype, tree addr,
 	}
     }
   else if (TYPE_GETS_REG_DELETE (type))
-    {
-      /* Make sure we have access to the member op delete, even though
-	 we'll actually be calling it from the destructor.  */
-      build_op_delete_call (DELETE_EXPR, addr, cxx_sizeof_nowarn (type),
-			    /*global_p=*/false,
-			    /*placement=*/NULL_TREE,
-			    /*alloc_fn=*/NULL_TREE,
-			    complain);
-    }
+    /* Make sure we have access to the member op delete, even though
+       we'll actually be calling it from the destructor.  */
+    build_op_delete_call (DELETE_EXPR, addr, cxx_sizeof_nowarn (type),
+			  /*global_p=*/false, /*placement=*/NULL_TREE,
+			  /*placement_args=*/NULL, /*alloc_fn=*/NULL_TREE,
+			  complain);
 
   if (destroying_delete)
     /* The operator delete will call the destructor.  */

@@ -111,6 +111,8 @@ extern unsigned int num_optabs;
 extern vec<const char *> register_filters;
 extern unsigned int get_register_filter_id (const char *);
 
+extern unsigned int num_dependent_filters;
+
 /* Information about an instruction name that matches an optab pattern.  */
 struct optab_pattern
 {
@@ -230,6 +232,20 @@ extern void compute_test_codes (rtx, file_location, char *);
 extern file_location get_file_location (rtx);
 extern const char *get_emit_function (rtx);
 extern bool find_optab (optab_pattern *, const char *);
-extern FILE *choose_output (const vec<FILE *> &, unsigned &);
+
+/* An output file produced by a machine-description generator.  Partition
+   files participate in size-based output selection.  */
+struct generator_output
+{
+  const char *name;
+  FILE *file;
+  bool partition_p;
+};
+
+extern unsigned int add_generator_output (vec<generator_output> &,
+					  const char *, bool);
+extern void open_generator_outputs (vec<generator_output> &);
+extern FILE *choose_output (const vec<generator_output> &);
+extern bool close_generator_outputs (const vec<generator_output> &);
 
 #endif /* GCC_GENSUPPORT_H */

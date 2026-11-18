@@ -164,11 +164,11 @@ Visibility::to_string () const
 {
   switch (vis_type)
     {
-    case PRIVATE:
+    case VisType::Private:
       return std::string ("private");
-    case PUBLIC:
+    case VisType::Public:
       return std::string ("pub");
-    case RESTRICTED:
+    case VisType::Restricted:
       return std::string ("pub(in ") + path.get_mappings ().as_string ()
 	     + std::string (")");
     default:
@@ -1179,7 +1179,7 @@ PathInExpression::to_string () const
 {
   std::string str;
 
-  if (has_opening_scope_resolution)
+  if (has_opening_scope_resolution ())
     {
       str = "::";
     }
@@ -1305,6 +1305,15 @@ BorrowExpr::to_string () const
 
   str += main_or_left_expr->to_string ();
 
+  return str;
+}
+
+std::string
+BoxExpr::to_string () const
+{
+  std::string str = "box ";
+  rust_assert (expr != nullptr);
+  str += expr->to_string ();
   return str;
 }
 
@@ -1645,12 +1654,6 @@ IfExprConseqElse::to_string () const
   str += "\n Else expr: " + else_block->to_string ();
 
   return str;
-}
-
-std::string
-RangeFromToInclExpr::to_string () const
-{
-  return from->to_string () + "..=" + to->to_string ();
 }
 
 std::string
@@ -2150,7 +2153,7 @@ TypePath::to_string () const
 {
   std::string str;
 
-  if (has_opening_scope_resolution)
+  if (has_opening_scope_resolution ())
     {
       str = "::";
     }
@@ -2316,7 +2319,7 @@ TypePath::as_simple_path () const
     }
 
   return AST::SimplePath (std::move (simple_segments),
-			  has_opening_scope_resolution, locus);
+			  has_opening_scope_resolution (), locus);
 }
 
 std::string
@@ -2384,7 +2387,9 @@ GenericArgs::to_string () const
 std::string
 GenericArgsBinding::to_string () const
 {
-  return identifier.as_string () + " = " + type->to_string ();
+  auto type_string = type->to_string ();
+  auto separator = kind == Kind::Constraint ? " : " : " = ";
+  return identifier.as_string () + separator + type_string;
 }
 
 std::string
@@ -2445,6 +2450,12 @@ SlicePatternItemsHasRest::to_string () const
 	  str += "\n  " + lower->to_string ();
 	}
     }
+
+  str += "\n Rest binding pattern: ";
+  if (rest_bind)
+    str += rest_bind->to_string ();
+  else
+    str += "none";
 
   str += "\n Upper patterns: ";
   if (upper_patterns.empty ())
@@ -4238,13 +4249,13 @@ RangeFullExpr::accept_vis (HIRFullVisitor &vis)
 }
 
 void
-RangeFromToInclExpr::accept_vis (HIRFullVisitor &vis)
+RangeToInclExpr::accept_vis (HIRFullVisitor &vis)
 {
   vis.visit (*this);
 }
 
 void
-RangeToInclExpr::accept_vis (HIRFullVisitor &vis)
+BoxExpr::accept_vis (HIRFullVisitor &vis)
 {
   vis.visit (*this);
 }
@@ -5036,12 +5047,6 @@ CallExpr::accept_vis (HIRExpressionVisitor &vis)
 }
 
 void
-RangeFromToInclExpr::accept_vis (HIRExpressionVisitor &vis)
-{
-  vis.visit (*this);
-}
-
-void
 IfExprConseqElse::accept_vis (HIRExpressionVisitor &vis)
 {
   vis.visit (*this);
@@ -5127,6 +5132,12 @@ ContinueExpr::accept_vis (HIRExpressionVisitor &vis)
 
 void
 RangeToExpr::accept_vis (HIRExpressionVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+BoxExpr::accept_vis (HIRExpressionVisitor &vis)
 {
   vis.visit (*this);
 }

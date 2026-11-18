@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
       *> TEST FUNCTION ACOS (Intrinsic)
        IDENTIFICATION DIVISION.
        PROGRAM-ID. prog.

@@ -41,6 +41,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-pretty-print.h"
 #include "langhooks.h"
 #include "gcc-urlifier.h"
+#include "opts.h"
 
 /* Print a warning if a constant expression had overflow in folding.
    Invoke this function on every expression that the language
@@ -189,7 +190,6 @@ warn_logical_operator (location_t location, enum tree_code code, tree type,
   int or_op = (code == TRUTH_ORIF_EXPR || code == TRUTH_OR_EXPR);
   int in0_p, in1_p, in_p;
   tree low0, low1, low, high0, high1, high, lhs, rhs, tem;
-  bool strict_overflow_p = false;
 
   if (!warn_logical_op)
     return;
@@ -264,7 +264,7 @@ warn_logical_operator (location_t location, enum tree_code code, tree type,
      portable code.  */
   op_left = unshare_expr (op_left);
   walk_tree_without_duplicates (&op_left, unwrap_c_maybe_const, NULL);
-  lhs = make_range (op_left, &in0_p, &low0, &high0, &strict_overflow_p);
+  lhs = make_range (op_left, &in0_p, &low0, &high0);
   if (!lhs)
     return;
 
@@ -279,7 +279,7 @@ warn_logical_operator (location_t location, enum tree_code code, tree type,
 
   op_right = unshare_expr (op_right);
   walk_tree_without_duplicates (&op_right, unwrap_c_maybe_const, NULL);
-  rhs = make_range (op_right, &in1_p, &low1, &high1, &strict_overflow_p);
+  rhs = make_range (op_right, &in1_p, &low1, &high1);
   if (!rhs)
     return;
 
@@ -702,14 +702,20 @@ strict_aliasing_warning (location_t loc, tree type, tree expr)
   STRIP_NOPS (expr);
   tree otype = TREE_TYPE (expr);
 
-  if (!(flag_strict_aliasing
-	&& POINTER_TYPE_P (type)
+  if (!(POINTER_TYPE_P (type)
 	&& POINTER_TYPE_P (otype)
 	&& !VOID_TYPE_P (TREE_TYPE (type)))
       /* If the type we are casting to is a ref-all pointer
 	 dereferencing it is always valid.  */
       || TYPE_REF_CAN_ALIAS_ALL (type))
     return false;
+
+  /* Temporarily enable strict aliasing so that the alias set query
+     functions return meaningful results for the warning.
+     Only do this if the user explicitly asked for `-Wstrict-aliasing`  */
+  temp_override<int> save (flag_strict_aliasing,
+			   OPTION_SET_P (warn_strict_aliasing) ?
+			   1 : flag_strict_aliasing);
 
   if ((warn_strict_aliasing > 1) && TREE_CODE (expr) == ADDR_EXPR
       && (DECL_P (TREE_OPERAND (expr, 0))
@@ -2378,7 +2384,6 @@ warn_for_sign_compare (location_t location,
   else
     {
       tree sop, uop, base_type;
-      bool ovf;
 
       if (op0_signed)
 	sop = orig_op0, uop = orig_op1;
@@ -2397,7 +2402,7 @@ warn_for_sign_compare (location_t location,
 	 literal (or some static constant expression involving such
 	 literals or a conditional expression involving such literals)
 	 and it is non-negative.  */
-      if (tree_expr_nonnegative_warnv_p (sop, &ovf))
+      if (tree_expr_nonnegative_p (sop))
 	/* OK */;
       /* Do not warn if the comparison is an equality operation, the
 	 unsigned quantity is an integral constant, and it would fit
@@ -3481,9 +3486,28 @@ warn_parm_array_mismatch (location_t origloc, rdwr_map *cur_idx,
       cura->ptrarg = parmpos;
     }
 
+
+  unsigned newbnds = 0;
+  unsigned newunspec = 0;
+
+  if (newa->internal_p)
+    {
+      newbnds = newa->vla_bounds (&newunspec);
+      newbnds += newunspec;
+    }
+
+  unsigned curbnds = 0;
+  unsigned curunspec = 0;
+
+  if (cura->internal_p)
+    {
+      curbnds = cura->vla_bounds (&curunspec);
+      curbnds += curunspec;
+    }
+
   /* Set if the parameter is [re]declared as a VLA.  */
-  const bool cur_vla_p = cura->size || cura->minsize == HOST_WIDE_INT_M1U;
-  const bool new_vla_p = newa->size || newa->minsize == HOST_WIDE_INT_M1U;
+  const bool cur_vla_p = cura->minsize == HOST_WIDE_INT_M1U || 0 < curbnds;
+  const bool new_vla_p = newa->minsize == HOST_WIDE_INT_M1U || 0 < newbnds;
 
   if (DECL_P (curp))
     origloc = DECL_SOURCE_LOCATION (curp);
@@ -3562,10 +3586,6 @@ warn_parm_array_mismatch (location_t origloc, rdwr_map *cur_idx,
 
   if (newa->size || cura->size)
     {
-      unsigned newunspec, curunspec;
-      unsigned newbnds = newa->vla_bounds (&newunspec) + newunspec;
-      unsigned curbnds = cura->vla_bounds (&curunspec) + curunspec;
-
       if (newbnds != curbnds)
 	{
 	  if (warning_n (newloc, OPT_Wvla_parameter, newbnds,

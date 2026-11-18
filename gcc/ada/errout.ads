@@ -483,6 +483,9 @@ package Errout is
    --  not get reset by any Error_Msg call, so the caller is responsible
    --  for resetting it.
 
+   Error_Msg_Qual_For_Standard : Boolean renames
+     Err_Vars.Error_Msg_Qual_For_Standard;
+
    Error_Msg_Warn : Boolean renames Err_Vars.Error_Msg_Warn;
    --  Used if current message contains a < insertion character to indicate
    --  if the current message is a warning message. Must be set appropriately
@@ -907,8 +910,8 @@ package Errout is
    --  where the expression is parenthesized, an attempt is made to include
    --  the parentheses (i.e. to return the location of the final paren).
 
-   procedure Purge_Messages (From : Source_Ptr; To : Source_Ptr)
-     renames Erroutc.Purge_Messages;
+   procedure Delete_Error_Msgs_In_Range (From : Source_Ptr; To : Source_Ptr)
+   renames Erroutc.Delete_Error_Msgs_In_Range;
    --  All error messages whose location is in the range From .. To (not
    --  including the end points) will be deleted from the error listing.
 

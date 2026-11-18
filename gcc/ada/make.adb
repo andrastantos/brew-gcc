@@ -54,7 +54,6 @@ with Switch;   use Switch;
 with Switch.M; use Switch.M;
 with Table;
 with Targparm;
-with Tempdir;
 with Types;    use Types;
 
 with Ada.Command_Line; use Ada.Command_Line;
@@ -551,14 +550,14 @@ package body Make is
    --  Mapping files
    -----------------
 
-   type Temp_Path_Names is array (Positive range <>) of Path_Name_Type;
-   type Temp_Path_Ptr is access Temp_Path_Names;
+   type Temp_Names is array (Positive range <>) of Temp_File_Name;
+   type Temp_Names_Ptr is access Temp_Names;
 
    type Free_File_Indexes is array (Positive range <>) of Positive;
    type Free_Indexes_Ptr is access Free_File_Indexes;
 
    type Mapping_File_Data is record
-      Mapping_File_Names : Temp_Path_Ptr;
+      Mapping_File_Names : Temp_Names_Ptr;
       --  The name ids of the temporary mapping files used. This is indexed
       --  on the maximum number of compilation processes we will be spawning
       --  (-j parameter)
@@ -583,28 +582,28 @@ package body Make is
    procedure Init_Mapping_File (File_Index : out Natural);
    --  Create a new mapping file or reuse one already created.
 
-   package Temp_File_Paths is new Table.Table
-     (Table_Component_Type => Path_Name_Type,
+   package Temp_File_Names is new Table.Table
+     (Table_Component_Type => Temp_File_Name,
       Table_Index_Type     => Natural,
       Table_Low_Bound      => 1,
       Table_Initial        => 4,
       Table_Increment      => 100,
-      Table_Name           => "Make.Temp_File_Paths",
+      Table_Name           => "Make.Temp_File_Names",
       Release_Threshold    => 0);
 
-   procedure Record_Temp_File (Path : Path_Name_Type);
+   procedure Record_Temp_File (Name : Temp_File_Name);
    --  Record the path of a temporary file, so that it can be deleted at the
    --  end of execution of gnatmake.
 
-   procedure Record_Temp_File (Path : Path_Name_Type) is
+   procedure Record_Temp_File (Name : Temp_File_Name) is
    begin
-      for J in 1 .. Temp_File_Paths.Last loop
-         if Temp_File_Paths.Table (J) = Path then
+      for J in 1 .. Temp_File_Names.Last loop
+         if Temp_File_Names.Table (J) = Name then
             return;
          end if;
       end loop;
 
-      Temp_File_Paths.Append (Path);
+      Temp_File_Names.Append (Name);
    end Record_Temp_File;
 
    -------------------------------------------------
@@ -1434,12 +1433,6 @@ package body Make is
       --  on the name specified with the -l linker option, using the
       --  Ada object path. Return No_File if no such file can be found.
 
-      type Char_Array is array (Natural) of Character;
-      type Char_Array_Access is access constant Char_Array;
-
-      Template : Char_Array_Access;
-      pragma Import (C, Template, "__gnat_library_template");
-
       ----------------
       -- Check_File --
       ----------------
@@ -1513,41 +1506,10 @@ package body Make is
       -- Get_Library_Name --
       ----------------------
 
-      --  See comments in a-adaint.c about template syntax
-
       function Get_Library_File (Name : String) return File_Name_Type is
-         File : File_Name_Type := No_File;
-
+         Library_Name : constant String := "lib" & Name & ".a";
       begin
-         Name_Len := 0;
-
-         for Ptr in Template'Range loop
-            case Template (Ptr) is
-               when '*' =>
-                  Add_Str_To_Name_Buffer (Name);
-
-               when ';' =>
-                  File := Full_Lib_File_Name (Name_Find);
-                  exit when File /= No_File;
-                  Name_Len := 0;
-
-               when NUL =>
-                  exit;
-
-               when others =>
-                  Add_Char_To_Name_Buffer (Template (Ptr));
-            end case;
-         end loop;
-
-         --  The for loop exited because the end of the template
-         --  was reached. File contains the last possible file name
-         --  for the library.
-
-         if File = No_File and then Name_Len > 0 then
-            File := Full_Lib_File_Name (Name_Find);
-         end if;
-
-         return File;
+         return Full_Lib_File_Name (Name_Find (Library_Name));
       end Get_Library_File;
 
    --  Start of processing for Check_Linker_Options
@@ -2245,14 +2207,14 @@ package body Make is
          end if;
 
          --  Put the name in the mapping file argument for the invocation
-         --  of the compiler.
+         --  of the compiler (while stripping the trailing NUL).
 
          Free (Mapping_File_Arg);
          Mapping_File_Arg :=
            new String'
              ("-gnatem=" &
-                Get_Name_String
-                  (The_Mapping_Files.Mapping_File_Names (Mfile)));
+                The_Mapping_Files.Mapping_File_Names (Mfile)
+                  (1 .. Temp_File_Len - 1));
       end Get_Mapping_File;
 
       -----------------------
@@ -3458,7 +3420,7 @@ package body Make is
 
             The_Mapping_Files :=
                 (Mapping_File_Names        =>
-                    new Temp_Path_Names (1 .. Maximum_Processes),
+                    new Temp_Names (1 .. Maximum_Processes),
                  Last_Mapping_File_Names   => 0,
                  Free_Mapping_File_Indexes =>
                     new Free_File_Indexes (1 .. Maximum_Processes),
@@ -3627,7 +3589,7 @@ package body Make is
 
       --  Just create an empty file
 
-      Tempdir.Create_Temp_File
+      Create_Temp_File
         (FD,
          The_Mapping_Files.Mapping_File_Names
            (The_Mapping_Files.Last_Mapping_File_Names));

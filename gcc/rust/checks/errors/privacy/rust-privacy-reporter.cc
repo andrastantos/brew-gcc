@@ -17,19 +17,21 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "rust-privacy-reporter.h"
+#include "rust-hir-map.h"
+#include "rust-rib.h"
 #include "rust-session-manager.h"
 #include "rust-hir-expr.h"
 #include "rust-hir-stmt.h"
 #include "rust-hir-item.h"
 #include "rust-attribute-values.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
 
 namespace Rust {
 namespace Privacy {
 
 PrivacyReporter::PrivacyReporter (
   Analysis::Mappings &mappings,
-  const Resolver2_0::NameResolutionContext &resolver,
+  const Resolver2_0::FinalizedNameResolutionContext &resolver,
   const Rust::Resolver::TypeCheckContext &ty_ctx)
   : mappings (mappings), resolver (resolver), ty_ctx (ty_ctx),
     current_module (tl::nullopt)
@@ -91,21 +93,11 @@ PrivacyReporter::go (HIR::Crate &crate)
     }
 }
 
-// FIXME: This function needs a lot of refactoring
 void
-PrivacyReporter::check_for_privacy_violation (const NodeId &use_id,
-					      const location_t locus)
+PrivacyReporter::check_violation_inner (NodeId ref_node_id,
+					const location_t locus)
 {
-  NodeId ref_node_id;
-
-  // FIXME: Assert here. For now, we return since this causes issues when
-  // checking inferred types (#1260)
-  if (auto id = resolver.lookup (use_id))
-    ref_node_id = *id;
-  else
-    return;
-
-  auto vis = mappings.lookup_visibility (ref_node_id);
+  auto vis = mappings.ast.module_visibility.lookup (ref_node_id);
 
   // FIXME: Can we really return here if the item has no visibility?
   if (!vis)
@@ -136,8 +128,8 @@ PrivacyReporter::check_for_privacy_violation (const NodeId &use_id,
 	// FIXME: This needs a LOT of TLC: hinting about the definition, a
 	// string to say if it's a module, function, type, etc...
 
-	if (!resolver.values.is_module_descendant (mod_node_id,
-						   current_module.value ()))
+	if (!resolver.get_underlying ().values.is_module_descendant (
+	      mod_node_id, current_module.value ()))
 	  valid = false;
       }
       break;
@@ -153,6 +145,41 @@ PrivacyReporter::check_for_privacy_violation (const NodeId &use_id,
       rust_error_at (richloc, ErrorCode::E0603,
 		     "definition is private in this context");
     }
+}
+
+void
+PrivacyReporter::check_for_privacy_violation (const NodeId &use_id,
+					      const location_t locus,
+					      Resolver2_0::Namespace ns)
+{
+  NodeId ref_node_id;
+
+  // FIXME: Assert here. For now, we return since this causes issues when
+  // checking inferred types (#1260)
+  if (auto id = resolver.lookup (use_id, ns))
+    ref_node_id = *id;
+  else
+    return;
+
+  check_violation_inner (ref_node_id, locus);
+}
+
+void
+PrivacyReporter::check_for_privacy_violation (const NodeId &use_id,
+					      const location_t locus,
+					      Resolver2_0::Namespace ns1,
+					      Resolver2_0::Namespace ns2)
+{
+  NodeId ref_node_id;
+
+  // FIXME: Assert here. For now, we return since this causes issues when
+  // checking inferred types (#1260)
+  if (auto resolved = resolver.lookup (use_id, ns1, ns2))
+    ref_node_id = resolved->id;
+  else
+    return;
+
+  check_violation_inner (ref_node_id, locus);
 }
 
 void
@@ -182,7 +209,8 @@ PrivacyReporter::check_base_type_privacy (Analysis::NodeMapping &node_mappings,
       {
 	auto ref_id = ty->get_ref ();
 	if (auto lookup_id = mappings.lookup_hir_to_node (ref_id))
-	  return check_for_privacy_violation (*lookup_id, locus);
+	  return check_for_privacy_violation (*lookup_id, locus,
+					      Resolver2_0::Namespace::Types);
       }
       break;
 
@@ -216,8 +244,13 @@ PrivacyReporter::check_base_type_privacy (Analysis::NodeMapping &node_mappings,
 	return recursive_check (p->resolve ());
       }
     case TyTy::PROJECTION:
-      return recursive_check (
-	static_cast<const TyTy::ProjectionType *> (ty)->get ());
+      {
+	auto p = static_cast<const TyTy::ProjectionType *> (ty);
+	if (p->is_trait_position ())
+	  return;
+	return recursive_check (
+	  static_cast<const TyTy::ProjectionType *> (ty)->get ());
+      }
     case TyTy::CLOSURE:
       rust_sorry_at (locus, "privacy pass for closures is not handled yet");
       break;
@@ -260,7 +293,8 @@ void
 PrivacyReporter::visit (HIR::PathInExpression &path)
 {
   check_for_privacy_violation (path.get_mappings ().get_nodeid (),
-			       path.get_locus ());
+			       path.get_locus (),
+			       Resolver2_0::Namespace::Values);
 }
 
 void
@@ -287,21 +321,24 @@ void
 PrivacyReporter::visit (HIR::TypePath &path)
 {
   check_for_privacy_violation (path.get_mappings ().get_nodeid (),
-			       path.get_locus ());
+			       path.get_locus (),
+			       Resolver2_0::Namespace::Types);
 }
 
 void
 PrivacyReporter::visit (HIR::QualifiedPathInExpression &path)
 {
   check_for_privacy_violation (path.get_mappings ().get_nodeid (),
-			       path.get_locus ());
+			       path.get_locus (),
+			       Resolver2_0::Namespace::Values);
 }
 
 void
 PrivacyReporter::visit (HIR::QualifiedPathInType &path)
 {
   check_for_privacy_violation (path.get_mappings ().get_nodeid (),
-			       path.get_locus ());
+			       path.get_locus (),
+			       Resolver2_0::Namespace::Types);
 }
 
 void
@@ -539,16 +576,15 @@ PrivacyReporter::visit (HIR::RangeFullExpr &)
 {}
 
 void
-PrivacyReporter::visit (HIR::RangeFromToInclExpr &expr)
-{
-  expr.get_from_expr ().accept_vis (*this);
-  expr.get_to_expr ().accept_vis (*this);
-}
-
-void
 PrivacyReporter::visit (HIR::RangeToInclExpr &)
 {
   // Not handled yet
+}
+
+void
+PrivacyReporter::visit (HIR::BoxExpr &expr)
+{
+  expr.get_expr ().accept_vis (*this);
 }
 
 void

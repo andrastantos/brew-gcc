@@ -3270,7 +3270,8 @@ gfc_resolve_get_team (gfc_expr *f, gfc_expr *level ATTRIBUTE_UNUSED)
 void
 gfc_resolve_image_index (gfc_expr *f, gfc_expr *array ATTRIBUTE_UNUSED,
 			 gfc_expr *sub ATTRIBUTE_UNUSED,
-			 gfc_expr *team_or_team_number ATTRIBUTE_UNUSED)
+			 gfc_expr *team ATTRIBUTE_UNUSED,
+			 gfc_expr *team_number ATTRIBUTE_UNUSED)
 {
   static char image_index[] = "__image_index";
   f->ts.type = BT_INTEGER;
@@ -3477,25 +3478,40 @@ gfc_resolve_trim (gfc_expr *f, gfc_expr *string)
 
 /* Resolve the trigonometric functions.  This amounts to setting
    the function return type-spec from its argument and building a
-   library function names of the form _gfortran_sind_r4.  */
+   library function names of the form _gfortran_specific__sind_r4.
+   Strip leading "d" from names of GNU extensions (dcosd, dsind, dtand,
+   and their inverses).  */
 
 void
 gfc_resolve_trig (gfc_expr *f, gfc_expr *x)
 {
+  const char *name;
   f->ts = x->ts;
+
+  name = f->value.function.isym->name;
+  if (name[0] == 'd')
+    name = &f->value.function.isym->name[1];
+
   f->value.function.name
-    = gfc_get_string (PREFIX ("%s_%c%d"), f->value.function.isym->name,
+    = gfc_get_string ("__%s_%c%d", name,
 		      gfc_type_letter (x->ts.type),
 		      gfc_type_abi_kind (&x->ts));
 }
 
 void
-gfc_resolve_trig2 (gfc_expr *f, gfc_expr *y, gfc_expr *x)
+gfc_resolve_trig2 (gfc_expr *f, gfc_expr *y, gfc_expr *x ATTRIBUTE_UNUSED)
 {
+  const char *name;
   f->ts = y->ts;
+
+  name = f->value.function.isym->name;
+  if (name[0] == 'd')
+    name = &f->value.function.isym->name[1];
+
   f->value.function.name
-    = gfc_get_string (PREFIX ("%s_%d"), f->value.function.isym->name,
-		      x->ts.kind);
+    = gfc_get_string ("__%s_%c%d", name,
+		      gfc_type_letter (y->ts.type),
+		      gfc_type_abi_kind (&y->ts));
 }
 
 

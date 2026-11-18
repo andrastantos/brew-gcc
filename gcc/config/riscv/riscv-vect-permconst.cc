@@ -4,7 +4,7 @@ This file is part of GCC.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 3, or(at your option)
+the Free Software Foundation; either version 3, or (at your option)
 any later version.
 
 GCC is distributed in the hope that it will be useful,
@@ -90,7 +90,7 @@ struct vector_permconst_entry
   HOST_WIDE_INT bias;
 };
 
-struct const_vector_hasher : nofree_ptr_hash <vector_permconst_entry>
+struct const_vector_hasher : free_ptr_hash <vector_permconst_entry>
 {
   static inline hashval_t hash (const vector_permconst_entry *);
   static inline bool equal (const vector_permconst_entry *,
@@ -146,14 +146,13 @@ public:
 
 private:
   void process_bb (basic_block);
-  hash_table<const_vector_hasher> *vector_permconst_table;
 }; // class pass_vector_permconst
 
 /* Try to optimize vector permutation constants in BB.  */
 void
 vector_permconst::process_bb (basic_block bb)
 {
-  vector_permconst_table = new hash_table<const_vector_hasher> (11);
+  hash_table<const_vector_hasher> vector_permconst_table (11);
 
   /* Walk the insns in BB searching for vector loads from the constant pool
      which can be satisfied by adjusting an earlier load with trivial
@@ -177,7 +176,7 @@ vector_permconst::process_bb (basic_block bb)
 	continue;
 
       /* A load from the constant pool should have a REG_EQUAL
-	 note with the vector contant in the note.  */
+	 note with the vector constant in the note.  */
       rtx note = find_reg_equal_equiv_note (insn);
       if (!note
 	  || REG_NOTE_KIND (note) != REG_EQUAL
@@ -239,7 +238,7 @@ vector_permconst::process_bb (basic_block bb)
       struct vector_permconst_entry tmp;
       tmp.normalized_vec = copy;
       struct vector_permconst_entry **slot
-	= vector_permconst_table->find_slot (&tmp, INSERT);
+	= vector_permconst_table.find_slot (&tmp, INSERT);
       if (*slot == NULL)
 	{
 	  /* This constant was not in the table, so initialize the hash table
@@ -291,10 +290,6 @@ vector_permconst::process_bb (basic_block bb)
 	  (*slot)->insn = insn;
 	}
     }
-
-  /* We construct and tear down the table for each block.  This may
-     be overly expensive.  */
-  vector_permconst_table->empty ();
 }
 
 /* Main entry point for this pass.  */

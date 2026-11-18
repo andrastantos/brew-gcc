@@ -176,6 +176,14 @@ extern enum pipeline_type microblaze_pipe;
 #define DWARF_FRAME_RETURN_COLUMN \
 	(GP_REG_FIRST + MB_ABI_SUB_RETURN_ADDR_REGNUM)
 
+/* Signal frames (config/microblaze/linux-unwind.h) record the
+   interrupted PC in DWARF column 36, one past the hard registers,
+   because column 15 must keep the interrupted r15.  Declaring it as
+   the alternate return column makes init_dwarf_reg_size_table size
+   it; otherwise _Unwind_GetGR aborts when unwinding through a signal
+   frame, such as during pthread cancellation.  */
+#define DWARF_ALT_FRAME_RETURN_COLUMN 36
+
 /* Initial state of return address on entry to func = R15.
    Actually, the RA is at R15+8, but gcc doesn't know how
    to generate this.
@@ -401,7 +409,7 @@ extern enum reg_class microblaze_regno_to_class[];
 /* The return address for the current frame is in r31 if this is a leaf
    function.  Otherwise, it is on the stack.  It is at a variable offset
    from sp/fp/ap, so we define a fake hard register rap which is a
-   poiner to the return address on the stack.  This always gets eliminated
+   pointer to the return address on the stack.  This always gets eliminated
    during reload to be either the frame pointer or the stack pointer plus
    an offset.  */
 

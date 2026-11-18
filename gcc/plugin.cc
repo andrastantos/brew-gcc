@@ -100,6 +100,7 @@ static int event_horizon = PLUGIN_EVENT_FIRST_DYNAMIC;
    parsing.  */
 static htab_t plugin_name_args_tab = NULL;
 
+namespace {
 /* List node for keeping track of plugin-registered callback.  */
 struct callback_info
 {
@@ -108,6 +109,7 @@ struct callback_info
   void *user_data;           /* plugin-specified data.  */
   struct callback_info *next;
 };
+}
 
 /* An array of lists of 'callback_info' objects indexed by the event id.  */
 static struct callback_info *plugin_callbacks_init[PLUGIN_EVENT_FIRST_DYNAMIC];
@@ -1037,7 +1039,7 @@ get_event_last (void)
 
 
 /* Retrieve the default plugin directory.  The gcc driver should have passed
-   it as -iplugindir <dir> to the cc1 program, and it is queriable through the
+   it as -iplugindir <dir> to the cc1 program, and it is queryable through the
    -print-file-name=plugin option to gcc.  */
 const char*
 default_plugin_dir_name (void)

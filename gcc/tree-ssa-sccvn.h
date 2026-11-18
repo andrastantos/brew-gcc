@@ -51,7 +51,7 @@ typedef struct vn_nary_op_s
   vn_nary_op_s *unwind_to;
   /* Unique identify that all expressions with the same value have. */
   unsigned int value_id;
-  ENUM_BITFIELD(tree_code) opcode : 16;
+  tree_code opcode : 16;
   unsigned length : 16;
   hashval_t hashcode;
   unsigned predicated_values : 1;
@@ -105,7 +105,7 @@ typedef const struct vn_phi_s *const_vn_phi_t;
 
 typedef struct vn_reference_op_struct
 {
-  ENUM_BITFIELD(tree_code) opcode : 16;
+  tree_code opcode : 16;
   /* Dependence info, used for [TARGET_]MEM_REF only.  For internal
      function calls clique is also used for the internal function code.  */
   unsigned short clique;
@@ -268,7 +268,7 @@ tree vn_reference_lookup_pieces (tree, alias_set_type, alias_set_type, tree,
 				 vec<vn_reference_op_s> ,
 				 vn_reference_t *, vn_lookup_kind);
 tree vn_reference_lookup (tree, tree, vn_lookup_kind, vn_reference_t *, bool,
-			  tree * = NULL, tree = NULL_TREE, bool = false);
+			  tree * = NULL, tree = NULL_TREE, gimple * = NULL);
 void vn_reference_lookup_call (gcall *, vn_reference_t *, vn_reference_t);
 vn_reference_t vn_reference_insert_pieces (tree, alias_set_type, alias_set_type,
 					   poly_int64, poly_int64,
@@ -309,10 +309,33 @@ unsigned do_rpo_vn (function *, edge, bitmap,
 		    /* skip_entry_phis */ bool = false,
 		    vn_lookup_kind = VN_WALKREWRITE);
 
-/* Private interface for PRE.  */
-void run_rpo_vn (vn_lookup_kind);
-unsigned eliminate_with_rpo_vn (bitmap);
-void free_rpo_vn (void);
+/* Value-numbers a function or a region.  */
+
+class vn_driver
+{
+public:
+  vn_driver (function *, bool iterate, bool eliminate,
+	     bool want_value_ids = false, vn_lookup_kind = VN_WALKREWRITE);
+  vn_driver (function *, edge entry, bitmap exit_bbs, bool iterate,
+	     bool eliminate, bool skip_entry_phis, vn_lookup_kind);
+  ~vn_driver ();
+  unsigned finalize (bitmap inserted_exprs = NULL);
+
+private:
+  DISABLE_COPY_AND_ASSIGN (vn_driver);
+  class rpo_elim *m_avail;
+  int *m_bb_to_rpo;
+  /* The walk's executable dominators, by RPO number.  */
+  int *m_exec_idom;
+  unsigned m_todo;
+  /* Whether the walk eliminated.  */
+  bool m_eliminate;
+  /* Whether the walk was of a region.  */
+  bool m_region_p;
+  /* The walker that eliminated, if the walk did: M_AVAIL unless the walk
+     iterated.  */
+  class eliminate_dom_walker *m_eliminator;
+};
 
 /* Valueize NAME if it is an SSA name, otherwise just return it.  This hook
    is initialized by run_scc_vn.  */

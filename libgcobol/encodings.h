@@ -31,8 +31,12 @@
 #ifndef _ENCODINGS_H_
 #define _ENCODINGS_H_
 
+#include <type_traits>
+
+// These values explicitly start at zero.  The final entry is used for sizing
+// a lookup array.
 enum cbl_encoding_t {
-  no_encoding_e,
+  no_encoding_e = 0,
   custom_encoding_e,
   iconv_1026_e,
   iconv_1046_e,
@@ -1193,6 +1197,7 @@ enum cbl_encoding_t {
   iconv_WIN_SAMI_2_e,
   iconv_WS2_e,
   iconv_YU_e,
+  iconv_LAST, // This must be the last one.  It's used for array sizing
 };
 
 static inline bool
@@ -1200,7 +1205,7 @@ valid_encoding( cbl_encoding_t enc ) {
   return enc <= iconv_YU_e;
 }
 
-#define ASCII_e  iconv_ASCII_e   
+#define ASCII_e  iconv_ASCII_e
 #define CP1252_e iconv_CP1252_e
 #define EBCDIC_e iconv_CP1140_e
 #define UTF8_e   iconv_UTF_8_e
@@ -1210,6 +1215,15 @@ struct encodings_t {
   bool supported;
   cbl_encoding_t type;
   char name[32];
+};
+
+struct cbl_encoding_t_hash {
+  using hashed_type = std::underlying_type<cbl_encoding_t>::type;
+    size_t
+    operator()(cbl_encoding_t e) const noexcept
+    {
+      return std::hash<hashed_type>{}(static_cast<hashed_type>(e));
+    }
 };
 
 #endif

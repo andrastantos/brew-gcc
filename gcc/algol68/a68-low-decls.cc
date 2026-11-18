@@ -42,6 +42,52 @@
 
 #include "a68.h"
 
+/* Auxiliary function to fish a declarer from some software construct.  The
+   first declarer found is returned, or NULL_TREE if none is found.  */
+
+static NODE_T *
+fish_declarer_from_tree (NODE_T *p)
+{
+  for (; p != NO_NODE; p = NEXT (p))
+    {
+      if (IS (p, DECLARER))
+	return p;
+
+      NODE_T *declarer = fish_declarer_from_tree (SUB (p));
+      if (declarer != NO_NODE)
+	return declarer;
+    }
+
+  return NO_NODE;
+}
+
+/* If the given DECLARER is an indicant whose symtab entry is annotated with a
+   CTYPE, then it is a typedef type derived from the type installed in the
+   given DECL.  The derived type was created and installed in the symtab entry
+   by a68_lower_mode_declaration.  Install it in DECL so the typedef gets
+   reflected intthe DWARF that gets generated for DECL.  */
+
+static void
+grok_typedef_in_decl (tree decl, NODE_T *declarer, bool use_pointer = false)
+{
+  if (SUB (declarer) != NO_NODE && IS (SUB (declarer), INDICANT))
+    {
+      NODE_T *indicant = SUB (declarer);
+
+      /* Note that indicants for standard modes do not have symtab entries.  */
+      if (TAX (indicant) != NO_TAG && CTYPE (TAX (indicant)) != NULL_TREE)
+	{
+	  if (use_pointer)
+	    {
+	      gcc_assert (POINTER_TYPE_P (TREE_TYPE (decl)));
+	      TREE_TYPE (TREE_TYPE (decl)) = CTYPE (TAX (indicant));
+	    }
+	  else
+	    TREE_TYPE (decl) = CTYPE (TAX (indicant));
+	}
+    }
+}
+
 /* Lower one or more mode declarations.
 
      mode declaration : mode symbol, defining indicant,
@@ -57,11 +103,9 @@
                         mode declaration, comma symbol,
 			defining indicant, equals symbol, void symbol.
 
-   Each mode declaration lowers into a TYPE_DECL, which are chained in the
-   current block.  This function returns void_node.
-
-   Note that the defining indicant is already annotated with the declared mode
-   so there is no need to go hunting for the declarer in the subtree.  */
+   Each mode declaration lowers into a TYPE_DECL so the mode is reflected in
+   the debug info.  This is done by linking the decl to the type via
+   TYPE_STUB_DECL and by filling in the TYPE_NAME of the base type.  */
 
 tree
 a68_lower_mode_declaration (NODE_T *p, LOW_CTX_T ctx)
@@ -87,19 +131,34 @@ a68_lower_mode_declaration (NODE_T *p, LOW_CTX_T ctx)
 	}
     }
 
-  /* Create a TYPE_DECL declaration for the defined mode and chain it in the
-     current block.  */
-  tree ctype = CTYPE (MOID (defining_indicant));
+  tree type = CTYPE (MOID (defining_indicant));
   tree decl_name = a68_get_mangled_indicant (NSYMBOL (defining_indicant),
-					     ctx.module_definition_name);
+						 ctx.module_definition_name);
   tree decl = build_decl (a68_get_node_location (p),
-			  TYPE_DECL, decl_name, ctype);
+			  TYPE_DECL, decl_name, type);
   SET_DECL_ASSEMBLER_NAME (decl, decl_name);
   TREE_PUBLIC (decl) = 1;
-  TYPE_CONTEXT (ctype) = DECL_CONTEXT (decl);
-  TYPE_NAME (ctype) = decl;
-  TYPE_STUB_DECL (ctype) = decl;
-  a68_add_decl (decl);
+
+  if (PUBLIC_RANGE (TABLE (TAX (defining_indicant))))
+    a68_add_global_decl (decl);
+  else
+    a68_add_decl (decl);
+
+  DECL_ORIGINAL_TYPE (decl) = type;
+
+  tree variant_type = build_variant_type_copy (type);
+  TYPE_STUB_DECL (variant_type) = TYPE_STUB_DECL (type);
+  TYPE_NAME (variant_type) = decl;
+  TREE_TYPE (decl) = variant_type;
+
+  TYPE_CONTEXT (type) = DECL_CONTEXT (decl);
+  TYPE_CONTEXT (variant_type) = TYPE_CONTEXT (type);
+
+  /* Install the derived typedef type in the symtab entry for the
+     defining-indicant, so the lowerers for identity declarations, variable
+     declarations, etc, having the indicant as declarer, can use this type
+     rather than the original type.  */
+  CTYPE (TAX (defining_indicant)) = variant_type;
 
   return void_node;
 }
@@ -133,16 +192,15 @@ a68_lower_mode_declaration (NODE_T *p, LOW_CTX_T ctx)
   HEAP generator, however, then the VAR_DECL declares a value of type pointer
   to CTYPE (AMODE0.  In this later case no optimization is possible and it has
   exactly the same effect than an identity declaration `REF AMODE
-  defining_identifier = HEAP AMODE'.
-
-  Note that the defining identifier is annotated with its mode, so there is no
-  need to go hunting for the declarer in the subtree.  */
+  defining_identifier = HEAP AMODE'.  */
 
 tree
 a68_lower_variable_declaration (NODE_T *p, LOW_CTX_T ctx)
 {
   NODE_T *defining_identifier, *unit;
   NODE_T *declarer = NO_NODE;
+
+  // XXX this is better than using ctx  NODE_T *declarer = fish_declarer_from_tree (p);
 
   tree sub_expr = NULL_TREE;
 
@@ -159,12 +217,12 @@ a68_lower_variable_declaration (NODE_T *p, LOW_CTX_T ctx)
 
       if (IS (q, PUBLIC_SYMBOL))
 	FORWARD (q);
- 
+
       if (IS (q, QUALIFIER))
 	{
 	  /* The qualifier determines what kind of generator is used in the
 	     variable declaration.  This is already annotated in the tax entry
-	     for the definining identifier.  */
+	     for the defining identifier.  */
 	  declarer = NEXT (q);
 	  defining_identifier = NEXT (NEXT (q));
 	}
@@ -176,6 +234,9 @@ a68_lower_variable_declaration (NODE_T *p, LOW_CTX_T ctx)
       else
 	gcc_unreachable ();
     }
+
+  gcc_assert (declarer != NO_NODE);
+  gcc_assert (defining_identifier != NO_NODE);
 
   /* Communicate declarer upward.  */
   if (ctx.declarer != NULL)
@@ -210,6 +271,12 @@ a68_lower_variable_declaration (NODE_T *p, LOW_CTX_T ctx)
     vec_safe_push (A68_MODULE_DEFINITION_DECLS, var_decl);
   else
     a68_add_decl (var_decl);
+
+  // XXX sucks to replicate this logic here.
+  bool use_pointer = (HEAP (TAX (defining_identifier)) != STATIC_SYMBOL
+		      && ((HEAP (TAX (defining_identifier)) == HEAP_SYMBOL)
+			  || HAS_ROWS (SUB (MOID (defining_identifier)))));
+  grok_typedef_in_decl (var_decl, declarer, use_pointer);
 
   /* Add a decl_expr in the current range.  */
   a68_add_decl_expr (fold_build1_loc (a68_get_node_location (p),
@@ -328,9 +395,7 @@ a68_lower_identity_declaration (NODE_T *p, LOW_CTX_T ctx)
   tree unit_tree = NULL_TREE;
   tree sub_expr = NULL_TREE;
 
-  /* Note that the formal declarer in the construct is not used.  This is
-     because it is already reflected in the mode of the identity
-     declaration.  */
+  NODE_T *declarer = fish_declarer_from_tree (p);
 
   NODE_T *defining_identifier;
   if (IS (SUB (p), IDENTITY_DECLARATION))
@@ -348,6 +413,9 @@ a68_lower_identity_declaration (NODE_T *p, LOW_CTX_T ctx)
     }
   else
     gcc_unreachable ();
+
+  gcc_assert (declarer != NO_NODE);
+  gcc_assert (defining_identifier != NO_NODE);
 
   NODE_T *unit = NEXT (NEXT (defining_identifier));
 
@@ -382,6 +450,8 @@ a68_lower_identity_declaration (NODE_T *p, LOW_CTX_T ctx)
 					  DECL_EXPR,
 					  TREE_TYPE (id_decl),
 					  id_decl));
+
+      grok_typedef_in_decl (id_decl, declarer);
 
       unit_tree = a68_lower_tree (unit, ctx);
       unit_tree = a68_consolidate_ref (MOID (unit), unit_tree);
@@ -422,6 +492,7 @@ a68_lower_identity_declaration (NODE_T *p, LOW_CTX_T ctx)
      declarer : indicant;
      		longety, indicant;
      		shortety, indicant;
+		fixety, indicant;
 		flex symbol, declarer;
 		flex symbol, bounds, declarer;
 		flex symbol, formal bounds, declarer;
@@ -576,7 +647,7 @@ a68_lower_procedure_variable_declaration (NODE_T *p, LOW_CTX_T ctx)
       else if (IS (q, QUALIFIER))
 	/* The qualifier determines what kind of generator is used in the
 	   variable declaration.  This is already annotated in the tax entry
-	   for the definining identifier.  */
+	   for the defining identifier.  */
 	defining_identifier = NEXT (NEXT (q));
       else
 	gcc_unreachable ();

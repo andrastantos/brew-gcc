@@ -211,6 +211,7 @@ enum mips_ucbranch_type
 };
 
 /* Macros to create an enumeration identifier for a function prototype.  */
+#define MIPS_FTYPE_NAME0(A) MIPS_##A##_FTYPE_VOID
 #define MIPS_FTYPE_NAME1(A, B) MIPS_##A##_FTYPE_##B
 #define MIPS_FTYPE_NAME2(A, B, C) MIPS_##A##_FTYPE_##B##_##C
 #define MIPS_FTYPE_NAME3(A, B, C, D) MIPS_##A##_FTYPE_##B##_##C##_##D
@@ -512,7 +513,7 @@ static const char *mips_base_align_functions; /* align_functions */
 /* Index [M][R] is true if register R is allowed to hold a value of mode M.  */
 static bool mips_hard_regno_mode_ok_p[MAX_MACHINE_MODE][FIRST_PSEUDO_REGISTER];
 
-/* Index C is true if character C is a valid PRINT_OPERAND punctation
+/* Index C is true if character C is a valid PRINT_OPERAND punctuation
    character.  */
 static bool mips_print_operand_punct[256];
 
@@ -4257,37 +4258,6 @@ mips_set_reg_reg_cost (machine_mode mode)
     }
 }
 
-/* Implement TARGET_INSN_COSTS.  */
-
-static int
-mips_insn_cost (rtx_insn *x, bool speed)
-{
-  int cost;
-  int count;
-  int ratio;
-
-  if (recog_memoized (x) < 0
-      && GET_CODE (PATTERN (x)) != ASM_INPUT
-      && asm_noperands (PATTERN (x)) < 0)
-    goto pattern_cost;
-
-  /* FIXME: return get_attr_length?  More tests may be needed.  */
-  if (!speed)
-    goto pattern_cost;
-
-  count = get_attr_insn_count (x);
-  ratio = get_attr_perf_ratio (x);
-  cost = COSTS_N_INSNS (count) * ratio;
-  if (cost > 0)
-    return cost;
-
-pattern_cost:
-  cost = pattern_cost (PATTERN (x), speed);
-  /* If the cost is zero, then it's likely a complex insn.
-     FIXME: Return COSTS_N_INSNS (2)?  More tests are needed.  */
-  return cost;
-}
-
 /* Implement TARGET_RTX_COSTS.  */
 
 static bool
@@ -4811,6 +4781,37 @@ mips_address_cost (rtx addr, machine_mode mode,
   return mips_address_insns (addr, mode, false);
 }
 
+/* Implement TARGET_INSN_COST.  */
+
+static int
+mips_insn_cost (rtx_insn *x, bool speed)
+{
+  int cost;
+  int count;
+  int ratio;
+
+  if (recog_memoized (x) < 0
+      && GET_CODE (PATTERN (x)) != ASM_INPUT
+      && asm_noperands (PATTERN (x)) < 0)
+    goto pattern_cost;
+
+  /* FIXME: return get_attr_length?  More tests may be needed.  */
+  if (!speed)
+    goto pattern_cost;
+
+  count = get_attr_insn_count (x);
+  ratio = get_attr_perf_ratio (x);
+  cost = COSTS_N_INSNS (count) * ratio;
+  if (cost > 0)
+    return cost;
+
+pattern_cost:
+  cost = pattern_cost (PATTERN (x), speed);
+  /* If the cost is zero, then it's likely a complex insn.
+     FIXME: Return COSTS_N_INSNS (2)?  More tests are needed.  */
+  return cost;
+}
+
 /* Implement TARGET_NO_SPECULATION_IN_DELAY_SLOTS_P.  */
 
 static bool
@@ -5026,7 +5027,8 @@ mips_split_move_p (rtx dest, rtx src, enum mips_split_type split_type)
    split, if we know it, NULL otherwise.  */
 
 void
-mips_split_move (rtx dest, rtx src, enum mips_split_type split_type, rtx insn_)
+mips_split_move (rtx dest, rtx src, enum mips_split_type split_type,
+		 rtx_insn *insn_)
 {
   rtx low_dest;
 
@@ -5117,7 +5119,7 @@ mips_split_move (rtx dest, rtx src, enum mips_split_type split_type, rtx insn_)
 /* Return the split type for instruction INSN.  */
 
 static enum mips_split_type
-mips_insn_split_type (rtx insn)
+mips_insn_split_type (rtx_insn *insn)
 {
   basic_block bb = BLOCK_FOR_INSN (insn);
   if (bb)
@@ -5328,7 +5330,7 @@ mips_split_msa_fill_d (rtx dest, rtx src)
 /* Return true if a move from SRC to DEST in INSN should be split.  */
 
 bool
-mips_split_move_insn_p (rtx dest, rtx src, rtx insn)
+mips_split_move_insn_p (rtx dest, rtx src, rtx_insn *insn)
 {
   return mips_split_move_p (dest, src, mips_insn_split_type (insn));
 }
@@ -5337,7 +5339,7 @@ mips_split_move_insn_p (rtx dest, rtx src, rtx insn)
    holds.  */
 
 void
-mips_split_move_insn (rtx dest, rtx src, rtx insn)
+mips_split_move_insn (rtx dest, rtx src, rtx_insn *insn)
 {
   mips_split_move (dest, src, mips_insn_split_type (insn), insn);
 }
@@ -6987,8 +6989,8 @@ mips_setup_incoming_varargs (cumulative_args_t cum,
   local_cum = *get_cumulative_args (cum);
 
   /* For a C23 variadic function w/o any named argument, and w/o an
-     artifical argument for large return value, skip advancing args.
-     There is such an artifical argument iff. arg.type is non-NULL
+     artificial argument for large return value, skip advancing args.
+     There is such an artificial argument iff. arg.type is non-NULL
      (PR 114175).  */
   if (!TYPE_NO_NAMED_ARGS_STDARG_P (TREE_TYPE (current_function_decl))
       || arg.type != NULL_TREE)
@@ -7093,7 +7095,7 @@ mips_build_builtin_va_list (void)
 			   unsigned_char_type_node);
       /* Explicitly pad to the size of a pointer, so that -Wpadded won't
 	 warn on every user file.  */
-      index = build_int_cst (NULL_TREE, GET_MODE_SIZE (ptr_mode) - 2 - 1);
+      index = build_int_cst (integer_type_node, GET_MODE_SIZE (ptr_mode) - 2 - 1);
       array = build_array_type (unsigned_char_type_node,
 			        build_index_type (index));
       f_res = build_decl (BUILTINS_LOCATION,
@@ -7407,7 +7409,7 @@ mips_gimplify_va_arg_expr (tree valist, tree type, gimple_seq *pre_p,
 
       /* [5] Emit code for: off -= rsize.  We do this as a form of
 	 post-decrement not available to C.  */
-      t = fold_convert (TREE_TYPE (off), build_int_cst (NULL_TREE, rsize));
+      t = fold_convert (TREE_TYPE (off), build_int_cst (integer_type_node, rsize));
       t = build2 (POSTDECREMENT_EXPR, TREE_TYPE (off), off, t);
 
       /* [4] Emit code for:
@@ -7434,7 +7436,7 @@ mips_gimplify_va_arg_expr (tree valist, tree type, gimple_seq *pre_p,
       /* [10, 11] Emit code for:
 	 addr_rtx = ovfl + (BYTES_BIG_ENDIAN ? OSIZE - SIZE : 0)
 	 ovfl += osize.  */
-      u = fold_convert (TREE_TYPE (ovfl), build_int_cst (NULL_TREE, osize));
+      u = fold_convert (TREE_TYPE (ovfl), build_int_cst (integer_type_node, osize));
       t = build2 (POSTINCREMENT_EXPR, TREE_TYPE (ovfl), ovfl, u);
       if (BYTES_BIG_ENDIAN && osize > size)
 	t = fold_build_pointer_plus_hwi (t, osize - size);
@@ -7863,7 +7865,8 @@ mips16_build_function_stub (void)
 static void
 mips16_copy_fpr_return_value (void)
 {
-  rtx fn, insn, retval;
+  rtx fn, retval;
+  rtx_insn *insn;
   tree return_type;
   machine_mode return_mode;
   const char *name;
@@ -8307,7 +8310,7 @@ mips_expand_call (enum mips_call_type type, rtx result, rtx addr,
    CALL_PATTERN is the pattern of the new call.  */
 
 void
-mips_split_call (rtx insn, rtx call_pattern)
+mips_split_call (rtx_insn *insn, rtx call_pattern)
 {
   emit_call_insn (call_pattern);
   if (!find_reg_note (insn, REG_NORETURN, 0))
@@ -8360,7 +8363,7 @@ mips_function_ok_for_sibcall (tree decl, tree exp ATTRIBUTE_UNUSED)
     return false;
 
   /* Direct Js are only possible to functions that use the same ISA encoding.
-     There is no JX counterpoart of JALX.  */
+     There is no JX counterpart of JALX.  */
   if (decl
       && const_call_insn_operand (XEXP (DECL_RTL (decl), 0), VOIDmode)
       && mips_call_may_need_jalx_p (decl))
@@ -8880,7 +8883,7 @@ mips_expand_ext_as_unaligned_load (rtx dest, rtx src, HOST_WIDE_INT width,
     }
 
   /* If we were loading 32bits and the original register was DI then
-     sign/zero extend into the orignal dest.  */
+     sign/zero extend into the original dest.  */
   if (dest1)
     {
       if (unsigned_p)
@@ -8977,7 +8980,7 @@ mips_use_ins_ext_p (rtx op, HOST_WIDE_INT width, HOST_WIDE_INT bitpos)
 }
 
 /* Check if MASK and SHIFT are valid in mask-low-and-shift-left
-   operation if MAXLEN is the maxium length of consecutive bits that
+   operation if MAXLEN is the maximum length of consecutive bits that
    can make up MASK.  MODE is the mode of the operation.  See
    mask_low_and_shift_len for the actual definition.  */
 
@@ -9237,7 +9240,7 @@ mips_pop_asm_switch (struct mips_asm_switch *asm_switch)
   mips_pop_asm_switch_1 (asm_switch, "\t", "\n");
 }
 
-/* Print the text for PRINT_OPERAND punctation character CH to FILE.
+/* Print the text for PRINT_OPERAND punctuation character CH to FILE.
    The punctuation characters are:
 
    '('	Start a nested ".set noreorder" block.
@@ -10034,7 +10037,7 @@ enum insn_code dspalu_bypass_table[][2] =
 };
 
 int
-mips_dspalu_bypass_p (rtx out_insn, rtx in_insn)
+mips_dspalu_bypass_p (rtx_insn *out_insn, rtx_insn *in_insn)
 {
   int i;
   int num_bypass = ARRAY_SIZE (dspalu_bypass_table);
@@ -11036,7 +11039,7 @@ mips_cfun_has_inflexible_gp_ref_p (void)
 	return true;
 
       /* MIPS16 functions that return in FPRs need to call an
-	 external libgcc routine.  This call is only made explict
+	 external libgcc routine.  This call is only made explicit
 	 during mips_expand_epilogue, and it too might be lazily bound.  */
       if (mips16_cfun_returns_in_fpr_p ())
 	return true;
@@ -12388,7 +12391,7 @@ mips_output_function_epilogue (FILE *)
 static void
 mips_frame_barrier (void)
 {
-  emit_clobber (gen_frame_mem (BLKmode, stack_pointer_rtx));
+  emit_insn (gen_blockage ());
 }
 
 
@@ -12844,7 +12847,9 @@ mips_expand_prologue (void)
       offset = frame->hard_frame_pointer_offset;
       if (offset == 0)
 	{
-	  rtx insn = mips_emit_move (hard_frame_pointer_rtx, stack_pointer_rtx);
+	  rtx_insn *insn
+	    = mips_emit_move (hard_frame_pointer_rtx,
+			      stack_pointer_rtx);
 	  RTX_FRAME_RELATED_P (insn) = 1;
 	}
       else if (SMALL_OPERAND (offset))
@@ -15398,9 +15403,7 @@ static void
 vr4130_true_reg_dependence_p_1 (rtx x, const_rtx pat ATTRIBUTE_UNUSED,
 				void *data)
 {
-  rtx *insn_ptr;
-
-  insn_ptr = (rtx *) data;
+  auto insn_ptr = (rtx_insn **) data;
   if (REG_P (x)
       && *insn_ptr != 0
       && reg_referenced_p (x, PATTERN (*insn_ptr)))
@@ -15411,7 +15414,7 @@ vr4130_true_reg_dependence_p_1 (rtx x, const_rtx pat ATTRIBUTE_UNUSED,
    and INSN.  */
 
 static bool
-vr4130_true_reg_dependence_p (rtx insn)
+vr4130_true_reg_dependence_p (rtx_insn *insn)
 {
   note_stores (vr4130_last_insn, vr4130_true_reg_dependence_p_1, &insn);
   return insn == 0;
@@ -17137,6 +17140,9 @@ mips_build_cvpointer_type (void)
 
 /* MIPS_FTYPE_ATYPESN takes N MIPS_FTYPES-like type codes and lists
    their associated MIPS_ATYPEs.  */
+#define MIPS_FTYPE_ATYPES0(A) \
+  MIPS_ATYPE_##A
+
 #define MIPS_FTYPE_ATYPES1(A, B) \
   MIPS_ATYPE_##A, MIPS_ATYPE_##B
 
@@ -18120,11 +18126,11 @@ mips16_lay_out_constants (bool split_p)
 	  if (barrier == 0 && pool.insn_address + 4 > pool.highest_address)
 	    {
 	      rtx_code_label *label;
-	      rtx_insn *jump;
 
 	      label = gen_label_rtx ();
 
-	      jump = emit_jump_insn_before (gen_jump (label), insn);
+	      rtx_jump_insn *jump
+		= emit_jump_insn_before (gen_jump (label), insn);
 	      JUMP_LABEL (jump) = label;
 	      LABEL_NUSES (label) = 1;
 	      barrier = emit_barrier_after (jump);
@@ -19349,7 +19355,7 @@ mips_classify_branch_p6600 (rtx_insn *insn)
   /* We ignore sequences here as they represent a filled delay slot.  */
   if (!insn
       || !USEFUL_INSN_P (insn)
-      || GET_CODE (PATTERN (insn)) == SEQUENCE)
+      || is_a<rtx_sequence *> (PATTERN (insn)))
     return UC_UNDEFINED;
 
   if (get_attr_jal (insn) == JAL_INDIRECT /* JIC and JIALC.  */
@@ -19410,7 +19416,7 @@ mips_avoid_hazard (rtx_insn *after, rtx_insn *insn, int *hilo_delay,
      imply it is not actually a compact branch anyway) and the current
      insn is not an inline asm, and can't go in a delay slot.  */
   else if (*fs_delay && get_attr_can_delay (insn) == CAN_DELAY_NO
-	   && GET_CODE (PATTERN (after)) != SEQUENCE
+	   && !is_a<rtx_sequence *> (PATTERN (after))
 	   && GET_CODE (pattern) != ASM_INPUT
 	   && asm_noperands (pattern) < 0)
     nops = 1;
@@ -19499,9 +19505,15 @@ mips_emit_speculation_barrier_function ()
 static bool
 mips_breakable_sequence_p (rtx_insn *insn)
 {
-  return (insn && GET_CODE (PATTERN (insn)) == SEQUENCE
-	  && TARGET_CB_MAYBE
-	  && get_attr_compact_form (SEQ_BEGIN (insn)) != COMPACT_FORM_NEVER);
+  if (!insn || !TARGET_CB_MAYBE)
+    return false;
+
+  auto seq = dyn_cast<rtx_sequence *> (PATTERN (insn));
+  if (!seq)
+    return false;
+  if (INSN_P (insn))
+    insn = seq->insn (0);
+  return get_attr_compact_form (insn) != COMPACT_FORM_NEVER;
 }
 
 /* Remove a SEQUENCE and replace it with the delay slot instruction
@@ -19611,7 +19623,7 @@ mips_reorg_process_insns (void)
       next_insn = NEXT_INSN (insn);
       if (USEFUL_INSN_P (insn))
 	{
-	  if (GET_CODE (PATTERN (insn)) == SEQUENCE)
+	  if (auto seq = dyn_cast<rtx_sequence *> (PATTERN (insn)))
 	    {
 	      rtx_insn *next_active = next_active_insn (insn);
 	      /* Undo delay slots to avoid bubbles if the next instruction can
@@ -19620,11 +19632,11 @@ mips_reorg_process_insns (void)
 		 safely breakable.  */
 	      if (TARGET_CB_MAYBE
 		  && mips_breakable_sequence_p (insn)
-		  && INSN_P (SEQ_BEGIN (insn))
-		  && INSN_P (SEQ_END (insn))
+		  && INSN_P (seq->insn (0))
+		  && INSN_P (seq->insn (seq->len () - 1))
 		  && ((next_active
 		       && INSN_P (next_active)
-		       && GET_CODE (PATTERN (next_active)) != SEQUENCE
+		       && !is_a<rtx_sequence *> (PATTERN (next_active))
 		       && get_attr_can_delay (next_active) == CAN_DELAY_YES)
 		      || !optimize_size))
 		{
@@ -20219,7 +20231,7 @@ mips_set_compression_mode (unsigned int compression_mode)
       /* Don't move loop invariants, because it tends to increase
 	 register pressure.  It also introduces an extra move in cases
 	 where the constant is the first operand in a two-operand binary
-	 instruction, or when it forms a register argument to a functon
+	 instruction, or when it forms a register argument to a function
 	 call.  */
       flag_move_loop_invariants = 0;
 
@@ -22328,7 +22340,7 @@ mips_expand_msa_reduc (rtx (*fn) (rtx, rtx, rtx), rtx dest, rtx in)
 /* Implement TARGET_SCHED_REASSOCIATION_WIDTH.  */
 
 static int
-mips_sched_reassociation_width (unsigned int opc ATTRIBUTE_UNUSED,
+mips_sched_reassociation_width (tree_code opc ATTRIBUTE_UNUSED,
 				machine_mode mode)
 {
   if (MSA_SUPPORTED_MODE_P (mode))
@@ -22384,7 +22396,7 @@ mips_expand_vec_unpack (rtx operands[2], bool unsigned_p, bool high_p)
 
       if (!unsigned_p)
 	{
-	  /* Extract sign extention for each element comparing each element
+	  /* Extract sign extension for each element comparing each element
 	     with immediate zero.  */
 	  tmp = gen_reg_rtx (imode);
 	  emit_insn (cmpFunc (tmp, operands[1], CONST0_RTX (imode)));
@@ -23129,6 +23141,16 @@ mips_case_values_threshold (void)
     return default_case_values_threshold ();
 }
 
+/* Implement TARGET_CAN_SHARE_JUMP_TABLE_P.  The MIPS16 casesi dispatch
+   loads the address of a table in the text section with a PC-relative
+   la, whose length assumes that the table follows the jump.  */
+
+static bool
+mips_can_share_jump_table_p (rtx_insn *)
+{
+  return !TARGET_MIPS16_SHORT_JUMP_TABLES;
+}
+
 /* Implement TARGET_ATOMIC_ASSIGN_EXPAND_FENV.  */
 
 static void
@@ -23625,6 +23647,9 @@ mips_print_patchable_function_entry (FILE *file ATTRIBUTE_UNUSED,
 
 #undef TARGET_CASE_VALUES_THRESHOLD
 #define TARGET_CASE_VALUES_THRESHOLD mips_case_values_threshold
+
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P mips_can_share_jump_table_p
 
 #undef TARGET_ATOMIC_ASSIGN_EXPAND_FENV
 #define TARGET_ATOMIC_ASSIGN_EXPAND_FENV mips_atomic_assign_expand_fenv

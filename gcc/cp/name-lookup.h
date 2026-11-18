@@ -36,13 +36,13 @@ struct cp_binding_level;
 #define INHERITED_VALUE_BINDING_P(NODE) ((NODE)->value_is_inherited)
 
 /* The IMPLICIT_TYPEDEF is hidden from ordinary name lookup (it was
-   injected via a local class's friend decl). The typdef may be in the
+   injected via a local class's friend decl). The typedef may be in the
    VALUE or the TYPE slot.  We do not get the situation where the
    value and type slots are both filled and both hidden.  */
 #define HIDDEN_TYPE_BINDING_P(NODE) ((NODE)->type_is_hidden)
 
 /* Create an overload suitable for recording an artificial TYPE_DECL
-   and another decl.  We use this machanism to implement the struct
+   and another decl.  We use this mechanism to implement the struct
    stat hack.  */
 
 #define STAT_HACK_P(N) ((N) && TREE_CODE (N) == OVERLOAD && OVL_LOOKUP_P (N))
@@ -193,7 +193,7 @@ struct GTY(()) tree_binding_vec {
    entity.  */
 #define BINDING_VECTOR_GLOBAL_DUPS_P(NODE) \
   (BINDING_VECTOR_CHECK (NODE)->base.static_flag)
-/* This binding contains duplicate references to a partioned module
+/* This binding contains duplicate references to a partitioned module
    entity.  */
 #define BINDING_VECTOR_PARTITION_DUPS_P(NODE) \
   (BINDING_VECTOR_CHECK (NODE)->base.volatile_flag)
@@ -239,6 +239,8 @@ enum scope_kind {
   sk_cond,	     /* The scope of the variable declared in the condition
 			of an if or switch statement.  */
   sk_stmt_expr,	     /* GNU statement expression block.  */
+  sk_contract,	     /* A C++26 contract-assertion scope.
+			[basic.scope.contract] */
   sk_function_parms, /* The scope containing function parameters.  */
   sk_class,	     /* The scope containing the members of a class.  */
   sk_scoped_enum,    /* The scope containing the enumerators of a C++11
@@ -253,8 +255,8 @@ enum scope_kind {
   sk_transaction,    /* A synchronized or atomic statement.  */
   sk_omp,	     /* An OpenMP structured block.  */
   sk_lambda,	     /* A lambda scope.  */
-  sk_contract,	     /* A C++26 contract-assertion scope.
-			[basic.scope.contract] */
+  /* Note that scopes for which local_bindings_p should be true must precede
+     sk_function_parms.  */
   sk_count	     /* Number of scope_kind enumerations.  */
 };
 
@@ -328,11 +330,11 @@ struct GTY(()) cp_binding_level {
   /* The kind of scope that this object represents.  However, a
       SK_TEMPLATE_SPEC scope is represented with KIND set to
       SK_TEMPLATE_PARMS and EXPLICIT_SPEC_P set to true.  */
-  ENUM_BITFIELD (scope_kind) kind : 5;
+  enum scope_kind kind : 5;
 
   /* True if this scope is an SK_TEMPLATE_SPEC scope.  This field is
       only valid if KIND == SK_TEMPLATE_PARMS.  */
-  BOOL_BITFIELD explicit_spec_p : 1;
+  bool explicit_spec_p : 1;
 
   /* True means make a BLOCK for this level regardless of all else.  */
   unsigned keep : 1;
@@ -503,9 +505,11 @@ extern bool decl_in_scope_p (tree);
 extern cxx_binding *outer_binding (tree, cxx_binding *, bool);
 extern void cp_emit_debug_info_for_using (tree, tree);
 
-extern void finish_nonmember_using_decl (tree scope, tree name);
+extern void finish_nonmember_using_decl (tree scope, tree name,
+					 bool typename_p = false);
 extern void finish_using_directive (tree target, tree attribs);
 void push_local_extern_decl_alias (tree decl);
+extern bool redefinable_import_p (tree decl);
 extern tree pushdecl (tree, bool hiding = false);
 extern tree pushdecl_outermost_localscope (tree);
 extern tree pushdecl_top_level (tree);

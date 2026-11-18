@@ -115,15 +115,16 @@ extern int riscv_address_insns (rtx, machine_mode, bool);
 extern int riscv_const_insns (rtx, bool);
 extern int riscv_split_const_insns (rtx);
 extern int riscv_load_store_insns (rtx, rtx_insn *);
-extern rtx riscv_emit_move (rtx, rtx);
+extern rtx_insn *riscv_emit_move (rtx, rtx);
 extern bool riscv_split_symbol (rtx, rtx, machine_mode, rtx *);
 extern bool riscv_split_symbol_type (enum riscv_symbol_type);
 extern rtx riscv_unspec_address (rtx, enum riscv_symbol_type);
-extern void riscv_move_integer (rtx, rtx, HOST_WIDE_INT, machine_mode);
+extern void riscv_move_integer (rtx, rtx, HOST_WIDE_INT);
 extern bool riscv_legitimize_move (machine_mode, rtx, rtx);
 extern rtx riscv_subword (rtx, bool);
 extern bool riscv_split_64bit_move_p (rtx, rtx);
 extern void riscv_split_doubleword_move (rtx, rtx);
+extern void riscv_split_quadword_move (rtx, rtx);
 extern const char *riscv_output_move (rtx, rtx);
 extern const char *riscv_output_return ();
 extern void riscv_declare_function_name (FILE *, const char *, tree);
@@ -155,7 +156,10 @@ extern rtx riscv_emit_unary (enum rtx_code code, rtx dest, rtx x);
 extern rtx riscv_emit_binary (enum rtx_code code, rtx dest, rtx x, rtx y);
 #endif
 extern bool riscv_expand_conditional_move (rtx, rtx, rtx, rtx);
-extern rtx riscv_legitimize_call_address (rtx);
+extern rtx riscv_legitimize_call_address (rtx, bool);
+extern bool riscv_call_needs_lpad_p (rtx);
+extern bool riscv_expand_zilsd_misaligned_move (rtx, rtx);
+extern bool riscv_zilsd_valid_mem_p (rtx, machine_mode);
 extern void riscv_set_return_address (rtx, rtx);
 extern rtx riscv_return_addr (int, rtx);
 extern poly_int64 riscv_initial_elimination_offset (int, int);
@@ -181,9 +185,9 @@ extern bool riscv_reg_frame_related (rtx);
 extern void riscv_split_sum_of_two_s12 (HOST_WIDE_INT, HOST_WIDE_INT *,
 					HOST_WIDE_INT *);
 extern bool riscv_vector_float_type_p (const_tree type);
-extern void generate_reflecting_code_using_brev (rtx *);
 extern void expand_crc_using_clmul (scalar_mode, scalar_mode, rtx *);
 extern void expand_reversed_crc_using_clmul (scalar_mode, scalar_mode, rtx *);
+extern bool riscv_zero_offset_address_bypass_p (rtx_insn *, rtx_insn *);
 
 /* Routines implemented in riscv-c.cc.  */
 void riscv_cpu_cpp_builtins (cpp_reader *);
@@ -201,6 +205,8 @@ extern std::string riscv_arch_str (bool version_p = true);
 extern void riscv_parse_arch_string (const char *, struct gcc_options *, location_t);
 
 extern bool riscv_hard_regno_rename_ok (unsigned, unsigned);
+extern bool riscv_vector_mode_p (machine_mode);
+extern unsigned int riscv_hard_regno_nregs (unsigned int, machine_mode);
 
 rtl_opt_pass * make_pass_shorten_memrefs (gcc::context *ctxt);
 rtl_opt_pass * make_pass_avlprop (gcc::context *ctxt);
@@ -218,8 +224,7 @@ extern bool vsetvl_insn_p (rtx_insn *);
 
 /* Routines implemented in riscv-string.c.  */
 extern bool riscv_expand_block_compare (rtx, rtx, rtx, rtx);
-extern bool riscv_expand_block_move (rtx, rtx, rtx);
-extern bool riscv_expand_block_clear (rtx, rtx);
+extern bool riscv_expand_block_move (rtx, rtx, rtx, bool);
 
 /* Information about one CPU we know about.  */
 struct riscv_cpu_info {
@@ -265,8 +270,8 @@ struct common_vector_cost
   /* Cost of a scalar-to-vector operation.  */
   const int scalar_to_vec_cost;
 
-  /* Cost of a permute operation.  */
-  const int permute_cost;
+  /* Cost of a permute operation for LMUL 1, 2, 4, 8.  */
+  const int permute_cost[4];
 
   /* Cost of an aligned vector load.  */
   const int align_load_cost;
@@ -279,17 +284,30 @@ struct common_vector_cost
 
   /* Cost of an unaligned vector store.  */
   const int unalign_store_cost;
+
+  /* Cost of vector reduction operations (unordered / tree reduction).
+     Indexed by element type.  */
+  const int reduc_i8_cost;
+  const int reduc_i16_cost;
+  const int reduc_i32_cost;
+  const int reduc_i64_cost;
+  const int reduc_f16_cost;
+  const int reduc_f32_cost;
+  const int reduc_f64_cost;
+
+  /* Cost of ordered (fold-left) floating-point reductions.  */
+  const int reduc_f16_ordered_cost;
+  const int reduc_f32_ordered_cost;
+  const int reduc_f64_ordered_cost;
 };
 
 /* scalable vectorization (VLA) specific cost.  */
 struct scalable_vector_cost : common_vector_cost
 {
-  CONSTEXPR scalable_vector_cost (const common_vector_cost &base)
+  constexpr scalable_vector_cost (const common_vector_cost &base)
     : common_vector_cost (base)
   {}
 
-  /* TODO: We will need more other kinds of vector cost for VLA.
-     E.g. fold_left reduction cost, lanes load/store cost, ..., etc.  */
 };
 
 /* Additional costs for register copies.  Cost is for one register.  */
@@ -322,10 +340,10 @@ struct cpu_vector_cost
   /* Cost of a not-taken branch.  */
   const int cond_not_taken_branch_cost;
 
-  /* Cost of an VLS modes operations.  */
+  /* Cost of a VLS modes operations.  */
   const common_vector_cost *vls;
 
-  /* Cost of an VLA modes operations.  */
+  /* Cost of a VLA modes operations.  */
   const scalable_vector_cost *vla;
 
   /* Cost of vector register move operations.  */
@@ -346,7 +364,7 @@ namespace riscv_vector {
 
 /* These flags describe how to pass the operands to a rvv insn pattern.
    e.g.:
-     If a insn has this flags:
+     If an insn has this flags:
        HAS_DEST_P | HAS_MASK_P | USE_VUNDEF_MERGE_P
 	 | TU_POLICY_P | BINARY_OP_P | FRM_DYN_P
      that means:
@@ -359,16 +377,16 @@ namespace riscv_vector {
        operands[7] is the mask policy operands
        operands[8] is the rounding mode operands
 
-     Then you can call `emit_vlmax_insn (flags, icode, ops)` to emit a insn.
+     Then you can call `emit_vlmax_insn (flags, icode, ops)` to emit an insn.
      and ops[0] is the dest operand (operands[0]), ops[1] is the mask
      operand (operands[1]), ops[2] and ops[3] is the two
-     operands (operands[3], operands[4]) to do the operation. Other operands
+     operands (operands[3], operands[4]) to do the operation.  Other operands
      will be created by emit_vlmax_insn according to the flags information.
 */
 enum insn_flags : unsigned int
 {
   /* flags for dest, mask, merge operands.  */
-  /* Means INSN has dest operand. False for STORE insn.  */
+  /* Means INSN has dest operand.  False for STORE insn.  */
   HAS_DEST_P = 1 << 0,
   /* Means INSN has mask operand.  */
   HAS_MASK_P = 1 << 1,
@@ -496,7 +514,7 @@ enum insn_type : unsigned int
   BINARY_OP_VXRM_RDN = BINARY_OP | VXRM_RDN_P,
   BINARY_OP_VXRM_ROD = BINARY_OP | VXRM_ROD_P,
 
-  /* Ternary operator. Always have real merge operand.  */
+  /* Ternary operator.  Always have real merge operand.  */
   TERNARY_OP = HAS_DEST_P | HAS_MASK_P | USE_ALL_TRUES_MASK_P | HAS_MERGE_P
 	       | TDEFAULT_POLICY_P | MDEFAULT_POLICY_P | TERNARY_OP_P,
   TERNARY_OP_FRM_DYN = TERNARY_OP | FRM_DYN_P,
@@ -624,6 +642,7 @@ void emit_nonvlmax_insn (unsigned, unsigned, rtx *, rtx);
 void emit_avltype_insn (unsigned, unsigned, rtx *, avl_type, rtx = nullptr);
 void emit_vlmax_insn_lra (unsigned, unsigned, rtx *, rtx);
 enum vlmul_type get_vlmul (machine_mode);
+bool is_frac_vlmul_p (machine_mode);
 rtx get_vlmax_rtx (machine_mode);
 unsigned int get_ratio (machine_mode);
 unsigned int get_nf (machine_mode);
@@ -646,6 +665,17 @@ enum mask_policy
   MASK_ANY = 2,
 };
 
+/* Values for the VTYPE altfmt field.  Instructions that do not care about
+   altfmt leave the "altfmt" insn attribute at its default (INVALID_ATTRIBUTE).
+   FP8 instructions select between standard (ALTFMT_NONE, E4M3) and alternate
+   (ALTFMT_ALT, E5M2) formats.  Dot-product instructions use distinct UNSPECs
+   to select the signedness or FP8 format of vs1 statically.  */
+enum altfmt_type
+{
+  ALTFMT_NONE = 0,
+  ALTFMT_ALT = 1,
+};
+
 /* Return true if VALUE is agnostic or any policy.  */
 #define IS_AGNOSTIC(VALUE) (bool) (VALUE & 0x1 || (VALUE >> 1 & 0x1))
 
@@ -661,7 +691,8 @@ bool neg_simm5_p (rtx);
 #ifdef RTX_CODE
 bool has_vi_variant_p (rtx_code, rtx);
 void expand_vec_cmp (rtx, rtx_code, rtx, rtx, rtx = nullptr, rtx = nullptr);
-bool expand_vec_cmp_float (rtx, rtx_code, rtx, rtx, bool);
+bool expand_vec_cmp_float (rtx, rtx_code, rtx, rtx, bool, rtx = nullptr,
+			   rtx = nullptr);
 void expand_cond_len_unop (unsigned, rtx *);
 void expand_cond_len_binop (unsigned, rtx *);
 void expand_reduction (unsigned, unsigned, unsigned, rtx *, rtx);
@@ -736,7 +767,7 @@ void expand_popcount (rtx *);
 void expand_rawmemchr (machine_mode, rtx, rtx, rtx, bool = false);
 bool expand_strcmp (rtx, rtx, rtx, rtx, unsigned HOST_WIDE_INT, bool);
 void emit_vec_extract (rtx, rtx, rtx);
-bool expand_vec_setmem (rtx, rtx, rtx);
+bool expand_vec_setmem (rtx, rtx, rtx, bool);
 bool expand_vec_cmpmem (rtx, rtx, rtx, rtx);
 void expand_strided_load (machine_mode, rtx *);
 void expand_strided_store (machine_mode, rtx *);
@@ -790,9 +821,15 @@ bool can_be_broadcast_p (rtx);
 bool strided_broadcast_p (rtx);
 bool gather_scatter_valid_offset_p (machine_mode);
 HOST_WIDE_INT estimated_poly_value (poly_int64, unsigned int);
-bool whole_reg_to_reg_move_p (rtx *, machine_mode, int);
+bool whole_reg_move_p (rtx *, machine_mode, int);
+bool whole_reg_loadstore_p (rtx dest, rtx src, rtx mask, rtx avl, rtx
+			    avl_type);
 bool splat_to_scalar_move_p (rtx *);
 rtx get_fp_rounding_coefficient (machine_mode);
+bool riscv_v_widen_constraint_ok (unsigned int, machine_mode, unsigned int,
+				  machine_mode);
+bool riscv_v_widen_non_overlap_constraint_ok (unsigned int, machine_mode,
+					      unsigned int, machine_mode);
 }
 
 /* We classify builtin types into two classes:
@@ -813,6 +850,46 @@ const unsigned int RISCV_BUILTIN_CLASS = (1 << RISCV_BUILTIN_SHIFT) - 1;
 /* Routines implemented in riscv-string.cc.  */
 extern bool riscv_expand_strcmp (rtx, rtx, rtx, rtx, rtx);
 extern bool riscv_expand_strlen (rtx, rtx, rtx, rtx);
+extern bool riscv_expand_setmem (rtx, rtx, rtx, bool);
+
+/* Routines implemented in riscv-fusion.cc.  */
+enum riscv_fusion_pairs
+{
+  RISCV_FUSE_NOTHING = 0,
+  RISCV_FUSE_ZEXTW = HOST_WIDE_INT_1U << 0,
+  RISCV_FUSE_ZEXTH = HOST_WIDE_INT_1U << 1,
+  RISCV_FUSE_ZEXTWS = HOST_WIDE_INT_1U << 2,
+  RISCV_FUSE_LDINDEXED = HOST_WIDE_INT_1U << 3,
+  RISCV_FUSE_LUI_ADDI = HOST_WIDE_INT_1U << 4,
+  RISCV_FUSE_AUIPC_ADDI = HOST_WIDE_INT_1U << 5,
+  RISCV_FUSE_LUI_LD = HOST_WIDE_INT_1U << 6,
+  RISCV_FUSE_AUIPC_LD = HOST_WIDE_INT_1U << 7,
+  RISCV_FUSE_LDPREINCREMENT = HOST_WIDE_INT_1U << 8,
+  RISCV_FUSE_ALIGNED_STD = HOST_WIDE_INT_1U << 9,
+  RISCV_FUSE_BFEXT = HOST_WIDE_INT_1U << 10,
+  RISCV_FUSE_EXPANDED_LD = HOST_WIDE_INT_1U << 11,
+  RISCV_FUSE_B_ALUI = HOST_WIDE_INT_1U << 12,
+  RISCV_FUSE_SUB_SEQZ = HOST_WIDE_INT_1U << 13,
+  RISCV_FUSE_ADD_ST = HOST_WIDE_INT_1U << 14,
+  RISCV_FUSE_ADD_ANDI = HOST_WIDE_INT_1U << 15,
+  RISCV_FUSE_ANDI_ADD = HOST_WIDE_INT_1U << 16,
+  RISCV_FUSE_LOGIC_LOGIC = HOST_WIDE_INT_1U << 17,
+  RISCV_FUSE_SLLI_SRLI = HOST_WIDE_INT_1U << 18,
+  RISCV_FUSE_SRLI_ADD = HOST_WIDE_INT_1U << 19,
+  RISCV_FUSE_PREINDEX_ST = HOST_WIDE_INT_1U << 20,
+  RISCV_FUSE_POSTINDEX_LD = HOST_WIDE_INT_1U << 21,
+  RISCV_FUSE_POSTINDEX_ST = HOST_WIDE_INT_1U << 22,
+  RISCV_FUSE_LDST_PAIR_INC = HOST_WIDE_INT_1U << 23,
+  RISCV_FUSE_LDST_PAIR_DEC = HOST_WIDE_INT_1U << 24,
+  RISCV_FUSE_FLDFST_PAIR_INC = HOST_WIDE_INT_1U << 25,
+  RISCV_FUSE_FLDFST_PAIR_DEC = HOST_WIDE_INT_1U << 26,
+};
+
+extern bool riscv_macro_fusion_p (void);
+extern bool riscv_macro_fusion_pair_p (rtx_insn *, rtx_insn *);
+extern enum riscv_fusion_pairs riscv_get_fusion_pair_type (rtx_insn *,
+						    rtx_insn *);
+extern unsigned HOST_WIDE_INT riscv_get_fusible_ops (void);
 
 /* Routines implemented in thead.cc.  */
 extern bool extract_base_offset_in_addr (rtx, rtx *, rtx *);
@@ -839,6 +916,10 @@ extern bool th_classify_address (struct riscv_address_info *,
 extern const char *th_output_move (rtx, rtx);
 extern bool th_print_operand_address (FILE *, machine_mode, rtx);
 #endif
+
+extern bool arcv_mpy_1c_bypass_p (rtx_insn *, rtx_insn *);
+extern bool arcv_mpy_2c_bypass_p (rtx_insn *, rtx_insn *);
+extern bool arcv_mpy_10c_bypass_p (rtx_insn *, rtx_insn *);
 
 extern bool strided_load_broadcast_p (void);
 extern bool riscv_prefer_agnostic_p (void);
@@ -878,6 +959,8 @@ struct riscv_tune_info {
 const struct riscv_tune_info *
 riscv_parse_tune (const char *, bool);
 const cpu_vector_cost *get_vector_costs ();
+unsigned int get_vector_units ();
+unsigned int get_scalar_units ();
 int get_gr2vr_cost ();
 int get_vr2gr_cost ();
 int get_fr2vr_cost ();

@@ -1,3 +1,40 @@
+2026-10-10  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Drop AC_C_CONST use.
+	Drop unused sizeof checks.
+	Drop off_t search.
+
+2026-10-10  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't check for ctype.h, stddef.h, or stdio.h.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	* configure: Regenerate.
+	* configure.ac: Drop AC_HEADER_STDC.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* decBasic.c (decCanonical): Fix typos.
+	(decDivide): Likewise.
+	(decFiniteMultiply): Likewise.
+	(decFloatMultiply): Likewise.
+	(decFloatQuantize): Likewise.
+	(decToInt32): Likewise.
+	* decCommon.c (decFinalize): Likewise.
+	(decFloatFromString): Likewise.
+	* decContext.c (decContextGetStatus): Likewise.
+	* decNumber.c (decToString): Likewise.
+	(decAddOp): Likewise.
+	(decMalloc): Likewise.
+	* decNumberLocal.h: Likewise.
+
 2026-01-09  Ben Boeckel  <ben.boeckel@kitware.com>
 
 	* configure: Regenerate.

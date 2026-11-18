@@ -1,4 +1,4 @@
-/* Header file for loop interation estimates.
+/* Header file for loop iteration estimates.
    Copyright (C) 2013-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
@@ -24,11 +24,11 @@ extern tree expand_simple_operations (tree, tree = NULL);
 extern tree simplify_using_initial_conditions (class loop *, tree);
 extern bool loop_only_exit_p (const class loop *, basic_block *body,
 			      const_edge);
-extern bool number_of_iterations_exit (class loop *, edge,
+extern bool number_of_iterations_exit (class loop *, const_edge,
 				       class tree_niter_desc *niter, bool,
 				       bool every_iteration = true,
 				       basic_block * = NULL);
-extern bool number_of_iterations_exit_assumptions (class loop *, edge,
+extern bool number_of_iterations_exit_assumptions (class loop *, const_edge,
 						   class tree_niter_desc *,
 						   gcond **, bool = true,
 						   basic_block * = NULL);
@@ -52,8 +52,9 @@ extern void estimate_numbers_of_iterations (function *);
 extern void estimate_numbers_of_iterations (class loop *);
 extern bool stmt_dominates_stmt_p (gimple *, gimple *);
 extern bool nowrap_type_p (tree);
+extern tree get_niter_type_bound (tree, tree, tree);
 extern bool scev_probably_wraps_p (tree, tree, tree, gimple *,
-				   class loop *, bool);
+				   class loop *, bool, tree * = nullptr);
 extern void free_numbers_of_iterations_estimates (class loop *);
 extern void free_numbers_of_iterations_estimates (function *);
 extern tree simplify_replace_tree (tree, tree,

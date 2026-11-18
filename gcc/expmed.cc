@@ -55,6 +55,13 @@ static bool store_integral_bit_field (rtx, opt_scalar_int_mode,
 				      unsigned HOST_WIDE_INT,
 				      poly_uint64, poly_uint64,
 				      machine_mode, rtx, bool, bool);
+/* The constant divisor of the last division expanded, so that a modulo by
+   the same constant can reuse the quotient.  Reset for each function by
+   prepare_function_start: carrying it across functions would make a
+   function's code depend on what was expanded before it in the translation
+   unit.  */
+HOST_WIDE_INT last_div_const = 0;
+
 static void store_fixed_bit_field (rtx, opt_scalar_int_mode,
 				   unsigned HOST_WIDE_INT,
 				   unsigned HOST_WIDE_INT,
@@ -663,7 +670,7 @@ store_bit_field_using_insv (const extraction_insn *insv, rtx op0,
   /* There are similar overflow check at the start of store_bit_field_1,
      but that only check the situation where the field lies completely
      outside the register, while there do have situation where the field
-     lies partialy in the register, we need to adjust bitsize for this
+     lies partially in the register, we need to adjust bitsize for this
      partial overflow situation.  Without this fix, pr48335-2.c on big-endian
      will broken on those arch support bit insert instruction, like arm, aarch64
      etc.  */
@@ -858,12 +865,16 @@ store_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
      valid for integral modes.  */
   opt_scalar_int_mode op0_mode = int_mode_for_mode (GET_MODE (op0));
   scalar_int_mode imode;
+  bool need_stack_p = false;
   if (!op0_mode.exists (&imode) || imode != GET_MODE (op0))
     {
       if (MEM_P (op0))
 	op0 = adjust_bitfield_address_size (op0, op0_mode.else_blk (),
 					    0, MEM_SIZE (op0));
-      else if (!op0_mode.exists ())
+      else if (!op0_mode.exists ()
+	       || maybe_lt
+	       ((unsigned) UNITS_PER_WORD,
+		(poly_uint64) REGMODE_NATURAL_SIZE (GET_MODE (op0))))
 	{
 	  if (ibitnum == 0
 	      && known_eq (ibitsize, GET_MODE_BITSIZE (GET_MODE (op0)))
@@ -876,16 +887,28 @@ store_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
 	    }
 	  if (!fallback_p)
 	    return false;
-	  rtx temp = assign_stack_temp (GET_MODE (op0),
-					GET_MODE_SIZE (GET_MODE (op0)));
-	  emit_move_insn (temp, op0);
-	  store_bit_field_1 (temp, bitsize, bitnum, 0, 0, fieldmode, value,
-			     reverse, fallback_p, undefined_p);
-	  emit_move_insn (op0, temp);
-	  return true;
+	  need_stack_p = true;
 	}
       else
 	op0 = gen_lowpart (op0_mode.require (), op0);
+    }
+  else if (!MEM_P (op0)
+	   && maybe_lt ((unsigned) UNITS_PER_WORD,
+			(poly_uint64) REGMODE_NATURAL_SIZE (GET_MODE (op0))))
+    need_stack_p = true;
+
+  /* With or without punning we might be faced with a mode that we cannot
+     split into words.  If so, spill OP0 to the stack and recurse.
+     This happens at most once.  */
+  if (need_stack_p)
+    {
+      rtx temp = assign_stack_temp (GET_MODE (op0),
+				    GET_MODE_SIZE (GET_MODE (op0)));
+      emit_move_insn (temp, op0);
+      store_bit_field_1 (temp, bitsize, bitnum, 0, 0, fieldmode, value,
+			 reverse, fallback_p, undefined_p);
+      emit_move_insn (op0, temp);
+      return true;
     }
 
   return store_integral_bit_field (op0, op0_mode, ibitsize, ibitnum,
@@ -1008,7 +1031,9 @@ store_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 	      in BLKmode to handle unaligned memory references and to shift the
 	      last chunk right on big-endian machines if need be.  */
 	  rtx value_word
-	    = fieldmode == BLKmode
+	    = (fieldmode == BLKmode
+	       || maybe_lt ((unsigned) UNITS_PER_WORD,
+			    (poly_uint64) REGMODE_NATURAL_SIZE (value_mode)))
 	      ? extract_bit_field (value, new_bitsize, wordnum * BITS_PER_WORD,
 				   1, NULL_RTX, word_mode, word_mode, false,
 				   NULL)
@@ -1064,9 +1089,21 @@ store_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 				 value, value_mode, reverse);
 	  return true;
 	}
-      op0 = simplify_gen_subreg (word_mode, op0, op0_mode.require (),
-				 bitnum / BITS_PER_WORD * UNITS_PER_WORD);
-      gcc_assert (op0);
+      rtx new_op0
+	= simplify_gen_subreg (word_mode, op0, op0_mode.require (),
+			       bitnum / BITS_PER_WORD * UNITS_PER_WORD);
+      if (!new_op0)
+	{
+	  /* No valid word-mode SUBREG of op0 at this offset.  Defer to
+	     store_split_bit_field, which addresses op0 a word at a time.  */
+	  if (!fallback_p)
+	    return false;
+	  store_split_bit_field (op0, op0_mode, bitsize, bitnum,
+				 bitregion_start, bitregion_end,
+				 value, value_mode, reverse);
+	  return true;
+	}
+      op0 = new_op0;
       op0_mode = word_mode;
       bitnum %= BITS_PER_WORD;
     }
@@ -1332,6 +1369,16 @@ store_fixed_bit_field_1 (rtx op0, scalar_int_mode mode,
   if (reverse)
     value = flip_storage_order (mode, value);
 
+  /* A field filling the whole of a MEM has no surrounding bits to preserve,
+     so store it directly: the read of a volatile OP0 cannot be removed later
+     and would be a spurious access with side effects (PR71048).  */
+  if (MEM_P (op0) && bitnum == 0 && bitsize == GET_MODE_BITSIZE (mode))
+    {
+      op0 = copy_rtx (op0);
+      emit_move_insn (op0, value);
+      return;
+    }
+
   /* Now clear the chosen bits in OP0,
      except that if VALUE is -1 we need not bother.  */
   /* We keep the intermediates in registers to allow CSE to combine
@@ -1353,8 +1400,9 @@ store_fixed_bit_field_1 (rtx op0, scalar_int_mode mode,
 
   if (! all_zero)
     {
-      temp = expand_binop (mode, ior_optab, temp, value,
-			   NULL_RTX, 1, OPTAB_LIB_WIDEN);
+      /* Use aop_optab if the field has been cleared.  */
+      temp = expand_binop (mode, all_one ? ior_optab : aop_optab,
+			   temp, value, NULL_RTX, 1, OPTAB_LIB_WIDEN);
       temp = force_reg (mode, temp);
     }
 
@@ -1650,6 +1698,264 @@ extract_bit_field_as_subreg (machine_mode mode, rtx op0,
   return NULL_RTX;
 }
 
+/* Same as extract_vector_from_vector but try with a permutation.  */
+
+static rtx
+extract_vector_from_vector_perm (rtx vec, rtx target, machine_mode mode,
+				 machine_mode subvec_mode, poly_uint64 bitsize,
+				 poly_uint64 bitnum, rtx *alt_rtl)
+{
+  machine_mode vec_mode = GET_MODE (vec);
+  poly_uint64 extract_idx;
+  if (!VECTOR_MODE_P (vec_mode)
+      || MEM_P (vec)
+      || !VECTOR_MODE_P (subvec_mode)
+      || maybe_ne (bitsize, GET_MODE_PRECISION (subvec_mode))
+      || !multiple_p (bitnum, GET_MODE_UNIT_BITSIZE (subvec_mode),
+		      &extract_idx))
+    return NULL_RTX;
+
+  /* We don't handle single-element vector modes here, they should
+     go through vector-element vec_extract.  */
+  if (known_le (GET_MODE_NUNITS (subvec_mode), 1)
+      || known_le (GET_MODE_NUNITS (vec_mode), 1))
+    return NULL_RTX;
+
+  machine_mode punned_vec_mode;
+  if (!vec_extract_perm_p (vec_mode, subvec_mode, extract_idx).exists
+      (&punned_vec_mode))
+    return NULL_RTX;
+
+  if (punned_vec_mode != vec_mode)
+    vec = gen_lowpart (punned_vec_mode, vec);
+
+  poly_uint64 out_nunits = GET_MODE_NUNITS (subvec_mode);
+
+  vec_perm_builder sel (out_nunits, 1, 3);
+  for (unsigned int i = 0; i < 3; ++i)
+    sel.quick_push (extract_idx + i);
+
+  rtx tmp = subvec_mode == mode ? target : NULL_RTX;
+  rtx res = expand_vec_perm_const (subvec_mode, vec, vec, sel, BLKmode, tmp);
+  if (!res)
+    return NULL_RTX;
+
+  if (res == target && alt_rtl)
+    *alt_rtl = target;
+
+  if (subvec_mode != mode)
+    res = gen_lowpart (mode, res);
+
+  return res;
+}
+
+/* Try to extract a subvector of mode SUBVEC_MODE (which has BITSIZE bits)
+   from vector VEC, starting at bit BITNUM, then extract the MODE lowpart of
+   the subvector.  If the vec_extract-based attempt failed, build a vector
+   permute to extract the part and hand it to the target.
+
+   Return the result on success or NULL_RTX on failure.  */
+
+static rtx
+extract_vector_from_vector (rtx vec, rtx target, machine_mode mode,
+			    machine_mode subvec_mode, poly_uint64 bitsize,
+			    poly_uint64 bitnum, rtx *alt_rtl)
+{
+  machine_mode vec_mode = GET_MODE (vec);
+  if (!VECTOR_MODE_P (vec_mode)
+      || MEM_P (vec)
+      || !VECTOR_MODE_P (subvec_mode)
+      || maybe_ne (bitsize, GET_MODE_PRECISION (subvec_mode))
+      || known_le (GET_MODE_SIZE (GET_MODE (vec)),
+		   GET_MODE_SIZE (subvec_mode)))
+    return NULL_RTX;
+
+  /* Try to find a fitting mode for extracting.  */
+  if (GET_MODE_INNER (vec_mode) != GET_MODE_INNER (subvec_mode))
+    {
+      scalar_mode inner_mode = GET_MODE_INNER (subvec_mode);
+      poly_uint64 nunits;
+      if (!multiple_p (GET_MODE_BITSIZE (vec_mode),
+		       GET_MODE_UNIT_BITSIZE (subvec_mode), &nunits)
+	  || !related_vector_mode (subvec_mode, inner_mode,
+				   nunits).exists (&vec_mode)
+	  || maybe_ne (GET_MODE_SIZE (vec_mode),
+		       GET_MODE_SIZE (GET_MODE (vec))))
+	return NULL_RTX;
+    }
+
+  poly_uint64 pos;
+  enum insn_code icode = convert_optab_handler (vec_extract_optab, vec_mode,
+						subvec_mode);
+  if (icode != CODE_FOR_nothing
+      && multiple_p (bitnum, GET_MODE_BITSIZE (subvec_mode), &pos))
+    {
+      if (vec_mode != GET_MODE (vec))
+	vec = gen_lowpart (vec_mode, vec);
+
+      class expand_operand ops[3];
+      create_output_operand (&ops[0], target, subvec_mode);
+      ops[0].target = 1;
+      create_input_operand (&ops[1], vec, GET_MODE (vec));
+      create_integer_operand (&ops[2], pos);
+      if (maybe_expand_insn (icode, 3, ops))
+	{
+	  if (alt_rtl && ops[0].target)
+	    *alt_rtl = target;
+	  target = ops[0].value;
+	  if (GET_MODE (target) != mode)
+	    return gen_lowpart (subvec_mode, target);
+	  return target;
+	}
+    }
+
+  rtx res = extract_vector_from_vector_perm (vec, target, mode, subvec_mode,
+					     bitsize, bitnum, alt_rtl);
+  if (res)
+    return res;
+
+  return NULL_RTX;
+}
+
+/* Extract an element of OP0 of size BITSIZE, starting at bit position BITNUM.
+   Pun the result with mode TMODE if necessary.  Return the extracted element
+   if successful or NULL_RTX otherwise.  */
+
+static rtx
+extract_element_from_vector (rtx op0, rtx target, machine_mode mode,
+			     machine_mode tmode, poly_uint64 bitsize,
+			     poly_uint64 bitnum, rtx *alt_rtl)
+{
+  /* See if we can get a better vector mode before extracting.  */
+  machine_mode outermode = GET_MODE (op0);
+  if (VECTOR_MODE_P (outermode)
+      && !MEM_P (op0)
+      && GET_MODE_INNER (outermode) != tmode)
+    {
+      machine_mode new_mode;
+
+      if (GET_MODE_CLASS (tmode) == MODE_FLOAT)
+	new_mode = MIN_MODE_VECTOR_FLOAT;
+      else if (GET_MODE_CLASS (tmode) == MODE_FRACT)
+	new_mode = MIN_MODE_VECTOR_FRACT;
+      else if (GET_MODE_CLASS (tmode) == MODE_UFRACT)
+	new_mode = MIN_MODE_VECTOR_UFRACT;
+      else if (GET_MODE_CLASS (tmode) == MODE_ACCUM)
+	new_mode = MIN_MODE_VECTOR_ACCUM;
+      else if (GET_MODE_CLASS (tmode) == MODE_UACCUM)
+	new_mode = MIN_MODE_VECTOR_UACCUM;
+      else
+	new_mode = MIN_MODE_VECTOR_INT;
+
+      FOR_EACH_MODE_FROM (new_mode, new_mode)
+	if (known_eq (GET_MODE_SIZE (new_mode), GET_MODE_SIZE (outermode))
+	    && known_eq (GET_MODE_UNIT_SIZE (new_mode), GET_MODE_SIZE (tmode))
+	    && known_eq (bitsize, GET_MODE_UNIT_PRECISION (new_mode))
+	    && multiple_p (bitnum, GET_MODE_UNIT_PRECISION (new_mode))
+	    && targetm.vector_mode_supported_p (new_mode)
+	    && targetm.modes_tieable_p (outermode, new_mode))
+	  break;
+      if (new_mode != VOIDmode)
+	op0 = gen_lowpart (new_mode, op0);
+    }
+
+  outermode = GET_MODE (op0);
+  if (VECTOR_MODE_P (outermode) && !MEM_P (op0))
+    {
+      scalar_mode innermode = GET_MODE_INNER (outermode);
+
+      enum insn_code icode
+	= convert_optab_handler (vec_extract_optab, outermode, innermode);
+
+      poly_uint64 pos;
+      if (icode != CODE_FOR_nothing
+	  && known_eq (bitsize, GET_MODE_PRECISION (innermode))
+	  && multiple_p (bitnum, GET_MODE_PRECISION (innermode), &pos))
+	{
+	  class expand_operand ops[3];
+
+	  create_output_operand (&ops[0], target,
+				 insn_data[icode].operand[0].mode);
+	  ops[0].target = 1;
+	  create_input_operand (&ops[1], op0, outermode);
+	  create_integer_operand (&ops[2], pos);
+	  if (maybe_expand_insn (icode, 3, ops))
+	    {
+	      if (alt_rtl && ops[0].target)
+		*alt_rtl = target;
+	      target = ops[0].value;
+	      if (GET_MODE (target) != mode)
+		return gen_lowpart (tmode, target);
+	      return target;
+	    }
+	}
+      /* Using subregs is useful if we're extracting one register vector
+	 from a multi-register vector.  extract_bit_field_as_subreg checks
+	 for valid bitsize and bitnum, so we don't need to do that here.  */
+      if (VECTOR_MODE_P (mode))
+	{
+	  rtx sub = extract_bit_field_as_subreg (mode, op0, outermode,
+						 bitsize, bitnum);
+	  if (sub)
+	    return sub;
+	}
+    }
+
+  return NULL_RTX;
+}
+
+/* Check whether:
+
+   (a) OP0 is a vector that spans multiple registers (which might
+       mean that it is a tuple mode) and
+
+   (b) a sequence of BITSIZE bits, starting at bit *BITNUM, fits within
+       a single vector register.
+
+   Return the vector register if so and update *BITNUM so that it
+   is relative to the returned register.  Return NULL_RTX otherwise.  */
+
+static rtx
+extract_vector_from_multireg (rtx op0, machine_mode tmode,
+			      poly_uint64 bitsize, poly_uint64 *bitnum)
+{
+  machine_mode outermode = GET_MODE (op0);
+  poly_uint64 outer_natural_sz = REGMODE_NATURAL_SIZE (outermode);
+  scalar_mode elmode = GET_MODE_INNER (outermode);
+  HOST_WIDE_INT vec_idx;
+  poly_uint64 off;
+  poly_uint64 nelts;
+  if (VECTOR_MODE_P (outermode)
+      && !MEM_P (op0)
+      && known_gt (GET_MODE_SIZE (outermode), outer_natural_sz)
+      && known_eq (bitsize, GET_MODE_PRECISION (tmode))
+      && can_div_trunc_p (*bitnum, outer_natural_sz * BITS_PER_UNIT,
+			  &vec_idx, &off)
+      && known_le (off + bitsize, outer_natural_sz * BITS_PER_UNIT)
+      && multiple_p (outer_natural_sz, GET_MODE_SIZE (elmode), &nelts))
+    {
+      /* Get a single-vector mode from the outer multi-vector mode.
+	 If it exists and we can pun the outer mode with a subreg,
+	 do so and return it.  */
+      multiple_p (outer_natural_sz, GET_MODE_SIZE (elmode), &nelts);
+      opt_machine_mode vmode
+	= related_vector_mode (outermode, GET_MODE_INNER (outermode), nelts);
+
+      machine_mode vmode_onevec;
+      rtx subreg;
+      if (vmode.exists (&vmode_onevec)
+	  && (subreg = simplify_gen_subreg
+	      (vmode_onevec, op0, outermode,
+	       vec_idx * GET_MODE_SIZE (vmode_onevec))))
+	{
+	  *bitnum = off;
+	  return subreg;
+	}
+    }
+
+  return NULL_RTX;
+}
+
 /* A subroutine of extract_bit_field, with the same arguments.
    If UNSIGNEDP is -1, the result need not be sign or zero extended.
    If FALLBACK_P is true, fall back to extract_fixed_bit_field
@@ -1692,142 +1998,55 @@ extract_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
     }
 
   /* First try to check for vector from vector extractions.  */
-  if (VECTOR_MODE_P (GET_MODE (op0))
-      && !MEM_P (op0)
-      && VECTOR_MODE_P (tmode)
-      && known_eq (bitsize, GET_MODE_PRECISION (tmode))
-      && maybe_gt (GET_MODE_SIZE (GET_MODE (op0)), GET_MODE_SIZE (tmode)))
-    {
-      machine_mode new_mode = GET_MODE (op0);
-      if (GET_MODE_INNER (new_mode) != GET_MODE_INNER (tmode))
-	{
-	  scalar_mode inner_mode = GET_MODE_INNER (tmode);
-	  poly_uint64 nunits;
-	  if (!multiple_p (GET_MODE_BITSIZE (GET_MODE (op0)),
-			   GET_MODE_UNIT_BITSIZE (tmode), &nunits)
-	      || !related_vector_mode (tmode, inner_mode,
-				       nunits).exists (&new_mode)
-	      || maybe_ne (GET_MODE_SIZE (new_mode),
-			   GET_MODE_SIZE (GET_MODE (op0))))
-	    new_mode = VOIDmode;
-	}
-      poly_uint64 pos;
-      if (new_mode != VOIDmode
-	  && (convert_optab_handler (vec_extract_optab, new_mode, tmode)
-	      != CODE_FOR_nothing)
-	  && multiple_p (bitnum, GET_MODE_BITSIZE (tmode), &pos))
-	{
-	  class expand_operand ops[3];
-	  machine_mode outermode = new_mode;
-	  machine_mode innermode = tmode;
-	  enum insn_code icode
-	    = convert_optab_handler (vec_extract_optab, outermode, innermode);
-
-	  if (new_mode != GET_MODE (op0))
-	    op0 = gen_lowpart (new_mode, op0);
-	  create_output_operand (&ops[0], target, innermode);
-	  ops[0].target = 1;
-	  create_input_operand (&ops[1], op0, outermode);
-	  create_integer_operand (&ops[2], pos);
-	  if (maybe_expand_insn (icode, 3, ops))
-	    {
-	      if (alt_rtl && ops[0].target)
-		*alt_rtl = target;
-	      target = ops[0].value;
-	      if (GET_MODE (target) != mode)
-		return gen_lowpart (tmode, target);
-	      return target;
-	    }
-	}
-    }
-
-  /* See if we can get a better vector mode before extracting.  */
-  if (VECTOR_MODE_P (GET_MODE (op0))
-      && !MEM_P (op0)
-      && GET_MODE_INNER (GET_MODE (op0)) != tmode)
-    {
-      machine_mode new_mode;
-
-      if (GET_MODE_CLASS (tmode) == MODE_FLOAT)
-	new_mode = MIN_MODE_VECTOR_FLOAT;
-      else if (GET_MODE_CLASS (tmode) == MODE_FRACT)
-	new_mode = MIN_MODE_VECTOR_FRACT;
-      else if (GET_MODE_CLASS (tmode) == MODE_UFRACT)
-	new_mode = MIN_MODE_VECTOR_UFRACT;
-      else if (GET_MODE_CLASS (tmode) == MODE_ACCUM)
-	new_mode = MIN_MODE_VECTOR_ACCUM;
-      else if (GET_MODE_CLASS (tmode) == MODE_UACCUM)
-	new_mode = MIN_MODE_VECTOR_UACCUM;
-      else
-	new_mode = MIN_MODE_VECTOR_INT;
-
-      FOR_EACH_MODE_FROM (new_mode, new_mode)
-	if (known_eq (GET_MODE_SIZE (new_mode), GET_MODE_SIZE (GET_MODE (op0)))
-	    && known_eq (GET_MODE_UNIT_SIZE (new_mode), GET_MODE_SIZE (tmode))
-	    && known_eq (bitsize, GET_MODE_UNIT_PRECISION (new_mode))
-	    && multiple_p (bitnum, GET_MODE_UNIT_PRECISION (new_mode))
-	    && targetm.vector_mode_supported_p (new_mode)
-	    && targetm.modes_tieable_p (GET_MODE (op0), new_mode))
-	  break;
-      if (new_mode != VOIDmode)
-	op0 = gen_lowpart (new_mode, op0);
-    }
+  rtx res = extract_vector_from_vector (op0, target, mode, tmode, bitsize,
+					bitnum, alt_rtl);
+  if (res)
+    return res;
 
   /* Use vec_extract patterns for extracting parts of vectors whenever
      available.  If that fails, see whether the current modes and bitregion
      give a natural subreg.  */
-  machine_mode outermode = GET_MODE (op0);
-  if (VECTOR_MODE_P (outermode) && !MEM_P (op0))
+  res = extract_element_from_vector (op0, target, mode, tmode, bitsize, bitnum,
+				     alt_rtl);
+  if (res)
+    return res;
+
+  /* If this mode occupies multiple registers and we're extracting
+     a single one, we can usually get to that vector directly
+     without actual extraction.
+     This helps targets see through multi-vector modes.  */
+  poly_uint64 bitnum_new = bitnum;
+  res = extract_vector_from_multireg (op0, tmode, bitsize, &bitnum_new);
+  if (res)
     {
-      scalar_mode innermode = GET_MODE_INNER (outermode);
+      rtx vec = extract_vector_from_vector (res, target, mode, tmode, bitsize,
+					    bitnum_new, alt_rtl);
+      if (vec)
+	return vec;
 
-      enum insn_code icode
-	= convert_optab_handler (vec_extract_optab, outermode, innermode);
+      rtx el = extract_element_from_vector (res, target, mode, tmode, bitsize,
+					    bitnum_new, alt_rtl);
+      if (el)
+	return el;
 
-      poly_uint64 pos;
-      if (icode != CODE_FOR_nothing
-	  && known_eq (bitsize, GET_MODE_PRECISION (innermode))
-	  && multiple_p (bitnum, GET_MODE_PRECISION (innermode), &pos))
-	{
-	  class expand_operand ops[3];
-
-	  create_output_operand (&ops[0], target,
-				 insn_data[icode].operand[0].mode);
-	  ops[0].target = 1;
-	  create_input_operand (&ops[1], op0, outermode);
-	  create_integer_operand (&ops[2], pos);
-	  if (maybe_expand_insn (icode, 3, ops))
-	    {
-	      if (alt_rtl && ops[0].target)
-		*alt_rtl = target;
-	      target = ops[0].value;
-	      if (GET_MODE (target) != mode)
-		return gen_lowpart (tmode, target);
-	      return target;
-	    }
-	}
-      /* Using subregs is useful if we're extracting one register vector
-	 from a multi-register vector.  extract_bit_field_as_subreg checks
-	 for valid bitsize and bitnum, so we don't need to do that here.  */
-      if (VECTOR_MODE_P (mode))
-	{
-	  rtx sub = extract_bit_field_as_subreg (mode, op0, outermode,
-						 bitsize, bitnum);
-	  if (sub)
-	    return sub;
-	}
+      op0 = res;
+      bitnum = bitnum_new;
     }
 
   /* Make sure we are playing with integral modes.  Pun with subregs
      if we aren't.  */
   opt_scalar_int_mode op0_mode = int_mode_for_mode (GET_MODE (op0));
   scalar_int_mode imode;
+  bool need_stack_p = false;
   if (!op0_mode.exists (&imode) || imode != GET_MODE (op0))
     {
       if (MEM_P (op0))
 	op0 = adjust_bitfield_address_size (op0, op0_mode.else_blk (),
 					    0, MEM_SIZE (op0));
-      else if (op0_mode.exists (&imode))
+      else if (op0_mode.exists (&imode)
+	       && known_ge
+	       ((unsigned) UNITS_PER_WORD,
+		(poly_uint64) REGMODE_NATURAL_SIZE (GET_MODE (op0))))
 	{
 	  op0 = gen_lowpart (imode, op0);
 
@@ -1837,12 +2056,19 @@ extract_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
 	    op0 = force_reg (imode, op0);
 	}
       else
-	{
-	  poly_int64 size = GET_MODE_SIZE (GET_MODE (op0));
-	  rtx mem = assign_stack_temp (GET_MODE (op0), size);
-	  emit_move_insn (mem, op0);
-	  op0 = adjust_bitfield_address_size (mem, BLKmode, 0, size);
-	}
+	need_stack_p = true;
+    }
+  else if (!MEM_P (op0)
+	   && maybe_lt ((unsigned) UNITS_PER_WORD,
+			(poly_uint64) REGMODE_NATURAL_SIZE (GET_MODE (op0))))
+    need_stack_p = true;
+
+  if (need_stack_p)
+    {
+      poly_int64 size = GET_MODE_SIZE (GET_MODE (op0));
+      rtx mem = assign_stack_temp (GET_MODE (op0), size);
+      emit_move_insn (mem, op0);
+      op0 = adjust_bitfield_address_size (mem, BLKmode, 0, size);
     }
 
   /* ??? We currently assume TARGET is at least as big as BITSIZE.
@@ -1963,14 +2189,16 @@ extract_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 				   (unsignedp ? 1 : -1), target_part,
 				   mode, word_mode, reverse, fallback_p, NULL);
 
-	  gcc_assert (target_part);
 	  if (!result_part)
 	    {
 	      delete_insns_since (last);
 	      return NULL;
 	    }
 
-	  if (result_part != target_part)
+	  if (!target_part)
+	    store_bit_field (target, BITS_PER_WORD, i * BITS_PER_WORD,
+			     0, 0, word_mode, result_part, false, i == 0);
+	  else if (result_part != target_part)
 	    emit_move_insn (target_part, result_part);
 	}
 
@@ -2962,6 +3190,30 @@ synth_mult (struct algorithm *alg_out, unsigned HOST_WIDE_INT t,
 		}
 	    }
 	}
+      else if (2 * BITS_PER_WORD <= HOST_BITS_PER_WIDE_INT
+	       && GET_MODE_BITSIZE (imode) == 2 * BITS_PER_WORD
+	       && m >= BITS_PER_WORD
+	       && imode == mode)
+	{
+	  q = t >> m;
+	  int op1_cost = shift_cost (speed, mode, m - BITS_PER_WORD);
+	  int op2_cost = zero_cost (speed);
+	  op_latency = MAX (op1_cost, op2_cost);
+	  op_cost = op1_cost + op2_cost;
+
+	  new_limit.cost = best_cost.cost - op_cost;
+	  new_limit.latency = best_cost.latency - op_latency;
+	  synth_mult (alg_in, q, &new_limit, mode);
+	  alg_in->cost.cost += op_cost;
+	  alg_in->cost.latency += op_latency;
+	  if (CHEAPER_MULT_COST (&alg_in->cost, &best_cost))
+	    {
+	      best_cost = alg_in->cost;
+	      std::swap (alg_in, best_alg);
+	      best_alg->log[best_alg->ops] = m;
+	      best_alg->op[best_alg->ops] = alg_shift;
+	    }
+	}
       if (cache_hit)
 	goto done;
     }
@@ -3521,7 +3773,7 @@ expand_mult (machine_mode mode, rtx op0, rtx op1, rtx target,
 
       /* If mode is integer vector mode, check if the backend supports
 	 vector lshift (by scalar or vector) at all.  If not, we can't use
-	 synthetized multiply.  */
+	 synthesized multiply.  */
       if (GET_MODE_CLASS (mode) == MODE_VECTOR_INT
 	  && optab_handler (vashl_optab, mode) == CODE_FOR_nothing
 	  && optab_handler (ashl_optab, mode) == CODE_FOR_nothing)
@@ -3548,7 +3800,9 @@ expand_mult (machine_mode mode, rtx op0, rtx op1, rtx target,
       else if (CONST_DOUBLE_AS_INT_P (scalar_op1))
 #endif
 	{
-	  int shift = wi::exact_log2 (rtx_mode_t (scalar_op1, mode));
+	  machine_mode scalar_mode = VECTOR_MODE_P (mode)
+				     ? GET_MODE_INNER (mode) : mode;
+	  int shift = wi::exact_log2 (rtx_mode_t (scalar_op1, scalar_mode));
 	  /* Perfect power of 2 (other than 1, which is handled above).  */
 	  if (shift > 0)
 	    return expand_shift (LSHIFT_EXPR, mode, op0,
@@ -3802,9 +4056,9 @@ invert_mod2n (unsigned HOST_WIDE_INT x, int n)
 {
   gcc_assert ((x & 1) == 1);
 
-  /* The algorithm notes that the choice Y = Z satisfies X*Y == 1 mod 2^3,
-     since X is odd.  Then each iteration doubles the number of bits of
-     significance in Y.  */
+  /* The algorithm notes that the choice Y = X satisfies X*Y == 1 mod 2^3,
+     since X is odd.  Then each Newton-Raphson iteration doubles the number
+     of bits of significance in Y (Hensel's lemma).  */
 
   const unsigned HOST_WIDE_INT mask
     = (n == HOST_BITS_PER_WIDE_INT
@@ -4258,6 +4512,69 @@ expand_sdiv_pow2 (scalar_int_mode mode, rtx op0, HOST_WIDE_INT d)
    (x mod 12) == (((x & 1023) + ((x >> 8) & ~3)) * 0x15555558 >> 2 * 3) >> 28
    */
 
+/* Helper for expand_divmod's unsigned constant division.  For OP0 in
+   INT_MODE divided by a constant needing a (SIZE+1)-bit multiplier ML
+   with right shift POST_SHIFT (the mh != 0 case), try to obtain
+   the quotient from the high part of a single multiply in a mode twice
+   as wide as INT_MODE.  Return the quotient in INT_MODE, having emitted
+   the insns, or NULL_RTX when the transformation is unavailable or not
+   cheaper than the classic sub/shift/add sequence.  EXTRA_COST is the
+   cost of that sequence's follow-up ops, MAX_COST bounds the multiply
+   and SPEED selects the cost model.
+
+   The magic constant occupies at most 2*SIZE bits and so must fit in a
+   HOST_WIDE_INT (always 64 bits today; checked below).  A wider INT_MODE
+   such as DImode -- which would need a 128-bit magic and a single-word
+   high-part multiply in a 2x-wide mode that common targets lack -- is
+   therefore excluded.  */
+
+static rtx
+expand_wide_mulh_udiv (scalar_int_mode int_mode, rtx op0,
+		       unsigned HOST_WIDE_INT ml, int size, int post_shift,
+		       int extra_cost, int max_cost, bool speed)
+{
+  scalar_int_mode wide_mode;
+
+  /* We need POST_SHIFT >= 1, a wider integer mode that still fits in a
+     word, and the pre-shifted magic constant to fit in a HOST_WIDE_INT.  */
+  if (post_shift < 1
+      || !GET_MODE_2XWIDER_MODE (int_mode).exists (&wide_mode)
+      || GET_MODE_BITSIZE (wide_mode) > BITS_PER_WORD
+      || GET_MODE_BITSIZE (wide_mode) > HOST_BITS_PER_WIDE_INT)
+    return NULL_RTX;
+
+  /* The caller obtained ML and POST_SHIFT from choose_multiplier, which
+     guarantees POST_SHIFT <= ceil (log2 (d)) <= SIZE for a SIZE-bit
+     divisor d, so the shift count below is non-negative.  */
+  gcc_checking_assert (post_shift <= size);
+
+  /* Pre-shift the (SIZE+1)-bit magic constant (2^SIZE + ML) by
+     (SIZE - POST_SHIFT) so that the quotient ends up in the high part
+     of the widened product.  Since ML < 2^SIZE and POST_SHIFT >= 1, the
+     result is below 2^(2*SIZE) and thus fits in both WIDE_MODE and an
+     unsigned HOST_WIDE_INT (2*SIZE <= HOST_BITS_PER_WIDE_INT was
+     checked above).  */
+  unsigned HOST_WIDE_INT magic
+    = ((HOST_WIDE_INT_1U << size) + ml) << (size - post_shift);
+
+  start_sequence ();
+  rtx x_wide = convert_to_mode (wide_mode, op0, 1);
+  rtx hi = expmed_mult_highpart (wide_mode, x_wide,
+				 gen_int_mode (magic, wide_mode),
+				 NULL_RTX, 1, max_cost);
+  rtx quotient = hi ? convert_to_mode (int_mode, hi, 1) : NULL_RTX;
+  rtx_insn *insns = end_sequence ();
+
+  /* Use the widened multiply only when it is no more expensive than
+     the classic sub/shift/add sequence.  */
+  unsigned classic_cost = mul_highpart_cost (speed, int_mode) + extra_cost;
+  if (quotient == NULL_RTX || seq_cost (insns, speed) > classic_cost)
+    return NULL_RTX;
+
+  emit_insn (insns);
+  return quotient;
+}
+
 rtx
 expand_divmod (int rem_flag, enum tree_code code, machine_mode mode,
 	       rtx op0, rtx op1, rtx target, int unsignedp,
@@ -4271,7 +4588,6 @@ expand_divmod (int rem_flag, enum tree_code code, machine_mode mode,
   optab optab1, optab2;
   int op1_is_constant, op1_is_pow2 = 0;
   int max_cost, extra_cost;
-  static HOST_WIDE_INT last_div_const = 0;
   bool speed = optimize_insn_for_speed_p ();
 
   op1_is_constant = CONST_INT_P (op1);
@@ -4532,22 +4848,32 @@ expand_divmod (int rem_flag, enum tree_code code, machine_mode mode,
 			      = (shift_cost (speed, int_mode, post_shift - 1)
 				 + shift_cost (speed, int_mode, 1)
 				 + 2 * add_cost (speed, int_mode));
-			    t1 = expmed_mult_highpart
-			      (int_mode, op0, gen_int_mode (ml, int_mode),
-			       NULL_RTX, 1, max_cost - extra_cost);
-			    if (t1 == 0)
-			      goto fail1;
-			    t2 = force_operand (gen_rtx_MINUS (int_mode,
-							       op0, t1),
-						NULL_RTX);
-			    t3 = expand_shift (RSHIFT_EXPR, int_mode,
-					       t2, 1, NULL_RTX, 1);
-			    t4 = force_operand (gen_rtx_PLUS (int_mode,
-							      t1, t3),
-						NULL_RTX);
-			    quotient = expand_shift
-			      (RSHIFT_EXPR, int_mode, t4,
-			       post_shift - 1, tquotient, 1);
+
+			    /* Try a single widened multiply first; use it when
+			       it is no more expensive.  */
+			    quotient
+			      = expand_wide_mulh_udiv (int_mode, op0, ml, size,
+						       post_shift, extra_cost,
+						       max_cost, speed);
+			    if (quotient == NULL_RTX)
+			      {
+				t1 = expmed_mult_highpart
+				  (int_mode, op0, gen_int_mode (ml, int_mode),
+				   NULL_RTX, 1, max_cost - extra_cost);
+				if (t1 == 0)
+				  goto fail1;
+				t2 = force_operand (gen_rtx_MINUS (int_mode,
+								   op0, t1),
+						    NULL_RTX);
+				t3 = expand_shift (RSHIFT_EXPR, int_mode,
+						   t2, 1, NULL_RTX, 1);
+				t4 = force_operand (gen_rtx_PLUS (int_mode,
+								  t1, t3),
+						    NULL_RTX);
+				quotient = expand_shift
+				  (RSHIFT_EXPR, int_mode, t4,
+				   post_shift - 1, tquotient, 1);
+			      }
 			  }
 			else
 			  {
@@ -5393,6 +5719,9 @@ make_tree (tree type, rtx x)
       t = wide_int_to_tree (type, rtx_mode_t (x, TYPE_MODE (type)));
       return t;
 
+    case CONST_POLY_INT:
+      return wide_int_to_tree (type, const_poly_int_value (x));
+
     case CONST_DOUBLE:
       STATIC_ASSERT (HOST_BITS_PER_WIDE_INT * 2 <= MAX_BITSIZE_MODE_ANY_INT);
       if (TARGET_SUPPORTS_WIDE_INT == 0 && GET_MODE (x) == VOIDmode)
@@ -5484,9 +5813,6 @@ make_tree (tree type, rtx x)
       /* fall through.  */
 
     default:
-      if (CONST_POLY_INT_P (x))
-	return wide_int_to_tree (t, const_poly_int_value (x));
-
       t = build_decl (RTL_LOCATION (x), VAR_DECL, NULL_TREE, type);
 
       /* If TYPE is a POINTER_TYPE, we might need to convert X from
@@ -6163,8 +6489,19 @@ emit_store_flag (rtx target, enum rtx_code code, rtx op0, rtx op1,
       if (!HAVE_conditional_move)
 	return 0;
 
-      /* Do not turn a trapping comparison into a non-trapping one.  */
-      if ((code != EQ && code != NE && code != UNEQ && code != LTGT)
+      /* x != y is split into x unord y || x ltgt y, but the conditional move
+	 below evaluates its comparison unconditionally and LTGT is signaling.
+	 Use the quiet x unord y || !(x uneq y) instead.  */
+      bool invert = false;
+      if (code == LTGT && !and_them)
+	{
+	  code = UNEQ;
+	  invert = true;
+	}
+
+      /* Do not change whether the comparison traps: only the quiet
+	 EQ, NE and UNEQ remainders come from quiet comparisons.  */
+      if ((code != EQ && code != NE && code != UNEQ)
 	  && flag_trapping_math)
 	return 0;
 
@@ -6178,6 +6515,9 @@ emit_store_flag (rtx target, enum rtx_code code, rtx op0, rtx op1,
       if (and_them)
 	tem = emit_conditional_move (target, { code, op0, op1, mode },
 				     tem, const0_rtx, GET_MODE (tem), 0);
+      else if (invert)
+	tem = emit_conditional_move (target, { code, op0, op1, mode },
+				     tem, trueval, GET_MODE (tem), 0);
       else
 	tem = emit_conditional_move (target, { code, op0, op1, mode },
 				     trueval, tem, GET_MODE (tem), 0);
@@ -6285,7 +6625,7 @@ emit_store_flag_force (rtx target, enum rtx_code code, rtx op0, rtx op1,
 }
 
 /* Expand a vector (left) rotate of MODE of X by an immediate AMT as a vector
-   permute operation.  Emit code to put the result in DST if successfull and
+   permute operation.  Emit code to put the result in DST if successful and
    return it.  Otherwise return NULL.  This is intended to implement vector
    rotates by byte amounts using vector permutes when the target does not offer
    native vector rotate operations.  */
@@ -6360,7 +6700,7 @@ equivalent_cmp_code (enum rtx_code code)
     }
 }
 
-/* Choose the more appropiate immediate in scalar integer comparisons.  The
+/* Choose the more appropriate immediate in scalar integer comparisons.  The
    purpose of this is to end up with an immediate which can be loaded into a
    register in fewer moves, if possible.
 

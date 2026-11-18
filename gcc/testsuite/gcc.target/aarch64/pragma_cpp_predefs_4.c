@@ -218,6 +218,27 @@
 #error Foo
 #endif
 
+#pragma GCC target "+nothing+sve2+sme2p2"
+#ifndef __ARM_FEATURE_SME
+#error Foo
+#endif
+#ifndef __ARM_FEATURE_SME2
+#error Foo
+#endif
+#ifndef __ARM_FEATURE_SME2p1
+#error Foo
+#endif
+#ifndef __ARM_FEATURE_SME2p2
+#error Foo
+#endif
+#pragma GCC target "+nothing+sve2+sme-mop4"
+#ifndef __ARM_FEATURE_SME_MOP4
+#error "__ARM_FEATURE_SME_MOP4 not defined"
+#endif
+#ifndef __ARM_FEATURE_SME2
+#error "__ARM_FEATURE_SME2 not defined"
+#endif
+
 #pragma GCC target "branch-protection=standard"
 #ifndef __ARM_FEATURE_BTI_DEFAULT
 #error Foo
@@ -367,5 +388,60 @@
 
 #pragma GCC target "arch=armv8-a+faminmax"
 #ifndef __ARM_FEATURE_FAMINMAX
+#error Foo
+#endif
+
+#pragma GCC target "arch=armv8-a+sve2+ssve-fexpa"
+#ifndef __ARM_FEATURE_SSVE_FEXPA
+#error Foo
+#endif
+
+#pragma GCC target "arch=armv8.8-a"
+#ifdef __ARM_FEATURE_CSSC
+#error Foo
+#endif
+
+#pragma GCC target "arch=armv8.9-a"
+#ifndef __ARM_FEATURE_CSSC
+#error Foo
+#endif
+
+#pragma GCC target "arch=armv9.3-a"
+#ifdef __ARM_FEATURE_CSSC
+#error Foo
+#endif
+
+#pragma GCC target "arch=armv9.4-a"
+#ifndef __ARM_FEATURE_CSSC
+#error Foo
+#endif
+
+#pragma GCC target "arch=armv8-a+cssc"
+#ifndef __ARM_FEATURE_CSSC
+#error Foo
+#endif
+
+#pragma GCC target "+nothing+cssc"
+#ifndef __ARM_FEATURE_CSSC
+#error Foo
+#endif
+
+#pragma GCC target "arch=armv8.9-a+nocssc"
+#ifdef __ARM_FEATURE_CSSC
+#error Foo
+#endif
+
+#pragma GCC target "+nothing+f16mm"
+#ifndef __ARM_FEATURE_F16MM
+#error Foo
+#endif
+
+#pragma GCC target "+nothing+f16f32mm"
+#ifndef __ARM_FEATURE_F16F32MM
+#error Foo
+#endif
+
+#pragma GCC target "+nothing+sve-b16mm"
+#ifndef __ARM_FEATURE_SVE_B16MM
 #error Foo
 #endif

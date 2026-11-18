@@ -47,6 +47,7 @@ extern enum gcn_isa {
 #define TARGET_RDNA2 (gcn_isa == ISA_RDNA2)
 #define TARGET_RDNA2_PLUS (gcn_isa >= ISA_RDNA2 && gcn_isa < ISA_CDNA1)
 #define TARGET_RDNA3 (gcn_isa == ISA_RDNA3)
+#define TARGET_RDNA3_PLUS (gcn_isa >= ISA_RDNA3 && gcn_isa < ISA_CDNA1)
 
 
 #define TARGET_PACKED_WORK_ITEMS (TARGET_CDNA2_PLUS || TARGET_RDNA3)
@@ -69,6 +70,8 @@ enum hsaco_attr_type
 #define TARGET_AVGPR_MEMOPS TARGET_CDNA2_PLUS
 /* AVGPRS may have their own register file, or be combined with VGPRS.  */
 #define TARGET_AVGPR_COMBINED TARGET_CDNA2_PLUS
+/* The wavefronts on each SIMD share one pool of SGPRs.  */
+#define TARGET_SHARED_SGPRS (!TARGET_RDNA2_PLUS)
 /* global_load/store has reduced offset.  */
 #define TARGET_11BIT_GLOBAL_OFFSET TARGET_RDNA2_PLUS
 /* The work item details are all encoded into v0.  */
@@ -97,14 +100,9 @@ enum hsaco_attr_type
    CDNA3 also uses 'nt' instead of 'slc' and 'sc1' instead of 'scc'; however,
    there is no non-scalar user so far.  */
 #define TARGET_GLC_NAME (TARGET_CDNA3 ? " sc0" : " glc")
-/* The metadata on different devices need different granularity.  */
-#define TARGET_VGPR_GRANULARITY \
-  (TARGET_RDNA3 ? 12 \
-   : TARGET_RDNA2_PLUS || TARGET_CDNA2_PLUS ? 8 \
-   : 4)
 /* This mostly affects the metadata.  */
 #define TARGET_ARCHITECTED_FLAT_SCRATCH (TARGET_RDNA3 || TARGET_CDNA3)
-/* Device has Sub-DWord Addressing instrucions.  */
+/* Device has Sub-DWord Addressing instructions.  */
 #define TARGET_SDWA (!TARGET_RDNA3)
 /* Different devices uses different cache control instructions.  */
 #define TARGET_WBINVL1_CACHE (!TARGET_RDNA2_PLUS && !TARGET_CDNA3)

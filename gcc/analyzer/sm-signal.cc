@@ -194,7 +194,7 @@ update_model_for_signal_handler (region_model *model,
 {
   gcc_assert (model);
   /* Purge all state within MODEL.  */
-  *model = region_model (model->get_manager ());
+  *model = region_model (model->get_node_manager ());
   model->push_frame (handler_fun, nullptr, nullptr, nullptr);
 }
 
@@ -221,7 +221,8 @@ public:
 
   void add_events_to_path (checker_path *emission_path,
 			   const exploded_edge &eedge ATTRIBUTE_UNUSED,
-			   pending_diagnostic &)
+			   pending_diagnostic &,
+			   const state_transition *)
     const final override
   {
     emission_path->add_event

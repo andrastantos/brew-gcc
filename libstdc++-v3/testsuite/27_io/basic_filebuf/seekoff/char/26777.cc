@@ -1,5 +1,6 @@
 // { dg-require-fork "" }
 // { dg-require-mkfifo "" }
+// { dg-require-sysv-or-posix-semaphore "" }
 
 // 2006-03-22  Paolo Carlini  <pcarlini@suse.de>
 
@@ -21,6 +22,7 @@
 // <http://www.gnu.org/licenses/>.
 
 #include <testsuite_hooks.h>
+#include <testsuite_semaphore.h>
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
@@ -52,7 +54,7 @@ bool test01()
   if (child == 0)
     {
       filebuf fbout;
-      fbout.open(name, ios_base::in | ios_base::out);
+      fbout.open(name, ios_base::out);
       test &= bool( fbout.is_open() );
       fbout.sputn("Whatever", 8);
       fbout.pubsync();

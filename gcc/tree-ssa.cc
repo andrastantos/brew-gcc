@@ -636,96 +636,119 @@ release_defs_bitset (bitmap toremove)
 /* Verify virtual SSA form.  */
 
 bool
-verify_vssa (basic_block bb, tree current_vdef, sbitmap visited)
+verify_vssa (basic_block bb_start, tree current_vdef, sbitmap visited)
 {
   bool err = false;
 
-  if (!bitmap_set_bit (visited, bb->index))
-    return false;
+  struct state_t {
+    basic_block bb;
+    tree	vdef;
+  } state;
 
-  /* Pick up the single virtual PHI def.  */
-  gphi *phi = NULL;
-  for (gphi_iterator si = gsi_start_phis (bb); !gsi_end_p (si);
-       gsi_next (&si))
+  auto_vec<state_t, 3> worklist;
+  state.bb = bb_start;
+  state.vdef = current_vdef;
+  worklist.safe_push (state);
+
+  while (!worklist.is_empty ())
     {
-      tree res = gimple_phi_result (si.phi ());
-      if (virtual_operand_p (res))
+      const auto &state = worklist.pop ();
+      const auto &bb = state.bb;
+      current_vdef = state.vdef;
+
+      if (!bitmap_set_bit (visited, bb->index))
+	continue;
+
+      /* Pick up the single virtual PHI def.  */
+      gphi *phi = NULL;
+      for (gphi_iterator si = gsi_start_phis (bb); !gsi_end_p (si);
+	   gsi_next (&si))
 	{
-	  if (phi)
+	  tree res = gimple_phi_result (si.phi ());
+	  if (virtual_operand_p (res))
 	    {
-	      error ("multiple virtual PHI nodes in BB %d", bb->index);
+	      if (phi)
+		{
+		  error ("multiple virtual PHI nodes in BB %d", bb->index);
+		  print_gimple_stmt (stderr, phi, 0);
+		  print_gimple_stmt (stderr, si.phi (), 0);
+		  err = true;
+		}
+	      else
+		phi = si.phi ();
+	    }
+	}
+      if (phi)
+	{
+	  current_vdef = gimple_phi_result (phi);
+	  if (TREE_CODE (current_vdef) != SSA_NAME)
+	    {
+	      error ("virtual definition is not an SSA name");
 	      print_gimple_stmt (stderr, phi, 0);
-	      print_gimple_stmt (stderr, si.phi (), 0);
 	      err = true;
 	    }
-	  else
-	    phi = si.phi ();
 	}
-    }
-  if (phi)
-    {
-      current_vdef = gimple_phi_result (phi);
-      if (TREE_CODE (current_vdef) != SSA_NAME)
-	{
-	  error ("virtual definition is not an SSA name");
-	  print_gimple_stmt (stderr, phi, 0);
-	  err = true;
-	}
-    }
 
-  /* Verify stmts.  */
-  for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
-       gsi_next (&gsi))
-    {
-      gimple *stmt = gsi_stmt (gsi);
-      tree vuse = gimple_vuse (stmt);
-      if (vuse)
+      /* Verify stmts.  */
+      for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
+	   gsi_next (&gsi))
 	{
-	  if (vuse != current_vdef)
+	  gimple *stmt = gsi_stmt (gsi);
+	  tree vuse = gimple_vuse (stmt);
+	  if (vuse)
 	    {
-	      error ("stmt with wrong VUSE");
-	      print_gimple_stmt (stderr, stmt, 0, TDF_VOPS);
+	      if (vuse != current_vdef)
+		{
+		  error ("stmt with wrong VUSE");
+		  print_gimple_stmt (stderr, stmt, 0, TDF_VOPS);
+		  fprintf (stderr, "expected ");
+		  print_generic_expr (stderr, current_vdef);
+		  fprintf (stderr, "\n");
+		  err = true;
+		}
+	      tree vdef = gimple_vdef (stmt);
+	      if (vdef)
+		{
+		  current_vdef = vdef;
+		  if (TREE_CODE (current_vdef) != SSA_NAME)
+		    {
+		      error ("virtual definition is not an SSA name");
+		      print_gimple_stmt (stderr, phi, 0);
+		      err = true;
+		    }
+		}
+	    }
+	}
+
+      /* Verify destination PHI uses and add successors to worklist.  */
+      edge_iterator ei;
+      edge e;
+      FOR_EACH_EDGE (e, ei, bb->succs)
+	{
+	  gphi *phi = get_virtual_phi (e->dest);
+	  if (phi
+	     && PHI_ARG_DEF_FROM_EDGE (phi, e) != current_vdef)
+	    {
+	      error ("PHI node with wrong VUSE on edge from BB %d",
+		     e->src->index);
+	      print_gimple_stmt (stderr, phi, 0, TDF_VOPS);
 	      fprintf (stderr, "expected ");
 	      print_generic_expr (stderr, current_vdef);
 	      fprintf (stderr, "\n");
 	      err = true;
 	    }
-	  tree vdef = gimple_vdef (stmt);
-	  if (vdef)
+
+	  /* Add successor BB along with current vdef to worklist.  */
+	  if (!bitmap_bit_p (visited, e->dest->index))
 	    {
-	      current_vdef = vdef;
-	      if (TREE_CODE (current_vdef) != SSA_NAME)
-		{
-		  error ("virtual definition is not an SSA name");
-		  print_gimple_stmt (stderr, phi, 0);
-		  err = true;
-		}
+	      state_t new_state;
+	      new_state.bb = e->dest;
+	      new_state.vdef = current_vdef;
+
+	      worklist.safe_push (new_state);
 	    }
 	}
     }
-
-  /* Verify destination PHI uses and recurse.  */
-  edge_iterator ei;
-  edge e;
-  FOR_EACH_EDGE (e, ei, bb->succs)
-    {
-      gphi *phi = get_virtual_phi (e->dest);
-      if (phi
-	  && PHI_ARG_DEF_FROM_EDGE (phi, e) != current_vdef)
-	{
-	  error ("PHI node with wrong VUSE on edge from BB %d",
-		 e->src->index);
-	  print_gimple_stmt (stderr, phi, 0, TDF_VOPS);
-	  fprintf (stderr, "expected ");
-	  print_generic_expr (stderr, current_vdef);
-	  fprintf (stderr, "\n");
-	  err = true;
-	}
-
-      /* Recurse.  */
-      err |= verify_vssa (e->dest, current_vdef, visited);
-    }
-
   return err;
 }
 
@@ -1052,7 +1075,7 @@ verify_ssa (bool check_modified_stmt, bool check_ssa_operands)
       /* Keep track of SSA names present in the IL.  */
       size_t i;
       tree name;
-      hash_map <void *, tree> ssa_info;
+      hash_map <const void *, tree> ssa_info;
 
       FOR_EACH_SSA_NAME (i, name, cfun)
 	{
@@ -1070,11 +1093,24 @@ verify_ssa (bool check_modified_stmt, bool check_ssa_operands)
 		goto err;
 	    }
 
-	  void *info = NULL;
-	  if (POINTER_TYPE_P (TREE_TYPE (name)))
-	    info = SSA_NAME_PTR_INFO (name);
-	  else if (INTEGRAL_TYPE_P (TREE_TYPE (name)))
-	    info = SSA_NAME_RANGE_INFO (name);
+	  const pt_solution *pt_info = ssa_name_pt_solution (name);
+	  if (pt_info)
+	    {
+	      bool existed;
+	      tree &val = ssa_info.get_or_insert (pt_info, &existed);
+	      if (existed)
+		{
+		  error ("shared SSA name pt_solution info");
+		  print_generic_expr (stderr, val);
+		  fprintf (stderr, " and ");
+		  print_generic_expr (stderr, name);
+		  fprintf (stderr, "\n");
+		  goto err;
+		}
+	      else
+		val = name;
+	    }
+	  const void *info = SSA_NAME_RANGE_INFO (name);
 	  if (info)
 	    {
 	      bool existed;
@@ -1325,9 +1361,15 @@ ssa_undefined_value_p (tree t, bool partial)
     return true;
 
   /* The value is undefined if the definition statement is a call
-     to .DEFERRED_INIT function.  */
+     to .DEFERRED_INIT function.  Except for AUTO_INIT_CXX26 which is
+     undefined but needs to have the same value in all uses.  */
   if (gimple_call_internal_p (def_stmt, IFN_DEFERRED_INIT))
-    return true;
+    {
+      if (tree_to_uhwi (gimple_call_arg (def_stmt, 1)) & AUTO_INIT_CXX26)
+	return false;
+      else
+	return true;
+    }
 
   /* The value is partially undefined if the definition statement is
      a REALPART_EXPR or IMAGPART_EXPR and its operand is defined by
@@ -1788,7 +1830,7 @@ maybe_optimize_var (tree var, bitmap addresses_taken, bitmap not_reg_needs,
 	      fprintf (dump_file, "\n");
 	    }
 	}
-      else if (TREE_CODE (TREE_TYPE (var)) == BITINT_TYPE
+      else if (BITINT_TYPE_P (TREE_TYPE (var))
 	       && (cfun->curr_properties & PROP_gimple_lbitint) != 0
 	       && TYPE_PRECISION (TREE_TYPE (var)) > MAX_FIXED_MODE_SIZE)
 	{
@@ -1853,6 +1895,33 @@ is_asan_mark_p (gimple *stmt)
   return false;
 }
 
+/* Helper for set_addresses_taken.  If the base of ADDR is a DECL,
+   set the bit for its uid in the bitmap passed as DATA and return
+   true; otherwise return false.  */
+
+static bool
+set_addresses_taken_1 (gimple *, tree addr, tree, void *data)
+{
+  bitmap addresses_taken = (bitmap)data;
+  addr = get_base_address (addr);
+  if (addr && DECL_P (addr))
+    {
+      bitmap_set_bit (addresses_taken, DECL_UID (addr));
+      return true;
+    }
+  return false;
+}
+
+/* Set the bit for the uid of all DECLs that have their address taken in
+   STMT in the ADDRESSES_TAKEN bitmap.  Return true if there are any.  */
+
+static bool
+set_addresses_taken (gimple *stmt, bitmap addresses_taken)
+{
+  return walk_stmt_load_store_addr_ops (stmt, addresses_taken, NULL, NULL,
+					set_addresses_taken_1);
+}
+
 /* Compute TREE_ADDRESSABLE and whether we have unhandled partial defs
    for local variables.  */
 
@@ -1890,7 +1959,7 @@ execute_update_addresses_taken (void)
 		     ATOMIC_COMPARE_EXCHANGE call.  */
 		  tree arg = gimple_call_arg (stmt, 1);
 		  gimple_call_set_arg (stmt, 1, null_pointer_node);
-		  gimple_ior_addresses_taken (addresses_taken, stmt);
+		  set_addresses_taken (stmt, addresses_taken);
 		  gimple_call_set_arg (stmt, 1, arg);
 		  /* Remember we have to check again below.  */
 		  optimistic_not_addressable = true;
@@ -1898,12 +1967,26 @@ execute_update_addresses_taken (void)
 	      else if (is_asan_mark_p (stmt)
 		       || gimple_call_internal_p (stmt, IFN_GOMP_SIMT_ENTER))
 		;
+	      else if (gimple_call_internal_p (stmt, IFN_ASSUME))
+		{
+		  /* An address-taken arguments are not relevant for aliasing
+		     and we never expand the call (and need the address).
+		     But we can't use a register.  */
+		  for (unsigned i = 1; i < gimple_call_num_args (stmt); ++i)
+		    {
+		      tree arg = gimple_call_arg (stmt, i);
+		      if (TREE_CODE (arg) == ADDR_EXPR)
+			bitmap_set_bit (not_reg_needs,
+					DECL_UID (get_base_address
+						    (TREE_OPERAND (arg, 0))));
+		    }
+		}
 	      else
-		gimple_ior_addresses_taken (addresses_taken, stmt);
+		set_addresses_taken (stmt, addresses_taken);
 	    }
 	  else
 	    /* Note all addresses taken by the stmt.  */
-	    gimple_ior_addresses_taken (addresses_taken, stmt);
+	    set_addresses_taken (stmt, addresses_taken);
 
 	  /* If we have a call or an assignment, see if the lhs contains
 	     a local decl that requires not to be a gimple register.  */
@@ -1970,16 +2053,14 @@ execute_update_addresses_taken (void)
       for (gphi_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi);
 	   gsi_next (&gsi))
 	{
-	  size_t i;
 	  gphi *phi = gsi.phi ();
 
 	  for (i = 0; i < gimple_phi_num_args (phi); i++)
 	    {
-	      tree op = PHI_ARG_DEF (phi, i), var;
-	      if (TREE_CODE (op) == ADDR_EXPR
-		  && (var = get_base_address (TREE_OPERAND (op, 0))) != NULL
-		  && DECL_P (var))
-		bitmap_set_bit (addresses_taken, DECL_UID (var));
+	      tree op = PHI_ARG_DEF (phi, i);
+	      if (TREE_CODE (op) == ADDR_EXPR)
+		set_addresses_taken_1 (phi, TREE_OPERAND (op, 0), op,
+				       (void *)addresses_taken);
 	    }
 	}
     }

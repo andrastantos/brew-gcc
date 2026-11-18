@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/Simple_ENVIRONMENT-NAME_with_exception.out" }
         identification division.
         program-id. envtest.

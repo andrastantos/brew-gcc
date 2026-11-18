@@ -70,9 +70,9 @@ static const sve_vec_cost neoversev2_sve_vector_cost =
   {
     2, /* int_stmt_cost  */
     2, /* fp_stmt_cost  */
-    2, /* ld2_st2_permute_cost  */
-    3, /* ld3_st3_permute_cost  */
-    3, /* ld4_st4_permute_cost  */
+    3, /* ld2_st2_permute_cost  */
+    4, /* ld3_st3_permute_cost  */
+    4, /* ld4_st4_permute_cost  */
     2, /* permute_cost  */
     /* Theoretically, a reduction involving 15 scalar ADDs could
        complete in ~5 cycles and would have a cost of 15.  [SU]ADDV
@@ -317,7 +317,7 @@ neoversev2_dispatch_constraint_callback (rtx_insn *insn)
   constraints.safe_push ({TOTAL_SLOTS, total_slots});
 
   return constraints;
-};
+}
 
 /* Neoverse V2 dispatch constraints configuration.  */
 static const struct dispatch_constraint_info neoversev2_dispatch_constraint_info = {
@@ -359,6 +359,7 @@ static const struct tune_params neoversev2_tunings =
    | AARCH64_EXTRA_TUNE_CSE_SVE_VL_CONSTANTS
    | AARCH64_EXTRA_TUNE_MATCHED_VECTOR_THROUGHPUT
    | AARCH64_EXTRA_TUNE_AVOID_PRED_RMW
+   | AARCH64_EXTRA_TUNE_AVOID_MOVIMM_Z
    | AARCH64_EXTRA_TUNE_AVOID_LDAPUR
    | AARCH64_EXTRA_TUNE_DISPATCH_SCHED),	/* tune_flags.  */
   &generic_armv9a_prefetch_tune,

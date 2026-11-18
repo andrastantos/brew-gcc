@@ -18,6 +18,7 @@
 
 #include "rust-derive.h"
 #include "rust-derive-clone.h"
+#include "rust-derive-coerce-pointee.h"
 #include "rust-derive-copy.h"
 #include "rust-derive-debug.h"
 #include "rust-derive-default.h"
@@ -30,13 +31,13 @@
 namespace Rust {
 namespace AST {
 
-DeriveVisitor::DeriveVisitor (location_t loc)
-  : loc (loc), builder (Builder (loc))
+DeriveVisitor::DeriveVisitor (location_t loc, Builder::Source item_source)
+  : loc (loc), builder (Builder (loc, item_source))
 {}
 
 std::vector<std::unique_ptr<Item>>
 DeriveVisitor::derive (Item &item, const Attribute &attr,
-		       BuiltinMacro to_derive)
+		       BuiltinMacro to_derive, Builder::Source item_source)
 {
   auto loc = attr.get_locus ();
 
@@ -53,27 +54,29 @@ DeriveVisitor::derive (Item &item, const Attribute &attr,
   switch (to_derive)
     {
     case BuiltinMacro::Clone:
-      return vec (DeriveClone (loc).go (item));
+      return vec (DeriveClone (loc, item_source).go (item));
     case BuiltinMacro::Copy:
-      return vec (DeriveCopy (loc).go (item));
+      return vec (DeriveCopy (loc, item_source).go (item));
     case BuiltinMacro::Debug:
       rust_warning_at (
 	loc, 0,
 	"derive(Debug) is not fully implemented yet and has no effect - only a "
 	"stub implementation will be generated");
-      return vec (DeriveDebug (loc).go (item));
+      return vec (DeriveDebug (loc, item_source).go (item));
     case BuiltinMacro::Default:
-      return vec (DeriveDefault (loc).go (item));
+      return vec (DeriveDefault (loc, item_source).go (item));
     case BuiltinMacro::Eq:
-      return DeriveEq (loc).go (item);
+      return DeriveEq (loc, item_source).go (item);
     case BuiltinMacro::PartialEq:
-      return DerivePartialEq (loc).go (item);
+      return DerivePartialEq (loc, item_source).go (item);
     case BuiltinMacro::Hash:
-      return vec (DeriveHash (loc).go (item));
+      return vec (DeriveHash (loc, item_source).go (item));
     case BuiltinMacro::Ord:
-      return vec (DeriveOrd (DeriveOrd::Ordering::Total, loc).go (item));
+      return vec (
+	DeriveOrd (DeriveOrd::Ordering::Total, loc, item_source).go (item));
     case BuiltinMacro::PartialOrd:
-      return vec (DeriveOrd (DeriveOrd::Ordering::Partial, loc).go (item));
+      return vec (
+	DeriveOrd (DeriveOrd::Ordering::Partial, loc, item_source).go (item));
     case BuiltinMacro::RustcEncodable:
     case BuiltinMacro::RustcDecodable:
       rust_sorry_at (loc, "derive(%s) is not yet implemented",
@@ -81,6 +84,8 @@ DeriveVisitor::derive (Item &item, const Attribute &attr,
 		       ? "RustcEncodable"
 		       : "RustcDecodable");
       return {};
+    case BuiltinMacro::CoercePointee:
+      return vec (DeriveCoercePointee (loc, item_source).go (item));
     default:
       rust_unreachable ();
     };
@@ -130,7 +135,8 @@ DeriveVisitor::setup_impl_generics (
 	      extra_bounds.emplace_back (extra_bound.value () ());
 
 	    auto impl_type_param
-	      = builder.new_type_param (type_param, std::move (extra_bounds));
+	      = builder.new_type_param (type_param, std::move (extra_bounds),
+					Builder::DefaultParamGen::Remove);
 
 	    impl_generics.push_back (std::move (impl_type_param));
 	  }
@@ -141,12 +147,14 @@ DeriveVisitor::setup_impl_generics (
 	    ConstGenericParam &const_param
 	      = (ConstGenericParam &) *generic.get ();
 
-	    std::unique_ptr<Type> associated_type
-	      = builder.single_type_path (const_param.get_name ().as_string ());
+	    auto associated_expr
+	      = std::make_unique<IdentifierExpr> (const_param.get_name (),
+						  std::vector<Attribute> (),
+						  const_param.get_locus ());
 
-	    GenericArg type_arg
-	      = GenericArg::create_type (std::move (associated_type));
-	    generic_args.push_back (std::move (type_arg));
+	    GenericArg const_arg
+	      = GenericArg::create_const (std::move (associated_expr));
+	    generic_args.push_back (std::move (const_arg));
 
 	    auto impl_const_param = builder.new_const_param (const_param);
 	    impl_generics.push_back (std::move (impl_const_param));

@@ -30,7 +30,7 @@ libgccjit.h.
           locked-down at this time.
 
 API compatibility is achieved by extending the API rather than changing
-it.  For ABI compatiblity, we avoid bumping the SONAME, and instead use
+it.  For ABI compatibility, we avoid bumping the SONAME, and instead use
 symbol versioning to tag each symbol, so that a binary linked against
 libgccjit.so is tagged according to the symbols that it uses.
 
@@ -481,3 +481,11 @@ information:
 --------------------
 ``LIBGCCJIT_ABI_37`` covers the addition of
 :func:`gcc_jit_context_new_array_type_u64`
+
+.. _LIBGCCJIT_ABI_38:
+
+``LIBGCCJIT_ABI_38``
+--------------------
+``LIBGCCJIT_ABI_38`` covers the addition of
+
+ * :func:`gcc_jit_type_is_floating_point`

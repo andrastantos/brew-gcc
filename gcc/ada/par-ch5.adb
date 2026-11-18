@@ -497,8 +497,6 @@ package body Ch5 is
                --  Cases of statements starting with an identifier
 
                when Tok_Identifier =>
-                  Check_Bad_Layout;
-
                   --  Save scan pointers and line number in case block label
 
                   Id_Node := Token_Node;
@@ -720,11 +718,21 @@ package body Ch5 is
                         Statement_Required := False;
                      end if;
 
-                  --  If junk after identifier, check if identifier is an
-                  --  instance of an incorrectly spelled keyword. If so, we
-                  --  do nothing. The Bad_Spelling_Of will have reset Token
-                  --  to the appropriate keyword, so the next time round the
-                  --  loop we will process the modified token.
+                  --  If junk after identifier, check if identifier is one of:
+                  --
+                  --  - An instance of an incorrectly spelled keyword.
+                  --  - One of the non-reserved keywords introduced by GNAT
+                  --    syntax extensions (currently, "finally" is the only
+                  --    such keyword that can occur here).
+                  --
+                  --  In the incorrect spelling case, we do nothing.
+                  --  Bad_Spelling_Of will have reset Token to the appropriate
+                  --  keyword, so the next time round the loop we will process
+                  --  the modified token.
+                  --
+                  --  In the non-reserved keyword case, we replace the
+                  --  identifier token with a token for the appropriate
+                  --  keyword.
                   --
                   --  Note that we check for ELSIF before ELSE here, because
                   --  we don't want to identify a misspelling of ELSE as ELSIF,
@@ -758,8 +766,14 @@ package body Ch5 is
                        or else Bad_Spelling_Of (Tok_While)
                      then
                         null;
+                     elsif Token_Name = Name_Finally then
+                        Error_Msg_GNAT_Extension
+                          ("the finally construct", Token_Ptr);
+                        Token := Tok_Finally;
+                        exit;
 
-                     --  If not a bad spelling, then we really have junk
+                     --  If not a bad spelling or non-reserved keyword, then we
+                     --  really have junk.
 
                      else
                         Scan; -- past identifier again
@@ -785,6 +799,8 @@ package body Ch5 is
 
                      end if;
                   end if;
+
+                  Check_Bad_Layout_At (Scan_State_Label);
 
                --  Statement starting with operator symbol. This could be
                --  a call, a name starting an assignment, or a qualified
@@ -2121,7 +2137,8 @@ package body Ch5 is
             --  can cause a lot of havoc, and it is better not to dump these
             --  cascaded messages on the user.
 
-            Purge_Messages (Get_Location (Missing_Begin_Msg), Prev_Token_Ptr);
+            Delete_Error_Msgs_In_Range
+              (Get_Location (Missing_Begin_Msg), Prev_Token_Ptr);
          end if;
       end Missing_Begin;
 

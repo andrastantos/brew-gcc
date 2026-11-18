@@ -86,7 +86,7 @@ along with GCC; see the file COPYING3.  If not see
   The vtable verification feature is controlled by the flag
   '-fvtable-verify='.  There are three flavors of this:
   '-fvtable-verify=std', '-fvtable-verify=preinit', and
-  '-fvtable-verify=none'.  If the option '-fvtable-verfy=preinit' is
+  '-fvtable-verify=none'.  If the option '-fvtable-verify=preinit' is
   used, then our constructor initialization function gets put into the
   preinit array.  This is necessary if there are data sets that need
   to be built very early in execution.  If the constructor
@@ -378,7 +378,6 @@ vtbl_map_get_node (tree class_type)
 
   tree class_type_decl;
   tree class_name;
-  unsigned int type_quals;
 
   if (!vtbl_map_hash)
     return NULL;
@@ -390,7 +389,7 @@ vtbl_map_get_node (tree class_type)
   class_type_decl = TYPE_NAME (class_type);
 
   /* Verify that there aren't any qualifiers on the type.  */
-  type_quals = TYPE_QUALS (TREE_TYPE (class_type_decl));
+  auto type_quals = TYPE_QUALS (TREE_TYPE (class_type_decl));
   gcc_assert (type_quals == TYPE_UNQUALIFIED);
 
   /* Get the mangled name for the unqualified type.  */
@@ -417,7 +416,6 @@ find_or_create_vtbl_map_node (tree base_class_type)
   struct vtbl_map_node *node;
   struct vtbl_map_node **slot;
   tree class_type_decl;
-  unsigned int type_quals;
 
   if (!vtbl_map_hash)
     vtbl_map_hash = new vtbl_map_table_type (10);
@@ -426,7 +424,7 @@ find_or_create_vtbl_map_node (tree base_class_type)
   class_type_decl = TYPE_NAME (base_class_type);
 
   /* Verify that there aren't any type qualifiers on type.  */
-  type_quals = TYPE_QUALS (TREE_TYPE (class_type_decl));
+  auto type_quals = TYPE_QUALS (TREE_TYPE (class_type_decl));
   gcc_assert (type_quals == TYPE_UNQUALIFIED);
 
   gcc_assert (HAS_DECL_ASSEMBLER_NAME_P (class_type_decl));

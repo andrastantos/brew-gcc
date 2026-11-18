@@ -17,6 +17,7 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "rust-hir-type-check-base.h"
+#include "options.h"
 #include "rust-compile-base.h"
 #include "rust-hir-item.h"
 #include "rust-hir-type-check-expr.h"
@@ -25,7 +26,6 @@
 #include "rust-type-util.h"
 #include "rust-attribute-values.h"
 #include "rust-tyty.h"
-#include "tree.h"
 
 namespace Rust {
 namespace Resolver {
@@ -46,6 +46,20 @@ TypeCheckBase::ResolveGenericParams (
 			      substitutions, is_foreign, abi);
 }
 
+TyTy::TypeBoundPredicate
+TypeCheckBase::ResolvePredicateFromBound (
+  HIR::TypePath &path,
+  tl::optional<std::reference_wrapper<HIR::Type>> associated_self,
+  BoundPolarity polarity, bool is_qualified_type, bool is_super_trait)
+{
+  TypeCheckBase ctx;
+  return ctx.get_predicate_from_bound (path, associated_self, polarity,
+				       is_qualified_type, is_super_trait);
+}
+
+static void walk_type_to_constrain (std::set<HirId> &constrained_symbols,
+				    TyTy::BaseType &r);
+
 static void
 walk_types_to_constrain (std::set<HirId> &constrained_symbols,
 			 const TyTy::SubstitutionArgumentMappings &constraints)
@@ -58,6 +72,7 @@ walk_types_to_constrain (std::set<HirId> &constrained_symbols,
 	  const auto p = arg->get_root ();
 	  constrained_symbols.insert (p->get_ref ());
 	  constrained_symbols.insert (p->get_ty_ref ());
+	  walk_type_to_constrain (constrained_symbols, *arg);
 
 	  if (p->has_substitutions_defined ())
 	    {
@@ -89,6 +104,7 @@ walk_type_to_constrain (std::set<HirId> &constrained_symbols, TyTy::BaseType &r)
       {
 	auto &arr = static_cast<TyTy::ArrayType &> (r);
 	walk_type_to_constrain (constrained_symbols, *arr.get_element_type ());
+	walk_type_to_constrain (constrained_symbols, *arr.get_capacity ());
       }
       break;
     case TyTy::TypeKind::FNDEF:
@@ -103,6 +119,13 @@ walk_type_to_constrain (std::set<HirId> &constrained_symbols, TyTy::BaseType &r)
       {
 	auto &param = static_cast<TyTy::ParamType &> (r);
 	constrained_symbols.insert (param.get_ty_ref ());
+      }
+      break;
+    case TyTy::TypeKind::CONST:
+      {
+	auto *constant = r.as_const_type ();
+	if (constant->const_kind () == TyTy::BaseConstType::ConstKind::Decl)
+	  constrained_symbols.insert (r.get_ty_ref ());
       }
       break;
     case TyTy::SLICE:
@@ -143,6 +166,19 @@ walk_type_to_constrain (std::set<HirId> &constrained_symbols, TyTy::BaseType &r)
     default:
       break;
     }
+
+  if (r.has_substitutions_defined ())
+    walk_types_to_constrain (constrained_symbols,
+			     r.get_subst_argument_mappings ());
+
+  for (const auto &bound : r.get_specified_bounds ())
+    {
+      const auto &args = bound.get_substitution_arguments ();
+      for (const auto &binding : args.get_binding_args ())
+	walk_type_to_constrain (constrained_symbols, *binding.second);
+      for (const auto &constraint : args.get_constraint_args ())
+	walk_type_to_constrain (constrained_symbols, *constraint.second);
+    }
 }
 
 bool
@@ -173,6 +209,19 @@ TypeCheckBase::check_for_unconstrained (
   walk_types_to_constrain (constrained_symbols, constraint_a);
   walk_types_to_constrain (constrained_symbols, constraint_b);
   walk_type_to_constrain (constrained_symbols, *reference);
+
+  for (const auto &param : params_to_constrain)
+    {
+      auto *ty = param.get_param_ty ();
+      for (const auto &bound : ty->get_specified_bounds ())
+	{
+	  const auto &args = bound.get_substitution_arguments ();
+	  for (const auto &binding : args.get_binding_args ())
+	    walk_type_to_constrain (constrained_symbols, *binding.second);
+	  for (const auto &constraint : args.get_constraint_args ())
+	    walk_type_to_constrain (constrained_symbols, *constraint.second);
+	}
+    }
 
   // check for unconstrained
   bool unconstrained = false;
@@ -337,7 +386,7 @@ TypeCheckBase::resolve_literal (const Analysis::NodeMapping &expr_mappings,
 	auto ok = context->lookup_builtin ("u8", &u8);
 	rust_assert (ok);
 
-	auto crate_num = mappings.get_current_crate ();
+	auto crate_num = mappings.crate.get_current_crate ();
 	Analysis::NodeMapping capacity_mapping (crate_num, UNKNOWN_NODEID,
 						mappings.get_next_hir_id (
 						  crate_num),
@@ -386,7 +435,43 @@ TypeCheckBase::resolve_literal (const Analysis::NodeMapping &expr_mappings,
 					   TyTy::Region::make_static ());
       }
       break;
+    case HIR::Literal::LitType::C_STRING:
+      {
+	// Throw error if C string literal contains null byte
+	if (literal.as_string ().find ('\0') != std::string::npos)
+	  {
+	    rust_error_at (
+	      locus, "null characters in C string literals are not supported");
+	    infered = new TyTy::ErrorType (expr_mappings.get_hirid (), locus);
+	    break;
+	  }
 
+	auto lang_item_defined
+	  = mappings.lookup_lang_item (LangItem::Kind::CSTR);
+
+	if (!lang_item_defined)
+	  {
+	    rust_error_at (locus, "unable to find lang item: %<c_str%>");
+	    infered = new TyTy::ErrorType (expr_mappings.get_hirid (), locus);
+	    break;
+	  }
+
+	DefId cstr_defid = lang_item_defined.value ();
+	HIR::Item *item = mappings.lookup_defid (cstr_defid).value ();
+
+	TyTy::BaseType *item_type = nullptr;
+	bool ok = context->lookup_type (item->get_mappings ().get_hirid (),
+					&item_type);
+
+	rust_assert (ok);
+	rust_assert (item_type->get_kind () == TyTy::TypeKind::ADT);
+
+	infered = new TyTy::ReferenceType (expr_mappings.get_hirid (),
+					   TyTy::TyVar (item_type->get_ref ()),
+					   Mutability::Imm,
+					   TyTy::Region::make_static ());
+      }
+      break;
     default:
       rust_unreachable ();
       break;
@@ -458,61 +543,86 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 	      continue;
 	    }
 
-	  const std::string inline_option = items.at (0)->as_string ();
+	  const std::string repr_option = items.at (0)->as_string ();
 
 	  // TODO: it would probably be better to make the MetaItems more aware
 	  // of constructs with nesting like #[repr(packed(2))] rather than
 	  // manually parsing the string "packed(2)" here.
 
-	  size_t oparen = inline_option.find ('(', 0);
+	  size_t oparen = repr_option.find ('(', 0);
 	  bool is_pack = false;
 	  bool is_align = false;
 	  bool is_c = false;
 	  bool is_integer = false;
+	  bool is_transparent = false;
+	  bool is_simd = false;
 	  unsigned char value = 1;
 
 	  if (oparen == std::string::npos)
 	    {
-	      is_pack = inline_option.compare ("packed") == 0;
-	      is_align = inline_option.compare ("align") == 0;
-	      is_c = inline_option.compare ("C") == 0;
-	      is_integer = (inline_option.compare ("isize") == 0
-			    || inline_option.compare ("i8") == 0
-			    || inline_option.compare ("i16") == 0
-			    || inline_option.compare ("i32") == 0
-			    || inline_option.compare ("i64") == 0
-			    || inline_option.compare ("i128") == 0
-			    || inline_option.compare ("usize") == 0
-			    || inline_option.compare ("u8") == 0
-			    || inline_option.compare ("u16") == 0
-			    || inline_option.compare ("u32") == 0
-			    || inline_option.compare ("u64") == 0
-			    || inline_option.compare ("u128") == 0);
+	      if (repr_option.compare ("align") == 0)
+		{
+		  rust_error_at (attr.get_locus (), ErrorCode::E0589,
+				 "invalid %<repr(align)%> attribute: %<align%> "
+				 "needs an argument");
+		  delete meta_items;
+		  break;
+		}
+
+	      is_pack = repr_option.compare ("packed") == 0;
+	      is_c = repr_option.compare ("C") == 0;
+	      is_integer = (repr_option.compare ("isize") == 0
+			    || repr_option.compare ("i8") == 0
+			    || repr_option.compare ("i16") == 0
+			    || repr_option.compare ("i32") == 0
+			    || repr_option.compare ("i64") == 0
+			    || repr_option.compare ("i128") == 0
+			    || repr_option.compare ("usize") == 0
+			    || repr_option.compare ("u8") == 0
+			    || repr_option.compare ("u16") == 0
+			    || repr_option.compare ("u32") == 0
+			    || repr_option.compare ("u64") == 0
+			    || repr_option.compare ("u128") == 0);
+	      is_transparent = repr_option.compare ("transparent") == 0;
+	      is_simd = repr_option.compare ("simd") == 0;
 	    }
 
 	  else
 	    {
-	      std::string rep = inline_option.substr (0, oparen);
+	      std::string rep = repr_option.substr (0, oparen);
 	      is_pack = rep.compare ("packed") == 0;
 	      is_align = rep.compare ("align") == 0;
 
-	      size_t cparen = inline_option.find (')', oparen);
+	      size_t cparen = repr_option.find (')', oparen);
 	      if (cparen == std::string::npos)
 		{
 		  rust_error_at (locus, "malformed attribute");
 		}
 
-	      std::string value_str = inline_option.substr (oparen, cparen);
+	      std::string value_str = repr_option.substr (oparen, cparen);
 	      value = strtoul (value_str.c_str () + 1, NULL, 10);
 	    }
 
-	  if (is_pack)
+	  if (is_transparent)
+	    {
+	      if (is_pack || is_align || is_c || is_integer)
+		rust_error_at (
+		  locus, ErrorCode::E0692,
+		  "transparent struct cannot have other repr hints");
+
+	      repr.repr_kind = TyTy::ADTType::ReprKind::TRANSPARENT;
+	    }
+	  else if (is_pack)
 	    {
 	      repr.repr_kind = TyTy::ADTType::ReprKind::PACKED;
 	      repr.pack = value;
 	    }
 	  else if (is_align)
 	    {
+	      if (value == 0 || (value & (value - 1)) != 0)
+		rust_error_at (
+		  attr.get_locus (), ErrorCode::E0589,
+		  "invalid %<repr(align)%> attribute: not a power of two");
 	      repr.repr_kind = TyTy::ADTType::ReprKind::ALIGN;
 	      repr.align = value;
 	    }
@@ -523,11 +633,21 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 	  else if (is_integer)
 	    {
 	      repr.repr_kind = TyTy::ADTType::ReprKind::INT;
-	      bool ok = context->lookup_builtin (inline_option, &repr.repr);
+	      bool ok = context->lookup_builtin (repr_option, &repr.repr);
 	      if (!ok)
 		{
-		  rust_error_at (attr.get_locus (), "Invalid repr type");
+		  rust_error_at (attr.get_locus (), ErrorCode::E0552,
+				 "unrecognized representation hint");
 		}
+	    }
+	  else if (is_simd)
+	    {
+	      repr.repr_kind = TyTy::ADTType::ReprKind::SIMD;
+	    }
+	  else
+	    {
+	      rust_error_at (attr.get_locus (), ErrorCode::E0552,
+			     "unrecognized representation hint");
 	    }
 
 	  delete meta_items;
@@ -564,7 +684,8 @@ TypeCheckBase::resolve_generic_params (
 
 	case HIR::GenericParam::GenericKind::CONST:
 	  {
-	    if (is_foreign && abi != Rust::ABI::INTRINSIC)
+	    if (is_foreign && abi != Rust::ABI::INTRINSIC
+		&& abi != Rust::ABI::PLATFORM_INTRINSIC)
 	      {
 		rust_error_at (generic_param->get_locus (), ErrorCode::E0044,
 			       "foreign items may not have const parameters");
@@ -599,6 +720,10 @@ TypeCheckBase::resolve_generic_params (
 
 		auto expr_type
 		  = TypeCheckExpr::Resolve (param.get_default_expression ());
+
+		if (specified_type->is<TyTy::ErrorType> ()
+		    || expr_type->is<TyTy::ErrorType> ())
+		  break;
 
 		coercion_site (param.get_mappings ().get_hirid (),
 			       TyTy::TyWithLocation (specified_type),
@@ -638,7 +763,8 @@ TypeCheckBase::resolve_generic_params (
 
 	case HIR::GenericParam::GenericKind::TYPE:
 	  {
-	    if (is_foreign && abi != Rust::ABI::INTRINSIC)
+	    if (is_foreign && abi != Rust::ABI::INTRINSIC
+		&& abi != Rust::ABI::PLATFORM_INTRINSIC)
 	      {
 		rust_error_at (generic_param->get_locus (), ErrorCode::E0044,
 			       "foreign items may not have type parameters");
@@ -668,6 +794,18 @@ TypeCheckBase::resolve_generic_params (
       auto pty = static_cast<TyTy::ParamType *> (bpty);
 
       TypeResolveGenericParam::ApplyAnyTraitBounds (type_param, pty);
+
+      // The drop_bounds lint: a `T: Drop` bound is most likely a mistake, as
+      // `Drop` bounds do not constrain a generic parameter in a useful way.
+      if (flag_unused_check_2_0)
+	if (auto drop = mappings.lookup_lang_item (LangItem::Kind::DROP))
+	  for (auto &bound : pty->get_specified_bounds ())
+	    if (bound.get_id () == drop.value ())
+	      rust_warning_at (
+		type_param.get_locus (), OPT_Wunused_variable,
+		"bounds on %<Drop%> are most likely incorrect, "
+		"use %<core::mem::needs_drop%> to detect whether "
+		"a type has a destructor");
     }
 }
 

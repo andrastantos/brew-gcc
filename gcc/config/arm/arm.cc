@@ -77,13 +77,10 @@
 #include "aarch-common-protos.h"
 #include "machmode.h"
 #include "arm-builtins.h"
+#include "minipool.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
-
-/* Forward definitions of types.  */
-typedef struct minipool_node    Mnode;
-typedef struct minipool_fixup   Mfix;
 
 void (*arm_lang_output_object_attributes_hook)(void);
 
@@ -126,21 +123,7 @@ static const char *output_multi_immediate (rtx *, const char *, const char *,
 static const char *shift_op (rtx, HOST_WIDE_INT *);
 static struct machine_function *arm_init_machine_status (void);
 static void thumb_exit (FILE *, int);
-static HOST_WIDE_INT get_jump_table_size (rtx_jump_table_data *);
-static Mnode *move_minipool_fix_forward_ref (Mnode *, Mnode *, HOST_WIDE_INT);
-static Mnode *add_minipool_forward_ref (Mfix *);
-static Mnode *move_minipool_fix_backward_ref (Mnode *, Mnode *, HOST_WIDE_INT);
-static Mnode *add_minipool_backward_ref (Mfix *);
-static void assign_minipool_offsets (Mfix *);
-static void arm_print_value (FILE *, rtx);
-static void dump_minipool (rtx_insn *);
-static int arm_barrier_cost (rtx_insn *);
-static Mfix *create_fix_barrier (Mfix *, HOST_WIDE_INT);
-static void push_minipool_barrier (rtx_insn *, HOST_WIDE_INT);
-static void push_minipool_fix (rtx_insn *, HOST_WIDE_INT, rtx *,
-			       machine_mode, rtx);
 static void arm_reorg (void);
-static void note_invalid_constants (rtx_insn *, HOST_WIDE_INT, int);
 static unsigned long arm_compute_save_reg0_reg12_mask (void);
 static unsigned long arm_compute_save_core_reg_mask (void);
 static unsigned long arm_isr_value (tree);
@@ -189,8 +172,8 @@ static int arm_register_move_cost (machine_mode, reg_class_t, reg_class_t);
 static int arm_memory_move_cost (machine_mode, reg_class_t, bool);
 static void emit_constant_insn (rtx cond, rtx pattern);
 static rtx_insn *emit_set_insn (rtx, rtx);
-static void arm_add_cfa_adjust_cfa_note (rtx, int, rtx, rtx);
-static rtx emit_multi_reg_push (unsigned long, unsigned long);
+static void arm_add_cfa_adjust_cfa_note (rtx_insn *, int, rtx, rtx);
+static rtx_insn *emit_multi_reg_push (unsigned long, unsigned long);
 static void arm_emit_multi_reg_pop (unsigned long);
 static int vfp_emit_fstmd (int, int);
 static void arm_emit_vfp_multi_reg_pop (int, int, rtx);
@@ -644,6 +627,12 @@ static const scoped_attribute_specs *const arm_attribute_table[] =
 #undef  TARGET_CANNOT_COPY_INSN_P
 #define TARGET_CANNOT_COPY_INSN_P arm_cannot_copy_insn_p
 
+/* The dispatch sequences find the table through the PC or LR, or define a
+   base label of their own, and arm_reorg expects every table to follow its
+   jump.  */
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P hook_bool_rtx_insn_false
+
 #ifdef HAVE_AS_TLS
 #undef TARGET_HAVE_TLS
 #define TARGET_HAVE_TLS true
@@ -846,9 +835,6 @@ static const scoped_attribute_specs *const arm_attribute_table[] =
 #undef TARGET_C_BITINT_TYPE_INFO
 #define TARGET_C_BITINT_TYPE_INFO arm_bitint_type_info
 
-/* Obstack for minipool constant handling.  */
-static struct obstack minipool_obstack;
-static char *         minipool_startobj;
 
 /* The maximum number of insns skipped which
    will be conditionalised if possible.  */
@@ -867,7 +853,7 @@ const struct tune_params *current_tune;
 int arm_fpu_attr;
 
 /* Used for Thumb call_via trampolines.  */
-rtx thumb_call_via_label[14];
+rtx_code_label *thumb_call_via_label[14];
 static int thumb_call_reg_needed;
 
 /* The bits in this mask specify which instruction scheduling options should
@@ -3137,7 +3123,7 @@ arm_option_override_internal (struct gcc_options *opts,
   if (TARGET_THUMB_P (opts->x_target_flags) && TARGET_CALLEE_INTERWORKING)
     opts->x_target_flags |= MASK_INTERWORK;
 
-  /* need to remember initial values so combinaisons of options like
+  /* need to remember initial values so combinations of options like
      -mflip-thumb -mthumb -fno-schedule-insns work for any attribute.  */
   cl_optimization *to = TREE_OPTIMIZATION (init_optimize);
 
@@ -3196,7 +3182,7 @@ arm_option_override_internal (struct gcc_options *opts,
      'Find out how many of the (return) argument registers we can corrupt'.
      As a consequence, the epilogue may clobber registers without fipa-ra
      finding out about it.  Therefore, disable fipa-ra in Thumb1 mode.
-     TODO: Accurately model clobbers for epilogue_insns and reenable
+     TODO: Accurately model clobbers for epilogue_insns and re-enable
      fipa-ra.  */
   if (TARGET_THUMB1_P (opts->x_target_flags))
     opts->x_flag_ipa_ra = 0;
@@ -3869,7 +3855,7 @@ arm_option_override (void)
       && (!arm_arch7 || !current_tune->prefer_ldrd_strd))
     flag_schedule_fusion = 0;
 
-  /* Need to remember initial options before they are overriden.  */
+  /* Need to remember initial options before they are overridden.  */
   init_optimize = build_optimization_node (&global_options,
 					   &global_options_set);
 
@@ -4093,8 +4079,7 @@ arm_fdpic_local_funcdesc_p (rtx fnx)
 static void
 arm_add_gc_roots (void)
 {
-  gcc_obstack_init(&minipool_obstack);
-  minipool_startobj = (char *) obstack_alloc (&minipool_obstack, 0);
+  minipools::add_gc_roots ();
 }
 
 /* A table of known ARM exception types.
@@ -4409,7 +4394,7 @@ static inline bool reg_needs_saving_p (unsigned reg)
    call.  SIBLING is the call insn, so we can examine its register usage.  */
 
 int
-use_return_insn (int iscond, rtx sibling)
+use_return_insn (int iscond, rtx_insn *sibling)
 {
   int regno;
   unsigned int func_type;
@@ -4731,7 +4716,7 @@ const_ok_for_dimode_op (HOST_WIDE_INT i, enum rtx_code code)
 
 /* ??? Tweak this for thumb2.  */
 int
-arm_split_constant (enum rtx_code code, machine_mode mode, rtx insn,
+arm_split_constant (enum rtx_code code, machine_mode mode, rtx_insn *insn,
 		    HOST_WIDE_INT val, rtx target, rtx source, int subtargets)
 {
   rtx cond;
@@ -4991,7 +4976,7 @@ optimal_immediate_sequence_1 (enum rtx_code code, unsigned HOST_WIDE_INT val,
 	  else if (loc > 16)
 	    {
 	      /* The 8-bit immediate already found clears b2 (and maybe b3)
-		 and we don't get here unless b1 is alredy clear, but it will
+		 and we don't get here unless b1 is already clear, but it will
 		 leave b4 unchanged.  */
 
 	      /* If we can clear b2 and b4 at once, then we win, since the
@@ -6134,7 +6119,7 @@ arm_return_in_memory (const_tree type, const_tree fntype)
 	 some of the detail.  */
       if (!AGGREGATE_TYPE_P (type)
 	  /* A _BitInt(N) for N <= 64 is a simple, non-aggregate type.  */
-	  && !(TREE_CODE (type) == BITINT_TYPE && size > 8)
+	  && !(BITINT_TYPE_P (type) && size > 8)
 	  && TREE_CODE (type) != VECTOR_TYPE
 	  && TREE_CODE (type) != COMPLEX_TYPE)
 	return false;
@@ -6166,7 +6151,7 @@ arm_return_in_memory (const_tree type, const_tree fntype)
 
   if (!AGGREGATE_TYPE_P (type)
       /* A _BitInt(N) for N <= 64 is a simple, non-aggregate type.  */
-      && !(TREE_CODE (type) == BITINT_TYPE && size > 8)
+      && !(BITINT_TYPE_P (type) && size > 8)
       && (TREE_CODE (type) != VECTOR_TYPE))
     /* All simple types are returned in registers.  */
     return false;
@@ -6305,7 +6290,7 @@ arm_pcs_from_attribute (tree attr)
 }
 
 /* Get the PCS variant to use for this call.  TYPE is the function's type
-   specification, DECL is the specific declartion.  DECL may be null if
+   specification, DECL is the specific declaration.  DECL may be null if
    the call could be indirect or if this is a library call.  */
 static enum arm_pcs
 arm_get_pcs_model (const_tree type, const_tree decl ATTRIBUTE_UNUSED)
@@ -6895,7 +6880,7 @@ aapcs_vfp_advance (CUMULATIVE_ARGS *pcum  ATTRIBUTE_UNUSED,
   }
 
 /* Table of co-processors that can be used to pass arguments in
-   registers.  Idealy no arugment should be a candidate for more than
+   registers.  Ideally no argument should be a candidate for more than
    one co-processor table entry, but the table is processed in order
    and stops after the first match.  If that entry then fails to put
    the argument into a co-processor register, the argument will go on
@@ -7158,7 +7143,7 @@ aapcs_layout_arg (CUMULATIVE_ARGS *pcum, machine_mode mode,
   /* C6 - NCRN is set to 4.  */
   pcum->aapcs_next_ncrn = NUM_ARG_REGS;
 
-  /* C7,C8 - arugment goes on the stack.  We have nothing to do here.  */
+  /* C7,C8 - argument goes on the stack.  We have nothing to do here.  */
   return;
 }
 
@@ -7218,7 +7203,7 @@ arm_init_cumulative_args (CUMULATIVE_ARGS *pcum, tree fntype,
    Return 1 if double word alignment is required for argument passing.
    Return -1 if double word alignment used to be required for argument
    passing before PR77728 ABI fix, but is not required anymore.
-   Return 0 if double word alignment is not required and wasn't requried
+   Return 0 if double word alignment is not required and wasn't required
    before either.  */
 static int
 arm_needs_doubleword_align (machine_mode mode, const_tree type)
@@ -7227,7 +7212,7 @@ arm_needs_doubleword_align (machine_mode mode, const_tree type)
     return GET_MODE_ALIGNMENT (mode) > PARM_BOUNDARY;
 
   /* For any _BitInt(N) where N > 32 the ABI demands double word alignment.  */
-  if (TREE_CODE (type) == BITINT_TYPE)
+  if (BITINT_TYPE_P (type))
     {
       if (int_size_in_bytes (type) > 4)
 	return 1;
@@ -9812,18 +9797,139 @@ thumb1_rtx_costs (rtx x, enum rtx_code code, enum rtx_code outer)
 
   switch (code)
     {
-    case ASHIFT:
-    case ASHIFTRT:
-    case LSHIFTRT:
-    case ROTATERT:
-      return (mode == SImode) ? COSTS_N_INSNS (1) : COSTS_N_INSNS (2);
-
     case PLUS:
     case MINUS:
     case COMPARE:
-    case NEG:
+    case AND:
+    case XOR:
+    case IOR:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  total = COSTS_N_INSNS (1);
+	  if (GET_CODE (XEXP (x, 0)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 0), 1), mode))
+	    total += COSTS_N_INSNS (1);
+	  if (GET_CODE (XEXP (x, 1)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 1), 1), mode))
+	    total += COSTS_N_INSNS (1);
+	  return total;
+	case E_DImode:
+	  total = COSTS_N_INSNS (2);
+	  if (GET_CODE (XEXP (x, 0)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 0), 1), mode))
+	    total += COSTS_N_INSNS (4);
+	  if (GET_CODE (XEXP (x, 1)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 1), 1), mode))
+	    total += COSTS_N_INSNS (4);
+	  return total;
+	case E_HImode:
+	case E_QImode:
+	  total = COSTS_N_INSNS (3);
+	  if (GET_CODE (XEXP (x, 0)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 0), 1), mode))
+	    total += COSTS_N_INSNS (3);
+	  if (GET_CODE (XEXP (x, 1)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 1), 1), mode))
+	    total += COSTS_N_INSNS (3);
+	  return total;
+	}
+      break;
+
     case NOT:
-      return COSTS_N_INSNS (1);
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	  return COSTS_N_INSNS (2);
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (3);
+	}
+      break;
+
+    case NEG:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (3);
+	}
+      break;
+
+    case ASHIFT:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	  if (CONST_INT_P (XEXP (x, 1))
+	      && IN_RANGE (INTVAL (XEXP (x, 1)), 32, 63))
+	    return COSTS_N_INSNS (2);
+	  return COSTS_N_INSNS (4);
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (3);
+	}
+      break;
+
+    case ASHIFTRT:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	  if (CONST_INT_P (XEXP (x, 1))
+	      && IN_RANGE (INTVAL (XEXP (x, 1)), 32, 63))
+	    return COSTS_N_INSNS (2);
+	  return COSTS_N_INSNS (4);
+	}
+      break;
+
+    case LSHIFTRT:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	  if (CONST_INT_P (XEXP (x, 1))
+	      && IN_RANGE (INTVAL (XEXP (x, 1)), 32, 63))
+	    return COSTS_N_INSNS (2);
+	  return COSTS_N_INSNS (4);
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (2);
+	}
+      break;
+
+    case ROTATERT:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (2);
+	case E_DImode:
+	  if (CONST_INT_P (XEXP (x, 1))
+	      && INTVAL (XEXP (x, 1)) == 32)
+	    return COSTS_N_INSNS (2);
+	  return COSTS_N_INSNS (6);
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (5);
+	}
+      break;
 
     case MULT:
       if (arm_arch6m && arm_m_profile_small_mul)
@@ -9899,12 +10005,6 @@ thumb1_rtx_costs (rtx x, enum rtx_code code, enum rtx_code outer)
     case TRUNCATE:
       return 99;
 
-    case AND:
-    case XOR:
-    case IOR:
-      /* XXX guess.  */
-      return 8;
-
     case MEM:
       /* XXX another guess.  */
       /* Memory costs quite a lot for the first word, but subsequent words
@@ -9950,27 +10050,139 @@ thumb1_size_rtx_costs (rtx x, enum rtx_code code, enum rtx_code outer)
 
   switch (code)
     {
-    case ASHIFT:
-    case ASHIFTRT:
-    case LSHIFTRT:
-    case ROTATERT:
-      return (mode == SImode) ? COSTS_N_INSNS (1) : COSTS_N_INSNS (2);
-
     case PLUS:
     case MINUS:
-      /* Thumb-1 needs two instructions to fulfill shiftadd/shiftsub0/shiftsub1
-	 defined by RTL expansion, especially for the expansion of
-	 multiplication.  */
-      if ((GET_CODE (XEXP (x, 0)) == MULT
-	   && power_of_two_operand (XEXP (XEXP (x,0),1), SImode))
-	  || (GET_CODE (XEXP (x, 1)) == MULT
-	      && power_of_two_operand (XEXP (XEXP (x, 1), 1), SImode)))
-	return COSTS_N_INSNS (2);
-      /* Fall through.  */
     case COMPARE:
-    case NEG:
+    case AND:
+    case XOR:
+    case IOR:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  cost = COSTS_N_INSNS (1);
+	  if (GET_CODE (XEXP (x, 0)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 0), 1), mode))
+	    cost += COSTS_N_INSNS (1);
+	  if (GET_CODE (XEXP (x, 1)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 1), 1), mode))
+	    cost += COSTS_N_INSNS (1);
+	  return cost;
+	case E_DImode:
+	  cost = COSTS_N_INSNS (2);
+	  if (GET_CODE (XEXP (x, 0)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 0), 1), mode))
+	    cost += COSTS_N_INSNS (4);
+	  if (GET_CODE (XEXP (x, 1)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 1), 1), mode))
+	    cost += COSTS_N_INSNS (4);
+	  return cost;
+	case E_HImode:
+	case E_QImode:
+	  cost = COSTS_N_INSNS (3);
+	  if (GET_CODE (XEXP (x, 0)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 0), 1), mode))
+	    cost += COSTS_N_INSNS (3);
+	  if (GET_CODE (XEXP (x, 1)) == MULT
+	      && power_of_two_operand (XEXP (XEXP (x, 1), 1), mode))
+	    cost += COSTS_N_INSNS (3);
+	  return cost;
+	}
+      break;
+
     case NOT:
-      return COSTS_N_INSNS (1);
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	  return COSTS_N_INSNS (2);
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (3);
+	}
+      break;
+
+    case NEG:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (3);
+	}
+      break;
+
+    case ASHIFT:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	  if (CONST_INT_P (XEXP (x, 1))
+	      && IN_RANGE (INTVAL (XEXP (x, 1)), 32, 63))
+	    return COSTS_N_INSNS (2);
+	  return COSTS_N_INSNS (4);
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (3);
+	}
+      break;
+
+    case ASHIFTRT:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	  if (CONST_INT_P (XEXP (x, 1))
+	      && IN_RANGE (INTVAL (XEXP (x, 1)), 32, 63))
+	    return COSTS_N_INSNS (2);
+	  return COSTS_N_INSNS (4);
+	}
+      break;
+
+    case LSHIFTRT:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (1);
+	case E_DImode:
+	  if (CONST_INT_P (XEXP (x, 1))
+	      && IN_RANGE (INTVAL (XEXP (x, 1)), 32, 63))
+	    return COSTS_N_INSNS (2);
+	  return COSTS_N_INSNS (4);
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (2);
+	}
+      break;
+
+    case ROTATERT:
+      switch (mode)
+	{
+	default:
+	case E_SImode:
+	  return COSTS_N_INSNS (2);
+	case E_DImode:
+	  if (CONST_INT_P (XEXP (x, 1))
+	      && INTVAL (XEXP (x, 1)) == 32)
+	    return COSTS_N_INSNS (2);
+	  return COSTS_N_INSNS (6);
+	case E_HImode:
+	case E_QImode:
+	  return COSTS_N_INSNS (5);
+	}
+      break;
 
     case MULT:
       if (CONST_INT_P (XEXP (x, 1)))
@@ -10057,11 +10269,6 @@ thumb1_size_rtx_costs (rtx x, enum rtx_code code, enum rtx_code outer)
 
     case TRUNCATE:
       return 99;
-
-    case AND:
-    case XOR:
-    case IOR:
-      return COSTS_N_INSNS (1);
 
     case MEM:
       return (COSTS_N_INSNS (1)
@@ -10491,7 +10698,7 @@ arm_rtx_costs_internal (rtx x, enum rtx_code code, enum rtx_code outer_code,
 	*cost = LIBCALL_COST (2);
 
       /* Make the cost of sdiv more expensive so when both sdiv and udiv are
-	 possible udiv is prefered.  */
+	 possible udiv is preferred.  */
       *cost += (code == DIV ? COSTS_N_INSNS (1) : 0);
       return false;	/* All arguments must be in registers.  */
 
@@ -10516,7 +10723,7 @@ arm_rtx_costs_internal (rtx x, enum rtx_code code, enum rtx_code outer_code,
     /* Fall-through.  */
     case UMOD:
       /* Make the cost of sdiv more expensive so when both sdiv and udiv are
-	 possible udiv is prefered.  */
+	 possible udiv is preferred.  */
       *cost = LIBCALL_COST (2) + (code == MOD ? COSTS_N_INSNS (1) : 0);
       return false;	/* All arguments must be in registers.  */
 
@@ -12510,6 +12717,7 @@ arm_builtin_vectorization_cost (enum vect_cost_for_stmt type_of_cost,
         return current_tune->vec_costs->vec_stmt_cost;
 
       case vec_construct:
+      case vec_deconstruct:
 	elements = TYPE_VECTOR_SUBPARTS (vectype);
 	return elements / 2 + 1;
 
@@ -13394,7 +13602,7 @@ mve_bool_vec_to_const (rtx const_vec)
 }
 
 /* Return a non-NULL RTX iff VALS, which is a PARALLEL containing only
-   constants (for vec_init) or CONST_VECTOR, can be effeciently loaded
+   constants (for vec_init) or CONST_VECTOR, can be efficiently loaded
    into a register.
 
    If this is the case, and GENERATE is set, we also generate code to do
@@ -17024,7 +17232,7 @@ operands_ok_ldrd_strd (rtx rt, rtx rt2, rtx rn, HOST_WIDE_INT offset,
           || (t % 2 != 0)   /* First destination register is not even.  */
           || (t2 != t + 1)
           /* PC can be used as base register (for offset addressing only),
-             but it is depricated.  */
+             but it is deprecated.  */
           || (n == PC_REGNUM)))
     return false;
 
@@ -17377,234 +17585,6 @@ valid_operands_ldrd_strd (rtx *operands, bool load)
 }
 
 
-/* Print a symbolic form of X to the debug file, F.  */
-static void
-arm_print_value (FILE *f, rtx x)
-{
-  switch (GET_CODE (x))
-    {
-    case CONST_INT:
-      fprintf (f, HOST_WIDE_INT_PRINT_HEX, INTVAL (x));
-      return;
-
-    case CONST_DOUBLE:
-      {
-	char fpstr[20];
-	real_to_decimal (fpstr, CONST_DOUBLE_REAL_VALUE (x),
-			 sizeof (fpstr), 0, 1);
-	fputs (fpstr, f);
-      }
-      return;
-
-    case CONST_VECTOR:
-      {
-	int i;
-
-	fprintf (f, "<");
-	for (i = 0; i < CONST_VECTOR_NUNITS (x); i++)
-	  {
-	    fprintf (f, HOST_WIDE_INT_PRINT_HEX, INTVAL (CONST_VECTOR_ELT (x, i)));
-	    if (i < (CONST_VECTOR_NUNITS (x) - 1))
-	      fputc (',', f);
-	  }
-	fprintf (f, ">");
-      }
-      return;
-
-    case CONST_STRING:
-      fprintf (f, "\"%s\"", XSTR (x, 0));
-      return;
-
-    case SYMBOL_REF:
-      fprintf (f, "`%s'", XSTR (x, 0));
-      return;
-
-    case LABEL_REF:
-      fprintf (f, "L%d", INSN_UID (XEXP (x, 0)));
-      return;
-
-    case CONST:
-      arm_print_value (f, XEXP (x, 0));
-      return;
-
-    case PLUS:
-      arm_print_value (f, XEXP (x, 0));
-      fprintf (f, "+");
-      arm_print_value (f, XEXP (x, 1));
-      return;
-
-    case PC:
-      fprintf (f, "pc");
-      return;
-
-    default:
-      fprintf (f, "????");
-      return;
-    }
-}
-
-/* Routines for manipulation of the constant pool.  */
-
-/* Arm instructions cannot load a large constant directly into a
-   register; they have to come from a pc relative load.  The constant
-   must therefore be placed in the addressable range of the pc
-   relative load.  Depending on the precise pc relative load
-   instruction the range is somewhere between 256 bytes and 4k.  This
-   means that we often have to dump a constant inside a function, and
-   generate code to branch around it.
-
-   It is important to minimize this, since the branches will slow
-   things down and make the code larger.
-
-   Normally we can hide the table after an existing unconditional
-   branch so that there is no interruption of the flow, but in the
-   worst case the code looks like this:
-
-	ldr	rn, L1
-	...
-	b	L2
-	align
-	L1:	.long value
-	L2:
-	...
-
-	ldr	rn, L3
-	...
-	b	L4
-	align
-	L3:	.long value
-	L4:
-	...
-
-   We fix this by performing a scan after scheduling, which notices
-   which instructions need to have their operands fetched from the
-   constant table and builds the table.
-
-   The algorithm starts by building a table of all the constants that
-   need fixing up and all the natural barriers in the function (places
-   where a constant table can be dropped without breaking the flow).
-   For each fixup we note how far the pc-relative replacement will be
-   able to reach and the offset of the instruction into the function.
-
-   Having built the table we then group the fixes together to form
-   tables that are as large as possible (subject to addressing
-   constraints) and emit each table of constants after the last
-   barrier that is within range of all the instructions in the group.
-   If a group does not contain a barrier, then we forcibly create one
-   by inserting a jump instruction into the flow.  Once the table has
-   been inserted, the insns are then modified to reference the
-   relevant entry in the pool.
-
-   Possible enhancements to the algorithm (not implemented) are:
-
-   1) For some processors and object formats, there may be benefit in
-   aligning the pools to the start of cache lines; this alignment
-   would need to be taken into account when calculating addressability
-   of a pool.  */
-
-/* These typedefs are located at the start of this file, so that
-   they can be used in the prototypes there.  This comment is to
-   remind readers of that fact so that the following structures
-   can be understood more easily.
-
-     typedef struct minipool_node    Mnode;
-     typedef struct minipool_fixup   Mfix;  */
-
-struct minipool_node
-{
-  /* Doubly linked chain of entries.  */
-  Mnode * next;
-  Mnode * prev;
-  /* The maximum offset into the code that this entry can be placed.  While
-     pushing fixes for forward references, all entries are sorted in order
-     of increasing max_address.  */
-  HOST_WIDE_INT max_address;
-  /* Similarly for an entry inserted for a backwards ref.  */
-  HOST_WIDE_INT min_address;
-  /* The number of fixes referencing this entry.  This can become zero
-     if we "unpush" an entry.  In this case we ignore the entry when we
-     come to emit the code.  */
-  int refcount;
-  /* The offset from the start of the minipool.  */
-  HOST_WIDE_INT offset;
-  /* The value in table.  */
-  rtx value;
-  /* The mode of value.  */
-  machine_mode mode;
-  /* The size of the value.  */
-  int fix_size;
-};
-
-struct minipool_fixup
-{
-  Mfix *            next;
-  rtx_insn *        insn;
-  HOST_WIDE_INT     address;
-  rtx *             loc;
-  machine_mode mode;
-  int               fix_size;
-  rtx               value;
-  Mnode *           minipool;
-  HOST_WIDE_INT     forwards;
-  HOST_WIDE_INT     backwards;
-};
-
-/* Fixes less than a word need padding out to a word boundary.  */
-#define MINIPOOL_FIX_SIZE(mode) \
-  (GET_MODE_SIZE ((mode)) >= 4 ? GET_MODE_SIZE ((mode)) : 4)
-
-static Mnode *	minipool_vector_head;
-static Mnode *	minipool_vector_tail;
-static rtx_code_label	*minipool_vector_label;
-static int	minipool_pad;
-
-/* The linked list of all minipool fixes required for this function.  */
-Mfix * 		minipool_fix_head;
-Mfix * 		minipool_fix_tail;
-/* The fix entry for the current minipool, once it has been placed.  */
-Mfix *		minipool_barrier;
-
-#ifndef JUMP_TABLES_IN_TEXT_SECTION
-#define JUMP_TABLES_IN_TEXT_SECTION 0
-#endif
-
-static HOST_WIDE_INT
-get_jump_table_size (rtx_jump_table_data *insn)
-{
-  /* ADDR_VECs only take room if read-only data does into the text
-     section.  */
-  if (JUMP_TABLES_IN_TEXT_SECTION || readonly_data_section == text_section)
-    {
-      rtx body = PATTERN (insn);
-      int elt = GET_CODE (body) == ADDR_DIFF_VEC ? 1 : 0;
-      HOST_WIDE_INT size;
-      HOST_WIDE_INT modesize;
-
-      modesize = GET_MODE_SIZE (GET_MODE (body));
-      size = modesize * XVECLEN (body, elt);
-      switch (modesize)
-	{
-	case 1:
-	  /* Round up size  of TBB table to a halfword boundary.  */
-	  size = (size + 1) & ~HOST_WIDE_INT_1;
-	  break;
-	case 2:
-	  /* No padding necessary for TBH.  */
-	  break;
-	case 4:
-	  /* Add two bytes for alignment on Thumb.  */
-	  if (TARGET_THUMB)
-	    size += 2;
-	  break;
-	default:
-	  gcc_unreachable ();
-	}
-      return size;
-    }
-
-  return 0;
-}
-
 /* Emit insns to load the function address from FUNCDESC (an FDPIC
    function descriptor) into a register and the GOT address into the
    FDPIC register, returning an rtx for the register holding the
@@ -17627,702 +17607,6 @@ arm_load_function_descriptor (rtx funcdesc)
   emit_insn (gen_restore_pic_register_after_call (pic_reg, gotaddr));
 
   return fnaddr_reg;
-}
-
-/* Return the maximum amount of padding that will be inserted before
-   label LABEL.  */
-static HOST_WIDE_INT
-get_label_padding (rtx label)
-{
-  HOST_WIDE_INT align, min_insn_size;
-
-  align = 1 << label_to_alignment (label).levels[0].log;
-  min_insn_size = TARGET_THUMB ? 2 : 4;
-  return align > min_insn_size ? align - min_insn_size : 0;
-}
-
-/* Move a minipool fix MP from its current location to before MAX_MP.
-   If MAX_MP is NULL, then MP doesn't need moving, but the addressing
-   constraints may need updating.  */
-static Mnode *
-move_minipool_fix_forward_ref (Mnode *mp, Mnode *max_mp,
-			       HOST_WIDE_INT max_address)
-{
-  /* The code below assumes these are different.  */
-  gcc_assert (mp != max_mp);
-
-  if (max_mp == NULL)
-    {
-      if (max_address < mp->max_address)
-	mp->max_address = max_address;
-    }
-  else
-    {
-      if (max_address > max_mp->max_address - mp->fix_size)
-	mp->max_address = max_mp->max_address - mp->fix_size;
-      else
-	mp->max_address = max_address;
-
-      /* Unlink MP from its current position.  Since max_mp is non-null,
-       mp->prev must be non-null.  */
-      mp->prev->next = mp->next;
-      if (mp->next != NULL)
-	mp->next->prev = mp->prev;
-      else
-	minipool_vector_tail = mp->prev;
-
-      /* Re-insert it before MAX_MP.  */
-      mp->next = max_mp;
-      mp->prev = max_mp->prev;
-      max_mp->prev = mp;
-
-      if (mp->prev != NULL)
-	mp->prev->next = mp;
-      else
-	minipool_vector_head = mp;
-    }
-
-  /* Save the new entry.  */
-  max_mp = mp;
-
-  /* Scan over the preceding entries and adjust their addresses as
-     required.  */
-  while (mp->prev != NULL
-	 && mp->prev->max_address > mp->max_address - mp->prev->fix_size)
-    {
-      mp->prev->max_address = mp->max_address - mp->prev->fix_size;
-      mp = mp->prev;
-    }
-
-  return max_mp;
-}
-
-/* Add a constant to the minipool for a forward reference.  Returns the
-   node added or NULL if the constant will not fit in this pool.  */
-static Mnode *
-add_minipool_forward_ref (Mfix *fix)
-{
-  /* If set, max_mp is the first pool_entry that has a lower
-     constraint than the one we are trying to add.  */
-  Mnode *       max_mp = NULL;
-  HOST_WIDE_INT max_address = fix->address + fix->forwards - minipool_pad;
-  Mnode *       mp;
-
-  /* If the minipool starts before the end of FIX->INSN then this FIX
-     cannot be placed into the current pool.  Furthermore, adding the
-     new constant pool entry may cause the pool to start FIX_SIZE bytes
-     earlier.  */
-  if (minipool_vector_head &&
-      (fix->address + get_attr_length (fix->insn)
-       >= minipool_vector_head->max_address - fix->fix_size))
-    return NULL;
-
-  /* Scan the pool to see if a constant with the same value has
-     already been added.  While we are doing this, also note the
-     location where we must insert the constant if it doesn't already
-     exist.  */
-  for (mp = minipool_vector_head; mp != NULL; mp = mp->next)
-    {
-      if (GET_CODE (fix->value) == GET_CODE (mp->value)
-	  && fix->mode == mp->mode
-	  && (!LABEL_P (fix->value)
-	      || (CODE_LABEL_NUMBER (fix->value)
-		  == CODE_LABEL_NUMBER (mp->value)))
-	  && rtx_equal_p (fix->value, mp->value))
-	{
-	  /* More than one fix references this entry.  */
-	  mp->refcount++;
-	  return move_minipool_fix_forward_ref (mp, max_mp, max_address);
-	}
-
-      /* Note the insertion point if necessary.  */
-      if (max_mp == NULL
-	  && mp->max_address > max_address)
-	max_mp = mp;
-
-      /* If we are inserting an 8-bytes aligned quantity and
-	 we have not already found an insertion point, then
-	 make sure that all such 8-byte aligned quantities are
-	 placed at the start of the pool.  */
-      if (ARM_DOUBLEWORD_ALIGN
-	  && max_mp == NULL
-	  && fix->fix_size >= 8
-	  && mp->fix_size < 8)
-	{
-	  max_mp = mp;
-	  max_address = mp->max_address;
-	}
-    }
-
-  /* The value is not currently in the minipool, so we need to create
-     a new entry for it.  If MAX_MP is NULL, the entry will be put on
-     the end of the list since the placement is less constrained than
-     any existing entry.  Otherwise, we insert the new fix before
-     MAX_MP and, if necessary, adjust the constraints on the other
-     entries.  */
-  mp = XNEW (Mnode);
-  mp->fix_size = fix->fix_size;
-  mp->mode = fix->mode;
-  mp->value = fix->value;
-  mp->refcount = 1;
-  /* Not yet required for a backwards ref.  */
-  mp->min_address = -65536;
-
-  if (max_mp == NULL)
-    {
-      mp->max_address = max_address;
-      mp->next = NULL;
-      mp->prev = minipool_vector_tail;
-
-      if (mp->prev == NULL)
-	{
-	  minipool_vector_head = mp;
-	  minipool_vector_label = gen_label_rtx ();
-	}
-      else
-	mp->prev->next = mp;
-
-      minipool_vector_tail = mp;
-    }
-  else
-    {
-      if (max_address > max_mp->max_address - mp->fix_size)
-	mp->max_address = max_mp->max_address - mp->fix_size;
-      else
-	mp->max_address = max_address;
-
-      mp->next = max_mp;
-      mp->prev = max_mp->prev;
-      max_mp->prev = mp;
-      if (mp->prev != NULL)
-	mp->prev->next = mp;
-      else
-	minipool_vector_head = mp;
-    }
-
-  /* Save the new entry.  */
-  max_mp = mp;
-
-  /* Scan over the preceding entries and adjust their addresses as
-     required.  */
-  while (mp->prev != NULL
-	 && mp->prev->max_address > mp->max_address - mp->prev->fix_size)
-    {
-      mp->prev->max_address = mp->max_address - mp->prev->fix_size;
-      mp = mp->prev;
-    }
-
-  return max_mp;
-}
-
-static Mnode *
-move_minipool_fix_backward_ref (Mnode *mp, Mnode *min_mp,
-				HOST_WIDE_INT  min_address)
-{
-  HOST_WIDE_INT offset;
-
-  /* The code below assumes these are different.  */
-  gcc_assert (mp != min_mp);
-
-  if (min_mp == NULL)
-    {
-      if (min_address > mp->min_address)
-	mp->min_address = min_address;
-    }
-  else
-    {
-      /* We will adjust this below if it is too loose.  */
-      mp->min_address = min_address;
-
-      /* Unlink MP from its current position.  Since min_mp is non-null,
-	 mp->next must be non-null.  */
-      mp->next->prev = mp->prev;
-      if (mp->prev != NULL)
-	mp->prev->next = mp->next;
-      else
-	minipool_vector_head = mp->next;
-
-      /* Reinsert it after MIN_MP.  */
-      mp->prev = min_mp;
-      mp->next = min_mp->next;
-      min_mp->next = mp;
-      if (mp->next != NULL)
-	mp->next->prev = mp;
-      else
-	minipool_vector_tail = mp;
-    }
-
-  min_mp = mp;
-
-  offset = 0;
-  for (mp = minipool_vector_head; mp != NULL; mp = mp->next)
-    {
-      mp->offset = offset;
-      if (mp->refcount > 0)
-	offset += mp->fix_size;
-
-      if (mp->next && mp->next->min_address < mp->min_address + mp->fix_size)
-	mp->next->min_address = mp->min_address + mp->fix_size;
-    }
-
-  return min_mp;
-}
-
-/* Add a constant to the minipool for a backward reference.  Returns the
-   node added or NULL if the constant will not fit in this pool.
-
-   Note that the code for insertion for a backwards reference can be
-   somewhat confusing because the calculated offsets for each fix do
-   not take into account the size of the pool (which is still under
-   construction.  */
-static Mnode *
-add_minipool_backward_ref (Mfix *fix)
-{
-  /* If set, min_mp is the last pool_entry that has a lower constraint
-     than the one we are trying to add.  */
-  Mnode *min_mp = NULL;
-  /* This can be negative, since it is only a constraint.  */
-  HOST_WIDE_INT  min_address = fix->address - fix->backwards;
-  Mnode *mp;
-
-  /* If we can't reach the current pool from this insn, or if we can't
-     insert this entry at the end of the pool without pushing other
-     fixes out of range, then we don't try.  This ensures that we
-     can't fail later on.  */
-  if (min_address >= minipool_barrier->address
-      || (minipool_vector_tail->min_address + fix->fix_size
-	  >= minipool_barrier->address))
-    return NULL;
-
-  /* Scan the pool to see if a constant with the same value has
-     already been added.  While we are doing this, also note the
-     location where we must insert the constant if it doesn't already
-     exist.  */
-  for (mp = minipool_vector_tail; mp != NULL; mp = mp->prev)
-    {
-      if (GET_CODE (fix->value) == GET_CODE (mp->value)
-	  && fix->mode == mp->mode
-	  && (!LABEL_P (fix->value)
-	      || (CODE_LABEL_NUMBER (fix->value)
-		  == CODE_LABEL_NUMBER (mp->value)))
-	  && rtx_equal_p (fix->value, mp->value)
-	  /* Check that there is enough slack to move this entry to the
-	     end of the table (this is conservative).  */
-	  && (mp->max_address
-	      > (minipool_barrier->address
-		 + minipool_vector_tail->offset
-		 + minipool_vector_tail->fix_size)))
-	{
-	  mp->refcount++;
-	  return move_minipool_fix_backward_ref (mp, min_mp, min_address);
-	}
-
-      if (min_mp != NULL)
-	mp->min_address += fix->fix_size;
-      else
-	{
-	  /* Note the insertion point if necessary.  */
-	  if (mp->min_address < min_address)
-	    {
-	      /* For now, we do not allow the insertion of 8-byte alignment
-		 requiring nodes anywhere but at the start of the pool.  */
-	      if (ARM_DOUBLEWORD_ALIGN
-		  && fix->fix_size >= 8 && mp->fix_size < 8)
-		return NULL;
-	      else
-		min_mp = mp;
-	    }
-	  else if (mp->max_address
-		   < minipool_barrier->address + mp->offset + fix->fix_size)
-	    {
-	      /* Inserting before this entry would push the fix beyond
-		 its maximum address (which can happen if we have
-		 re-located a forwards fix); force the new fix to come
-		 after it.  */
-	      if (ARM_DOUBLEWORD_ALIGN
-		  && fix->fix_size >= 8 && mp->fix_size < 8)
-		return NULL;
-	      else
-		{
-		  min_mp = mp;
-		  min_address = mp->min_address + fix->fix_size;
-		}
-	    }
-	  /* Do not insert a non-8-byte aligned quantity before 8-byte
-	     aligned quantities.  */
-	  else if (ARM_DOUBLEWORD_ALIGN
-		   && fix->fix_size < 8
-		   && mp->fix_size >= 8)
-	    {
-	      min_mp = mp;
-	      min_address = mp->min_address + fix->fix_size;
-	    }
-	}
-    }
-
-  /* We need to create a new entry.  */
-  mp = XNEW (Mnode);
-  mp->fix_size = fix->fix_size;
-  mp->mode = fix->mode;
-  mp->value = fix->value;
-  mp->refcount = 1;
-  mp->max_address = minipool_barrier->address + 65536;
-
-  mp->min_address = min_address;
-
-  if (min_mp == NULL)
-    {
-      mp->prev = NULL;
-      mp->next = minipool_vector_head;
-
-      if (mp->next == NULL)
-	{
-	  minipool_vector_tail = mp;
-	  minipool_vector_label = gen_label_rtx ();
-	}
-      else
-	mp->next->prev = mp;
-
-      minipool_vector_head = mp;
-    }
-  else
-    {
-      mp->next = min_mp->next;
-      mp->prev = min_mp;
-      min_mp->next = mp;
-
-      if (mp->next != NULL)
-	mp->next->prev = mp;
-      else
-	minipool_vector_tail = mp;
-    }
-
-  /* Save the new entry.  */
-  min_mp = mp;
-
-  if (mp->prev)
-    mp = mp->prev;
-  else
-    mp->offset = 0;
-
-  /* Scan over the following entries and adjust their offsets.  */
-  while (mp->next != NULL)
-    {
-      if (mp->next->min_address < mp->min_address + mp->fix_size)
-	mp->next->min_address = mp->min_address + mp->fix_size;
-
-      if (mp->refcount)
-	mp->next->offset = mp->offset + mp->fix_size;
-      else
-	mp->next->offset = mp->offset;
-
-      mp = mp->next;
-    }
-
-  return min_mp;
-}
-
-static void
-assign_minipool_offsets (Mfix *barrier)
-{
-  HOST_WIDE_INT offset = 0;
-  Mnode *mp;
-
-  minipool_barrier = barrier;
-
-  for (mp = minipool_vector_head; mp != NULL; mp = mp->next)
-    {
-      mp->offset = offset;
-
-      if (mp->refcount > 0)
-	offset += mp->fix_size;
-    }
-}
-
-/* Output the literal table */
-static void
-dump_minipool (rtx_insn *scan)
-{
-  Mnode * mp;
-  Mnode * nmp;
-  int align64 = 0;
-
-  if (ARM_DOUBLEWORD_ALIGN)
-    for (mp = minipool_vector_head; mp != NULL; mp = mp->next)
-      if (mp->refcount > 0 && mp->fix_size >= 8)
-	{
-	  align64 = 1;
-	  break;
-	}
-
-  if (dump_file)
-    fprintf (dump_file,
-	     ";; Emitting minipool after insn %u; address %ld; align %d (bytes)\n",
-	     INSN_UID (scan), (unsigned long) minipool_barrier->address, align64 ? 8 : 4);
-
-  scan = emit_label_after (gen_label_rtx (), scan);
-  scan = emit_insn_after (align64 ? gen_align_8 () : gen_align_4 (), scan);
-  scan = emit_label_after (minipool_vector_label, scan);
-
-  for (mp = minipool_vector_head; mp != NULL; mp = nmp)
-    {
-      if (mp->refcount > 0)
-	{
-	  if (dump_file)
-	    {
-	      fprintf (dump_file,
-		       ";;  Offset %u, min %ld, max %ld ",
-		       (unsigned) mp->offset, (unsigned long) mp->min_address,
-		       (unsigned long) mp->max_address);
-	      arm_print_value (dump_file, mp->value);
-	      fputc ('\n', dump_file);
-	    }
-
-	  rtx val = copy_rtx (mp->value);
-
-	  switch (GET_MODE_SIZE (mp->mode))
-	    {
-#ifdef HAVE_consttable_1
-	    case 1:
-	      scan = emit_insn_after (gen_consttable_1 (val), scan);
-	      break;
-
-#endif
-#ifdef HAVE_consttable_2
-	    case 2:
-	      scan = emit_insn_after (gen_consttable_2 (val), scan);
-	      break;
-
-#endif
-#ifdef HAVE_consttable_4
-	    case 4:
-	      scan = emit_insn_after (gen_consttable_4 (val), scan);
-	      break;
-
-#endif
-#ifdef HAVE_consttable_8
-	    case 8:
-	      scan = emit_insn_after (gen_consttable_8 (val), scan);
-	      break;
-
-#endif
-#ifdef HAVE_consttable_16
-	    case 16:
-              scan = emit_insn_after (gen_consttable_16 (val), scan);
-              break;
-
-#endif
-	    default:
-	      gcc_unreachable ();
-	    }
-	}
-
-      nmp = mp->next;
-      free (mp);
-    }
-
-  minipool_vector_head = minipool_vector_tail = NULL;
-  scan = emit_insn_after (gen_consttable_end (), scan);
-  scan = emit_barrier_after (scan);
-}
-
-/* Return the cost of forcibly inserting a barrier after INSN.  */
-static int
-arm_barrier_cost (rtx_insn *insn)
-{
-  /* Basing the location of the pool on the loop depth is preferable,
-     but at the moment, the basic block information seems to be
-     corrupt by this stage of the compilation.  */
-  int base_cost = 50;
-  rtx_insn *next = next_nonnote_insn (insn);
-
-  if (next != NULL && LABEL_P (next))
-    base_cost -= 20;
-
-  switch (GET_CODE (insn))
-    {
-    case CODE_LABEL:
-      /* It will always be better to place the table before the label, rather
-	 than after it.  */
-      return 50;
-
-    case INSN:
-    case CALL_INSN:
-      return base_cost;
-
-    case JUMP_INSN:
-      return base_cost - 10;
-
-    default:
-      return base_cost + 10;
-    }
-}
-
-/* Find the best place in the insn stream in the range
-   (FIX->address,MAX_ADDRESS) to forcibly insert a minipool barrier.
-   Create the barrier by inserting a jump and add a new fix entry for
-   it.  */
-static Mfix *
-create_fix_barrier (Mfix *fix, HOST_WIDE_INT max_address)
-{
-  HOST_WIDE_INT count = 0;
-  rtx_barrier *barrier;
-  rtx_insn *from = fix->insn;
-  /* The instruction after which we will insert the jump.  */
-  rtx_insn *selected = NULL;
-  int selected_cost;
-  /* The address at which the jump instruction will be placed.  */
-  HOST_WIDE_INT selected_address;
-  Mfix * new_fix;
-  HOST_WIDE_INT max_count = max_address - fix->address;
-  rtx_code_label *label = gen_label_rtx ();
-
-  selected_cost = arm_barrier_cost (from);
-  selected_address = fix->address;
-
-  while (from && count < max_count)
-    {
-      rtx_jump_table_data *tmp;
-      int new_cost;
-
-      /* This code shouldn't have been called if there was a natural barrier
-	 within range.  */
-      gcc_assert (!BARRIER_P (from));
-
-      /* Count the length of this insn.  This must stay in sync with the
-	 code that pushes minipool fixes.  */
-      if (LABEL_P (from))
-	count += get_label_padding (from);
-      else
-	count += get_attr_length (from);
-
-      /* If there is a jump table, add its length.  */
-      if (tablejump_p (from, NULL, &tmp))
-	{
-	  count += get_jump_table_size (tmp);
-
-	  /* Jump tables aren't in a basic block, so base the cost on
-	     the dispatch insn.  If we select this location, we will
-	     still put the pool after the table.  */
-	  new_cost = arm_barrier_cost (from);
-
-	  if (count < max_count
-	      && (!selected || new_cost <= selected_cost))
-	    {
-	      selected = tmp;
-	      selected_cost = new_cost;
-	      selected_address = fix->address + count;
-	    }
-
-	  /* Continue after the dispatch table.  */
-	  from = NEXT_INSN (tmp);
-	  continue;
-	}
-
-      new_cost = arm_barrier_cost (from);
-
-      if (count < max_count
-	  && (!selected || new_cost <= selected_cost))
-	{
-	  selected = from;
-	  selected_cost = new_cost;
-	  selected_address = fix->address + count;
-	}
-
-      from = NEXT_INSN (from);
-    }
-
-  /* Make sure that we found a place to insert the jump.  */
-  gcc_assert (selected);
-
-  /* Create a new JUMP_INSN that branches around a barrier.  */
-  from = emit_jump_insn_after (gen_jump (label), selected);
-  JUMP_LABEL (from) = label;
-  barrier = emit_barrier_after (from);
-  emit_label_after (label, barrier);
-
-  /* Create a minipool barrier entry for the new barrier.  */
-  new_fix = (Mfix *) obstack_alloc (&minipool_obstack, sizeof (* new_fix));
-  new_fix->insn = barrier;
-  new_fix->address = selected_address;
-  new_fix->next = fix->next;
-  fix->next = new_fix;
-
-  return new_fix;
-}
-
-/* Record that there is a natural barrier in the insn stream at
-   ADDRESS.  */
-static void
-push_minipool_barrier (rtx_insn *insn, HOST_WIDE_INT address)
-{
-  Mfix * fix = (Mfix *) obstack_alloc (&minipool_obstack, sizeof (* fix));
-
-  fix->insn = insn;
-  fix->address = address;
-
-  fix->next = NULL;
-  if (minipool_fix_head != NULL)
-    minipool_fix_tail->next = fix;
-  else
-    minipool_fix_head = fix;
-
-  minipool_fix_tail = fix;
-}
-
-/* Record INSN, which will need fixing up to load a value from the
-   minipool.  ADDRESS is the offset of the insn since the start of the
-   function; LOC is a pointer to the part of the insn which requires
-   fixing; VALUE is the constant that must be loaded, which is of type
-   MODE.  */
-static void
-push_minipool_fix (rtx_insn *insn, HOST_WIDE_INT address, rtx *loc,
-		   machine_mode mode, rtx value)
-{
-  gcc_assert (!arm_disable_literal_pool);
-  Mfix * fix = (Mfix *) obstack_alloc (&minipool_obstack, sizeof (* fix));
-
-  fix->insn = insn;
-  fix->address = address;
-  fix->loc = loc;
-  fix->mode = mode;
-  fix->fix_size = MINIPOOL_FIX_SIZE (mode);
-  fix->value = value;
-  fix->forwards = get_attr_pool_range (insn);
-  fix->backwards = get_attr_neg_pool_range (insn);
-  fix->minipool = NULL;
-
-  /* If an insn doesn't have a range defined for it, then it isn't
-     expecting to be reworked by this code.  Better to stop now than
-     to generate duff assembly code.  */
-  gcc_assert (fix->forwards || fix->backwards);
-
-  /* If an entry requires 8-byte alignment then assume all constant pools
-     require 4 bytes of padding.  Trying to do this later on a per-pool
-     basis is awkward because existing pool entries have to be modified.  */
-  if (ARM_DOUBLEWORD_ALIGN && fix->fix_size >= 8)
-    minipool_pad = 4;
-
-  if (dump_file)
-    {
-      fprintf (dump_file,
-	       ";; %smode fixup for i%d; addr %lu, range (%ld,%ld): ",
-	       GET_MODE_NAME (mode),
-	       INSN_UID (insn), (unsigned long) address,
-	       -1 * (long)fix->backwards, (long)fix->forwards);
-      arm_print_value (dump_file, fix->value);
-      fprintf (dump_file, "\n");
-    }
-
-  /* Add it to the chain of fixes.  */
-  fix->next = NULL;
-
-  if (minipool_fix_head != NULL)
-    minipool_fix_tail->next = fix;
-  else
-    minipool_fix_head = fix;
-
-  minipool_fix_tail = fix;
 }
 
 /* Return maximum allowed cost of synthesizing a 64-bit constant VAL inline.
@@ -18431,72 +17715,6 @@ arm_const_double_by_immediates (rtx val)
     return false;
 
   return true;
-}
-
-/* Scan INSN and note any of its operands that need fixing.
-   If DO_PUSHES is false we do not actually push any of the fixups
-   needed.  */
-static void
-note_invalid_constants (rtx_insn *insn, HOST_WIDE_INT address, int do_pushes)
-{
-  int opno;
-
-  extract_constrain_insn (insn);
-
-  if (recog_data.n_alternatives == 0)
-    return;
-
-  /* Fill in recog_op_alt with information about the constraints of
-     this insn.  */
-  preprocess_constraints (insn);
-
-  const operand_alternative *op_alt = which_op_alt ();
-  for (opno = 0; opno < recog_data.n_operands; opno++)
-    {
-      /* Things we need to fix can only occur in inputs.  */
-      if (recog_data.operand_type[opno] != OP_IN)
-	continue;
-
-      /* If this alternative is a memory reference, then any mention
-	 of constants in this alternative is really to fool reload
-	 into allowing us to accept one there.  We need to fix them up
-	 now so that we output the right code.  */
-      if (op_alt[opno].memory_ok)
-	{
-	  rtx op = recog_data.operand[opno];
-
-	  if (CONSTANT_P (op))
-	    {
-	      if (do_pushes)
-		push_minipool_fix (insn, address, recog_data.operand_loc[opno],
-				   recog_data.operand_mode[opno], op);
-	    }
-	  else if (MEM_P (op)
-		   && GET_CODE (XEXP (op, 0)) == SYMBOL_REF
-		   && CONSTANT_POOL_ADDRESS_P (XEXP (op, 0)))
-	    {
-	      if (do_pushes)
-		{
-		  rtx cop = avoid_constant_pool_reference (op);
-
-		  /* Casting the address of something to a mode narrower
-		     than a word can cause avoid_constant_pool_reference()
-		     to return the pool reference itself.  That's no good to
-		     us here.  Lets just hope that we can use the
-		     constant pool value directly.  */
-		  if (op == cop)
-		    cop = get_pool_constant (XEXP (op, 0));
-
-		  push_minipool_fix (insn, address,
-				     recog_data.operand_loc[opno],
-				     recog_data.operand_mode[opno], cop);
-		}
-
-	    }
-	}
-    }
-
-  return;
 }
 
 /* This function computes the clear mask and PADDING_BITS_TO_CLEAR for structs
@@ -18609,7 +17827,7 @@ comp_not_to_clear_mask_str_un (tree arg_type, int * regno,
       int max_bit = -1;
       uint32_t mask;
       uint32_t padding_bits_to_clear_res[NUM_ARG_REGS]
-	= {-1, -1, -1, -1};
+	= {~0U, ~0U, ~0U, ~0U};
 
       /* To compute the padding bits in a union we only consider bits as
 	 padding bits if they are always either a padding bit or fall outside a
@@ -18874,7 +18092,8 @@ cmse_clear_registers (sbitmap to_clear_bitmap, uint32_t *padding_bits_to_clear,
     {
       rtvec vunspec_vec;
       int i, j, k, nb_regs;
-      rtx use_seq, par, reg, set, vunspec;
+      rtx_insn *use_seq;
+      rtx par, reg, set, vunspec;
       int to_clear_bitmap_size = SBITMAP_SIZE (to_clear_bitmap);
       auto_sbitmap core_regs_bitmap (to_clear_bitmap_size);
       auto_sbitmap to_clear_core_bitmap (to_clear_bitmap_size);
@@ -19155,8 +18374,8 @@ cmse_nonsecure_call_inline_register_clear (void)
 
 	  if (clear_callee_saved)
 	    {
-	      rtx push_insn =
-		emit_multi_reg_push (callee_saved_mask, callee_saved_mask);
+	      rtx_insn *push_insn
+		= emit_multi_reg_push (callee_saved_mask, callee_saved_mask);
 	      /* Disable frame debug info in push because it needs to be
 		 disabled for pop (see below).  */
 	      RTX_FRAME_RELATED_P (push_insn) = 0;
@@ -19586,17 +18805,10 @@ thumb2_reorg (void)
   CLEAR_REG_SET (&live);
 }
 
-/* Gcc puts the pool in the wrong place for ARM, since we can only
-   load addresses a limited distance around the pc.  We do some
-   special munging to move the constant pool values to the correct
-   point in the code.  */
+/* Perform some target-specific tweaks to the function.  */
 static void
 arm_reorg (void)
 {
-  rtx_insn *insn;
-  HOST_WIDE_INT address = 0;
-  Mfix * fix;
-
   if (use_cmse)
     cmse_nonsecure_call_inline_register_clear ();
 
@@ -19608,169 +18820,10 @@ arm_reorg (void)
   else if (TARGET_THUMB2)
     thumb2_reorg ();
 
-  /* Ensure all insns that must be split have been split at this point.
-     Otherwise, the pool placement code below may compute incorrect
-     insn lengths.  Note that when optimizing, all insns have already
-     been split at this point.  */
-  if (!optimize)
-    split_all_insns_noflow ();
-
-  /* Make sure we do not attempt to create a literal pool even though it should
-     no longer be necessary to create any.  */
-  if (arm_disable_literal_pool)
-    return ;
-
-  minipool_fix_head = minipool_fix_tail = NULL;
-
-  /* The first insn must always be a note, or the code below won't
-     scan it properly.  */
-  insn = get_insns ();
-  gcc_assert (NOTE_P (insn));
-  minipool_pad = 0;
-
-  /* Scan all the insns and record the operands that will need fixing.  */
-  for (insn = next_nonnote_insn (insn); insn; insn = next_nonnote_insn (insn))
-    {
-      if (BARRIER_P (insn))
-	push_minipool_barrier (insn, address);
-      else if (INSN_P (insn))
-	{
-	  rtx_jump_table_data *table;
-
-	  note_invalid_constants (insn, address, true);
-	  address += get_attr_length (insn);
-
-	  /* If the insn is a vector jump, add the size of the table
-	     and skip the table.  */
-	  if (tablejump_p (insn, NULL, &table))
-	    {
-	      address += get_jump_table_size (table);
-	      insn = table;
-	    }
-	}
-      else if (LABEL_P (insn))
-	/* Add the worst-case padding due to alignment.  We don't add
-	   the _current_ padding because the minipool insertions
-	   themselves might change it.  */
-	address += get_label_padding (insn);
-    }
-
-  fix = minipool_fix_head;
-
-  /* Now scan the fixups and perform the required changes.  */
-  while (fix)
-    {
-      Mfix * ftmp;
-      Mfix * fdel;
-      Mfix *  last_added_fix;
-      Mfix * last_barrier = NULL;
-      Mfix * this_fix;
-
-      /* Skip any further barriers before the next fix.  */
-      while (fix && BARRIER_P (fix->insn))
-	fix = fix->next;
-
-      /* No more fixes.  */
-      if (fix == NULL)
-	break;
-
-      last_added_fix = NULL;
-
-      for (ftmp = fix; ftmp; ftmp = ftmp->next)
-	{
-	  if (BARRIER_P (ftmp->insn))
-	    {
-	      if (ftmp->address >= minipool_vector_head->max_address)
-		break;
-
-	      last_barrier = ftmp;
-	    }
-	  else if ((ftmp->minipool = add_minipool_forward_ref (ftmp)) == NULL)
-	    break;
-
-	  last_added_fix = ftmp;  /* Keep track of the last fix added.  */
-	}
-
-      /* If we found a barrier, drop back to that; any fixes that we
-	 could have reached but come after the barrier will now go in
-	 the next mini-pool.  */
-      if (last_barrier != NULL)
-	{
-	  /* Reduce the refcount for those fixes that won't go into this
-	     pool after all.  */
-	  for (fdel = last_barrier->next;
-	       fdel && fdel != ftmp;
-	       fdel = fdel->next)
-	    {
-	      fdel->minipool->refcount--;
-	      fdel->minipool = NULL;
-	    }
-
-	  ftmp = last_barrier;
-	}
-      else
-        {
-	  /* ftmp is first fix that we can't fit into this pool and
-	     there no natural barriers that we could use.  Insert a
-	     new barrier in the code somewhere between the previous
-	     fix and this one, and arrange to jump around it.  */
-	  HOST_WIDE_INT max_address;
-
-	  /* The last item on the list of fixes must be a barrier, so
-	     we can never run off the end of the list of fixes without
-	     last_barrier being set.  */
-	  gcc_assert (ftmp);
-
-	  max_address = minipool_vector_head->max_address;
-	  /* Check that there isn't another fix that is in range that
-	     we couldn't fit into this pool because the pool was
-	     already too large: we need to put the pool before such an
-	     instruction.  The pool itself may come just after the
-	     fix because create_fix_barrier also allows space for a
-	     jump instruction.  */
-	  if (ftmp->address < max_address)
-	    max_address = ftmp->address + 1;
-
-	  last_barrier = create_fix_barrier (last_added_fix, max_address);
-	}
-
-      assign_minipool_offsets (last_barrier);
-
-      while (ftmp)
-	{
-	  if (!BARRIER_P (ftmp->insn)
-	      && ((ftmp->minipool = add_minipool_backward_ref (ftmp))
-		  == NULL))
-	    break;
-
-	  ftmp = ftmp->next;
-	}
-
-      /* Scan over the fixes we have identified for this pool, fixing them
-	 up and adding the constants to the pool itself.  */
-      for (this_fix = fix; this_fix && ftmp != this_fix;
-	   this_fix = this_fix->next)
-	if (!BARRIER_P (this_fix->insn))
-	  {
-	    rtx addr
-	      = plus_constant (Pmode,
-			       gen_rtx_LABEL_REF (VOIDmode,
-						  minipool_vector_label),
-			       this_fix->minipool->offset);
-	    *this_fix->loc = gen_rtx_MEM (this_fix->mode, addr);
-	  }
-
-      dump_minipool (last_barrier->insn);
-      fix = ftmp;
-    }
-
-  /* From now on we must synthesize any constants that we can't handle
-     directly.  This can happen if the RTL gets split during final
-     instruction generation.  */
-  cfun->machine->after_arm_reorg = 1;
-
-  /* Free the minipool memory.  */
-  obstack_free (&minipool_obstack, minipool_startobj);
+  /* Only create a literal pool when one is wanted.  This should be a no-op if
+     we've disabled them, but...  */
+  if (!arm_disable_literal_pool)
+    minipools::place_minipools ();
 }
 
 /* Routines to output assembly language.  */
@@ -19962,9 +19015,9 @@ vfp_emit_fstmd (int base_reg, int count)
       XVECEXP (dwarf, 0, i + 1) = tmp;
     }
 
-  par = emit_insn (par);
-  add_reg_note (par, REG_FRAME_RELATED_EXPR, dwarf);
-  RTX_FRAME_RELATED_P (par) = 1;
+  rtx_insn *insn = emit_insn (par);
+  add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
+  RTX_FRAME_RELATED_P (insn) = 1;
 
   return count * 8;
 }
@@ -19992,9 +19045,7 @@ detect_cmse_nonsecure_call (tree addr)
 void
 arm_emit_call_insn (rtx pat, rtx addr, bool sibcall)
 {
-  rtx insn;
-
-  insn = emit_call_insn (pat);
+  rtx_insn *insn = emit_call_insn (pat);
 
   /* The PIC register is live on entry to VxWorks PIC PLT entries.
      If the call might use such an entry, add a use of the PIC register
@@ -21957,7 +21008,7 @@ arm_output_function_epilogue (FILE *)
 	 of call_reg and call_value_reg type insns.  */
       for (regno = 0; regno < LR_REGNUM; regno++)
 	{
-	  rtx label = cfun->machine->call_via[regno];
+	  rtx_insn *label = cfun->machine->call_via[regno];
 
 	  if (label != NULL)
 	    {
@@ -22032,7 +21083,7 @@ thumb2_emit_strd_push (unsigned long saved_regs_mask)
      64-bit aligned).  */
   if ((num_regs & 1) != 0)
     {
-      rtx reg, mem, insn;
+      rtx reg, mem;
 
       reg = gen_rtx_REG (SImode, regno);
       if (num_regs == 1)
@@ -22047,7 +21098,7 @@ thumb2_emit_strd_push (unsigned long saved_regs_mask)
 
       tmp = gen_rtx_SET (mem, reg);
       RTX_FRAME_RELATED_P (tmp) = 1;
-      insn = emit_insn (tmp);
+      rtx_insn *insn = emit_insn (tmp);
       RTX_FRAME_RELATED_P (insn) = 1;
       add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
       tmp = gen_rtx_SET (gen_frame_mem (Pmode, stack_pointer_rtx), reg);
@@ -22075,7 +21126,6 @@ thumb2_emit_strd_push (unsigned long saved_regs_mask)
 
 	if (first)
 	  {
-	    rtx insn;
 
 	    first = false;
 	    mem1 = gen_frame_mem (Pmode, plus_constant (Pmode,
@@ -22096,7 +21146,7 @@ thumb2_emit_strd_push (unsigned long saved_regs_mask)
 	    XVECEXP (par, 0, 0) = tmp0;
 	    XVECEXP (par, 0, 1) = tmp1;
 	    XVECEXP (par, 0, 2) = tmp2;
-	    insn = emit_insn (par);
+	    rtx_insn *insn = emit_insn (par);
 	    RTX_FRAME_RELATED_P (insn) = 1;
 	    add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
 	  }
@@ -22157,7 +21207,7 @@ arm_emit_strd_push (unsigned long saved_regs_mask)
   int i, j, dwarf_index  = 0;
   int offset = 0;
   rtx dwarf = NULL_RTX;
-  rtx insn = NULL_RTX;
+  rtx_insn *insn = nullptr;
   rtx tmp, mem;
 
   /* TODO: A more efficient code can be emitted by changing the
@@ -22209,11 +21259,11 @@ arm_emit_strd_push (unsigned long saved_regs_mask)
 
             tmp = gen_rtx_SET (mem, gen_rtx_REG (DImode, j));
             RTX_FRAME_RELATED_P (tmp) = 1;
-            tmp = emit_insn (tmp);
+	    rtx_insn *tmp1 = emit_insn (tmp);
 
             /* Record the first store insn.  */
             if (dwarf_index == 1)
-              insn = tmp;
+	      insn = tmp1;
 
             /* Generate dwarf info.  */
             mem = gen_frame_mem (SImode,
@@ -22256,11 +21306,11 @@ arm_emit_strd_push (unsigned long saved_regs_mask)
 
             tmp = gen_rtx_SET (mem, gen_rtx_REG (SImode, j));
             RTX_FRAME_RELATED_P (tmp) = 1;
-            tmp = emit_insn (tmp);
+	    rtx_insn *tmp1 = emit_insn (tmp);
 
             /* Record the first store insn.  */
             if (dwarf_index == 1)
-              insn = tmp;
+	      insn = tmp1;
 
             /* Generate dwarf info.  */
             mem = gen_frame_mem (SImode,
@@ -22290,13 +21340,13 @@ arm_emit_strd_push (unsigned long saved_regs_mask)
    of DWARF2 frame unwind information.  DWARF_REGS_MASK is a subset of
    MASK for registers that should be annotated for DWARF2 frame unwind
    information.  */
-static rtx
+static rtx_insn *
 emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 {
   int num_regs = 0;
   int num_dwarf_regs = 0;
   int i, j;
-  rtx par;
+  rtx_insn *par;
   rtx dwarf;
   int dwarf_par_index;
   rtx tmp, reg;
@@ -22355,7 +21405,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 
      For more see PR43399.  */
 
-  par = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (num_regs));
+  rtx parallel = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (num_regs));
   dwarf = gen_rtx_SEQUENCE (VOIDmode, rtvec_alloc (num_dwarf_regs + 1));
   dwarf_par_index = 1;
 
@@ -22379,8 +21429,8 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 	     of dwarf code emitter and it doesn't consider reg-reg copies while
 	     updating the register list.  When PACBTI is enabled we manually
 	     updated the .save directive register list to use "ra_auth_code"
-	     (pseduo register 143) instead of IP register as shown in following
-	     pseduo code.
+	     (pseudo register 143) instead of IP register as shown in following
+	     pseudo code.
 	     Example:
 		pacbti  ip, lr, sp
 		.cfi_register 143, 12
@@ -22391,7 +21441,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 	  if (arm_current_function_pac_enabled_p () && i == IP_REGNUM)
 	    dwarf_reg = gen_rtx_REG (SImode, RA_AUTH_CODE);
 
-	  XVECEXP (par, 0, 0)
+	  XVECEXP (parallel, 0, 0)
 	    = gen_rtx_SET (gen_frame_mem
 			   (BLKmode,
 			    gen_rtx_PRE_MODIFY (Pmode,
@@ -22424,7 +21474,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 	  if (arm_current_function_pac_enabled_p () && i == IP_REGNUM)
 	    dwarf_reg = gen_rtx_REG (SImode, RA_AUTH_CODE);
 
-	  XVECEXP (par, 0, j) = gen_rtx_USE (VOIDmode, reg);
+	  XVECEXP (parallel, 0, j) = gen_rtx_USE (VOIDmode, reg);
 
 	  if (dwarf_regs_mask & (1 << i))
 	    {
@@ -22442,7 +21492,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 	}
     }
 
-  par = emit_insn (par);
+  par = emit_insn (parallel);
 
   tmp = gen_rtx_SET (stack_pointer_rtx,
 		     plus_constant (Pmode, stack_pointer_rtx, -4 * num_regs));
@@ -22458,7 +21508,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
    SIZE is the offset to be adjusted.
    DEST and SRC might be stack_pointer_rtx or hard_frame_pointer_rtx.  */
 static void
-arm_add_cfa_adjust_cfa_note (rtx insn, int size, rtx dest, rtx src)
+arm_add_cfa_adjust_cfa_note (rtx_insn *insn, int size, rtx dest, rtx src)
 {
   rtx dwarf;
 
@@ -22513,10 +21563,9 @@ arm_emit_multi_reg_pop (unsigned long saved_regs_mask)
       tmp = gen_frame_mem (SImode,
 			   gen_rtx_POST_INC (Pmode,
 					     stack_pointer_rtx));
-      tmp = emit_insn (gen_rtx_SET (reg, tmp));
-      REG_NOTES (tmp) = alloc_reg_note (REG_CFA_RESTORE, dwarf_reg,
-					dwarf);
-      arm_add_cfa_adjust_cfa_note (tmp, UNITS_PER_WORD,
+      rtx_insn *insn = emit_insn (gen_rtx_SET (reg, tmp));
+      add_reg_note (insn, REG_CFA_RESTORE, dwarf_reg);
+      arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD,
 				   stack_pointer_rtx, stack_pointer_rtx);
       return;
     }
@@ -22567,14 +21616,14 @@ arm_emit_multi_reg_pop (unsigned long saved_regs_mask)
       elt++;
     }
 
-  par = return_in_pc ? emit_jump_insn (par) : emit_insn (par);
-  REG_NOTES (par) = dwarf;
+  rtx_insn *insn = return_in_pc ? emit_jump_insn (par) : emit_insn (par);
+  REG_NOTES (insn) = dwarf;
 
   if (!return_in_pc && emit_update)
-    arm_add_cfa_adjust_cfa_note (par, UNITS_PER_WORD * num_regs,
+    arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD * num_regs,
 				 stack_pointer_rtx, stack_pointer_rtx);
   else if (!return_in_pc)
-    RTX_FRAME_RELATED_P (par) = 1;
+    RTX_FRAME_RELATED_P (insn) = 1;
 }
 
 /* Generate and emit an insn pattern that we will recognize as a pop_multi
@@ -22640,17 +21689,17 @@ arm_emit_vfp_multi_reg_pop (int first_reg, int num_regs, rtx base_reg)
       j++;
     }
 
-  par = emit_insn (par);
-  REG_NOTES (par) = dwarf;
+  rtx_insn *insn = emit_insn (par);
+  REG_NOTES (insn) = dwarf;
 
-  /* Make sure cfa doesn't leave with IP_REGNUM to allow unwinding fron FP.  */
+  /* Make sure cfa doesn't leave with IP_REGNUM to allow unwinding from FP.  */
   if (REGNO (base_reg) == IP_REGNUM)
     {
-      RTX_FRAME_RELATED_P (par) = 1;
-      add_reg_note (par, REG_CFA_DEF_CFA, hard_frame_pointer_rtx);
+      RTX_FRAME_RELATED_P (insn) = 1;
+      add_reg_note (insn, REG_CFA_DEF_CFA, hard_frame_pointer_rtx);
     }
   else
-    arm_add_cfa_adjust_cfa_note (par, 2 * UNITS_PER_WORD * num_regs,
+    arm_add_cfa_adjust_cfa_note (insn, 2 * UNITS_PER_WORD * num_regs,
 				 base_reg, base_reg);
 }
 
@@ -22723,9 +21772,9 @@ thumb2_emit_ldrd_pop (unsigned long saved_regs_mask)
             /* When saved-register index (i) is odd, RTXs for both the registers
                to be loaded are generated in above given LDRD pattern, and the
                pattern can be emitted now.  */
-            par = emit_insn (par);
-            REG_NOTES (par) = dwarf;
-	    RTX_FRAME_RELATED_P (par) = 1;
+	    rtx_insn *insn = emit_insn (par);
+	    REG_NOTES (insn) = dwarf;
+	    RTX_FRAME_RELATED_P (insn) = 1;
           }
 
         i++;
@@ -22741,10 +21790,10 @@ thumb2_emit_ldrd_pop (unsigned long saved_regs_mask)
   tmp = gen_rtx_SET (stack_pointer_rtx,
                      plus_constant (Pmode, stack_pointer_rtx, 4 * i));
   RTX_FRAME_RELATED_P (tmp) = 1;
-  tmp = emit_insn (tmp);
+  rtx_insn *insn = emit_insn (tmp);
   if (!return_in_pc)
     {
-      arm_add_cfa_adjust_cfa_note (tmp, UNITS_PER_WORD * i,
+      arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD * i,
 				   stack_pointer_rtx, stack_pointer_rtx);
     }
 
@@ -22779,9 +21828,9 @@ thumb2_emit_ldrd_pop (unsigned long saved_regs_mask)
         }
       else
         {
-          par = emit_insn (tmp);
-	  REG_NOTES (par) = dwarf;
-	  arm_add_cfa_adjust_cfa_note (par, UNITS_PER_WORD,
+	  rtx_insn *insn = emit_insn (tmp);
+	  REG_NOTES (insn) = dwarf;
+	  arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD,
 				       stack_pointer_rtx, stack_pointer_rtx);
         }
 
@@ -22798,7 +21847,7 @@ thumb2_emit_ldrd_pop (unsigned long saved_regs_mask)
 
 /* LDRD in ARM mode needs consecutive registers as operands.  This function
    emits LDRD whenever possible, otherwise it emits single-word loads. It uses
-   offset addressing and then generates one separate stack udpate. This provides
+   offset addressing and then generates one separate stack update. This provides
    more scheduling freedom, compared to writeback on every load.  However,
    if the function returns using load into PC directly
    (i.e., if PC is in SAVED_REGS_MASK), the stack needs to be updated
@@ -22813,7 +21862,6 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
   int j = 0;
   int offset = 0;
   rtx par = NULL_RTX;
-  rtx dwarf = NULL_RTX;
   rtx tmp, mem;
 
   /* Restore saved registers.  */
@@ -22838,19 +21886,13 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
               mem = gen_frame_mem (DImode, stack_pointer_rtx);
 
             tmp = gen_rtx_SET (gen_rtx_REG (DImode, j), mem);
-            tmp = emit_insn (tmp);
-	    RTX_FRAME_RELATED_P (tmp) = 1;
+	    rtx_insn *insn = emit_insn (tmp);
+	    RTX_FRAME_RELATED_P (insn) = 1;
 
             /* Generate dwarf info.  */
 
-            dwarf = alloc_reg_note (REG_CFA_RESTORE,
-                                    gen_rtx_REG (SImode, j),
-                                    NULL_RTX);
-            dwarf = alloc_reg_note (REG_CFA_RESTORE,
-                                    gen_rtx_REG (SImode, j + 1),
-                                    dwarf);
-
-            REG_NOTES (tmp) = dwarf;
+	    add_reg_note (insn, REG_CFA_RESTORE, gen_rtx_REG (SImode, j));
+	    add_reg_note (insn, REG_CFA_RESTORE, gen_rtx_REG (SImode, j + 1));
 
             offset += 8;
             j += 2;
@@ -22867,13 +21909,11 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
               mem = gen_frame_mem (SImode, stack_pointer_rtx);
 
             tmp = gen_rtx_SET (gen_rtx_REG (SImode, j), mem);
-            tmp = emit_insn (tmp);
-	    RTX_FRAME_RELATED_P (tmp) = 1;
+	    rtx_insn *insn = emit_insn (tmp);
+	    RTX_FRAME_RELATED_P (insn) = 1;
 
             /* Generate dwarf info.  */
-            REG_NOTES (tmp) = alloc_reg_note (REG_CFA_RESTORE,
-                                              gen_rtx_REG (SImode, j),
-                                              NULL_RTX);
+	    add_reg_note (insn, REG_CFA_RESTORE, gen_rtx_REG (SImode, j));
 
             offset += 4;
             j += 1;
@@ -22891,8 +21931,8 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
                          plus_constant (Pmode,
                                         stack_pointer_rtx,
                                         offset));
-      tmp = emit_insn (tmp);
-      arm_add_cfa_adjust_cfa_note (tmp, offset,
+      rtx_insn *insn = emit_insn (tmp);
+      arm_add_cfa_adjust_cfa_note (insn, offset,
 				   stack_pointer_rtx, stack_pointer_rtx);
       offset = 0;
     }
@@ -22908,14 +21948,11 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
                                                           stack_pointer_rtx)));
       RTX_FRAME_RELATED_P (tmp) = 1;
       XVECEXP (par, 0, 1) = tmp;
-      par = emit_jump_insn (par);
+      rtx_insn *insn = emit_jump_insn (par);
 
       /* Generate dwarf info.  */
-      dwarf = alloc_reg_note (REG_CFA_RESTORE,
-                              gen_rtx_REG (SImode, PC_REGNUM),
-                              NULL_RTX);
-      REG_NOTES (par) = dwarf;
-      arm_add_cfa_adjust_cfa_note (par, UNITS_PER_WORD,
+      add_reg_note (insn, REG_CFA_RESTORE, gen_rtx_REG (SImode, PC_REGNUM));
+      arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD,
 				   stack_pointer_rtx, stack_pointer_rtx);
     }
 }
@@ -22948,7 +21985,7 @@ thumb_force_lr_save (void)
    we do have an indirect tailcall happening in this
    particular case.  */
 static bool
-is_indirect_tailcall_p (rtx call)
+is_indirect_tailcall_p (rtx_insn *call)
 {
   rtx pat = PATTERN (call);
 
@@ -23331,7 +22368,8 @@ static void
 thumb_set_frame_pointer (arm_stack_offsets *offsets)
 {
   HOST_WIDE_INT amount;
-  rtx insn, dwarf;
+  rtx_insn *insn;
+  rtx dwarf;
 
   amount = offsets->outgoing_args - offsets->locals_base;
   if (amount < 1024)
@@ -23414,7 +22452,7 @@ get_scratch_register_on_entry (struct scratch_reg *sr, unsigned int regno1,
   if (sr->saved)
     {
       rtx addr = gen_rtx_PRE_DEC (Pmode, stack_pointer_rtx);
-      rtx insn = emit_set_insn (gen_frame_mem (SImode, addr), sr->reg);
+      rtx_insn *insn = emit_set_insn (gen_frame_mem (SImode, addr), sr->reg);
       rtx x = gen_rtx_SET (stack_pointer_rtx,
 		           plus_constant (Pmode, stack_pointer_rtx, -4));
       RTX_FRAME_RELATED_P (insn) = 1;
@@ -23430,7 +22468,7 @@ release_scratch_register_on_entry (struct scratch_reg *sr)
   if (sr->saved)
     {
       rtx addr = gen_rtx_POST_INC (Pmode, stack_pointer_rtx);
-      rtx insn = emit_set_insn (sr->reg, gen_frame_mem (SImode, addr));
+      rtx_insn *insn = emit_set_insn (sr->reg, gen_frame_mem (SImode, addr));
       rtx x = gen_rtx_SET (stack_pointer_rtx,
 			   plus_constant (Pmode, stack_pointer_rtx, 4));
       RTX_FRAME_RELATED_P (insn) = 1;
@@ -23604,7 +22642,7 @@ void
 arm_expand_prologue (void)
 {
   rtx amount;
-  rtx insn;
+  rtx_insn *insn;
   rtx ip_rtx;
   unsigned long live_regs_mask;
   unsigned long func_type;
@@ -23948,15 +22986,15 @@ arm_expand_prologue (void)
       /* Create the new frame pointer.  */
       if (TARGET_APCS_FRAME)
 	{
-	  insn = GEN_INT (-(4 + args_to_push + fp_offset));
-	  insn = emit_insn (gen_addsi3 (hard_frame_pointer_rtx, ip_rtx, insn));
+	  rtx x = GEN_INT (-(4 + args_to_push + fp_offset));
+	  insn = emit_insn (gen_addsi3 (hard_frame_pointer_rtx, ip_rtx, x));
 	  RTX_FRAME_RELATED_P (insn) = 1;
 	}
       else
 	{
-	  insn = GEN_INT (saved_regs - (4 + fp_offset));
+	  rtx x = GEN_INT (saved_regs - (4 + fp_offset));
 	  insn = emit_insn (gen_addsi3 (hard_frame_pointer_rtx,
-					stack_pointer_rtx, insn));
+					stack_pointer_rtx, x));
 	  RTX_FRAME_RELATED_P (insn) = 1;
 	}
     }
@@ -23996,14 +23034,15 @@ arm_expand_prologue (void)
   /* Recover the static chain register.  */
   if (clobber_ip)
     {
+      rtx x;
       if (!arm_r3_live_at_start_p () || saved_pretend_args)
-	insn = gen_rtx_REG (SImode, 3);
+	x = gen_rtx_REG (SImode, 3);
       else
 	{
-	  insn = plus_constant (Pmode, hard_frame_pointer_rtx, 4);
-	  insn = gen_frame_mem (SImode, insn);
+	  x = plus_constant (Pmode, hard_frame_pointer_rtx, 4);
+	  x = gen_frame_mem (SImode, x);
 	}
-      emit_set_insn (ip_rtx, insn);
+      emit_set_insn (ip_rtx, x);
       emit_insn (gen_force_register_use (ip_rtx));
     }
 
@@ -24102,7 +23141,7 @@ arm_print_condition (FILE *stream)
 
 
 /* Globally reserved letters: acln
-   Puncutation letters currently used: @_-|?().!#
+   Punctuation letters currently used: @_-|?().!#
    Lower case letters currently used: bcdefhimpqtvwxyz
    Upper case letters currently used: ABCDEFGHIJKLMOPQRSTUV
    Letters previously used, but now deprecated/obsolete: sNWXYZ.
@@ -25317,7 +24356,7 @@ get_arm_condition_code (rtx comparison)
 }
 
 /* Implement TARGET_FIXED_CONDITION_CODE_REGS.  We only have condition
-   code registers when not targetting Thumb1.  The VFP condition register
+   code registers when not targeting Thumb1.  The VFP condition register
    only exists when generating hard-float code.  */
 static bool
 arm_fixed_condition_code_regs (unsigned int *p1, unsigned int *p2)
@@ -25505,19 +24544,19 @@ arm_final_prescan_insn (rtx_insn *insn)
       /* Flag which part of the IF_THEN_ELSE is the LABEL_REF.  */
       int then_not_else = TRUE;
       rtx_insn *this_insn = start_insn;
-      rtx label = 0;
+      rtx_insn *label = 0;
 
       /* Register the insn jumped to.  */
       if (reverse)
         {
 	  if (!seeking_return)
-	    label = XEXP (SET_SRC (body), 0);
+	    label = label_ref_label (SET_SRC (body));
         }
       else if (GET_CODE (XEXP (SET_SRC (body), 1)) == LABEL_REF)
-	label = XEXP (XEXP (SET_SRC (body), 1), 0);
+	label = label_ref_label (XEXP (SET_SRC (body), 1));
       else if (GET_CODE (XEXP (SET_SRC (body), 2)) == LABEL_REF)
 	{
-	  label = XEXP (XEXP (SET_SRC (body), 2), 0);
+	  label = label_ref_label (XEXP (SET_SRC (body), 2));
 	  then_not_else = FALSE;
 	}
       else if (ANY_RETURN_P (XEXP (SET_SRC (body), 1)))
@@ -25615,7 +24654,8 @@ arm_final_prescan_insn (rtx_insn *insn)
 		  && GET_CODE (SET_DEST (scanbody)) == PC)
 		{
 		  if (GET_CODE (SET_SRC (scanbody)) == LABEL_REF
-		      && XEXP (SET_SRC (scanbody), 0) == label && !reverse)
+		      && label_ref_label (SET_SRC (scanbody)) == label
+		      && !reverse)
 		    {
 		      arm_ccfsm_state = 2;
 		      succeed = TRUE;
@@ -26278,7 +25318,7 @@ thumb_pop (FILE *f, unsigned long mask)
       if (TARGET_INTERWORK || TARGET_BACKTRACE || crtl->calls_eh_return
 	  || IS_CMSE_ENTRY (arm_current_func_type ()))
 	{
-	  /* The PC is never poped directly, instead
+	  /* The PC is never popped directly, instead
 	     it is popped into r3 and then BX is used.  */
 	  fprintf (f, "}\n");
 
@@ -26612,7 +25652,8 @@ thumb1_final_prescan_insn (rtx_insn *insn)
     asm_fprintf (asm_out_file, "%@ 0x%04x\n",
 		 INSN_ADDRESSES (INSN_UID (insn)));
   /* Don't overwrite the previous setter when we get to a cbranch.  */
-  if (INSN_CODE (insn) != CODE_FOR_cbranchsi4_insn)
+  if (INSN_CODE (insn) != CODE_FOR_cbranchsi4_insn
+      && INSN_CODE (insn) != CODE_FOR_thumb1_cbz)
     {
       enum attr_conds conds;
 
@@ -26644,7 +25685,7 @@ thumb1_final_prescan_insn (rtx_insn *insn)
 	    }
 	}
       else if (conds != CONDS_NOCOND)
-	cfun->machine->thumb1_cc_insn = NULL_RTX;
+	cfun->machine->thumb1_cc_insn = nullptr;
     }
 
     /* Check if unexpected far jump is used.  */
@@ -28080,12 +27121,12 @@ arm_expand_epilogue (bool really_return)
                   }
                 else
                   {
-                    insn = emit_insn (gen_movsi (gen_rtx_REG (SImode, i),
-                                                 addr));
-                    REG_NOTES (insn) = alloc_reg_note (REG_CFA_RESTORE,
-                                                       gen_rtx_REG (SImode, i),
-                                                       NULL_RTX);
-		    arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD,
+		    rtx_insn *move
+		      = emit_insn (gen_movsi (gen_rtx_REG (SImode, i),
+					      addr));
+		    add_reg_note (move, REG_CFA_RESTORE,
+				  gen_rtx_REG (SImode, i));
+		    arm_add_cfa_adjust_cfa_note (move, UNITS_PER_WORD,
 						 stack_pointer_rtx,
 						 stack_pointer_rtx);
                   }
@@ -28370,7 +27411,7 @@ const char *
 thumb_call_via_reg (rtx reg)
 {
   int regno = REGNO (reg);
-  rtx *labelp;
+  rtx_code_label **labelp;
 
   gcc_assert (regno < LR_REGNUM);
 
@@ -28392,7 +27433,8 @@ thumb_call_via_reg (rtx reg)
       labelp = cfun->machine->call_via + regno;
     }
 
-  output_asm_insn ("bl\t%a0", labelp);
+  rtx temp = *labelp;
+  output_asm_insn ("bl\t%a0", &temp);
   return "";
 }
 
@@ -28614,7 +27656,7 @@ arm_print_asm_arch_directives (FILE *stream, cl_target_option *targ_options)
 
   if (strcmp (build_target.arch_name, "armv7ve") == 0)
     {
-      /* Keep backward compatability for assemblers which don't support
+      /* Keep backward compatibility for assemblers which don't support
 	 armv7ve.  Fortunately, none of the following extensions are reset
 	 by a .fpu directive.  */
       asm_fprintf (stream, "\t.arch armv7-a\n");
@@ -28793,7 +27835,7 @@ arm_file_end (void)
 
   for (regno = 0; regno < LR_REGNUM; regno++)
     {
-      rtx label = thumb_call_via_label[regno];
+      rtx_code_label *label = thumb_call_via_label[regno];
 
       if (label != 0)
 	{
@@ -29242,7 +28284,7 @@ arm32_output_mi_thunk (FILE *file, tree, HOST_WIDE_INT delta,
 
   /* Add DELTA to THIS_RTX.  */
   if (delta != 0)
-    arm_split_constant (PLUS, Pmode, NULL_RTX,
+    arm_split_constant (PLUS, Pmode, nullptr,
 			delta, this_rtx, this_rtx, false);
 
   /* Add *(*THIS_RTX + VCALL_OFFSET) to THIS_RTX.  */
@@ -29251,7 +28293,7 @@ arm32_output_mi_thunk (FILE *file, tree, HOST_WIDE_INT delta,
       /* Load *THIS_RTX.  */
       emit_move_insn (temp, gen_rtx_MEM (Pmode, this_rtx));
       /* Compute *THIS_RTX + VCALL_OFFSET.  */
-      arm_split_constant (PLUS, Pmode, NULL_RTX, vcall_offset, temp, temp,
+      arm_split_constant (PLUS, Pmode, nullptr, vcall_offset, temp, temp,
 			  false);
       /* Compute *(*THIS_RTX + VCALL_OFFSET).  */
       emit_move_insn (temp, gen_rtx_MEM (Pmode, temp));
@@ -29852,7 +28894,7 @@ arm_debugger_regno (unsigned int regno)
 }
 
 /* Dwarf models VFPv3 registers as 32 64-bit registers.
-   GCC models tham as 64 32-bit registers, so we need to describe this to
+   GCC models them as 64 32-bit registers, so we need to describe this to
    the DWARF generation code.  Other registers can use the default.  */
 static rtx
 arm_dwarf_register_span (rtx rtl)
@@ -31143,9 +30185,7 @@ arm_expand_compare_and_swap (rtx operands[])
   /* Normally the succ memory model must be stronger than fail, but in the
      unlikely event of fail being ACQUIRE and succ being RELEASE we need to
      promote succ to ACQ_REL so that we don't lose the acquire semantics.  */
-
-  if (TARGET_HAVE_LDACQ
-      && is_mm_acquire (memmodel_from_int (INTVAL (mod_f)))
+  if (is_mm_acquire (memmodel_from_int (INTVAL (mod_f)))
       && is_mm_release (memmodel_from_int (INTVAL (mod_s))))
     mod_s = GEN_INT (MEMMODEL_ACQ_REL);
 
@@ -33221,7 +32261,7 @@ aarch_bti_j_insn_p (rtx_insn *insn)
 
 /* Check if X (or any sub-rtx of X) is a PACIASP/PACIBSP instruction.  */
 bool
-aarch_pac_insn_p (rtx x)
+aarch_pac_insn_p (rtx_insn *x)
 {
   if (!x || !INSN_P (x))
     return false;
@@ -34428,7 +33468,7 @@ arm_target_bb_ok_for_lob (basic_block bb)
 	  && single_succ_edge (bb)->dest == single_pred_edge (bb)->src);
 }
 
-/* Utility fuction: Given a VCTP or a VCTP_M insn, return the number of MVE
+/* Utility function: Given a VCTP or a VCTP_M insn, return the number of MVE
    lanes based on the machine mode being used.  */
 
 static int
@@ -34614,7 +33654,7 @@ arm_mve_load_store_insn_p (rtx_insn* insn,
    are used.
 
    If INSN is a MVE operation across lanes that is not predicated by
-   VCTP_VPR_GENERATED it can not be validated by the use of its ouputs.
+   VCTP_VPR_GENERATED it can not be validated by the use of its outputs.
 
    Any other INSN is safe to implicit predicate if we don't use its outputs
    outside the loop.  The instructions that use this INSN's outputs will be
@@ -34836,9 +33876,9 @@ arm_mve_check_reg_origin_is_num_elems (loop *loop, rtx reg, rtx vctp_step,
   if (DF_REG_DEF_COUNT (REGNO (reg)) > 2)
     return false;
 
-  /* Look for a single defition of REG going into the loop.  The DEF_CHAIN will
-     have at least two values, as this is a loop induction variable that is
-     defined outside the loop.  */
+  /* Look for a single definition of REG going into the loop.  The DEF_CHAIN
+     will have at least two values, as this is a loop induction variable that
+     is defined outside the loop.  */
   for (df_ref def = DF_REG_DEF_CHAIN (REGNO (reg));
        def;
        def = DF_REF_NEXT_REG (def))
@@ -35130,7 +34170,7 @@ arm_mve_dlstp_check_dec_counter (loop *loop, rtx_insn* vctp_insn,
     }
   /* If the decrements are the same, then the situation is simple: either they
      are also the same reg, which is safe, or they are different registers, in
-     which case makse sure that there is a only simple SET from one to the
+     which case make sure that there is a only simple SET from one to the
      other inside the loop.*/
   else if (decrementnum == arm_mve_get_vctp_lanes (vctp_insn))
     {
@@ -35319,7 +34359,7 @@ arm_mve_loop_valid_for_dlstp (loop *loop)
 
 /* Predict whether the given loop in gimple will be transformed in the RTL
    doloop_optimize pass.  It could be argued that turning large enough loops
-   into low-overhead loops would not show a signficant performance boost.
+   into low-overhead loops would not show a significant performance boost.
    However, in the case of tail predication we would still avoid using VPT/VPST
    instructions inside the loop, and in either case using low-overhead loops
    would not be detrimental, so we decided to not consider size, avoiding the
@@ -35390,7 +34430,7 @@ arm_loop_unroll_adjust (unsigned nunroll, struct loop *loop)
     return nunroll;
 }
 
-/* Function to hadle emitting a VPT-unpredicated version of a VPT-predicated
+/* Function to handle emitting a VPT-unpredicated version of a VPT-predicated
    insn to a sequence.  */
 
 static bool

@@ -161,11 +161,11 @@ pru_compute_frame_layout (void)
      addendum	  - Second addendum operand (a constant).
      kind	  - Note kind.  REG_NOTE_MAX if no note must be added.
  */
-static rtx
+static rtx_insn *
 pru_add3_frame_adjust (rtx op0, rtx op1, int addendum,
 		       const enum reg_note kind)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   rtx op0_adjust = gen_rtx_SET (op0, plus_constant (Pmode, op1, addendum));
 
@@ -200,7 +200,7 @@ pru_add3_frame_adjust (rtx op0, rtx op1, int addendum,
 }
 
 /* Add a const_int to the stack pointer register.  */
-static rtx
+static rtx_insn *
 pru_add_to_sp (int addendum, const enum reg_note kind)
 {
   return pru_add3_frame_adjust (stack_pointer_rtx, stack_pointer_rtx,
@@ -2560,10 +2560,11 @@ pru_insert_loop_label_last (rtx_insn *last_insn, rtx_code_label *label,
 	if (code == CALL_INSN || code == CODE_LABEL || code == BARRIER)
 	  break;
 
-	if (INSN_P (prev))
+	if (NONDEBUG_INSN_P (prev))
 	  {
-	    if (GET_CODE (PATTERN (prev)) == SEQUENCE)
-	      prev = as_a <rtx_insn *> (XVECEXP (PATTERN (prev), 0, 1));
+	    if (rtx_sequence *seq
+		= dyn_cast <rtx_sequence *> (PATTERN (prev)))
+	      prev = seq->insn (1);
 
 	    /* Other insns that should not be in the last two opcodes.  */
 	    icode = recog_memoized (prev);
@@ -2914,8 +2915,8 @@ pru_reorg_loop (rtx_insn *insns)
 	/* Replace the others with branches to REPEAT_LABEL.  */
 	for (end = loop->end->next; end != 0; end = end->next)
 	  {
-	    rtx_insn *newjmp;
-	    newjmp = emit_jump_insn_before (gen_jump (repeat_label), end->insn);
+	    rtx_jump_insn *newjmp
+	      = emit_jump_insn_before (gen_jump (repeat_label), end->insn);
 	    JUMP_LABEL (newjmp) = repeat_label;
 	    delete_insn (end->insn);
 	    delete_insn (end->fallthrough);

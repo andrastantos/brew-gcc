@@ -21,23 +21,27 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_ANALYZER_REGION_H
 #define GCC_ANALYZER_REGION_H
 
-#include "analyzer/symbol.h"
-#include "text-art/widget.h"
+#include "analyzer/symbolic-nodes.h"
+#include "analyzer/store.h"
+#include "analyzer/concrete-ranges.h"
+#include "analyzer/symbolic-memory-offsets.h"
+#include "analyzer/symbolic-memory-ranges.h"
+#include "analyzer/symbolic-pointers.h"
 
 namespace ana {
 
 /* An enum for identifying different spaces within memory.  */
 
-enum memory_space
+enum class memory_space
 {
-  MEMSPACE_UNKNOWN,
-  MEMSPACE_CODE,
-  MEMSPACE_GLOBALS,
-  MEMSPACE_STACK,
-  MEMSPACE_HEAP,
-  MEMSPACE_READONLY_DATA,
-  MEMSPACE_THREAD_LOCAL,
-  MEMSPACE_PRIVATE
+  unknown,
+  code,
+  globals,
+  stack,
+  heap,
+  read_only_data,
+  thread_local_,
+  private_
 };
 
 /* An enum for discriminating between the different concrete subclasses
@@ -122,9 +126,12 @@ enum region_kind
    within the frames and the "globals" region.  Regions for structs
    can have subregions for fields.  */
 
-class region : public symbol
+class region : public symbolic::node
 {
 public:
+  using symbolic_bit_count = symbolic::scalar<integer_with_unit<units::bit>>;
+  using symbolic_byte_count = symbolic::scalar<integer_with_unit<units::byte>>;
+
   virtual ~region ();
 
   virtual enum region_kind get_kind () const = 0;
@@ -153,6 +160,14 @@ public:
   virtual const var_arg_region *
   dyn_cast_var_arg_region () const { return nullptr; }
 
+  void print_dump_widget_label (pretty_printer *pp) const final override;
+  virtual void print_region_for_dump_widget_label (pretty_printer *pp) const = 0;
+  void
+  add_dump_widget_children (text_art::tree_widget &,
+			    symbolic::node_dump_state &nds) const final override;
+  const char *
+  get_any_dump_color () const override { return "region"; }
+
   virtual void accept (visitor *v) const;
 
   const region *get_parent_region () const { return m_parent; }
@@ -160,7 +175,7 @@ public:
   bool base_region_p () const;
   bool descendent_of_p (const region *elder) const;
   const frame_region *maybe_get_frame_region () const;
-  enum memory_space get_memory_space () const;
+  memory_space get_memory_space () const;
   bool can_have_initial_svalue_p () const;
   const svalue *get_initial_value_at_main (region_model_manager *mgr) const;
 
@@ -176,73 +191,51 @@ public:
   void dump (bool simple) const;
   void dump () const;
 
-  std::unique_ptr<json::value> to_json () const;
-
-
   bool maybe_print_for_user (pretty_printer *pp,
 			     const region_model &model) const;
-
-  std::unique_ptr<text_art::tree_widget>
-  make_dump_widget (const text_art::dump_widget_info &dwi,
-		    const char *prefix = nullptr) const;
 
   bool non_null_p () const;
 
   static int cmp_ptr_ptr (const void *, const void *);
 
-  bool involves_p (const svalue *sval) const;
+  symbolic::memory_offset
+  get_memory_offset (region_model_manager &mgr) const;
 
-  region_offset get_offset (region_model_manager *mgr) const;
-  region_offset get_next_offset (region_model_manager *mgr) const;
+  symbolic::memory_range
+  get_memory_range (region_model_manager &mgr) const;
 
-  /* Attempt to get the size of this region as a concrete number of bytes.
-     If successful, return true and write the size to *OUT.
-     Otherwise return false.
+  symbolic::pointer
+  get_pointer (region_model_manager &mgr) const;
+
+  /* Attempt to get the size of this region in bytes.
      This is the accessed size, not necessarily the size that's valid to
      access.  */
-  virtual bool get_byte_size (byte_size_t *out) const;
+  virtual const symbolic_byte_size *
+  maybe_get_byte_size (symbolic::scalar_manager<concrete_byte_size> &byte_mgr) const;
 
-  /* Attempt to get the size of this region as a concrete number of bits.
-     If successful, return true and write the size to *OUT.
-     Otherwise return false.
+  /* Attempt to get the size of this region in bits.
      This is the accessed size, not necessarily the size that's valid to
      access.  */
-  virtual bool get_bit_size (bit_size_t *out) const;
+  virtual const symbolic_bit_size *
+  maybe_get_bit_size (symbolic::scalar_manager<concrete_bit_size> &bit_mgr) const;
 
   /* Get a symbolic value describing the size of this region in bytes
      (which could be "unknown").
      This is the accessed size, not necessarily the size that's valid to
      access.  */
-  virtual const svalue *get_byte_size_sval (region_model_manager *mgr) const;
+  const svalue *get_byte_size_sval (region_model_manager *mgr) const;
 
-  /* Get a symbolic value describing the size of this region in bits
-     (which could be "unknown").
-     This is the accessed size, not necessarily the size that's valid to
-     access.  */
-  virtual const svalue *get_bit_size_sval (region_model_manager *mgr) const;
+  virtual const symbolic_bit_count *
+  maybe_get_bit_offset_relative_to_parent (region_model_manager &mgr) const;
 
-  /* Attempt to get the offset in bits of this region relative to its parent.
-     If successful, return true and write to *OUT.
-     Otherwise return false.  */
-  virtual bool get_relative_concrete_offset (bit_offset_t *out) const;
-
-  /* Get the offset in bytes of this region relative to its parent as a svalue.
-     Might return an unknown_svalue.  */
-  virtual const svalue *
-  get_relative_symbolic_offset (region_model_manager *mgr) const;
-
-  /* Attempt to get the position and size of this region expressed as a
-     concrete range of bytes relative to its parent.
-     If successful, return true and write to *OUT.
-     Otherwise return false.  */
-  bool get_relative_concrete_byte_range (byte_range *out) const;
+  virtual const symbolic_byte_count *
+  maybe_get_byte_offset_relative_to_parent (region_model_manager &mgr) const;
 
   void
-  get_subregions_for_binding (region_model_manager *mgr,
-			      bit_offset_t start_bit_offset,
-			      bit_size_t size_in_bits,
-			      tree type,
-			      auto_vec <const region *> *out) const;
+  get_subregions_for_bit_range (region_model_manager *mgr,
+				concrete_bit_range relative_bit_range,
+				tree type,
+				auto_vec <const region *> *out) const;
 
   bool symbolic_for_unknown_ptr_p () const;
 
@@ -255,25 +248,36 @@ public:
 
   bool is_named_decl_p (const char *decl_name) const;
 
-  bool empty_p () const;
+  bool empty_p (region_model_manager &mgr) const;
 
  protected:
-  region (complexity c, symbol::id_t id, const region *parent, tree type);
+  region (complexity c, symbolic::node::id_t id, const region *parent, tree type);
+
+  std::unique_ptr<json::object>
+  make_json_obj (const char *type_name) const;
 
  private:
-  region_offset calc_offset (region_model_manager *mgr) const;
+  symbolic::memory_offset
+  calc_memory_offset (symbolic::node_manager &mgr) const;
+
+  symbolic::memory_range
+  calc_memory_range (symbolic::node_manager &mgr) const;
+
+  symbolic::pointer
+  calc_pointer (symbolic::node_manager &mgr) const;
+
   const svalue *calc_initial_value_at_main (region_model_manager *mgr) const;
 
   virtual void
-  print_dump_widget_label (pretty_printer *pp) const = 0;
-  virtual void
-  add_dump_widget_children (text_art::tree_widget &,
-			    const text_art::dump_widget_info &dwi) const;
+  add_dump_widget_children_for_region (text_art::tree_widget &,
+				       symbolic::node_dump_state &nds) const;
 
   const region *m_parent;
   tree m_type;
 
-  mutable region_offset *m_cached_offset;
+  mutable std::unique_ptr<symbolic::memory_offset> m_cached_memory_offset;
+  mutable std::unique_ptr<symbolic::memory_range> m_cached_memory_range;
+  mutable std::unique_ptr<symbolic::pointer> m_cached_pointer;
 
   /* For regions within a global decl, a cache of the svalue for the initial
      value of this region when the program starts.  */
@@ -298,7 +302,7 @@ namespace ana {
 class space_region : public region
 {
 protected:
-  space_region (symbol::id_t id, const region *parent)
+  space_region (symbolic::node::id_t id, const region *parent)
   : region (complexity (parent), id, parent, NULL_TREE)
   {}
 };
@@ -353,7 +357,7 @@ public:
     const function *m_fun;
   };
 
-  frame_region (symbol::id_t id, const region *parent,
+  frame_region (symbolic::node::id_t id, const region *parent,
 		const frame_region *calling_frame,
 		const function &fun, int index)
   : space_region (id, parent), m_calling_frame (calling_frame),
@@ -370,7 +374,15 @@ public:
   void accept (visitor *v) const final override;
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
 
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   /* Accessors.  */
   const frame_region *get_calling_frame () const { return m_calling_frame; }
@@ -424,14 +436,22 @@ namespace ana {
 class globals_region : public space_region
 {
  public:
-  globals_region (symbol::id_t id, const region *parent)
+  globals_region (symbolic::node::id_t id, const region *parent)
   : space_region (id, parent)
   {}
 
   /* region vfuncs.  */
   enum region_kind get_kind () const final override { return RK_GLOBALS; }
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 };
 
 } // namespace ana
@@ -452,13 +472,21 @@ namespace ana {
 class code_region : public space_region
 {
 public:
-  code_region (symbol::id_t id, const region *parent)
+  code_region (symbolic::node::id_t id, const region *parent)
   : space_region (id, parent)
   {}
 
   /* region vfuncs.  */
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
+
   enum region_kind get_kind () const final override { return RK_CODE; }
 };
 
@@ -480,7 +508,7 @@ namespace ana {
 class function_region : public region
 {
 public:
-  function_region (symbol::id_t id, const code_region *parent, tree fndecl)
+  function_region (symbolic::node::id_t id, const code_region *parent, tree fndecl)
   : region (complexity (parent), id, parent, TREE_TYPE (fndecl)),
     m_fndecl (fndecl)
   {
@@ -489,7 +517,14 @@ public:
 
   /* region vfuncs.  */
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   enum region_kind get_kind () const final override { return RK_FUNCTION; }
   const function_region *
@@ -519,7 +554,7 @@ namespace ana {
 class label_region : public region
 {
 public:
-  label_region (symbol::id_t id, const function_region *parent, tree label)
+  label_region (symbolic::node::id_t id, const function_region *parent, tree label)
   : region (complexity (parent), id, parent, NULL_TREE), m_label (label)
   {
     gcc_assert (TREE_CODE (label) == LABEL_DECL);
@@ -527,7 +562,14 @@ public:
 
   /* region vfuncs.  */
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+  std::unique_ptr<json::object>
+  to_json () const final override;
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
+
   enum region_kind get_kind () const final override { return RK_LABEL; }
 
   tree get_label () const { return m_label; }
@@ -554,12 +596,18 @@ namespace ana {
 class stack_region : public space_region
 {
 public:
-  stack_region (symbol::id_t id, region *parent)
+  stack_region (symbolic::node::id_t id, region *parent)
   : space_region (id, parent)
   {}
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+  std::unique_ptr<json::object>
+  to_json () const final override;
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   enum region_kind get_kind () const final override { return RK_STACK; }
 };
@@ -582,13 +630,20 @@ namespace ana {
 class heap_region : public space_region
 {
 public:
-  heap_region (symbol::id_t id, region *parent)
+  heap_region (symbolic::node::id_t id, region *parent)
   : space_region (id, parent)
   {}
 
   enum region_kind get_kind () const final override { return RK_HEAP; }
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  std::unique_ptr<json::object>
+  to_json () const final override;
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
+
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
 };
 
 } // namespace ana
@@ -609,13 +664,19 @@ namespace ana {
 class thread_local_region : public space_region
 {
 public:
-  thread_local_region (symbol::id_t id, region *parent)
+  thread_local_region (symbolic::node::id_t id, region *parent)
   : space_region (id, parent)
   {}
 
   enum region_kind get_kind () const final override { return RK_THREAD_LOCAL; }
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+  std::unique_ptr<json::object>
+  to_json () const final override;
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 };
 
 } // namespace ana
@@ -637,11 +698,20 @@ namespace ana {
 class root_region : public region
 {
 public:
-  root_region (symbol::id_t id);
+  root_region (symbolic::node::id_t id);
 
   enum region_kind get_kind () const final override { return RK_ROOT; }
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 };
 
 } // namespace ana
@@ -696,7 +766,7 @@ public:
     const svalue *m_sval_ptr;
   };
 
-  symbolic_region (symbol::id_t id, region *parent, const svalue *sval_ptr);
+  symbolic_region (symbolic::node::id_t id, region *parent, const svalue *sval_ptr);
 
   const symbolic_region *
   dyn_cast_symbolic_region () const final override { return this; }
@@ -704,11 +774,19 @@ public:
   enum region_kind get_kind () const final override { return RK_SYMBOLIC; }
   void accept (visitor *v) const final override;
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
   void
-  add_dump_widget_children (text_art::tree_widget &w,
-			    const text_art::dump_widget_info &dwi)
+  add_dump_widget_children_for_region (text_art::tree_widget &w,
+			    symbolic::node_dump_state &nds)
     const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   const svalue *get_pointer () const { return m_sval_ptr; }
 
@@ -741,10 +819,10 @@ namespace ana {
 class decl_region : public region
 {
 public:
-  decl_region (symbol::id_t id, const region *parent, tree decl)
+  decl_region (symbolic::node::id_t id, const region *parent, tree decl)
   : region (complexity (parent), id, parent, TREE_TYPE (decl)), m_decl (decl),
     m_tracked (calc_tracked_p (decl)),
-    m_ctor_svalue (nullptr)
+    m_ctor_bit_contents (nullptr)
   {}
 
   enum region_kind get_kind () const final override { return RK_DECL; }
@@ -754,21 +832,40 @@ public:
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
 
   void
-  print_dump_widget_label (pretty_printer *pp) const final override;
+  print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   bool tracked_p () const final override { return m_tracked; }
 
   tree get_decl () const { return m_decl; }
   int get_stack_depth () const;
 
+  const symbolic::bit_contents *
+  maybe_get_bit_contents_for_initializer (region_model_manager *mgr) const;
+
   const svalue *maybe_get_constant_value (region_model_manager *mgr) const;
   const svalue *get_svalue_for_constructor (tree ctor,
 					    region_model_manager *mgr) const;
+  const symbolic::bit_contents &
+  get_bit_contents_for_constructor (tree ctor,
+				    region_model_manager *mgr) const;
   const svalue *get_svalue_for_initializer (region_model_manager *mgr) const;
 
+  const symbolic::bit_vector *
+  maybe_get_bit_vector_for_initializer (symbolic::node_manager &node_mgr) const;
+
 private:
-  const svalue *calc_svalue_for_constructor (tree ctor,
-					     region_model_manager *mgr) const;
+  const symbolic::bit_contents &
+  calc_bit_contents_for_constructor (tree ctor,
+				     region_model_manager *mgr) const;
   static bool calc_tracked_p (tree decl);
 
   tree m_decl;
@@ -779,8 +876,8 @@ private:
      This can be debugged using -fdump-analyzer-untracked.  */
   bool m_tracked;
 
-  /* Cached result of get_svalue_for_constructor.  */
-  mutable const svalue *m_ctor_svalue;
+  /* Cached result of get_bit_contents_for_constructor.  */
+  mutable const symbolic::bit_contents *m_ctor_bit_contents;
 };
 
 } // namespace ana
@@ -832,7 +929,7 @@ public:
     tree m_field;
   };
 
-  field_region (symbol::id_t id, const region *parent, tree field)
+  field_region (symbolic::node::id_t id, const region *parent, tree field)
   : region (complexity (parent), id, parent, TREE_TYPE (field)),
     m_field (field)
   {}
@@ -840,15 +937,28 @@ public:
   enum region_kind get_kind () const final override { return RK_FIELD; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   const field_region *
   dyn_cast_field_region () const final override { return this; }
 
   tree get_field () const { return m_field; }
 
-  bool get_relative_concrete_offset (bit_offset_t *out) const final override;
-  const svalue *get_relative_symbolic_offset (region_model_manager *mgr)
+  const symbolic_bit_count *
+  maybe_get_bit_offset_relative_to_parent (region_model_manager &mgr)
+    const final override;
+
+  const symbolic_byte_count *
+  maybe_get_byte_offset_relative_to_parent (region_model_manager &mgr)
     const final override;
 
 private:
@@ -916,7 +1026,7 @@ public:
     const svalue *m_index;
   };
 
-  element_region (symbol::id_t id, const region *parent, tree element_type,
+  element_region (symbolic::node::id_t id, const region *parent, tree element_type,
 		  const svalue *index)
   : region (complexity::from_pair (parent, index), id, parent, element_type),
     m_index (index)
@@ -931,17 +1041,29 @@ public:
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
 
   void
-  print_dump_widget_label (pretty_printer *pp) const final override;
+  print_region_for_dump_widget_label (pretty_printer *pp) const final override;
   void
-  add_dump_widget_children (text_art::tree_widget &,
-			    const text_art::dump_widget_info &dwi)
+  add_dump_widget_children_for_region (text_art::tree_widget &,
+			    symbolic::node_dump_state &nds)
     const final override;
+
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   const svalue *get_index () const { return m_index; }
 
-  virtual bool
-  get_relative_concrete_offset (bit_offset_t *out) const final override;
-  const svalue *get_relative_symbolic_offset (region_model_manager *mgr)
+  const symbolic_bit_count *
+  maybe_get_bit_offset_relative_to_parent (region_model_manager &mgr)
+    const final override;
+
+  const symbolic_byte_count *
+  maybe_get_byte_offset_relative_to_parent (region_model_manager &mgr)
     const final override;
 
 private:
@@ -1010,7 +1132,7 @@ public:
     const svalue *m_byte_offset;
   };
 
-  offset_region (symbol::id_t id, const region *parent, tree type,
+  offset_region (symbolic::node::id_t id, const region *parent, tree type,
 		 const svalue *byte_offset)
   : region (complexity::from_pair (parent, byte_offset), id, parent, type),
     m_byte_offset (byte_offset)
@@ -1025,17 +1147,30 @@ public:
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
 
   void
-  print_dump_widget_label (pretty_printer *pp) const final override;
+  print_region_for_dump_widget_label (pretty_printer *pp) const final override;
   void
-  add_dump_widget_children (text_art::tree_widget &,
-			    const text_art::dump_widget_info &dwi)
+  add_dump_widget_children_for_region (text_art::tree_widget &,
+			    symbolic::node_dump_state &nds)
     const final override;
+
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   const svalue *get_byte_offset () const { return m_byte_offset; }
   const svalue *get_bit_offset (region_model_manager *mgr) const;
 
-  bool get_relative_concrete_offset (bit_offset_t *out) const final override;
-  const svalue *get_relative_symbolic_offset (region_model_manager *mgr)
+  const symbolic_bit_count *
+  maybe_get_bit_offset_relative_to_parent (region_model_manager &mgr)
+    const final override;
+
+  const symbolic_byte_count *
+  maybe_get_byte_offset_relative_to_parent (region_model_manager &mgr)
     const final override;
 
 private:
@@ -1107,7 +1242,7 @@ public:
     const svalue *m_end_offset;
   };
 
-  sized_region (symbol::id_t id, const region *parent, tree type,
+  sized_region (symbolic::node::id_t id, const region *parent, tree type,
 		const svalue *byte_size_sval)
   : region (complexity::from_pair (parent, byte_size_sval),
 	    id, parent, type),
@@ -1122,23 +1257,25 @@ public:
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
   void
-  print_dump_widget_label (pretty_printer *pp) const final override;
+  print_region_for_dump_widget_label (pretty_printer *pp) const final override;
   void
-  add_dump_widget_children (text_art::tree_widget &,
-			    const text_art::dump_widget_info &dwi)
+  add_dump_widget_children_for_region (text_art::tree_widget &,
+				       symbolic::node_dump_state &nds)
     const final override;
 
-  bool get_byte_size (byte_size_t *out) const final override;
-  bool get_bit_size (bit_size_t *out) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
 
-  const svalue *
-  get_byte_size_sval (region_model_manager *) const final override
-  {
-    return m_byte_size_sval;
-  }
+  std::unique_ptr<json::object>
+  to_json () const final override;
 
-  const svalue *
-  get_bit_size_sval (region_model_manager *) const final override;
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
+
+  const symbolic_byte_size *
+  maybe_get_byte_size (symbolic::scalar_manager<concrete_byte_size> &byte_mgr) const final override;
+  const symbolic_bit_size *
+  maybe_get_bit_size (symbolic::scalar_manager<concrete_bit_size> &bit_mgr) const final override;
 
 private:
   const svalue *m_byte_size_sval;
@@ -1205,7 +1342,7 @@ public:
     tree m_type;
   };
 
-  cast_region (symbol::id_t id, const region *parent, tree type)
+  cast_region (symbolic::node::id_t id, const region *parent, tree type)
   : region (complexity (parent), id,
 	    parent, type)
   {}
@@ -1215,9 +1352,24 @@ public:
   dyn_cast_cast_region () const final override { return this; }
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
   void
-  print_dump_widget_label (pretty_printer *pp) const final override;
+  print_region_for_dump_widget_label (pretty_printer *pp) const final override;
 
-  bool get_relative_concrete_offset (bit_offset_t *out) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
+
+  const symbolic_bit_count *
+  maybe_get_bit_offset_relative_to_parent (region_model_manager &mgr)
+    const final override;
+
+  const symbolic_byte_count *
+  maybe_get_byte_offset_relative_to_parent (region_model_manager &mgr)
+    const final override;
 };
 
 } // namespace ana
@@ -1244,7 +1396,7 @@ namespace ana {
 class heap_allocated_region : public region
 {
 public:
-  heap_allocated_region (symbol::id_t id, const region *parent)
+  heap_allocated_region (symbolic::node::id_t id, const region *parent)
   : region (complexity (parent), id, parent, NULL_TREE)
   {}
 
@@ -1252,7 +1404,16 @@ public:
   get_kind () const final override { return RK_HEAP_ALLOCATED; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 };
 
 /* An untyped region dynamically allocated on the stack via "alloca".  */
@@ -1260,14 +1421,23 @@ public:
 class alloca_region : public region
 {
 public:
-  alloca_region (symbol::id_t id, const frame_region *parent)
+  alloca_region (symbolic::node::id_t id, const frame_region *parent)
   : region (complexity (parent), id, parent, NULL_TREE)
   {}
 
   enum region_kind get_kind () const final override { return RK_ALLOCA; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 };
 
 /* A region for a STRING_CST.  */
@@ -1275,7 +1445,7 @@ public:
 class string_region : public region
 {
 public:
-  string_region (symbol::id_t id, const region *parent, tree string_cst)
+  string_region (symbolic::node::id_t id, const region *parent, tree string_cst)
   : region (complexity (parent), id, parent, TREE_TYPE (string_cst)),
     m_string_cst (string_cst)
   {}
@@ -1286,7 +1456,15 @@ public:
   enum region_kind get_kind () const final override { return RK_STRING; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   /* We assume string literals are immutable, so we don't track them in
      the store.  */
@@ -1318,7 +1496,7 @@ public:
   /* A support class for uniquifying instances of bit_range_region.  */
   struct key_t
   {
-    key_t (const region *parent, tree type, const bit_range &bits)
+    key_t (const region *parent, tree type, const concrete_bit_range &bits)
     : m_parent (parent), m_type (type), m_bits (bits)
     {
       gcc_assert (parent);
@@ -1329,8 +1507,8 @@ public:
       inchash::hash hstate;
       hstate.add_ptr (m_parent);
       hstate.add_ptr (m_type);
-      hstate.add_wide_int (m_bits.m_start_bit_offset);
-      hstate.add_wide_int (m_bits.m_size_in_bits);
+      hstate.add_int (m_bits.get_start_offset ().as_long ());
+      hstate.add_int (m_bits.get_size ().as_long ());
       return hstate.end ();
     }
 
@@ -1351,11 +1529,11 @@ public:
 
     const region *m_parent;
     tree m_type;
-    bit_range m_bits;
+    concrete_bit_range m_bits;
   };
 
-  bit_range_region (symbol::id_t id, const region *parent, tree type,
-		    const bit_range &bits)
+  bit_range_region (symbolic::node::id_t id, const region *parent, tree type,
+		    const concrete_bit_range &bits)
   : region (complexity (parent), id, parent, type),
     m_bits (bits)
   {}
@@ -1366,20 +1544,36 @@ public:
   enum region_kind get_kind () const final override { return RK_BIT_RANGE; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
 
-  const bit_range &get_bits () const { return m_bits; }
+  std::unique_ptr<json::object>
+  to_json () const final override;
 
-  bool get_byte_size (byte_size_t *out) const final override;
-  bool get_bit_size (bit_size_t *out) const final override;
-  const svalue *get_byte_size_sval (region_model_manager *mgr) const final override;
-  const svalue *get_bit_size_sval (region_model_manager *mgr) const final override;
-  bool get_relative_concrete_offset (bit_offset_t *out) const final override;
-  const svalue *get_relative_symbolic_offset (region_model_manager *mgr)
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
+
+  const concrete_bit_range &get_bits () const { return m_bits; }
+
+  const symbolic_byte_size *
+  maybe_get_byte_size (symbolic::scalar_manager<concrete_byte_size> &byte_mgr)
+    const final override;
+
+  const symbolic_bit_size *
+  maybe_get_bit_size (symbolic::scalar_manager<concrete_bit_size> &bit_mgr)
+    const final override;
+
+  const symbolic_bit_count *
+  maybe_get_bit_offset_relative_to_parent (region_model_manager &mgr)
+    const final override;
+
+  const symbolic_byte_count *
+  maybe_get_byte_offset_relative_to_parent (region_model_manager &mgr)
     const final override;
 
 private:
-  bit_range m_bits;
+  concrete_bit_range m_bits;
 };
 
 } // namespace ana
@@ -1443,7 +1637,7 @@ public:
     unsigned m_idx;
   };
 
-  var_arg_region (symbol::id_t id, const frame_region *parent,
+  var_arg_region (symbolic::node::id_t id, const frame_region *parent,
 		  unsigned idx)
   : region (complexity (parent), id, parent, NULL_TREE),
     m_idx (idx)
@@ -1455,7 +1649,15 @@ public:
   enum region_kind get_kind () const final override { return RK_VAR_ARG; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
   const frame_region *get_frame_region () const;
   unsigned get_index () const { return m_idx; }
@@ -1487,14 +1689,22 @@ namespace ana {
 class errno_region : public region
 {
 public:
-  errno_region (symbol::id_t id, const thread_local_region *parent)
+  errno_region (symbolic::node::id_t id, const thread_local_region *parent)
   : region (complexity (parent), id, parent, integer_type_node)
   {}
 
   enum region_kind get_kind () const final override { return RK_ERRNO; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 };
 
 } // namespace ana
@@ -1528,7 +1738,15 @@ public:
   enum region_kind get_kind () const final override { return RK_PRIVATE; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 
 private:
   const char *m_desc;
@@ -1551,14 +1769,22 @@ namespace ana {
 class unknown_region : public region
 {
 public:
-  unknown_region (symbol::id_t id, const region *parent, tree type)
+  unknown_region (symbolic::node::id_t id, const region *parent, tree type)
   : region (complexity (parent), id, parent, type)
   {}
 
   enum region_kind get_kind () const final override { return RK_UNKNOWN; }
 
   void dump_to_pp (pretty_printer *pp, bool simple) const final override;
-  void print_dump_widget_label (pretty_printer *pp) const final override;
+  void print_region_for_dump_widget_label (pretty_printer *pp) const final override;
+  void
+  accept_node_visitor (symbolic::node_visitor &v) const final override;
+
+  std::unique_ptr<json::object>
+  to_json () const final override;
+
+  std::unique_ptr<diagnostics::markup::node>
+  make_markup_node (symbolic::markup_context &markup_ctxt) const final override;
 };
 
 } // namespace ana

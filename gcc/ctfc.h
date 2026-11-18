@@ -181,9 +181,9 @@ struct GTY ((for_user)) ctf_dtdef
   uint32_t linkage;           /* Used in function types.  0=local, 1=global.  */
 
   /* Whether this type was added from a global function.  */
-  BOOL_BITFIELD from_global_func : 1;
+  bool from_global_func : 1;
   /* Enum signedness.  */
-  BOOL_BITFIELD dtd_enum_unsigned : 1;
+  bool dtd_enum_unsigned : 1;
   /* Lots of spare bits.  */
 
   union GTY ((desc ("ctf_dtu_d_union_selector (&%1)")))
@@ -314,7 +314,7 @@ typedef struct GTY (()) ctf_container
 
   /* CTF string table.  */
   ctf_strtable_t ctfc_strtable;
-  /* Auxilliary string table.  At this time, used for keeping func arg names
+  /* Auxiliary string table.  At this time, used for keeping func arg names
      for BTF.  */
   ctf_strtable_t ctfc_aux_strtable;
 
@@ -369,7 +369,7 @@ typedef struct GTY (()) ctf_container
 /* Markers for which string table from the CTF container to use.  */
 
 #define CTF_STRTAB 0	    /* CTF string table.  */
-#define CTF_AUX_STRTAB 1    /* CTF auxilliary string table.  */
+#define CTF_AUX_STRTAB 1    /* CTF auxiliary string table.  */
 
 typedef ctf_container_t * ctf_container_ref;
 
@@ -389,7 +389,7 @@ extern unsigned int ctfc_get_num_ctf_types (ctf_container_ref);
 
 extern unsigned int ctfc_get_num_ctf_vars (ctf_container_ref);
 
-/* Get reference to the CTF string table or the CTF auxilliary
+/* Get reference to the CTF string table or the CTF auxiliary
    string table.  */
 
 extern ctf_strtable_t * ctfc_get_strtab (ctf_container_ref, int);

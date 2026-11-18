@@ -72,6 +72,7 @@ BOOT_CFLAGS = -O $(CFLAGS)
 T_CFLAGS =
 
 CC = cc
+ADAC = $(CC)
 BISON = bison
 BISONFLAGS =
 ECHO = echo
@@ -93,9 +94,13 @@ RANLIB_FLAGS = @ranlib_flags@
 AWK = @AWK@
 
 # Should we build position-independent host code?
-enable_host_pie = @enable_host_pie@
 PICFLAG = @PICFLAG@
+
+# The linker flag for the above.
 LD_PICFLAG = @LD_PICFLAG@
+
+# Flags to determine code coverage.
+COVERAGE_FLAGS = @coverage_flags@
 
 SHELL = @SHELL@
 PWD_COMMAND = $${PWDCMD-pwd}
@@ -204,12 +209,12 @@ RTSDIR = rts$(subst /,_,$(MULTISUBDIR))
 # Link flags used to build gnat tools.  By default we prefer to statically
 # link with libgcc to avoid a dependency on shared libgcc (which is tricky
 # to deal with as it may conflict with the libgcc provided by the system).
-GCC_LINK_FLAGS=-static-libstdc++ -static-libgcc
+GCC_LINK_FLAGS = -static-libstdc++ -static-libgcc $(COVERAGE_FLAGS)
 
 # We need to link against libbacktrace because diagnostics use it
 LIBBACKTRACE = ../../../libbacktrace/.libs/libbacktrace.a
 
-ifneq ($(enable_host_pie),)
+ifeq (@enable_host_pie@,yes)
 LIBIBERTY = ../../../libiberty/pic/libiberty.a
 LIBGNAT   = ../$(RTSDIR)/libgnat_pic.a
 else
@@ -245,7 +250,7 @@ all.indirect: Makefile ../gnat1$(exeext)
 INTERNAL_CFLAGS = @CROSS@ -DIN_GCC
 
 # This is the variable actually used when we compile.
-ALL_CFLAGS = $(INTERNAL_CFLAGS) $(T_CFLAGS) $(CFLAGS)
+ALL_CFLAGS = $(T_CFLAGS) $(CFLAGS) $(INTERNAL_CFLAGS) $(COVERAGE_FLAGS)
 
 # Likewise.
 ALL_CPPFLAGS = $(CPPFLAGS)
@@ -294,10 +299,10 @@ ADA_INCLUDES_FOR_SUBDIR = -I. -I$(fsrcdir)/ada
 	$(CC) -c $(ALL_CFLAGS) $(ADA_CFLAGS) $(ALL_CPPFLAGS) $(INCLUDES) $< $(OUTPUT_OPTION)
 
 .adb.o:
-	$(CC) -c $(ALL_ADAFLAGS) $(ADA_INCLUDES) $< $(OUTPUT_OPTION)
+	$(ADAC) -c $(ALL_ADAFLAGS) $(ADA_INCLUDES) $< $(OUTPUT_OPTION)
 
 .ads.o:
-	$(CC) -c $(ALL_ADAFLAGS) $(ADA_INCLUDES) $< $(OUTPUT_OPTION)
+	$(ADAC) -c $(ALL_ADAFLAGS) $(ADA_INCLUDES) $< $(OUTPUT_OPTION)
 
 # how to regenerate this file
 Makefile: ../config.status $(srcdir)/ada/gcc-interface/Makefile.in $(srcdir)/ada/Makefile.in $(srcdir)/ada/version.c
@@ -328,11 +333,12 @@ GNATMAKE_OBJS = a-except.o ali.o ali-util.o aspects.o s-casuti.o alloc.o \
  s-secsta.o s-stalib.o s-stoele.o scans.o scng.o sdefault.o sfn_scan.o \
  s-purexc.o s-htable.o scil_ll.o sem_aux.o sinfo.o sinput.o sinput-c.o \
  snames.o stand.o stringt.o styleg.o stylesw.o system.o validsw.o \
- switch.o switch-m.o table.o targparm.o tempdir.o types.o uintp.o \
+ switch.o switch-m.o table.o targparm.o types.o uintp.o \
  uname.o urealp.o usage.o widechar.o warnsw.o \
  seinfo.o einfo-entities.o einfo-utils.o sinfo-nodes.o sinfo-utils.o \
  errid.o \
  errid-diagnostic_repository.o \
+ errid-restriction_repository.o \
  errid-switch_repository.o \
  erroutc-pretty_emitter.o \
  erroutc-sarif_emitter.o \
@@ -379,6 +385,7 @@ include $(fsrcdir)/ada/Makefile.rtl
 
 TOOLS_FLAGS_TO_PASS=		\
 	"CC=$(CC)" 		\
+	"ADAC=$(ADAC)" 		\
 	"CFLAGS=$(CFLAGS) $(PICFLAG)"	\
 	"LDFLAGS=$(LDFLAGS) $(LD_PICFLAG)"	\
 	"ADAFLAGS=$(ADAFLAGS)"	\
@@ -459,44 +466,44 @@ gnattools2: ../stamp-tools
 
 common-tools: ../stamp-tools
 	$(GNATMAKE) -j0 -c -b $(ADA_INCLUDES) \
-	  --GNATBIND="$(GNATBIND)" --GCC="$(CC) $(ALL_ADAFLAGS)" \
+	  --GNATBIND="$(GNATBIND)" --GCC="$(ADAC) $(ALL_ADAFLAGS)" \
 	  gnatchop gnatcmd gnatkr gnatls gnatprep gnatname \
 	  gnatclean -bargs $(ADA_INCLUDES) $(GNATBIND_FLAGS)
 	$(GNATLINK) -v gnatcmd -o ../../gnat$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 	$(GNATLINK) -v gnatchop -o ../../gnatchop$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 	$(GNATLINK) -v gnatkr -o ../../gnatkr$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 	$(GNATLINK) -v gnatls -o ../../gnatls$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 	$(GNATLINK) -v gnatprep -o ../../gnatprep$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 	$(GNATLINK) -v gnatname -o ../../gnatname$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	   --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 	$(GNATLINK) -v gnatclean -o ../../gnatclean$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 
 ../../gnatdll$(exeext): ../stamp-tools
-	$(GNATMAKE) -c $(ADA_INCLUDES) gnatdll --GCC="$(CC) $(ALL_ADAFLAGS)"
+	$(GNATMAKE) -c $(ADA_INCLUDES) gnatdll --GCC="$(ADAC) $(ALL_ADAFLAGS)"
 	$(GNATBIND) $(ADA_INCLUDES) $(GNATBIND_FLAGS) gnatdll
 	$(GNATLINK) -v gnatdll -o $@ \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 
 gnatmake-re: ../stamp-tools
-	$(GNATMAKE) -j0 $(ADA_INCLUDES) -u sdefault --GCC="$(CC) $(ALL_ADAFLAGS)"
-	$(GNATMAKE) -j0 -c $(ADA_INCLUDES) gnatmake --GCC="$(CC) $(ALL_ADAFLAGS)"
+	$(GNATMAKE) -j0 $(ADA_INCLUDES) -u sdefault --GCC="$(ADAC) $(ALL_ADAFLAGS)"
+	$(GNATMAKE) -j0 -c $(ADA_INCLUDES) gnatmake --GCC="$(ADAC) $(ALL_ADAFLAGS)"
 	$(GNATBIND) $(ADA_INCLUDES) $(GNATBIND_FLAGS) gnatmake
 	$(GNATLINK) -v gnatmake -o ../../gnatmake$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 
 # Note the use of the "mv" command in order to allow gnatlink to be linked
@@ -504,10 +511,10 @@ gnatmake-re: ../stamp-tools
 # gnatlink-re cannot be run at the same time as gnatmake-re, hence the
 # dependency
 gnatlink-re: ../stamp-tools gnatmake-re
-	$(GNATMAKE) -j0 -c $(ADA_INCLUDES) gnatlink --GCC="$(CC) $(ALL_ADAFLAGS)"
+	$(GNATMAKE) -j0 -c $(ADA_INCLUDES) gnatlink --GCC="$(ADAC) $(ALL_ADAFLAGS)"
 	$(GNATBIND) $(ADA_INCLUDES) $(GNATBIND_FLAGS) gnatlink
 	$(GNATLINK) -v gnatlink -o ../../gnatlinknew$(exeext) \
-	  --GCC="$(CC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
+	  --GCC="$(ADAC) $(ALL_CFLAGS) $(ADA_CFLAGS) $(ADA_INCLUDES)" \
 	  --LINK="$(GCC_LINK)" $(TOOLS_LIBS)
 	$(MV)  ../../gnatlinknew$(exeext)  ../../gnatlink$(exeext)
 
@@ -638,8 +645,15 @@ $(RTSDIR)/s-oscons.ads: ../stamp-gnatlib1-$(RTSDIR) s-oscons-tmplt.c gsocket.h .
 	    $(OSCONS_EXTRACT) ; \
 	    ../bldtools/oscons/xoscons s-oscons)
 
-gnatlib: ../stamp-gnatlib1-$(RTSDIR) ../stamp-gnatlib2-$(RTSDIR) $(RTSDIR)/s-oscons.ads
+$(RTSDIR)/a-intnam.ads: ../stamp-gnatlib1-$(RTSDIR)
+	touch $@
+
+$(RTSDIR)/s-intnam.ads: $(fsrcdir)/ada/xsintnam.sed $(RTSDIR)/a-intnam.ads
+	sed -f $(fsrcdir)/ada/xsintnam.sed $(RTSDIR)/a-intnam.ads > $@
+
+gnatlib: ../stamp-gnatlib1-$(RTSDIR) ../stamp-gnatlib2-$(RTSDIR) $(RTSDIR)/s-oscons.ads $(RTSDIR)/s-intnam.ads
 	test -f $(RTSDIR)/s-oscons.ads || exit 1
+	test -f $(RTSDIR)/s-intnam.ads || exit 1
 # C files
 	$(MAKE) -C $(RTSDIR) \
 		CC="$(GCC_FOR_ADA_RTS)" \
@@ -872,13 +886,13 @@ b_gnatl.adb : $(GNATLINK_OBJS)
 	$(GNATBIND) $(ADA_INCLUDES) -o b_gnatl.adb gnatlink.ali
 
 b_gnatl.o : b_gnatl.adb
-	$(CC) -c $(ALL_ADAFLAGS) $(ADA_INCLUDES) -gnatws -gnatyN $< $(OUTPUT_OPTION)
+	$(ADAC) -c $(ALL_ADAFLAGS) $(ADA_INCLUDES) -gnatws -gnatyN $< $(OUTPUT_OPTION)
 
 b_gnatm.adb : $(GNATMAKE_OBJS)
 	$(GNATBIND) $(ADA_INCLUDES) -o b_gnatm.adb gnatmake.ali
 
 b_gnatm.o : b_gnatm.adb
-	$(CC) -c $(ALL_ADAFLAGS) $(ADA_INCLUDES) -gnatws -gnatyN $< $(OUTPUT_OPTION)
+	$(ADAC) -c $(ALL_ADAFLAGS) $(ADA_INCLUDES) -gnatws -gnatyN $< $(OUTPUT_OPTION)
 
 # Provide a `toolexeclibdir' definition for when `gnat-install-lib' is
 # wired through gcc/ in a configuration with top-level libada disabled.
@@ -902,7 +916,6 @@ tracebak.o  : tracebak.c
 adadecode.o : adadecode.c adadecode.h
 aux-io.o  : aux-io.c
 argv.o    : argv.c
-cal.o     : cal.c
 errno.o   : errno.c
 exit.o    : adaint.h exit.c
 expect.o  : expect.c

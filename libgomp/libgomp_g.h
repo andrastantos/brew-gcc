@@ -33,10 +33,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* atomic.c */
+
+extern void GOMP_atomic_start (void);
+extern void GOMP_atomic_end (void);
+extern void GOMP_reduction_start (void);
+extern void GOMP_reduction_end (void);
+
 /* barrier.c */
 
 extern void GOMP_barrier (void);
+extern void GOMP_barrier_ext (int);
 extern bool GOMP_barrier_cancel (void);
+extern bool GOMP_barrier_cancel_ext (int);
 
 /* critical.c */
 
@@ -44,8 +53,6 @@ extern void GOMP_critical_start (void);
 extern void GOMP_critical_end (void);
 extern void GOMP_critical_name_start (void **);
 extern void GOMP_critical_name_end (void **);
-extern void GOMP_atomic_start (void);
-extern void GOMP_atomic_end (void);
 
 /* loop.c */
 
@@ -136,6 +143,12 @@ extern void GOMP_parallel_loop_maybe_nonmonotonic_runtime (void (*)(void *),
 extern void GOMP_loop_end (void);
 extern void GOMP_loop_end_nowait (void);
 extern bool GOMP_loop_end_cancel (void);
+
+extern _Complex int GOMP_loop_static_worksharing (unsigned long long);
+extern _Complex int GOMP_loop_static_worksharing_start (unsigned long long);
+extern void GOMP_loop_static_worksharing_dispatch (unsigned long long,
+						   unsigned long long);
+extern void GOMP_loop_static_worksharing_end (void);
 
 /* loop_ull.c */
 
@@ -290,6 +303,9 @@ extern unsigned GOMP_parallel_reductions (void (*) (void *), void *, unsigned,
 					  unsigned);
 extern bool GOMP_cancel (int, bool);
 extern bool GOMP_cancellation_point (int);
+extern bool GOMP_has_masked_thread_num (int);
+extern bool GOMP_has_masked_thread_num_with_end (int);
+extern void GOMP_masked_end (void);
 
 /* task.c */
 
@@ -330,12 +346,16 @@ extern bool GOMP_sections_end_cancel (void);
 /* single.c */
 
 extern bool GOMP_single_start (void);
+extern bool GOMP_single_start_with_end (void);
+extern void GOMP_single_end (void);
 extern void *GOMP_single_copy_start (void);
 extern void GOMP_single_copy_end (void *);
 
 /* scope.c */
 
 extern void GOMP_scope_start (uintptr_t *);
+extern void GOMP_scope_start_with_end (uintptr_t *);
+extern void GOMP_scope_end (void);
 
 /* target.c */
 
@@ -357,16 +377,24 @@ extern void GOMP_target_enter_exit_data (int, size_t, void **, size_t *,
 					 void **);
 extern void GOMP_teams (unsigned int, unsigned int);
 extern bool GOMP_teams4 (unsigned int, unsigned int, unsigned int, bool);
-extern void *GOMP_target_map_indirect_ptr (void *);
 struct interop_obj_t;
 extern void GOMP_interop (int, int, struct interop_obj_t ***, const int *,
 			  const char **, int, struct interop_obj_t **, int,
 			  struct interop_obj_t ***, unsigned, void **);
 
+/* target-indirect.c */
+
+extern void *GOMP_target_map_indirect_ptr (void *);
+
 /* teams.c */
 
 extern void GOMP_teams_reg (void (*) (void *), void *, unsigned, unsigned,
 			    unsigned);
+extern _Complex int GOMP_distribute_static_worksharing (unsigned long long);
+extern _Complex int GOMP_distribute_static_worksharing_start (unsigned long long);
+extern void GOMP_distribute_static_worksharing_dispatch (unsigned long long,
+							 unsigned long long);
+extern void GOMP_distribute_static_worksharing_end (void);
 
 /* allocator.c */
 
@@ -384,6 +412,12 @@ extern void GOMP_error (const char *, size_t);
 /* oacc-async.c */
 
 extern void GOACC_wait (int, int, ...);
+
+/* oacc-init.c */
+
+extern void GOACC_init (int, int);
+extern void GOACC_shutdown (int, int);
+extern void GOACC_set_device (int, int);
 
 /* oacc-mem.c */
 

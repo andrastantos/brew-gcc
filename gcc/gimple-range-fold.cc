@@ -651,6 +651,25 @@ gimple_range_adjustment (vrange &res, const gimple *stmt)
     }
 }
 
+// Provide context to the gimple fold callback.
+
+static struct
+{
+  gimple *m_stmt;
+  range_query *m_query;
+} x_fold_context;
+
+// Gimple fold callback.
+
+static tree
+pta_valueize (tree name)
+{
+  tree ret
+    = x_fold_context.m_query->value_of_expr (name, x_fold_context.m_stmt);
+
+  return ret ? ret : name;
+}
+
 // Calculate a range for statement S and return it in R. If NAME is provided it
 // represents the SSA_NAME on the LHS of the statement. It is only required
 // if there is more than one lhs/output.  If a range cannot
@@ -668,16 +687,22 @@ fold_using_range::fold_stmt (vrange &r, gimple *s, fur_source &src, tree name)
     name = gimple_get_lhs (s);
 
   // Process addresses and loads from static constructors.
-  if (gimple_code (s) == GIMPLE_ASSIGN)
-    {
-      if (gimple_assign_rhs_code (s) == ADDR_EXPR)
-	return range_of_address (as_a <prange> (r), s, src);
-      if (range_from_readonly_var (r, s))
-	return true;
-    }
+  if (gimple_code (s) == GIMPLE_ASSIGN && range_from_readonly_var (r, s, src))
+    return true;
+
+  // Save the current range query and restore it before returning.
+  // If the specified query is different, make it the current one.
+  // PR 125854 - The fold machinery may make a query call.
+  // PR 126814 - tree_expr_nonnegative_p may make a call.
+  // PR 126942 - path_ranger queries should never be the current query.
+  //		 set_range_query will revert to a global query for this.
+  range_query *saved_query = set_range_query (cfun, src.query ());
 
   gimple_range_op_handler handler (s);
-  if (handler)
+  if (gimple_code (s) == GIMPLE_ASSIGN
+      && gimple_assign_rhs_code (s) == ADDR_EXPR)
+    res = range_of_address (as_a <prange> (r), s, src);
+  else if (handler)
     res = range_of_range_op (r, handler, src);
   else if (is_a<gphi *>(s))
     res = range_of_phi (r, as_a<gphi *> (s), src);
@@ -686,16 +711,28 @@ fold_using_range::fold_stmt (vrange &r, gimple *s, fur_source &src, tree name)
   else if (is_a<gassign *> (s) && gimple_assign_rhs_code (s) == COND_EXPR)
     res = range_of_cond_expr (r, as_a<gassign *> (s), src);
 
-  // If the result is varying, check for basic nonnegativeness.
-  // Specifically this helps for now with strict enum in cases like
-  // g++.dg/warn/pr33738.C.
-  bool so_p;
-  if (res && r.varying_p () && INTEGRAL_TYPE_P (r.type ())
-      && gimple_stmt_nonnegative_warnv_p (s, &so_p))
-    r.set_nonnegative (r.type ());
+  // If the result is varying, use the type's min/max if either is not
+  // the same as the full precision min/max. This helps with strict enum
+  // e.g. `g++.dg/warn/pr33738.C`.
+  if (res && r.varying_p () && INTEGRAL_TYPE_P (r.type ()))
+    {
+      irange &ir = as_a <irange> (r);
+      tree type = r.type ();
+      auto typemax = wi::to_wide (TYPE_MAX_VALUE (type));
+      auto typemin = wi::to_wide (TYPE_MIN_VALUE (type));
+      auto precisionmax = wi::max_value (TYPE_PRECISION (type),
+					 TYPE_SIGN (type));
+      auto precisionmin = wi::min_value (TYPE_PRECISION (type),
+					 TYPE_SIGN (type));
+      if (typemax != precisionmax || typemin != precisionmin)
+	ir.set (type, typemin, typemax);
+    }
 
   if (!res)
     {
+      // Restore the original query.
+      if (saved_query)
+	set_range_query (cfun, saved_query);
       // If no name specified or range is unsupported, bail.
       if (!name || !gimple_range_ssa_p (name))
 	return false;
@@ -705,7 +742,12 @@ fold_using_range::fold_stmt (vrange &r, gimple *s, fur_source &src, tree name)
     }
 
   if (r.undefined_p ())
-    return true;
+    {
+      // Restore the original query.
+      if (saved_query)
+	set_range_query (cfun, saved_query);
+      return true;
+    }
 
   // We sometimes get compatible types copied from operands, make sure
   // the correct type is being returned.
@@ -714,6 +756,34 @@ fold_using_range::fold_stmt (vrange &r, gimple *s, fur_source &src, tree name)
       gcc_checking_assert (range_compatible_p (r.type (), TREE_TYPE (name)));
       range_cast (r, TREE_TYPE (name));
     }
+
+  if (is_a <prange> (r))
+    {
+      prange &p = as_a <prange> (r);
+      // Check to see if points_to should be set.
+      if (p.addr_unknown_p () && name && gimple_code (s) == GIMPLE_ASSIGN)
+	{
+	  tree rhs = gimple_assign_rhs1 (s);
+	  tree_code code = gimple_assign_rhs_code (s);
+	  // If code is SSA_NAME, any points to would already be copied.
+	  if (code != SSA_NAME
+	      && get_gimple_rhs_class (code) == GIMPLE_SINGLE_RHS
+	      && TREE_CODE (rhs) == ADDR_EXPR)
+	    p.set_addr (rhs, true);
+	  else
+	    {
+	      // If we couldn't find anything, try fold.
+	      x_fold_context = { s, get_range_query (cfun) };
+	      rhs = gimple_fold_stmt_to_constant_1 (s, pta_valueize,
+						    pta_valueize);
+	      if (rhs && TREE_CODE (rhs) == ADDR_EXPR)
+		p.set_addr (rhs, true);
+	    }
+	}
+    }
+  // Restore the original query.
+  if (saved_query)
+    set_range_query (cfun, saved_query);
   return true;
 }
 
@@ -844,7 +914,6 @@ fold_using_range::range_of_address (prange &r, gimple *stmt, fur_source &src)
   gcc_checking_assert (gimple_code (stmt) == GIMPLE_ASSIGN);
   gcc_checking_assert (gimple_assign_rhs_code (stmt) == ADDR_EXPR);
 
-  bool strict_overflow_p;
   tree expr = gimple_assign_rhs1 (stmt);
   poly_int64 bitsize, bitpos;
   tree offset;
@@ -912,7 +981,7 @@ fold_using_range::range_of_address (prange &r, gimple *stmt, fur_source &src)
     }
 
   // Handle "= &a".
-  if (tree_single_nonzero_warnv_p (expr, &strict_overflow_p))
+  if (tree_single_nonzero_p (expr))
     {
       r.set_nonzero (TREE_TYPE (gimple_assign_rhs1 (stmt)));
       return true;
@@ -923,121 +992,372 @@ fold_using_range::range_of_address (prange &r, gimple *stmt, fur_source &src)
   return true;
 }
 
-/* If TYPE is a pointer, return false.  Otherwise, add zero of TYPE (which must
-   be an integer) to R and return true.  */
+// Does R contain anything in [LO, HI]?
 
 static bool
-range_from_missing_constructor_part (vrange &r, tree type)
+intersects_p (const irange &r, const wide_int &lo, const wide_int &hi)
 {
-  if (POINTER_TYPE_P (type))
+  int_range_max tmp (r);
+  tmp.intersect (int_range<1> (r.type (), lo, hi));
+  return !tmp.undefined_p ();
+}
+
+// The range of a load from a read-only aggregate: walk its initializer along
+// the component path of the reference, COMPONENT_PATH, from the aggregate out,
+// unioning into R the constants the load can reach.  For example:
+//
+//   static const struct { int a, b[2]; } tbl[2] = { { 1, { 2, 3 } },
+//                                                   { 4, { 5, 6 } } };
+//   ... = tbl[i].b[1];
+//
+// COMPONENT_PATH is { tbl[i], tbl[i].b, tbl[i].b[1] } and R is [3, 3][6, 6].
+// The methods return false when a range cannot be determined.
+
+class ctor_ref_range
+{
+public:
+  ctor_ref_range (vrange &r, tree type, const vec<tree> &component_path,
+		  fur_source &src)
+    : m_r (r), m_type (type), m_component_path (component_path),
+      m_src (src) { }
+  bool accumulate_range (tree init, unsigned i);
+private:
+  bool accumulate_range_from_scalar (tree init);
+  bool accumulate_range_from_component_ref (tree init, unsigned i, tree fld);
+  bool accumulate_range_from_array_ref (tree init, unsigned i, tree idx);
+  void accumulate_range_from_missing_constructor_elt ();
+
+  vrange &m_r;
+  tree m_type;
+  const vec<tree> &m_component_path;
+  fur_source &m_src;
+};
+
+// Accumulate the range of the load from INIT, the initializer reached after
+// I steps of the component path.
+
+bool
+ctor_ref_range::accumulate_range (tree init, unsigned i)
+{
+  if (i == m_component_path.length ())
+    return accumulate_range_from_scalar (init);
+  if (TREE_CODE (init) != CONSTRUCTOR && TREE_CODE (init) != STRING_CST)
     return false;
-  gcc_checking_assert (irange::supports_p (type));
-  wide_int zero = wi::zero (TYPE_PRECISION (type));
-  r.union_ (int_range<1> (type, zero, zero));
+
+  tree ref = m_component_path[i];
+  if (TREE_CODE (ref) == COMPONENT_REF)
+    return accumulate_range_from_component_ref (init, i + 1,
+						TREE_OPERAND (ref, 1));
+
+  gcc_assert (TREE_CODE (ref) == ARRAY_REF);
+  return accumulate_range_from_array_ref (init, i + 1, TREE_OPERAND (ref, 1));
+}
+
+// Accumulate the range from the scalar INIT at the end of the component path.
+// For example, for t[1] with static const int t[2] = { 4, 5 }, INIT is 5 and
+// the range is [5, 5].
+
+bool
+ctor_ref_range::accumulate_range_from_scalar (tree init)
+{
+  if (!useless_type_conversion_p (m_type, TREE_TYPE (init)))
+    return false;
+
+  if (POINTER_TYPE_P (m_type))
+    {
+      prange elt;
+      if (integer_zerop (init))
+	elt.set_zero (m_type);
+      else if (tree_single_nonzero_p (init))
+	elt.set_nonzero (m_type);
+      else
+	return false;
+      m_r.union_ (elt);
+      return true;
+    }
+
+  if (TREE_CODE (init) == REAL_CST)
+    {
+      const REAL_VALUE_TYPE *rv = TREE_REAL_CST_PTR (init);
+      frange elt;
+      if (real_isnan (rv))
+	elt.set_nan (m_type, real_isneg (rv));
+      else
+	elt.set (m_type, *rv, *rv, nan_state (false));
+      m_r.union_ (elt);
+      return true;
+    }
+
+  if (TREE_CODE (init) != INTEGER_CST)
+    return false;
+
+  wide_int wi_cst = wi::to_wide (init);
+  m_r.union_ (int_range<1> (m_type, wi_cst, wi_cst));
   return true;
 }
 
-// One step of fold_using_range::range_from_readonly_var.  Process expressions
-// in COMPS which together load a value of TYPE, from index I to 0 according to
-// the corresponding static initializer in CST which should be either a scalar
-// invariant or a constructor.  Currently TYPE must be either a pointer or an
-// integer.  If TYPE is a pointer, return true if all potentially loaded values
-// are known not to be zero and false if any of them can be zero.  Otherwise
-// return true if it is possible to add all constants which can be loaded from
-// CST (which must be storable to TYPE) to R and do so.
-// TODO: Add support for franges.
+// Accumulate the range from field FLD of the record or union initializer
+// INIT.  FLD is the field of a COMPONENT_REF in the component path and I the
+// step after it.  For example, when walking s.b in:
+//
+//   static const struct { int a, b; } s = { 1, 2 };
+//
+// INIT is { 1, 2 }, FLD is b, and I is 1, the end of the path, and the range
+// is [2, 2].
 
-static bool
-range_from_readonly_load (vrange &r, tree type, tree cst,
-			  const vec <tree> &comps, unsigned i)
+bool
+ctor_ref_range::accumulate_range_from_component_ref (tree init, unsigned i,
+						     tree fld)
 {
-  if (i == 0)
-    {
-      if (!useless_type_conversion_p (type, TREE_TYPE (cst)))
-	return false;
-
-      if (POINTER_TYPE_P (type))
-	{
-	  bool strict_overflow_p;
-	  return tree_single_nonzero_warnv_p (cst, &strict_overflow_p);
-	}
-
-      if (TREE_CODE (cst) != INTEGER_CST)
-	return false;
-
-      wide_int wi_cst = wi::to_wide (cst);
-      r.union_ (int_range<1> (type, wi_cst, wi_cst));
-      return true;
-    }
-  /* TODO: Perhaps handle RAW_DATA_CST too.  */
-  if (TREE_CODE (cst) != CONSTRUCTOR)
-    return false;
-
-  i--;
-  tree expr = comps[i];
   unsigned ix;
   tree index, val;
-
-  if (TREE_CODE (expr) == COMPONENT_REF)
+  if (TREE_CODE (init) != CONSTRUCTOR)
+    return false;
+  if (TYPE_MAIN_VARIANT (TREE_TYPE (init)) == DECL_CONTEXT (fld))
+    FOR_EACH_CONSTRUCTOR_ELT (CONSTRUCTOR_ELTS (init), ix, index, val)
+      {
+	if (index != fld)
+	  continue;
+	return accumulate_range (val, i);
+      }
+  else if (TYPE_CANONICAL (TYPE_MAIN_VARIANT (TREE_TYPE (init)))
+	   == TYPE_CANONICAL (DECL_CONTEXT (fld)))
     {
-      tree ref_fld = TREE_OPERAND (expr, 1);
-      FOR_EACH_CONSTRUCTOR_ELT (CONSTRUCTOR_ELTS (cst), ix, index, val)
-	{
-	  if (index != ref_fld)
-	    continue;
-	  return range_from_readonly_load (r, type, val, comps, i);
-	}
-      if (TREE_CODE (TREE_TYPE (cst)) == RECORD_TYPE)
-	return range_from_missing_constructor_part (r, type);
-      else
-	/* Missing constructor of a union field just isn't like other missing
-	   constructor parts.  */
+      // If fld is from a different record/union than the CONSTRUCTOR,
+      // fallback to bit offset/size comparison.  This happens e.g.
+      // with C++ pointer-to-members, where we can get different
+      // __ptrmemfunc_type RECORD_TYPEs with __pfn and __delta
+      // FIELD_DECLs at the same offsets.
+      tree off = bit_position (fld);
+      tree sz = DECL_SIZE (fld);
+      if (TREE_CODE (off) != INTEGER_CST
+	  || TREE_CODE (sz) != INTEGER_CST
+	  || int_size_in_bytes (TREE_TYPE (init)) == -1)
 	return false;
-    }
-
-  gcc_assert (TREE_CODE (expr) == ARRAY_REF);
-  tree op1 = TREE_OPERAND (expr, 1);
-
-  if (TREE_CODE (op1) == INTEGER_CST)
-    {
-      unsigned ctor_idx;
-      val = get_array_ctor_element_at_index (cst, wi::to_offset (op1),
-					     &ctor_idx);
-      if (!val)
+      offset_int woff = wi::to_offset (off);
+      offset_int wsz = wi::to_offset (sz);
+      FOR_EACH_CONSTRUCTOR_ELT (CONSTRUCTOR_ELTS (init), ix, index, val)
 	{
-	  if (ctor_idx < CONSTRUCTOR_NELTS (cst))
+	  off = bit_position (index);
+	  sz = DECL_SIZE (index);
+	  if (TREE_CODE (off) != INTEGER_CST || TREE_CODE (sz) != INTEGER_CST)
 	    return false;
-	  return range_from_missing_constructor_part (r, type);
+	  if (wi::to_offset (off) != woff || wi::to_offset (sz) != wsz)
+	    continue;
+	  return accumulate_range (val, i);
 	}
-      return range_from_readonly_load (r, type, val, comps, i);
     }
+  else
+    return false;
+  if (TREE_CODE (TREE_TYPE (init)) == RECORD_TYPE)
+    {
+      accumulate_range_from_missing_constructor_elt ();
+      return true;
+    }
+  else
+    /* Missing constructor of a union field just isn't like other missing
+       constructor parts.  */
+    return false;
+}
 
-  tree arr_type = TREE_TYPE (cst);
-  tree domain = TYPE_DOMAIN (arr_type);
+// Accumulate the range from the element at IDX of the array initializer INIT,
+// or from every element when IDX is not a constant.  IDX is the index of an
+// ARRAY_REF in the component path and I the step after it.  For example,
+// when walking t[1] or t[n] in:
+//
+//   static const int t[2] = { 4, 5 };
+//
+// INIT is { 4, 5 } and I is 1, the end of the path.  For t[1] the range is
+// [5, 5] and for t[n] it is [4, 5].  When every element is loaded, whatever
+// the initializer leaves out reads as zero: take each element's indices out
+// of the domain to see if anything is left.
+
+bool
+ctor_ref_range::accumulate_range_from_array_ref (tree init, unsigned i,
+						 tree idx)
+{
+  tree domain = TYPE_DOMAIN (TREE_TYPE (init));
   if (!TYPE_MIN_VALUE (domain)
       || !TYPE_MAX_VALUE (domain)
       || !tree_fits_uhwi_p (TYPE_MIN_VALUE (domain))
       || !tree_fits_uhwi_p (TYPE_MAX_VALUE (domain)))
     return false;
-  unsigned HOST_WIDE_INT needed_count
-    = (tree_to_uhwi (TYPE_MAX_VALUE (domain))
-       - tree_to_uhwi (TYPE_MIN_VALUE (domain)) + 1);
-  if (CONSTRUCTOR_NELTS (cst) < needed_count)
+
+  // Unsigned bounds that look reversed are signed, as they are for
+  // get_array_ctor_element_at_index: Ada's -1 .. 5 has a lower bound of
+  // SIZE_MAX.
+  tree type = TREE_TYPE (TYPE_MIN_VALUE (domain));
+  if (TYPE_UNSIGNED (type)
+      && tree_int_cst_lt (TYPE_MAX_VALUE (domain), TYPE_MIN_VALUE (domain)))
+    type = signed_type_for (type);
+  wide_int min = wi::to_wide (TYPE_MIN_VALUE (domain));
+  wide_int max = wi::to_wide (TYPE_MAX_VALUE (domain));
+
+  // Ada represents an empty array with reversed bounds.
+  if (wi::gt_p (min, max, TYPE_SIGN (type)))
+    return true;
+
+  unsigned prec = TYPE_PRECISION (type);
+  int_range<1> domain_r (type, min, max);
+
+  // Narrow IDX to the ranges it can actually take.
+  int_range_max idx_r;
+  m_src.get_operand (idx_r, idx);
+  range_cast (idx_r, type);
+  idx_r.intersect (domain_r);
+  if (idx_r.undefined_p ())
+    return false;
+
+  int_range_max missing (idx_r);
+  wide_int next = domain_r.lower_bound ();
+  unsigned ix;
+  tree index, val;
+
+  if (TREE_CODE (init) == STRING_CST)
     {
-      if (!range_from_missing_constructor_part (r, type))
+      if (i != m_component_path.length ()
+	  || !INTEGRAL_TYPE_P (m_type)
+	  || TYPE_PRECISION (m_type) != CHAR_BIT
+	  || !useless_type_conversion_p (m_type, TREE_TYPE (TREE_TYPE (init)))
+	  || wi::gtu_p (max + 1 - min, TREE_STRING_LENGTH (init)))
+	return false;
+      for (unsigned j = 0; j < idx_r.num_pairs (); ++j)
+	{
+	  wide_int l = idx_r.lower_bound (j);
+	  wide_int u = idx_r.upper_bound (j);
+	  if (wi::lt_p (u, min, TYPE_SIGN (type))
+	      || wi::gt_p (l, max, TYPE_SIGN (type)))
+	    continue;
+	  l = wi::max (l, min, TYPE_SIGN (type));
+	  u = wi::min (u, max, TYPE_SIGN (type));
+	  unsigned n = (l - min).to_uhwi ();
+	  unsigned e = (u - min).to_uhwi ();
+	  /* Note, if we'd have more than 256 iterations of the loops
+	     below or even across all the outer loop iterations, it might
+	     be more efficient to have a 256 bools array or 256-bit bitmask,
+	     gather which bytes are seen and then union_ those which were
+	     seen.  Given the current param limits this can't ever happen.  */
+	  wide_int wi_cst;
+	  if (TYPE_UNSIGNED (m_type))
+	    for (; n <= e; ++n)
+	      {
+		wi_cst
+		  = wi::uhwi ((unsigned char) TREE_STRING_POINTER (init)[n],
+			      CHAR_BIT);
+		m_r.union_ (int_range<1> (m_type, wi_cst, wi_cst));
+	      }
+	  else
+	    for (; n <= e; ++n)
+	      {
+		wi_cst
+		  = wi::shwi ((signed char) TREE_STRING_POINTER (init)[n],
+			      CHAR_BIT);
+		m_r.union_ (int_range<1> (m_type, wi_cst, wi_cst));
+	      }
+	}
+      return true;
+    }
+
+  // Build a range with the entire domain, and take out any elements which are
+  // initialized.  If there's anything left in that range, it means there are
+  // missing elements and we should add a [0, 0] to the final range.
+  FOR_EACH_CONSTRUCTOR_ELT (CONSTRUCTOR_ELTS (init), ix, index, val)
+    {
+      wide_int lo, hi;
+
+      // A null index means the element follows the previous one.
+      if (!index)
+	lo = hi = next;
+      else if (TREE_CODE (index) == RANGE_EXPR)
+	{
+	  lo = wi::to_wide (TREE_OPERAND (index, 0), prec);
+	  hi = wi::to_wide (TREE_OPERAND (index, 1), prec);
+	}
+      else
+	{
+	  gcc_checking_assert (TREE_CODE (index) == INTEGER_CST);
+	  lo = hi = wi::to_wide (index, prec);
+	}
+      // A RAW_DATA_CST holds one element per byte.
+      if (TREE_CODE (val) == RAW_DATA_CST)
+	hi = wi::add (hi, RAW_DATA_LENGTH (val) - 1);
+      missing.intersect (int_range<2> (type, lo, hi, VR_ANTI_RANGE));
+      next = wi::add (hi, 1);
+
+      if (TREE_CODE (val) == RAW_DATA_CST)
+	{
+	  if (!intersects_p (idx_r, lo, hi))
+	    continue;
+
+	  if (i != m_component_path.length ()
+	      || !INTEGRAL_TYPE_P (m_type)
+	      || TYPE_PRECISION (m_type) != CHAR_BIT
+	      || !useless_type_conversion_p (m_type,
+					     TREE_TYPE (val)))
+	    return false;
+
+	  for (unsigned j = 0; j < idx_r.num_pairs (); ++j)
+	    {
+	      wide_int l = idx_r.lower_bound (j);
+	      wide_int u = idx_r.upper_bound (j);
+	      if (wi::lt_p (u, lo, TYPE_SIGN (type))
+		  || wi::gt_p (l, hi, TYPE_SIGN (type)))
+		continue;
+	      l = wi::max (l, lo, TYPE_SIGN (type));
+	      u = wi::min (u, hi, TYPE_SIGN (type));
+	      unsigned n = (l - lo).to_uhwi ();
+	      unsigned e = (u - lo).to_uhwi ();
+	      /* Note, if we'd have more than 256 iterations of the loops
+		 below or even across all the outer loop iterations, it might
+		 be more efficient to have a 256 bools array or 256-bit
+		 bitmask, gather which bytes are seen and then union_ those
+		 which were seen.  Given the current param limits this can't
+		 ever happen.  */
+	      wide_int wi_cst;
+	      if (TYPE_UNSIGNED (m_type))
+		for (; n <= e; ++n)
+		  {
+		    wi_cst = wi::uhwi (RAW_DATA_UCHAR_ELT (val, n), CHAR_BIT);
+		    m_r.union_ (int_range<1> (m_type, wi_cst, wi_cst));
+		  }
+	      else
+		for (; n <= e; ++n)
+		  {
+		    wi_cst = wi::shwi (RAW_DATA_SCHAR_ELT (val, n), CHAR_BIT);
+		    m_r.union_ (int_range<1> (m_type, wi_cst, wi_cst));
+		  }
+	    }
+	  continue;
+	}
+
+      if (lo == hi)
+	{
+	  if (!idx_r.contains_p (lo))
+	    continue;
+	}
+      else if (!intersects_p (idx_r, lo, hi))
+	continue;
+
+      if (!accumulate_range (val, i))
 	return false;
     }
 
-  FOR_EACH_CONSTRUCTOR_ELT (CONSTRUCTOR_ELTS (cst), ix, index, val)
-    {
-      /* TODO: If the array index in the expr is an SSA_NAME with a known
-	 range, we could use just values loaded from the corresponding array
-	 elements.  */
-      if (!range_from_readonly_load (r, type, val, comps, i))
-	return false;
-    }
-
+  if (!missing.undefined_p ())
+    accumulate_range_from_missing_constructor_elt ();
   return true;
+}
+
+// Accumulate [0, 0] for a constructor element the initializer leaves out.
+// For example, when loading t[1] in:
+//
+//   static const int t[2] = { 4 };
+
+void
+ctor_ref_range::accumulate_range_from_missing_constructor_elt ()
+{
+  value_range zero (m_type);
+  zero.set_zero (m_type);
+  m_r.union_ (zero);
 }
 
 // Attempt to calculate the range of value loaded by STMT (which must be an
@@ -1046,13 +1366,14 @@ range_from_readonly_load (vrange &r, tree type, tree cst,
 // false and leave R untouched.
 
 bool
-fold_using_range::range_from_readonly_var (vrange &r, gimple *stmt)
+fold_using_range::range_from_readonly_var (vrange &r, gimple *stmt,
+					   fur_source &src)
 {
   gcc_checking_assert (gimple_code (stmt) == GIMPLE_ASSIGN);
   tree type = TREE_TYPE (gimple_assign_lhs (stmt));
-  /* TODO: Add support for frange.  */
   if (!irange::supports_p (type)
-      && !prange::supports_p (type))
+      && !prange::supports_p (type)
+      && !frange::supports_p (type))
     return false;
 
   unsigned HOST_WIDE_INT limit = param_vrp_cstload_limit;
@@ -1064,14 +1385,16 @@ fold_using_range::range_from_readonly_var (vrange &r, gimple *stmt)
     return false;
   limit *= tree_to_uhwi (TYPE_SIZE_UNIT (TREE_TYPE (t)));
 
-  unsigned count = 0;
+  // The component path of the reference, from the aggregate out.
+  auto_vec <tree, 4> component_path;
   while (TREE_CODE (t) == ARRAY_REF
 	 || TREE_CODE (t) == COMPONENT_REF)
     {
-      count++;
+      component_path.safe_push (t);
       t = TREE_OPERAND (t, 0);
     }
-  if (!count
+  component_path.reverse ();
+  if (component_path.is_empty ()
       || (TREE_CODE (t) != VAR_DECL
 	  && TREE_CODE (t) != CONST_DECL))
     return false;
@@ -1085,30 +1408,15 @@ fold_using_range::range_from_readonly_var (vrange &r, gimple *stmt)
      the right part of the constructor then.  */
   tree ctor = ctor_for_folding (t);
   if (!ctor
-      || TREE_CODE (ctor) != CONSTRUCTOR)
+      || (TREE_CODE (ctor) != CONSTRUCTOR
+	  && TREE_CODE (ctor) != STRING_CST))
     return false;
 
-  t = gimple_assign_rhs1 (stmt);
-  auto_vec <tree, 4> comps;
-  comps.safe_grow (count, true);
-  int i = 0;
-  while (TREE_CODE (t) == ARRAY_REF
-	 || TREE_CODE (t) == COMPONENT_REF)
-    {
-      comps[i] = t;
-      t = TREE_OPERAND (t, 0);
-      i++;
-    }
-
   value_range tmp (type);
-  bool res = range_from_readonly_load (tmp, type, ctor, comps, count);
+  ctor_ref_range load (tmp, type, component_path, src);
+  bool res = load.accumulate_range (ctor, 0) && !tmp.varying_p ();
   if (res)
-    {
-      if (POINTER_TYPE_P (type))
-	r.set_nonzero (type);
-      else
-	r = tmp;
-    }
+    r = tmp;
   return res;
 }
 
@@ -1121,7 +1429,6 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
   tree phi_def = gimple_phi_result (phi);
   tree type = gimple_range_type (phi);
   value_range arg_range (type);
-  value_range equiv_range (type);
   unsigned x;
 
   if (!type)
@@ -1131,7 +1438,6 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
   tree single_arg = NULL_TREE;
   bool seen_arg = false;
 
-  relation_oracle *oracle = &(src.query()->relation ());
   // Start with an empty range, unioning in each argument's range.
   r.set_undefined ();
   for (x = 0; x < gimple_phi_num_args (phi); x++)
@@ -1148,15 +1454,8 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
 
       if (!arg_range.undefined_p ())
 	{
+	  r.union_ (arg_range);
 	  // Register potential dependencies for stale value tracking.
-	  // Likewise, if the incoming PHI argument is equivalent to this
-	  // PHI definition, it provides no new info.  Accumulate these ranges
-	  // in case all arguments are equivalences.
-	  if (oracle->query (e, arg, phi_def) == VREL_EQ)
-	    equiv_range.union_(arg_range);
-	  else
-	    r.union_ (arg_range);
-
 	  if (gimple_range_ssa_p (arg) && src.gori_ssa ())
 	    src.gori_ssa ()->register_dependency (phi_def, arg);
 	}
@@ -1167,7 +1466,7 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
 	  seen_arg = true;
 	  single_arg = arg;
 	}
-      else if (single_arg != arg)
+      else if (!vrp_operand_equal_p (single_arg, arg))
 	single_arg = NULL_TREE;
 
       // Once the value reaches varying, stop looking.
@@ -1175,10 +1474,6 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
 	break;
     }
 
-  // If all arguments were equivalences, use the equivalence ranges as no
-  // arguments were processed.
-  if (r.undefined_p () && !equiv_range.undefined_p ())
-    r = equiv_range;
 
   // If the PHI boils down to a single effective argument, look at it.
   if (single_arg)
@@ -1205,14 +1500,26 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
 	  if (single_arg)
 	    src.register_relation (phi, VREL_EQ, phi_def, single_arg);
 	}
-      else if (src.get_operand (arg_range, single_arg)
-	       && arg_range.singleton_p ())
+      else if (src.get_operand (arg_range, single_arg))
 	{
+	  // Check if the single argument points to a specific object.
+	  if (is_a <prange> (arg_range))
+	    {
+	      prange &ptr = as_a <prange> (arg_range);
+	      // If it doesn't already point at something, set points to.
+	      if (ptr.addr_unknown_p () && TREE_CODE (single_arg) == ADDR_EXPR)
+		ptr.set_addr (single_arg, true);
+	      r = ptr;
+	      return true;
+	    }
 	  // Numerical arguments that are a constant can be returned as
 	  // the constant. This can help fold later cases where even this
 	  // constant might have been UNDEFINED via an unreachable edge.
-	  r = arg_range;
-	  return true;
+	  if (arg_range.singleton_p ())
+	    {
+	      r = arg_range;
+	      return true;
+	    }
 	}
     }
 
@@ -1260,9 +1567,8 @@ fold_using_range::range_of_call (vrange &r, gcall *call, fur_source &)
     return false;
 
   tree lhs = gimple_call_lhs (call);
-  bool strict_overflow_p;
 
-  if (gimple_stmt_nonnegative_warnv_p (call, &strict_overflow_p))
+  if (gimple_stmt_nonnegative_p (call))
     r.set_nonnegative (type);
   else if (gimple_call_nonnull_result_p (call)
 	   || gimple_call_nonnull_arg (call))
@@ -1566,7 +1872,7 @@ fold_using_range::relation_fold_and_or (irange& lhs_range, gimple *s,
     return;
 
   if (reverse_op2)
-    relation2 = relation_negate (relation2);
+    relation2 = relation_swap (relation2);
 
   // x && y is false if the relation intersection of the true cases is NULL.
   if (is_and && relation_intersect (relation1, relation2) == VREL_UNDEFINED)
@@ -1632,9 +1938,9 @@ fur_source::register_outgoing_edges (gcond *s, irange &lhs_range,
   // if (a_2 < b_5)
   tree ssa1 = gimple_range_ssa_p (handler.operand1 ());
   tree ssa2 = gimple_range_ssa_p (handler.operand2 ());
-  value_range r1,r2;
   if (ssa1 && ssa2)
     {
+      value_range r1,r2;
       r1.set_varying (TREE_TYPE (ssa1));
       r2.set_varying (TREE_TYPE (ssa2));
       if (e0)
@@ -1659,9 +1965,12 @@ fur_source::register_outgoing_edges (gcond *s, irange &lhs_range,
   // leading to the condition such as:
   // c_2 = a_4 < b_7
   // if (c_2)
+  // as well as relations implied by a known result, such as:
+  // c_2 = a_4 - b_7
+  // if (c_2 == 0)
   FOR_EACH_GORI_EXPORT_NAME (gori_ssa (), bb, name)
     {
-      if (TREE_CODE (TREE_TYPE (name)) != BOOLEAN_TYPE)
+      if (!INTEGRAL_TYPE_P (TREE_TYPE (name)))
 	continue;
       gimple *stmt = SSA_NAME_DEF_STMT (name);
       gimple_range_op_handler handler (stmt);
@@ -1672,18 +1981,36 @@ fur_source::register_outgoing_edges (gcond *s, irange &lhs_range,
       value_range r (TREE_TYPE (name));
       if (ssa1 && ssa2)
 	{
-	  r1.set_varying (TREE_TYPE (ssa1));
-	  r2.set_varying (TREE_TYPE (ssa2));
 	  if (e0 && gori ()->edge_range_p (r, e0, name, *m_query)
-	      && r.singleton_p ())
+	      && !r.undefined_p ()
+	      && !r.varying_p ())
 	    {
+	      value_range r1,r2;
+	      r1.set_varying (TREE_TYPE (ssa1));
+	      r2.set_varying (TREE_TYPE (ssa2));
+	      if (!gori ()->edge_range_p (r1, e0, ssa1, *m_query)
+		  || r1.undefined_p ())
+		r1.set_varying (TREE_TYPE (ssa1));
+	      if (!gori ()->edge_range_p (r2, e0, ssa2, *m_query)
+		  || r2.undefined_p ())
+		r2.set_varying (TREE_TYPE (ssa2));
 	      relation_kind relation = handler.op1_op2_relation (r, r1, r2);
 	      if (relation != VREL_VARYING)
 		register_relation (e0, relation, ssa1, ssa2);
 	    }
 	  if (e1 && gori ()->edge_range_p (r, e1, name, *m_query)
-	      && r.singleton_p ())
+	      && !r.undefined_p ()
+	      && !r.varying_p ())
 	    {
+	      value_range r1,r2;
+	      r1.set_varying (TREE_TYPE (ssa1));
+	      r2.set_varying (TREE_TYPE (ssa2));
+	      if (!gori ()->edge_range_p (r1, e1, ssa1, *m_query)
+		  || r1.undefined_p ())
+		r1.set_varying (TREE_TYPE (ssa1));
+	      if (!gori ()->edge_range_p (r2, e1, ssa2, *m_query)
+		  || r2.undefined_p ())
+		r2.set_varying (TREE_TYPE (ssa2));
 	      relation_kind relation = handler.op1_op2_relation (r, r1, r2);
 	      if (relation != VREL_VARYING)
 		register_relation (e1, relation, ssa1, ssa2);

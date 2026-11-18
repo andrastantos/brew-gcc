@@ -19,10 +19,11 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define INCLUDE_STRING
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "dumpfile.h"
+#include "dumpfile.h"	/* for dump_flags */
 #include "backend.h"
 #include "tree.h"
 #include "gimple.h"
@@ -35,7 +36,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-eh.h"
 #include "gimple-iterator.h"
 #include "tree-cfg.h"
-#include "dumpfile.h"	/* for dump_flags */
 #include "value-prof.h"
 #include "trans-mem.h"
 #include "cfganal.h"
@@ -823,8 +823,6 @@ pp_points_to_solution (pretty_printer *pp, const pt_solution *pt)
     pp_string (pp, "escaped ");
   if (pt->ipa_escaped)
     pp_string (pp, "unit-escaped ");
-  if (pt->null)
-    pp_string (pp, "null ");
   if (pt->const_pool)
     pp_string (pp, "const-pool ");
   if (pt->vars
@@ -2401,29 +2399,32 @@ dump_ssaname_info (pretty_printer *pp, tree node, int spc)
   if (TREE_CODE (node) != SSA_NAME)
     return;
 
-  if (POINTER_TYPE_P (TREE_TYPE (node))
-      && SSA_NAME_PTR_INFO (node))
+  if (const pt_solution *pt = ssa_name_pt_solution (node))
     {
-      unsigned int align, misalign;
-      struct ptr_info_def *pi = SSA_NAME_PTR_INFO (node);
       pp_string (pp, "# PT = ");
-      pp_points_to_solution (pp, &pi->pt);
+      pp_points_to_solution (pp, pt);
       newline_and_indent (pp, spc);
-      if (get_ptr_info_alignment (pi, &align, &misalign))
-	{
-	  pp_printf (pp, "# ALIGN = %u, MISALIGN = %u", align, misalign);
-	  newline_and_indent (pp, spc);
-	}
     }
 
-  if (!POINTER_TYPE_P (TREE_TYPE (node))
-      && SSA_NAME_RANGE_INFO (node))
+  unsigned int align, misalign;
+  if (get_ssa_name_alignment (node, &align, &misalign))
+    {
+      pp_printf (pp, "# ALIGN = %u, MISALIGN = %u", align, misalign);
+      newline_and_indent (pp, spc);
+    }
+
+  if (SSA_NAME_RANGE_INFO (node))
     {
       value_range r (TREE_TYPE (node));
       get_global_range_query ()->range_of_expr (r, node);
-      pp_string (pp, "# RANGE ");
-      pp_vrange (pp, &r);
-      newline_and_indent (pp, spc);
+      /* A pointer has storage as soon as it has aliasing info, so do not
+	 print the VARYING that results.  */
+      if (!r.varying_p ())
+	{
+	  pp_string (pp, "# RANGE ");
+	  pp_vrange (pp, &r);
+	  newline_and_indent (pp, spc);
+	}
     }
 }
 
@@ -3023,8 +3024,7 @@ dump_phi_nodes (pretty_printer *pp, basic_block bb, int indent,
       if (!virtual_operand_p (gimple_phi_result (phi)) || (flags & TDF_VOPS))
         {
           INDENT (indent);
-	  dump_gimple_phi (pp, phi, indent,
-			   (flags & TDF_GIMPLE) ? false : true, flags);
+	  dump_gimple_phi (pp, phi, indent, !(flags & TDF_GIMPLE), flags);
           pp_newline (pp);
         }
     }

@@ -1,3 +1,473 @@
+2026-11-13  LIU Hao  <lh_mouse@126.com>
+
+	* config/i386/cygwin.S: Fix a typo in `___chkstk`.
+
+2026-11-10  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* configure: Regenerate.
+	* configure.ac: Set libgcc_topdir to "${srcdir}/.." and remove AC_CONFIG_AUX_DIR.
+
+2026-11-09  Florian Fuchs  <fuchsfl@gmail.com>
+
+	PR target/128472
+	* config/s390/t-float16 (LIB2ADD): Only add the _dpd_ files when
+	decimal_float is set.
+
+2026-11-08  Alexandre Oliva  <oliva@adacore.com>
+
+	* config/gthr-vxworks-thread.c (ENTRYPTR): Rename to...
+	(__gthread_entry_point_t): ... this.  Use gthread
+	conventions.  Drop indirection.
+	(__task_wrapper): Use VxWorks conventions for its formals,
+	and convert to the gthread types.  Drop extraneous and risky
+	double-underscore prefixes.  Add indirection to entry point
+	pointer.
+	(__gthread_create): Use __gthread_entry_point_t.
+
+2026-11-08  Douglas Rupp  <rupp@adacore.com>
+
+	* config/rs6000/vxworks-unwind.h: New file.
+	* config.host (powerpc*-wrs-vxworks7*): Set md_unwind_header
+	to use it.
+
+2026-11-04  Sam Price  <thesamprice@gmail.com>
+
+	* config/microblaze/moddi3.S: Name the register-pair halves by
+	endianness.  Fix the divisor negation, the result sign and the
+	zero paths.  Do not normalize an already-normalized dividend.
+	Do not compute the quotient, which is not returned.  Drop the
+	dead comparison, the unreferenced label and the branch over it.
+	Name the working registers and the labels after the reference
+	algorithm, and state the invariant the trial subtraction relies
+	on.
+	Assisted-by: Claude (Anthropic)
+
+2026-11-04  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure.ac: Replace AC_CONFIG_HEADER with AC_CONFIG_HEADERS.
+
+2026-10-24  Matt Turner  <mattst88@gmail.com>
+
+	* config/ia64/unwind-ia64.c (ia64_copy_rbs): Take LEN in bytes,
+	not words.
+
+2026-10-24  Matt Turner  <mattst88@gmail.com>
+
+	* config/ia64/unwind-ia64.c (ia64_copy_rbs): Make LEN and COUNT
+	signed.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for inttypes.h, stdint.h, sys/auxv.h,
+	sys/mman.h, sys/stat.h, sys/types.h, or unistd.h.
+
+2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* configure.ac: Include ../config/mmap.m4.
+
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in (STDC_HEADERS): Delete.
+	* configure: Regenerate.
+	* configure.ac: Drop AC_HEADER_STDC.
+
+2026-09-11  Manjunath Matti  <mmatti@linux.ibm.com>
+	    Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/117584
+	* config/rs6000/float128-sed: Add __floatbitinttf/__floatbitintkf
+	and __fixtfbitint/__fixkfbitint substitution rules.
+	* config/rs6000/float128-sed-hw: Likewise.
+	* config/rs6000/libgcc-glibc.ver (GCC_17.0.0): New version node
+	inheriting GCC_4.2.0; export __floatbitintkf, __fixkfbitint,
+	__floatbitinttf, __fixtfbitint, __floatbitintsf, __fixsfbitint,
+	__floatbitintdf and __fixdfbitint.
+	* config/rs6000/t-float128 (fp128_softfp_funcs): Add floatbitintkf
+	and fixkfbitint.
+	(rs6000_bitint_bin_funcs, rs6000_bitint_bin_src): New; add to
+	LIB2ADD unconditionally.
+	(rs6000_bitint_dec_funcs, rs6000_bitint_dec_src): New; add to
+	LIB2ADD_ST when decimal float is enabled.
+	* config/rs6000/t-linux (ibm128_bitint_funcs, ibm128_bitint_src):
+	New; add to LIB2ADD.
+	(ibm128_bitint_objs, IBM128_BITINT_CFLAGS): New.
+	* config/rs6000/floatbitinttf-ibm128.c: New file.
+	* config/rs6000/fixtfbitint-ibm128.c: New file.
+
+2026-09-04  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (FUNCS_notiny): Add _divsq3, _udivusq3.
+	* config/avr/lib1funcs-fixed.S (__udivusq3, __divsq3): New DEFUN.
+	(__usdivusq3, __ssdivsq3): New ENTRY.
+
+2026-09-01  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (FUNCS_notiny): Add _mulsq3.
+	* config/avr/lib1funcs-fixed.S (__mulsq3, __ssmulsq3): Implement.
+	* config/avr/lib1funcs.S (__umulsidi3): Add ENTRYs
+	__mulusq3, __usmulusq3.
+
+2026-09-01  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs-fixed.S (__mulQ64_work):
+	Restore B = R10..R17 to its orignal value.
+
+2026-08-25  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/127071
+	* config/avr/t-copy-libgcc: Remove file.
+	* config/avr/t-avrlibc: Remove code to pull in t-copy-libgcc.
+
+2026-08-24  Kito Cheng  <kito.cheng@sifive.com>
+
+	* config/riscv/feature_bits.c: Include
+	common/config/riscv/riscv-hwprobe.h, and drop the hwprobe key
+	numbers, extension bit positions, struct riscv_hwprobe and
+	syscall_5_args that moved there.
+	(__init_riscv_features_bits_linux): Set the extension bits from
+	riscv-hwprobe.def.
+	(__init_riscv_feature_bits): Add a declaration.
+
+2026-08-16  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs.S: Fix typo in comment.
+
+2026-08-12  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (LIB1ASMFUNCS): Add _usshift_1, _usshift_2,
+	_usshift_4, _ssshift_1, _ssshift_2, _ssshift_4.
+	(FUNCS_notiny): Add _usshift_8, _ssshift_8.
+	(LIB2FUNCS_EXCLUDE): Add all the default libgcc saturated shifts.
+	* config/avr/lib1funcs-fixed.S: Support saturated ashl for
+	all fixed-point modes.
+
+2026-08-11  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (conv_YX): New variable.
+	(LIB2FUNCS_EXCLUDE): Add more modules that handle modes which
+	we don't support, or which are handled by avr-specific modules.
+
+2026-08-05  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (LIB1ASMFUNCS): Add _divQ16_tail.
+	* config/avr/lib1funcs-fixed.S (__divQ16_tail): New DEFUN.
+	(__divhq3, __udivuhq3, __divha3, __udivuha3): Overhaul.
+	(__ssdivhq3, __usdivuhq3, __ssdivha3, __usdivuha3): New ENTRYs.
+
+2026-08-05  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (FUNCS_notiny) <_divsa3, _udivusa3>: Move
+	to LIB1ASMFUNCS.
+	* config/avr/lib1funcs-fixed.S (__divsa3, __udivusa3): Overhaul.
+	Saturate result.
+	(__ssdivsa3, __usdivusa3, __udivusa3.2): New ENTRYs.
+
+2026-07-31  Muhammad Kamran  <muhammad.kamran@arm.com>
+
+	* config/aarch64/aarch64-asm.h (FEATURE_1_AND_MARK): Do not emit
+	.previous after AArch64 build attributes.
+
+2026-07-29  Piotr Kubaj  <pkubaj@FreeBSD.org>
+
+	PR target/125803
+	* config/rs6000/freebsd-unwind.h (TOC_SAVE_SLOT): New macro,
+	defined according to _CALL_ELF.
+	(frob_update_context): Use TOC_SAVE_SLOT instead of the
+	hard-coded ELFv1 offset 40 when checking for and locating the
+	saved TOC, so that r2 is restored correctly under ELFv2.  Guard
+	the ELFv1-only PLT stub and function pointer call sequences
+	with _CALL_ELF != 2, mirroring linux-unwind.h.
+
+2026-07-28  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (FUNCS_notiny): Add _udivuQ64_common, _udivuda3,
+	_udivuta3, _udivudq3, _divda3, _divta3, _divdq3, _divQ64_tail.
+	* config/avr/lib1funcs-fixed.S (__udivuta3, __usdivuta3)
+	(__udivudq3, __usdivudq3, __udivuda3, __usdivuda3)
+	(__udivuQ64_common, __divda3, __ssdivda3, __divta3, __ssdivta3)
+	(__divdq3, __ssdivdq3, __divQ64_tail): New functions.
+
+2026-07-25  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (FUNCS_notiny): Add _negdi2_r10.
+	* config/avr/lib1funcs.S (__negdi2_r10): New function.
+	(__divdi3_moddi3): Use it.
+	* config/avr/lib1funcs-fixed.S (__mulQ64_work): Use it.
+
+2026-07-22  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs.S (__mulqihi3): Use .branch_plus.
+	(__mulsidi3): Same.
+
+2026-07-22  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs-fixed.S (__mulQ64_work): Shave
+	off one more instruction.
+
+2026-07-22  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs-fixed.S (__mulQ64_work): Tweak
+	overflow handling.  Use __negsi2 (non-saturating negation)
+	to negate.
+
+2026-07-21  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs.S (__muldi3_6): Tweak.
+
+2026-07-21  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs-fixed.S (__mulQ64_work): Add a
+	SET instruction (for signed) prior to ICALL-ing.
+
+2026-07-21  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (FUNCS_notiny): Add: _umulditi3_raw,
+	_muluda3,  _muluta3,  _muludq3, _mulda3 _multa3 _muldq3,
+	_muluQ64_tail, _mulQ64_work, _divsa3 _udivusa3.
+	* config/avr/asm-defs.h (mov8, ENTRY): New .macro's.
+	* config/avr/lib1funcs-fixed.S (__umulditi3_raw, __muluda3)
+	(__muluta3, __muludq3, __muluQ64_tail, __muldq3, __mulda3)
+	(__multa3, __mulQ64_work): New DEFUN's.
+
+2026-07-11  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* config.host <i[34567]86-*-netbsdelf*> (tmake_file): Add
+	i386/t-msabi.
+	<x86_64-*-netbsd*>: Likewise.
+
+2026-07-09  Stefan Schulze Frielinghaus  <stefansf@gcc.gnu.org>
+
+	* config.host: Remove target s390-*.  Remove -m31 part.
+	* config/s390/libgcc-glibc.ver: Remove -m31 part.
+	* config/s390/morestack.S: Ditto.
+	* config/s390/sfp-machine.h: Ditto.
+	* configure: Regenerate.
+	* configure.ac: Remove target s390-*.
+	* generic-morestack.c: Remove -m31 part.
+	* config/s390/32/_fixdfdi.c: Removed.
+	* config/s390/32/_fixsfdi.c: Removed.
+	* config/s390/32/_fixtfdi.c: Removed.
+	* config/s390/32/_fixunsdfdi.c: Removed.
+	* config/s390/32/_fixunssfdi.c: Removed.
+	* config/s390/32/_fixunstfdi.c: Removed.
+	* config/s390/32/t-floattodi: Removed.
+
+2026-07-08  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (LIB1ASMFUNCS): Add _negsi2_r18.
+	* config/avr/asm-defs.h (.call_if_neg): New .macro.
+	* config/avr/lib1funcs.S (__divmodsi4): Use .call_if_neg.
+	(__negsi2_r18): New function.
+	* config/avr/lib1funcs-fixed.S (__divsa3): Use .call_if_neg.
+
+2026-07-05  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* configure.ac (solaris_ld_v2_maps): Remove.
+	* configure: Regenerate.
+	* Makefile.in (solaris_ld_v2_maps): Remove.
+	* config/t-slibgcc-sld (libgcc-unwind.map): Remove
+	solaris_ld_v2_maps handling.
+
+2026-07-04  Iain Sandoe  <iain@sandoe.co.uk>
+
+	PR libgcc/123976
+	* config/t-darwin-ehs: Add md-unwind-def.h as a
+	pre-requisite.
+
+2026-06-29  Claudio Bantaloukas  <Claudio.Bantaloukas@arm.com>
+
+	* config/aarch64/__arm_sc_memchr_scalar.S: New file.
+	* config/aarch64/__arm_sc_memcpy_scalar.S: Likewise.
+	* config/aarch64/__arm_sc_memset_scalar.S: Likewise.
+	* config/aarch64/libgcc-sme.ver (GCC_17.0): Export
+	__arm_sc_memchr, __arm_sc_memcpy, __arm_sc_memmove and
+	__arm_sc_memset.
+	* config/aarch64/t-aarch64: Add new files.
+	* config/aarch64/aarch64-asm.h: Add ENTRY_ALIAS.
+
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Replace AC_HELP_STRING with AS_HELP_STRING.  Replace
+	AC_TRY_COMPILE with AC_COMPILE_IFELSE.
+
+2026-06-17  Muhammad Kamran  <muhammad.kamran@arm.com>
+
+	* config/aarch64/aarch64-asm.h (FEATURE_1_AND_MARK): Define.
+	Use AArch64 build attributes when __ARM_BUILDATTR64_FV is
+	available, otherwise emit a GNU property note.
+
+2026-06-15  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	PR target/38239
+	* config/sol2/gmon.c [__i386__] (_mcount): Pass selfpc, frompc to
+	internal_mcount.
+	(internal_mcount): Remove already_setup.
+	Remove obsolete comment.
+	(moncontrol): Disable profil(2) deprecation warning.
+
+2026-06-14  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/asm-defs.h (REGNO): Recognize: x, y, z, X, Y, Z.
+	(PC_SIZE): New define.
+	* config/avr/lib1funcs.S (__mulpsi3, __mulsi3): Use it.
+
+2026-06-12  Ramin Moussavi  <lordrasmus@gmail.com>
+
+	* config.host (microblaze*-linux*): Set md_unwind_header.
+	* config/microblaze/linux-unwind.h: New file.
+
+2026-06-09  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs.S: Fix trailing blanks.
+	(mov_h): Remove macro and invocations.
+	(mov_l): Remove macro.  Replace invocations with wmov.
+	(__zero_reg__, __tmp_reg__, __SREG__, __SP_H__)
+	(__SP_L__, __RAMPZ__, __EIND__, skip, NEG2, NEG4)
+	(wmov, wsubi, waddi, mov4, XCALL, XJMP, XICALL, XIJMP)
+	(do_prologue_saves, do_epilogue_restores, .branch_plus)
+	(DEFUN, ENDF, FALIAS): Move macros to...
+	* config/avr/asm-defs.h: ...this new file.
+	* config/avr/lib1funcs-fixed.S: Fix trailing blanks.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/s390/tpf-unwind.h (s390_fallback_frame_state): Likewise.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/pa/linux-atomic.c: Fix typos.
+	* config/pa/sync-libfuncs.c: Likewise.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/nvptx/atomic.c: Fix typos.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/nds32/initfini.c: Fix typos.
+	* config/nds32/linux-atomic.c: Likewise.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/mips/linux-unwind.h (mips_fallback_frame_state): Likewise.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/arm/fp16.c (__gnu_float2h_internal): Fix typos.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/arc/ieee-754/divtab-arc-df.c: Fix typos.
+	* config/arc/ieee-754/divtab-arc-sf.c: Likewise.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/alpha/vms-unwind.h (alpha_vms_fallback_frame_state): Fix typos.
+
+2026-06-01  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* config/aarch64/aarch64-unwind.h (aarch64_demangle_return_addr): Fix
+	typos.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* fixed-bit.c: Fix typos.
+	* libgcov-interface.c (__gcov_reset_int): Likewise.
+	(__gcov_dump_int): Likewise.
+	* libgcov-util.c (FLAG_ONE_HOT): Likewise.
+	(calculate_overlap): Likewise.
+	* unwind-dw2.c: Likewise.
+	* unwind-seh.c (_Unwind_GetTextRelBase): Likewise.
+
+2026-05-29  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* config.host <i[34567]86-*-freebsd*> (tmake_file): Add
+	i386/t-msabi.
+	<x86_64-*-freebsd*>: Likewise.
+	* config/i386/i386-asm.h: Update comment.
+	* config/i386/resms64.h: Use .note.GNU-stack on FreeBSD, too.
+	* config/i386/resms64f.h: Likewise.
+	* config/i386/resms64fx.h: Likewise.
+	* config/i386/resms64x.h: Likewise.
+	* config/i386/savms64.h: Likewise.
+	* config/i386/savms64f.h: Likewise.
+
+2026-05-21  Christoph Müllner  <christoph.muellner@vrull.eu>
+
+	* config/riscv/feature_bits.c (ZICFISS_GROUPID,
+	ZICFISS_BITMASK, RISCV_HWPROBE_KEY_IMA_EXT_1,
+	RISCV_HWPROBE_EXT_ZICFISS): Define.
+	(SET_FROM_IMA_EXT_1): Define.
+	(__init_riscv_features_bits_linux): Query IMA_EXT_1 and set
+	zicfiss from the corresponding upstream Linux hwprobe bit.
+
+2026-05-21  Christoph Müllner  <christoph.muellner@vrull.eu>
+
+	* config/riscv/feature_bits.c (RISCV_HWPROBE_EXT_SUPM,
+	RISCV_HWPROBE_EXT_ZICNTR, RISCV_HWPROBE_EXT_ZIHPM,
+	RISCV_HWPROBE_EXT_ZFBFMIN, RISCV_HWPROBE_EXT_ZVFBFMIN,
+	RISCV_HWPROBE_EXT_ZVFBFWMA, RISCV_HWPROBE_EXT_ZICBOM,
+	RISCV_HWPROBE_EXT_ZAAMO, RISCV_HWPROBE_EXT_ZALRSC,
+	RISCV_HWPROBE_EXT_ZABHA, RISCV_HWPROBE_EXT_ZALASR,
+	RISCV_HWPROBE_EXT_ZICBOP, RISCV_HWPROBE_EXT_ZILSD,
+	RISCV_HWPROBE_EXT_ZCLSD, RISCV_HWPROBE_EXT_ZICFILP): Define.
+	(__init_riscv_features_bits_linux): Set feature bits from the
+	corresponding upstream Linux hwprobe bits.
+
+2026-05-21  Christoph Müllner  <christoph.muellner@vrull.eu>
+
+	* config/riscv/feature_bits.c (SUPM_GROUPID, SUPM_BITMASK,
+	ZICNTR_GROUPID, ZICNTR_BITMASK, ZIHPM_GROUPID,
+	ZIHPM_BITMASK, ZFBFMIN_GROUPID, ZFBFMIN_BITMASK,
+	ZVFBFMIN_GROUPID, ZVFBFMIN_BITMASK, ZVFBFWMA_GROUPID,
+	ZVFBFWMA_BITMASK, ZICBOM_GROUPID, ZICBOM_BITMASK,
+	ZAAMO_GROUPID, ZAAMO_BITMASK, ZALRSC_GROUPID,
+	ZALRSC_BITMASK, ZABHA_GROUPID, ZABHA_BITMASK,
+	ZALASR_GROUPID, ZALASR_BITMASK, ZICBOP_GROUPID,
+	ZICBOP_BITMASK, ZICFILP_GROUPID, ZICFILP_BITMASK):
+	Define.
+
+2026-05-21  Christoph Müllner  <christoph.muellner@vrull.eu>
+
+	* config/riscv/feature_bits.c (B_GROUPID, B_BITMASK,
+	E_GROUPID, E_BITMASK, H_GROUPID, H_BITMASK,
+	ZILSD_GROUPID, ZILSD_BITMASK, ZCLSD_GROUPID,
+	ZCLSD_BITMASK, ZCMP_GROUPID, ZCMP_BITMASK,
+	ZIFENCEI_GROUPID, ZIFENCEI_BITMASK, ZMMUL_GROUPID,
+	ZMMUL_BITMASK): Define.
+
+2026-05-19  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (LIB1ASMFUNCS): Add _bitreverse8, _bitreverse16,
+	_bitreverse24, _bitreverse32.
+	* config/avr/lib1funcs.S (__bitreverse8, __bitreverse16)
+	(__bitreverse24, __bitreverse32): New functions.
+
+2026-05-11  John David Anglin  <danglin@gcc.gnu.org>
+
+	* config.host (hppa*64*-hp-hpux11*): Handle linking with GNU ld.
+	* config/pa/libgcc-hpux.ver: New file.
+	* config/pa/t-slibgcc-gld: New file.
+	* config/pa/t-slibgcc-hpux (SHLIB_LDFLAGS, INSTALL_SHLIB,
+	SHLIB_MKMAP, SHLIB_MAPFILES): Define.
+
+2026-05-04  Iain Buclaw  <ibuclaw@gdcproject.org>
+
+	* config/m32c/*: Delete entire directory.
+	* config.host: Remove references to m32c.
+	* config/rl78/lib2div.c (C3): Likewise.
+
+2026-04-23  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* config/i386/t-slibgcc-cygming (SHLIB_LINK): Add $(LDFLAGS).
+
 2026-04-17  Andre Vieira  <andre.simoesdiasvieira@arm.com>
 
 	* config/arm/sfp-exceptions.c: New file.

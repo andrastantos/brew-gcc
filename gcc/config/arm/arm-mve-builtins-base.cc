@@ -44,7 +44,7 @@ namespace {
 class vdupq_impl : public quiet<function_base>
 {
 public:
-  CONSTEXPR vdupq_impl (int unspec_for_m_n_sint,
+  constexpr vdupq_impl (int unspec_for_m_n_sint,
 			int unspec_for_m_n_uint,
 			int unspec_for_m_n_fp)
     : m_unspec_for_m_n_sint (unspec_for_m_n_sint),
@@ -240,7 +240,7 @@ class vstrq_scatter_impl : public store_truncating
 public:
   using store_truncating::store_truncating;
 
-  CONSTEXPR vstrq_scatter_impl (bool shifted,
+  constexpr vstrq_scatter_impl (bool shifted,
 				scalar_mode to_int_mode,
 				opt_scalar_mode to_float_mode)
     : store_truncating (to_int_mode, to_float_mode),
@@ -290,13 +290,16 @@ public:
 class vstrq_scatter_base_impl : public function_base
 {
 public:
-  CONSTEXPR vstrq_scatter_base_impl (scalar_mode to_int_mode)
+  constexpr vstrq_scatter_base_impl (scalar_mode to_int_mode)
     : m_to_int_mode (to_int_mode)
   {}
 
-  unsigned int call_properties (const function_instance &) const override
+  unsigned int call_properties (const function_instance &fi) const override
   {
-    return CP_WRITE_MEMORY;
+    if (fi.mode_suffix_id == MODE_wb)
+      return CP_WRITE_MEMORY | CP_READ_MEMORY;
+    else
+      return CP_WRITE_MEMORY;
   }
 
   machine_mode memory_vector_mode (const function_instance &fi) const override
@@ -407,7 +410,7 @@ class vldrq_gather_impl : public load_extending
 public:
   using load_extending::load_extending;
 
-  CONSTEXPR vldrq_gather_impl (bool shifted,
+  constexpr vldrq_gather_impl (bool shifted,
 			       type_suffix_index signed_memory_type,
 			       type_suffix_index unsigned_memory_type,
 			       type_suffix_index float_memory_type)
@@ -415,7 +418,7 @@ public:
       m_shifted (shifted)
   {}
 
-  CONSTEXPR vldrq_gather_impl (bool shifted,
+  constexpr vldrq_gather_impl (bool shifted,
 			       type_suffix_index signed_memory_type,
 			       type_suffix_index unsigned_memory_type)
     : load_extending (signed_memory_type, unsigned_memory_type, NUM_TYPE_SUFFIXES),
@@ -480,6 +483,14 @@ public:
     return type_suffixes[suffix].vector_mode;
   }
 
+  unsigned int call_properties (const function_instance &fi) const override
+  {
+    if (fi.mode_suffix_id == MODE_wb)
+      return CP_WRITE_MEMORY | CP_READ_MEMORY;
+    else
+      return CP_READ_MEMORY;
+  }
+
   rtx expand (function_expander &e) const override
   {
     insn_code icode;
@@ -534,7 +545,7 @@ public:
 class vctpq_impl : public function_base
 {
 public:
-  CONSTEXPR vctpq_impl (machine_mode mode)
+  constexpr vctpq_impl (machine_mode mode)
     : m_mode (mode)
   {}
 
@@ -691,7 +702,7 @@ public:
 class vcvtxq_impl : public function_base
 {
 public:
-  CONSTEXPR vcvtxq_impl (int unspec_f16_f32, int unspec_for_m_f16_f32,
+  constexpr vcvtxq_impl (int unspec_f16_f32, int unspec_for_m_f16_f32,
 			 int unspec_f32_f16, int unspec_for_m_f32_f16)
     : m_unspec_f16_f32 (unspec_f16_f32),
       m_unspec_for_m_f16_f32 (unspec_for_m_f16_f32),
@@ -742,14 +753,14 @@ public:
 
 /* Map the vidup / vddup function directly to CODE (UNSPEC, M) where M is the
    vector mode associated with type suffix 0.  We need this special case
-   because in MODE_wb the builtins derefrence the first parameter and update
+   because in MODE_wb the builtins dereference the first parameter and update
    its contents.  We also have to insert the two additional parameters needed
    by the builtins compared to the intrinsics.  In wrapping mode, we have to
    match the 'hack' to make sure the 'wrap' parameters is in odd register.  */
 class viddup_impl : public function_base
 {
 public:
-  CONSTEXPR viddup_impl (bool inc_dec, bool wrap)
+  constexpr viddup_impl (bool inc_dec, bool wrap)
     : m_inc_dec (inc_dec), m_wrap (wrap)
   {}
 
@@ -875,7 +886,7 @@ public:
 
 /* Map the vshlc function directly to CODE (UNSPEC, M) where M is the vector
    mode associated with type suffix 0.  We need this special case because the
-   intrinsics derefrence the second parameter and update its contents.  */
+   intrinsics dereference the second parameter and update its contents.  */
 class vshlc_impl : public function_base
 {
 public:
@@ -949,7 +960,7 @@ public:
 class vadc_vsbc_impl : public function_base
 {
 public:
-  CONSTEXPR vadc_vsbc_impl (bool init_carry, bool add)
+  constexpr vadc_vsbc_impl (bool init_carry, bool add)
     : m_init_carry (init_carry), m_add (add)
   {}
 
@@ -1191,7 +1202,7 @@ enum which_scalar_shift {
 class mve_function_scalar_shift : public function_base
 {
 public:
-  CONSTEXPR mve_function_scalar_shift (enum which_scalar_shift shl)
+  constexpr mve_function_scalar_shift (enum which_scalar_shift shl)
     : m_scalar_shift (shl)
   {}
 
@@ -1285,7 +1296,7 @@ public:
 class mve_function_vpnot : public function_base
 {
 public:
-  CONSTEXPR mve_function_vpnot (void)
+  constexpr mve_function_vpnot (void)
   {}
 
   rtx
@@ -1304,7 +1315,7 @@ public:
 class mve_function_vsetq_vgetq_lane : public function_base
 {
 public:
-  CONSTEXPR mve_function_vsetq_vgetq_lane (bool is_get)
+  constexpr mve_function_vsetq_vgetq_lane (bool is_get)
     : m_is_get (is_get)
   {}
 

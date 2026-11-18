@@ -1,6 +1,5 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -mno-avx -msse2 -mtune=generic -minline-all-stringops" } */
-/* { dg-add-options check_function_bodies } */
 /* Keep labels and directives ('.cfi_startproc', '.cfi_endproc').  */
 /* { dg-final { check-function-bodies "**" "" "" { target { lp64 } } {^\t?\.} } } */
 
@@ -76,7 +75,7 @@
 **	.p2align 3
 **.L18:
 **	cmpq	\$64, %rdx
-**	jb	.L10
+**	jbe	.L10
 **	movdqu	\(%rsi\), %xmm7
 **	movdqu	16\(%rsi\), %xmm6
 **	movdqu	32\(%rsi\), %xmm5

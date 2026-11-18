@@ -37,6 +37,7 @@ void gen_int_fp_signed_fixed_libfunc (optab, const char *, char, machine_mode);
 void gen_int_fixed_libfunc (optab, const char *, char, machine_mode);
 void gen_int_signed_fixed_libfunc (optab, const char *, char, machine_mode);
 void gen_int_unsigned_fixed_libfunc (optab, const char *, char, machine_mode);
+void gen_bitint_fp_libfunc (optab, const char *, char, machine_mode);
 
 void gen_interclass_conv_libfunc (convert_optab, const char *,
 				  machine_mode, machine_mode);

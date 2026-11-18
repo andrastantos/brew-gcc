@@ -99,7 +99,7 @@
    since the functions are actually in libSystem but for 7.x compatibility
    we want them to be looked for in libmx first.
    Include libSystemStubs when compiling against 10.3 - 10.6 SDKs (we assume
-   this is the case when targetting these) - but not for 64-bit long double.
+   this is the case when targeting these) - but not for 64-bit long double.
    Don't do either for m64, the library is either a dummy or non-existent.
 */
 
@@ -295,7 +295,9 @@
   /* cr0..cr7 */							\
     "cr0", "cr1", "cr2", "cr3", "cr4", "cr5", "cr6", "cr7",		\
   /* vrsave vscr sfp */							\
-    "vrsave", "vscr", "sfp"						\
+    "vrsave", "vscr", "sfp",						\
+  /* DMRs */								\
+      "dm0", "dm1", "dm2", "dm3", "dm4", "dm5", "dm6", "dm7"	\
 }
 
 /* This outputs NAME to FILE.  */

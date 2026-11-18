@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        IDENTIFICATION DIVISION.
        PROGRAM-ID. prog.
        PROCEDURE DIVISION.
@@ -16,6 +17,6 @@
                    END-IF.
            IF FUNCTION ABS(000.0) NOT EQUAL TO ZERO
                    MOVE 1 TO RETURN-CODE
-                   DISPLAY "FUNCTION ABS(-000.0) FAILS."
+                   DISPLAY "FUNCTION ABS(000.0) FAILS."
                    END-IF.
 

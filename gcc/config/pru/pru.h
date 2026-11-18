@@ -49,6 +49,11 @@
   "%(cpp_device) "					\
   "%{mabi=ti:-D__PRU_EABI_TI__; :-D__PRU_EABI_GNU__}"
 
+/* Allow MCU specs to append assembler command line.  */
+#undef  ASM_SPEC
+#define ASM_SPEC					    \
+  "%(asm_device) "
+
 /* Do not relax when in TI ABI mode since TI tools do not always
    put PRU_S10_PCREL.  */
 #undef  LINK_SPEC
@@ -241,7 +246,7 @@ enum reg_class
     /* NO_REGS	      */ { 0, 0, 0, 0, 0},			\
     /* SIB_REGS	      */ { 0xf, 0xff000000u, ~0u, 0xffffffu, 0},\
     /* LOOPCNTR_REGS  */ { 0, 0, 0, 0, 0xf},			\
-    /* MULDST_REGS    */ { 0, 0, 0, 0x00000f00u, 0},		\
+    /* MULDST_REGS    */ { 0, 0, 0, 0x0000ff00u, 0},		\
     /* MULSRC0_REGS   */ { 0, 0, 0, 0x000f0000u, 0},		\
     /* MULSRC1_REGS   */ { 0, 0, 0, 0x00f00000u, 0},		\
     /* REGIO_REGS     */ { 0, 0, 0, 0xff000000u, 0},		\
@@ -568,7 +573,7 @@ do {									\
 
 /* See definition of clz pattern for rationale of the value.  */
 #define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE)	\
-	((VALUE) = GET_MODE_BITSIZE (MODE) - 1 - 32, 2)
+	((VALUE) = GET_MODE_UNIT_BITSIZE (MODE) - 1 - 32, 2)
 
 /* Jumps are cheap on PRU.  */
 #define LOGICAL_OP_NON_SHORT_CIRCUIT		0

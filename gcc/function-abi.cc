@@ -159,7 +159,10 @@ caller_save_regs (const function_abi &caller_abi) const
 	 clobbers for (e.g. taking -fipa-ra into account).  */
       result |= (extra_clobbers & m_abi_clobbers[abi_id]);
     }
-  return result;
+
+  /* The caller can save a register only if the register is enabled in
+     the caller.  */
+  return result & accessible_reg_set;
 }
 
 /* Return the set of registers that cannot be used to hold a value of
@@ -224,10 +227,7 @@ insn_callee_abi (const rtx_insn *insn)
     if (tree fndecl = get_call_fndecl (insn))
       return fndecl_abi (fndecl);
 
-  if (targetm.calls.insn_callee_abi)
-    return targetm.calls.insn_callee_abi (insn);
-
-  return default_function_abi;
+  return function_abis[CALL_INSN_ABI_ID (insn)];
 }
 
 /* Return the ABI of the function called by CALL_EXPR EXP.  Return the

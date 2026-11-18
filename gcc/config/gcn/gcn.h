@@ -30,6 +30,14 @@ extern const struct gcn_device_def {
   int max_isa_vgprs;
   unsigned generic_version;
   const char *arch_family;
+  int simds_per_cu;
+  int max_waves_per_simd;
+  int vgpr_granularity;
+  int sgprs_per_simd;
+  int sgpr_granularity;
+  int max_normal_sgprs;
+  int max_normal_vgprs;
+  int max_normal_avgprs;
 } gcn_devices[];
 
 #define TARGET_CPU_CPP_BUILTINS()                                              \
@@ -84,6 +92,9 @@ extern const struct gcn_device_def {
   {"arch", "%{!march=*:-march=%(VALUE)}" }, \
   {"tune", "%{!mtune=*:-mtune=%(VALUE)}" }
 
+/* Assembler doesn't support '-v' option.  */
+#define ASM_V_SPEC ""
+
 /* Default target_flags if no switches specified.  */
 #ifndef TARGET_DEFAULT
 #define TARGET_DEFAULT 0
@@ -117,6 +128,7 @@ extern const struct gcn_device_def {
 
 #define DATA_ALIGNMENT(TYPE,ALIGN) ((ALIGN) > 128 ? (ALIGN) : 128)
 #define LOCAL_ALIGNMENT(TYPE,ALIGN) ((ALIGN) > 64 ? (ALIGN) : 64)
+#define LOCAL_DECL_ALIGNMENT(DECL) gcn_local_decl_alignment (DECL)
 #define STACK_SLOT_ALIGNMENT(TYPE,MODE,ALIGN) ((ALIGN) > 64 ? (ALIGN) : 64)
 #define STRICT_ALIGNMENT 1
 
@@ -216,7 +228,7 @@ STATIC_ASSERT (LAST_AVGPR_REG + 1 - FIRST_AVGPR_REG == 256);
 #define NUM_PARM_REGS  6
 
 /* There is no arg pointer.  Just choose random fixed register that does
-   not intefere with anything.  */
+   not interfere with anything.  */
 #define ARG_POINTER_REGNUM SOFT_ARG_REG
 
 #define HARD_FRAME_POINTER_IS_ARG_POINTER   0
@@ -412,6 +424,7 @@ enum reg_class
   AVGPR_REGS,
   ALL_VGPR_REGS,
   ALL_GPR_REGS,
+  SCALAR_SPILL_REGS,
   SRCDST_REGS,
   AFP_REGS,
   ALL_REGS,
@@ -428,7 +441,7 @@ enum reg_class
    "EXECZ_CONDITIONAL_REG", \
    "ALL_CONDITIONAL_REGS",  \
    "EXEC_MASK_REG",	    \
-   "MEMORY_APERTURE_REGS"   \
+   "MEMORY_APERTURE_REGS",  \
    "SGPR_REGS",		    \
    "SGPR_EXEC_REGS",	    \
    "SGPR_VOP3A_SRC_REGS",   \
@@ -440,6 +453,7 @@ enum reg_class
    "AVGPR_REGS",	    \
    "ALL_VGPR_REGS",	    \
    "ALL_GPR_REGS",	    \
+   "SCALAR_SPILL_REGS",	    \
    "SRCDST_REGS",	    \
    "AFP_REGS",		    \
    "ALL_REGS"		    \
@@ -576,6 +590,12 @@ enum reg_class
      0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,			   \
      0xffffffff, 0, 0, 0,						   \
      0, 0, 0, 0, 0, 0},							   \
+    /* SCALAR_SPILL_REGS.  */						   \
+    {0xffffffff, 0xffffffff, 0xffffffff, 0xf1,				   \
+     0, 0, 0, 0,							   \
+     0, 0, 0, 0,							   \
+     0,		 0xffffffff, 0xffffffff, 0xffffffff,			   \
+     0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0},	   \
     /* SRCDST_REGS.  */							   \
     {0xffffffff, 0xffffffff, 0xffffffff,				   \
      0xffffffff-NAMED_REG_MASK (VCCZ_REG),				   \
@@ -597,8 +617,6 @@ enum reg_class
      0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0 }}
 
 #define REGNO_REG_CLASS(REGNO) gcn_regno_reg_class (REGNO)
-#define MODE_CODE_BASE_REG_CLASS(MODE, AS, OUTER, INDEX) \
-	 gcn_mode_code_base_reg_class (MODE, AS, OUTER, INDEX)
 #define REGNO_MODE_CODE_OK_FOR_BASE_P(NUM, MODE, AS, OUTER, INDEX) \
 	 gcn_regno_mode_code_ok_for_base_p (NUM, MODE, AS, OUTER, INDEX)
 #define INDEX_REG_CLASS VGPR_REGS
@@ -865,7 +883,7 @@ enum gcn_builtin_codes
 
 /* Costs.  */
 
-/* Branches are to be dicouraged when theres an alternative.
+/* Branches are to be dicouraged when there's an alternative.
    FIXME: This number is plucked from the air.  */
 #define BRANCH_COST(SPEED_P, PREDICABLE_P) 10
 
@@ -902,3 +920,6 @@ enum gcn_builtin_codes
       || M == V2SFmode || M == V2DImode || M == V2DFmode) \
    ? 2 \
    : 1)
+
+/* For switching between kernel and regular function.  */
+#define SWITCHABLE_TARGET 1

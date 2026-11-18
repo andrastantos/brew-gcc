@@ -21,9 +21,70 @@ namespace Values {
 class Intrinsics
 {
 public:
+  static constexpr auto &UNREACHABLE = "unreachable";
+
+  // Math intrinsics
+  static constexpr auto &SQRTF32 = "sqrtf32";
+  static constexpr auto &SQRTF64 = "sqrtf64";
+
+  static constexpr auto &SINF32 = "sinf32";
+  static constexpr auto &SINF64 = "sinf64";
+
+  static constexpr auto &COSF32 = "cosf32";
+  static constexpr auto &COSF64 = "cosf64";
+
+  static constexpr auto &POWF32 = "powf32";
+  static constexpr auto &POWF64 = "powf64";
+
+  static constexpr auto &POWIF32 = "powif32";
+  static constexpr auto &POWIF64 = "powif64";
+
+  static constexpr auto &EXPF32 = "expf32";
+  static constexpr auto &EXPF64 = "expf64";
+
+  static constexpr auto &EXP2F32 = "exp2f32";
+  static constexpr auto &EXP2F64 = "exp2f64";
+
+  static constexpr auto &LOGF32 = "logf32";
+  static constexpr auto &LOGF64 = "logf64";
+
+  static constexpr auto &LOG10F32 = "log10f32";
+  static constexpr auto &LOG10F64 = "log10f64";
+
+  static constexpr auto &LOG2F32 = "log2f32";
+  static constexpr auto &LOG2F64 = "log2f64";
+
+  static constexpr auto &FMAF32 = "fmaf32";
+  static constexpr auto &FMAF64 = "fmaf64";
+
+  static constexpr auto &FABSF32 = "fabsf32";
+  static constexpr auto &FABSF64 = "fabsf64";
+
+  static constexpr auto &COPYSIGNF32 = "copysignf32";
+  static constexpr auto &COPYSIGNF64 = "copysignf64";
+
+  static constexpr auto &FLOORF32 = "floorf32";
+  static constexpr auto &FLOORF64 = "floorf64";
+
+  static constexpr auto &CEILF32 = "ceilf32";
+  static constexpr auto &CEILF64 = "ceilf64";
+
+  static constexpr auto &TRUNCF32 = "truncf32";
+  static constexpr auto &TRUNCF64 = "truncf64";
+
+  static constexpr auto &RINTF32 = "rintf32";
+  static constexpr auto &RINTF64 = "rintf64";
+
+  static constexpr auto &NEARBYINTF32 = "nearbyintf32";
+  static constexpr auto &NEARBYINTF64 = "nearbyintf64";
+
+  static constexpr auto &ROUNDF32 = "roundf32";
+  static constexpr auto &ROUNDF64 = "roundf64";
+
   static constexpr auto &ABORT = "abort";
   static constexpr auto &OFFSET = "offset";
   static constexpr auto &SIZE_OF = "size_of";
+  static constexpr auto &SIZE_OF_VAL = "size_of_val";
   static constexpr auto &TRANSMUTE = "transmute";
 
   static constexpr auto &ADD_WITH_OVERFLOW = "add_with_overflow";
@@ -35,16 +96,121 @@ public:
 
   static constexpr auto &PREFETCH_READ_DATA = "prefetch_read_data";
   static constexpr auto &PREFETCH_WRITE_DATA = "prefetch_write_data";
+  static constexpr auto &PREFETCH_READ_INSTRUCTION
+    = "prefetch_read_instruction";
+  static constexpr auto &PREFETCH_WRITE_INSTRUCTION
+    = "prefetch_write_instruction";
 
+  static constexpr auto &ATOMIC_STORE = "atomic_store";
+  // atomic_store is renamed to atomic_store_seqcst from 1.64.0, the latter is
+  // left in for compatibility
+  // https://github.com/rust-lang/rust/commit/4982a59986f7393ace98f63c10e6c435ffba1420
   static constexpr auto &ATOMIC_STORE_SEQCST = "atomic_store_seqcst";
+  static constexpr auto &ATOMIC_STORE_REL = "atomic_store_rel";
+  // atomic_store_rel is nenamed to atomic_store_release from 1.64.0, the
+  // latter is left in for compatibility
   static constexpr auto &ATOMIC_STORE_RELEASE = "atomic_store_release";
   static constexpr auto &ATOMIC_STORE_RELAXED = "atomic_store_relaxed";
   static constexpr auto &ATOMIC_STORE_UNORDERED = "atomic_store_unordered";
 
+  static constexpr auto &ATOMIC_LOAD = "atomic_load";
+  // atomic_load is renamed to atomic_load_seqcst from 1.64.0, the latter is
+  // left in for compatibility
   static constexpr auto &ATOMIC_LOAD_SEQCST = "atomic_load_seqcst";
+  static constexpr auto &ATOMIC_LOAD_ACQ = "atomic_load_acq";
+  // atomic_load_acq is renamed to atomic_load_acquire from 1.64.0, the latter
+  // is left in for compatibility
   static constexpr auto &ATOMIC_LOAD_ACQUIRE = "atomic_load_acquire";
   static constexpr auto &ATOMIC_LOAD_RELAXED = "atomic_load_relaxed";
   static constexpr auto &ATOMIC_LOAD_UNORDERED = "atomic_load_unordered";
+
+  static constexpr auto &ATOMIC_XADD = "atomic_xadd";
+  static constexpr auto &ATOMIC_XADD_ACQ = "atomic_xadd_acq";
+  static constexpr auto &ATOMIC_XADD_REL = "atomic_xadd_rel";
+  static constexpr auto &ATOMIC_XADD_ACQREL = "atomic_xadd_acqrel";
+  static constexpr auto &ATOMIC_XADD_RELAXED = "atomic_xadd_relaxed";
+  static constexpr auto &ATOMIC_XSUB = "atomic_xsub";
+  static constexpr auto &ATOMIC_XSUB_ACQ = "atomic_xsub_acq";
+  static constexpr auto &ATOMIC_XSUB_REL = "atomic_xsub_rel";
+  static constexpr auto &ATOMIC_XSUB_ACQREL = "atomic_xsub_acqrel";
+  static constexpr auto &ATOMIC_XSUB_RELAXED = "atomic_xsub_relaxed";
+  static constexpr auto &ATOMIC_AND = "atomic_and";
+  static constexpr auto &ATOMIC_AND_ACQ = "atomic_and_acq";
+  static constexpr auto &ATOMIC_AND_REL = "atomic_and_rel";
+  static constexpr auto &ATOMIC_AND_ACQREL = "atomic_and_acqrel";
+  static constexpr auto &ATOMIC_AND_RELAXED = "atomic_and_relaxed";
+  static constexpr auto &ATOMIC_NAND = "atomic_nand";
+  static constexpr auto &ATOMIC_NAND_ACQ = "atomic_nand_acq";
+  static constexpr auto &ATOMIC_NAND_REL = "atomic_nand_rel";
+  static constexpr auto &ATOMIC_NAND_ACQREL = "atomic_nand_acqrel";
+  static constexpr auto &ATOMIC_NAND_RELAXED = "atomic_nand_relaxed";
+  static constexpr auto &ATOMIC_OR = "atomic_or";
+  static constexpr auto &ATOMIC_OR_ACQ = "atomic_or_acq";
+  static constexpr auto &ATOMIC_OR_REL = "atomic_or_rel";
+  static constexpr auto &ATOMIC_OR_ACQREL = "atomic_or_acqrel";
+  static constexpr auto &ATOMIC_OR_RELAXED = "atomic_or_relaxed";
+  static constexpr auto &ATOMIC_XOR = "atomic_xor";
+  static constexpr auto &ATOMIC_XOR_ACQ = "atomic_xor_acq";
+  static constexpr auto &ATOMIC_XOR_REL = "atomic_xor_rel";
+  static constexpr auto &ATOMIC_XOR_ACQREL = "atomic_xor_acqrel";
+  static constexpr auto &ATOMIC_XOR_RELAXED = "atomic_xor_relaxed";
+
+  static constexpr auto &ATOMIC_MIN = "atomic_min";
+  static constexpr auto &ATOMIC_MIN_ACQ = "atomic_min_acq";
+  static constexpr auto &ATOMIC_MIN_REL = "atomic_min_rel";
+  static constexpr auto &ATOMIC_MIN_ACQREL = "atomic_min_acqrel";
+  static constexpr auto &ATOMIC_MIN_RELAXED = "atomic_min_relaxed";
+  static constexpr auto &ATOMIC_MAX = "atomic_max";
+  static constexpr auto &ATOMIC_MAX_ACQ = "atomic_max_acq";
+  static constexpr auto &ATOMIC_MAX_REL = "atomic_max_rel";
+  static constexpr auto &ATOMIC_MAX_ACQREL = "atomic_max_acqrel";
+  static constexpr auto &ATOMIC_MAX_RELAXED = "atomic_max_relaxed";
+  static constexpr auto &ATOMIC_UMIN = "atomic_umin";
+  static constexpr auto &ATOMIC_UMIN_ACQ = "atomic_umin_acq";
+  static constexpr auto &ATOMIC_UMIN_REL = "atomic_umin_rel";
+  static constexpr auto &ATOMIC_UMIN_ACQREL = "atomic_umin_acqrel";
+  static constexpr auto &ATOMIC_UMIN_RELAXED = "atomic_umin_relaxed";
+  static constexpr auto &ATOMIC_UMAX = "atomic_umax";
+  static constexpr auto &ATOMIC_UMAX_ACQ = "atomic_umax_acq";
+  static constexpr auto &ATOMIC_UMAX_REL = "atomic_umax_rel";
+  static constexpr auto &ATOMIC_UMAX_ACQREL = "atomic_umax_acqrel";
+  static constexpr auto &ATOMIC_UMAX_RELAXED = "atomic_umax_relaxed";
+
+  static constexpr auto &ATOMIC_CXCHG = "atomic_cxchg";
+  static constexpr auto &ATOMIC_CXCHG_ACQ = "atomic_cxchg_acq";
+  static constexpr auto &ATOMIC_CXCHG_REL = "atomic_cxchg_rel";
+  static constexpr auto &ATOMIC_CXCHG_ACQREL = "atomic_cxchg_acqrel";
+  static constexpr auto &ATOMIC_CXCHG_RELAXED = "atomic_cxchg_relaxed";
+  static constexpr auto &ATOMIC_CXCHG_FAILRELAXED = "atomic_cxchg_failrelaxed";
+  static constexpr auto &ATOMIC_CXCHG_FAILACQ = "atomic_cxchg_failacq";
+  static constexpr auto &ATOMIC_CXCHG_ACQ_FAILRELAXED
+    = "atomic_cxchg_acq_failrelaxed";
+  static constexpr auto &ATOMIC_CXCHG_ACQREL_FAILRELAXED
+    = "atomic_cxchg_acqrel_failrelaxed";
+  static constexpr auto &ATOMIC_CXCHGWEAK = "atomic_cxchgweak";
+  static constexpr auto &ATOMIC_CXCHGWEAK_ACQ = "atomic_cxchgweak_acq";
+  static constexpr auto &ATOMIC_CXCHGWEAK_REL = "atomic_cxchgweak_rel";
+  static constexpr auto &ATOMIC_CXCHGWEAK_ACQREL = "atomic_cxchgweak_acqrel";
+  static constexpr auto &ATOMIC_CXCHGWEAK_RELAXED = "atomic_cxchgweak_relaxed";
+  static constexpr auto &ATOMIC_CXCHGWEAK_FAILRELAXED
+    = "atomic_cxchgweak_failrelaxed";
+  static constexpr auto &ATOMIC_CXCHGWEAK_FAILACQ = "atomic_cxchgweak_failacq";
+  static constexpr auto &ATOMIC_CXCHGWEAK_ACQ_FAILRELAXED
+    = "atomic_cxchgweak_acq_failrelaxed";
+  static constexpr auto &ATOMIC_CXCHGWEAK_ACQREL_FAILRELAXED
+    = "atomic_cxchgweak_acqrel_failrelaxed";
+
+  static constexpr auto &ATOMIC_FENCE = "atomic_fence";
+  static constexpr auto &ATOMIC_FENCE_ACQ = "atomic_fence_acq";
+  static constexpr auto &ATOMIC_FENCE_REL = "atomic_fence_rel";
+  static constexpr auto &ATOMIC_FENCE_ACQREL = "atomic_fence_acqrel";
+  static constexpr auto &ATOMIC_SINGLETHREADFENCE = "atomic_singlethreadfence";
+  static constexpr auto &ATOMIC_SINGLETHREADFENCE_ACQ
+    = "atomic_singlethreadfence_acq";
+  static constexpr auto &ATOMIC_SINGLETHREADFENCE_REL
+    = "atomic_singlethreadfence_rel";
+  static constexpr auto &ATOMIC_SINGLETHREADFENCE_ACQREL
+    = "atomic_singlethreadfence_acqrel";
 
   static constexpr auto &UNCHECKED_ADD = "unchecked_add";
   static constexpr auto &UNCHECKED_SUB = "unchecked_sub";
@@ -77,6 +243,7 @@ public:
   static constexpr auto &ASSUME = "assume";
 
   static constexpr auto &MIN_ALIGN_OF = "min_align_of";
+  static constexpr auto &MIN_ALIGN_OF_VAL = "min_align_of_val";
   static constexpr auto &NEEDS_DROP = "needs_drop";
   static constexpr auto &CALLER_LOCATION = "caller_location";
   static constexpr auto &CTPOP = "ctpop";
@@ -97,6 +264,30 @@ public:
   static constexpr auto &TYPE_NAME = "type_name";
   static constexpr auto &FORGET = "forget";
   static constexpr auto &BLACK_BOX = "black_box";
+  static constexpr auto &ARITH_OFFSET = "arith_offset";
+  static constexpr auto &WRITE_BYTES = "write_bytes";
+
+  static constexpr auto &BREAKPOINT = "breakpoint";
+
+  static constexpr auto &PREF_ALIGN_OF = "pref_align_of";
+
+  static constexpr auto &ASSERT_ZERO_VALID = "assert_zero_valid";
+  static constexpr auto &ASSERT_INHABITED = "assert_inhabited";
+  static constexpr auto &ASSERT_UNINIT_VALID = "assert_uninit_valid";
+
+  static constexpr auto &FADD_FAST = "fadd_fast";
+  static constexpr auto &FSUB_FAST = "fsub_fast";
+  static constexpr auto &FMUL_FAST = "fmul_fast";
+  static constexpr auto &FDIV_FAST = "fdiv_fast";
+  static constexpr auto &FREM_FAST = "frem_fast";
+
+  static constexpr auto &FLOAT_TO_INT_UNCHECKED = "float_to_int_unchecked";
+
+  static constexpr auto &EXACT_DIV = "exact_div";
+
+  static constexpr auto &NONTEMPORAL_STORE = "nontemporal_store";
+
+  static constexpr auto &PTR_OFFSET_FROM = "ptr_offset_from";
 };
 } // namespace Values
 } // namespace Rust

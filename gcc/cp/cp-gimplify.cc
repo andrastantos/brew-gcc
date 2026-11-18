@@ -44,6 +44,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "opts.h"
 #include "gcc-urlifier.h"
 #include "contracts.h" // build_contract_check ()
+#include "builtins.h"
 
 /* Keep track of forward references to immediate-escalating functions in
    case they become consteval.  This vector contains ADDR_EXPRs and
@@ -91,6 +92,10 @@ struct cp_fold_data
   {
     gcc_checking_assert (!(flags & ff_mce_false)
 			 || !(flags & ff_only_non_odr));
+  }
+  mce_value mce ()
+  {
+    return flags & ff_mce_false ? mce_false : mce_unknown;
   }
 };
 
@@ -502,9 +507,9 @@ immediate_escalating_function_p (tree fn)
 	 specifier  */
   if (LAMBDA_FUNCTION_P (fn))
     return true;
-  /* -- a defaulted function that is not declared with the
+  /* -- a non-user-provided defaulted function that is not declared with the
 	consteval specifier  */
-  if (DECL_DEFAULTED_FN (fn))
+  if (DECL_DEFAULTED_FN (fn) && !user_provided_p (fn))
     return true;
   /* -- a function that results from the instantiation of a templated entity
 	defined with the constexpr specifier.  */
@@ -855,13 +860,6 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 
     case CALL_EXPR:
       ret = GS_OK;
-      /* At this point any function that takes/returns a consteval-only
-	 expression is a problem.  */
-      for (int i = 0; i < call_expr_nargs (*expr_p); ++i)
-	if (check_out_of_consteval_use (CALL_EXPR_ARG (*expr_p, i)))
-	  ret = GS_ERROR;
-      if (consteval_only_p (TREE_TYPE (*expr_p)))
-	ret = GS_ERROR;
       if (flag_strong_eval_order == 2
 	  && CALL_EXPR_FN (*expr_p)
 	  && !CALL_EXPR_OPERATOR_SYNTAX (*expr_p)
@@ -880,7 +878,47 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 	      = build1 (NOP_EXPR, fnptrtype, CALL_EXPR_FN (*expr_p));
 	}
       if (!CALL_EXPR_FN (*expr_p))
-	/* Internal function call.  */;
+	/* Internal function call.  */
+	switch (CALL_EXPR_IFN (*expr_p))
+	  {
+	  case IFN_BSWAP:
+	  case IFN_BITREVERSE:
+	    if (ret == GS_OK)
+	      {
+		location_t loc = EXPR_LOCATION (*expr_p);
+		internal_fn ifn = CALL_EXPR_IFN (*expr_p);
+		tree arg = CALL_EXPR_ARG (*expr_p, 0);
+		tree r = fold_build_builtin_bswapg_bitreverseg (loc, ifn,
+								arg);
+		if (TREE_CODE (r) == CALL_EXPR
+		    && !CALL_EXPR_FN (r)
+		    && CALL_EXPR_IFN (r) == ifn)
+		  break;
+		*expr_p = r;
+		return ret;
+	      }
+	    break;
+	  case IFN_CLMUL:
+	    if (ret == GS_OK)
+	      {
+		location_t loc = EXPR_LOCATION (*expr_p);
+		tree arg1 = CALL_EXPR_ARG (*expr_p, 0);
+		tree arg2 = CALL_EXPR_ARG (*expr_p, 1);
+		tree arg3 = NULL_TREE;
+		if (call_expr_nargs (*expr_p) == 3)
+		  arg3 = CALL_EXPR_ARG (*expr_p, 2);
+		tree r = fold_build_builtin_clmulg (loc, arg1, arg2, arg3);
+		if (TREE_CODE (r) == CALL_EXPR
+		    && !CALL_EXPR_FN (r)
+		    && CALL_EXPR_IFN (r) == IFN_CLMUL)
+		  break;
+		*expr_p = r;
+		return ret;
+	      }
+	    break;
+	  default:
+	    break;
+	  }
       else if (CALL_EXPR_REVERSE_ARGS (*expr_p))
 	{
 	  /* This is a call to a (compound) assignment operator that used
@@ -1014,6 +1052,10 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 		break;
 	      case CP_BUILT_IN_CONSTEXPR_DIAG:
 		*expr_p = void_node;
+		break;
+	      case CP_BUILT_IN_START_LIFETIME:
+		*expr_p = fold_convert (void_type_node,
+					CALL_EXPR_ARG (*expr_p, 0));
 		break;
 	      default:
 		break;
@@ -1343,23 +1385,6 @@ cp_build_init_expr_for_ctor (tree call, tree init)
   return init;
 }
 
-/* For every DECL_EXPR check if it declares a consteval-only variable and
-   if so, overwrite it with a no-op.  The point here is not to leak
-   consteval-only variables into the middle end.  */
-
-static tree
-wipe_consteval_only_r (tree *stmt_p, int *, void *)
-{
-  if (TREE_CODE (*stmt_p) == DECL_EXPR)
-    {
-      tree d = DECL_EXPR_DECL (*stmt_p);
-      if (VAR_P (d) && consteval_only_p (d))
-	/* Wipe the DECL_EXPR so that it doesn't get into gimple.  */
-	*stmt_p = void_node;
-    }
-  return NULL_TREE;
-}
-
 /* A walk_tree callback for cp_fold_function and cp_fully_fold_init to handle
    immediate functions.  */
 
@@ -1386,17 +1411,6 @@ cp_fold_immediate_r (tree *stmt_p, int *walk_subtrees, void *data_)
       *walk_subtrees = 0;
       return NULL_TREE;
     }
-
-  /* Most invalid uses of consteval-only types should have been already
-     detected at this point.  And the valid ones won't be needed
-     anymore.  */
-  if (flag_reflection
-      && complain
-      && (data->flags & ff_genericize)
-      && TREE_CODE (stmt) == STATEMENT_LIST)
-    for (tree s : tsi_range (stmt))
-      if (check_out_of_consteval_use (s))
-	*stmt_p = void_node;
 
   tree decl = NULL_TREE;
   bool call_p = false;
@@ -1431,15 +1445,8 @@ cp_fold_immediate_r (tree *stmt_p, int *walk_subtrees, void *data_)
       if (IF_STMT_CONSTEVAL_P (stmt))
 	{
 	  if (!data->pset.add (stmt))
-	    {
-	      cp_walk_tree (&ELSE_CLAUSE (stmt), cp_fold_immediate_r, data_,
-			    nullptr);
-	      if (flag_reflection)
-		/* Check & clear consteval-only DECL_EXPRs even here,
-		   because we wouldn't be walking this subtree otherwise.  */
-		cp_walk_tree (&THEN_CLAUSE (stmt), wipe_consteval_only_r,
-			      data_, nullptr);
-	    }
+	    cp_walk_tree (&ELSE_CLAUSE (stmt), cp_fold_immediate_r, data_,
+			  nullptr);
 	  *walk_subtrees = 0;
 	  return NULL_TREE;
 	}
@@ -1498,7 +1505,8 @@ cp_fold_immediate_r (tree *stmt_p, int *walk_subtrees, void *data_)
 		  error_at (loc, "call to consteval function %qE is "
 			    "not a constant expression", stmt);
 		  /* Explain why it's not a constant expression.  */
-		  *stmt_p = cxx_constant_value (stmt, complain);
+		  cxx_constant_value (stmt, complain);
+		  *stmt_p = error_mark_node;
 		  maybe_explain_promoted_consteval (loc, decl);
 		}
 	      else if (!data->pset.add (stmt))
@@ -1512,21 +1520,6 @@ cp_fold_immediate_r (tree *stmt_p, int *walk_subtrees, void *data_)
 	    }
 	  *walk_subtrees = 0;
 	  return stmt;
-	}
-      /* If we called a consteval function and it evaluated to a consteval-only
-	 expression, it could be a problem if we are outside a manifestly
-	 constant-evaluated context.  */
-      else if ((data->flags & ff_genericize)
-	       && check_out_of_consteval_use (e, complain))
-	{
-	  *stmt_p = void_node;
-	  if (complain & tf_error)
-	    return NULL_TREE;
-	  else
-	    {
-	      *walk_subtrees = 0;
-	      return stmt;
-	    }
 	}
 
       /* We've evaluated the consteval function call.  */
@@ -1712,17 +1705,27 @@ cp_fold_r (tree *stmt_p, int *walk_subtrees, void *data_)
 	 here rather than in cp_genericize to avoid problems with the invisible
 	 reference transition.  */
     case INIT_EXPR:
+      if (!flag_no_inline
+	  && (data->flags & ff_genericize))
+	{
+	  tree to = TREE_OPERAND (*stmt_p, 0);
+	  tree &from = TREE_OPERAND (*stmt_p, 1);
+	  tree folded = maybe_constant_init (from, to, data->mce ());
+	  if (folded != from && TREE_CONSTANT (folded))
+	    from = folded;
+	}
+
       if (data->flags & ff_genericize)
 	cp_genericize_init_expr (stmt_p);
       break;
 
     case TARGET_EXPR:
-      if (!flag_no_inline)
+      if (!flag_no_inline
+	  && (data->flags & ff_genericize))
 	if (tree &init = TARGET_EXPR_INITIAL (stmt))
 	  {
 	    tree folded = maybe_constant_init (init, TARGET_EXPR_SLOT (stmt),
-					       (data->flags & ff_mce_false
-						? mce_false : mce_unknown));
+					       data->mce ());
 	    if (folded != init && TREE_CONSTANT (folded))
 	      init = folded;
 	  }
@@ -1748,6 +1751,24 @@ cp_fold_r (tree *stmt_p, int *walk_subtrees, void *data_)
 	      init = sub;
 	    }
 	}
+      break;
+
+    case CONVERT_EXPR:
+      /* convert_to_void used to fold these away to void_node.  Do it now;
+	 other code (e.g., trees_out) depends on these being expunged.  We
+	 do it here before maybe_save_constexpr_fundef copies function
+	 bodies.  */
+      if ((data->flags & (ff_only_non_odr | ff_genericize))
+	  && VOID_TYPE_P (TREE_TYPE (stmt))
+	  && !TREE_SIDE_EFFECTS (stmt))
+       {
+	 /* Since we're discarding it, it's our last chance to check for
+	    out-of-consteval expressions.  */
+	 check_out_of_consteval_use (stmt);
+	 *stmt_p = void_node;
+	 *walk_subtrees = 0;
+	 return NULL_TREE;
+       }
       break;
 
     default:
@@ -1954,13 +1975,7 @@ cp_genericize_r (tree *stmt_p, int *walk_subtrees, void *data)
   if ((TREE_CODE (stmt) == VAR_DECL
        || TREE_CODE (stmt) == PARM_DECL
        || TREE_CODE (stmt) == RESULT_DECL)
-      && DECL_HAS_VALUE_EXPR_P (stmt)
-      /* Walk DECL_VALUE_EXPR mainly for benefit of xobj lambdas so that we
-	 adjust any invisiref object parm uses within the capture proxies.
-	 TODO: For GCC 17 do this walking unconditionally.  */
-      && current_function_decl
-      && DECL_XOBJ_MEMBER_FUNCTION_P (current_function_decl)
-      && LAMBDA_FUNCTION_P (current_function_decl))
+      && DECL_HAS_VALUE_EXPR_P (stmt))
     {
       tree ve = DECL_VALUE_EXPR (stmt);
       cp_walk_tree (&ve, cp_genericize_r, data, NULL);
@@ -1979,6 +1994,7 @@ cp_genericize_r (tree *stmt_p, int *walk_subtrees, void *data)
 	  *stmt_p = fold_convert (TREE_TYPE (stmt), TREE_OPERAND (stmt, 0));
 	  *walk_subtrees = 0;
 	}
+      check_out_of_consteval_use (stmt);
       break;
 
     case RETURN_EXPR:
@@ -2157,16 +2173,24 @@ cp_genericize_r (tree *stmt_p, int *walk_subtrees, void *data)
 	  wtd->no_sanitize_p = no_sanitize_p;
 	}
       if (flag_reflection)
-	/* Wipe consteval-only vars from BIND_EXPR_VARS and BLOCK_VARS.  */
+	/* Adjust consteval-only vars in BIND_EXPR_VARS so that REFLECT_EXPR
+	   doesn't leak into the ME.  */
 	for (tree *p = &BIND_EXPR_VARS (stmt); *p; )
 	  {
-	    if (VAR_P (*p) && consteval_only_p (*p))
+	    if (VAR_P (*p))
 	      {
-		if (BIND_EXPR_BLOCK (stmt)
-		    && *p == BLOCK_VARS (BIND_EXPR_BLOCK (stmt)))
-		  BLOCK_VARS (BIND_EXPR_BLOCK (stmt)) = DECL_CHAIN (*p);
-		*p = DECL_CHAIN (*p);
-		continue;
+		/* First, adjust null reflections.  */
+		if (DECL_INITIAL (*p))
+		  rewrite_null_reflection (DECL_INITIAL (*p));
+		/* If the variable is still consteval-only, remove it.  */
+		if (consteval_only_p (*p))
+		  {
+		    if (BIND_EXPR_BLOCK (stmt)
+			&& *p == BLOCK_VARS (BIND_EXPR_BLOCK (stmt)))
+		      BLOCK_VARS (BIND_EXPR_BLOCK (stmt)) = DECL_CHAIN (*p);
+		    *p = DECL_CHAIN (*p);
+		    continue;
+		  }
 	      }
 	    p = &DECL_CHAIN (*p);
 	  }
@@ -2381,13 +2405,35 @@ cp_genericize_r (tree *stmt_p, int *walk_subtrees, void *data)
       *walk_subtrees = 0;
       break;
 
+    case INDIRECT_REF:
+      /* A pointer to a class might point to a base subobject, which is
+	 only guaranteed the alignment of the class as a base (the ABI
+	 "nvalign").  That is less than TYPE_ALIGN if a virtual base needs
+	 more alignment than the rest of the class, so don't let the middle
+	 end assume more (PR c++/103303).  */
+      {
+	tree type = TREE_TYPE (stmt);
+	if (CLASS_TYPE_P (type)
+	    && COMPLETE_TYPE_P (type)
+	    && CLASSTYPE_AS_BASE (type)
+	    && CLASSTYPE_ALIGN (type) < TYPE_ALIGN (type)
+	    && resolves_to_fixed_type_p (stmt) <= 0
+	    /* Respect an alignment the user specified on a variant.  */
+	    && TYPE_ALIGN (type) == TYPE_ALIGN (TYPE_MAIN_VARIANT (type)))
+	  TREE_TYPE (stmt) = build_aligned_type (type, CLASSTYPE_ALIGN (type));
+      }
+      break;
+
     case NOP_EXPR:
       *stmt_p = predeclare_vla (*stmt_p);
 
       /* Warn of new allocations that are not big enough for the target
-	 type.  */
+	 type.  Don't warn for calls from new expressions, new TYPE[0]
+	 is fine and new expansion should arrange for the right size
+	 to be provided.  */
       if (warn_alloc_size
 	  && TREE_CODE (TREE_OPERAND (stmt, 0)) == CALL_EXPR
+	  && !CALL_FROM_NEW_OR_DELETE_P (TREE_OPERAND (stmt, 0))
 	  && POINTER_TYPE_P (TREE_TYPE (stmt)))
 	{
 	  if (tree fndecl = get_callee_fndecl (TREE_OPERAND (stmt, 0)))
@@ -2585,6 +2631,12 @@ cp_genericize_r (tree *stmt_p, int *walk_subtrees, void *data)
 	  && DECL_P (TREE_OPERAND (TREE_OPERAND (stmt, 0), 0))
 	  && is_gimple_reg (TREE_OPERAND (TREE_OPERAND (stmt, 0), 0)))
 	DECL_NOT_GIMPLE_REG_P (TREE_OPERAND (TREE_OPERAND (stmt, 0), 0)) = 1;
+      break;
+
+    case REFLECT_EXPR:
+      /* Only the null reflection may reach the ME.  */
+      check_out_of_consteval_use (stmt);
+      *stmt_p = build_int_cst (meta_info_type_node, 0);
       break;
 
     default:
@@ -3769,6 +3821,7 @@ cp_fold (tree x, fold_flags_t flags)
 	if ((OPTION_SET_P (flag_fold_simple_inlines)
 	     ? flag_fold_simple_inlines
 	     : !flag_no_inline)
+	    && !(flags & ff_only_non_odr)
 	    && call_expr_nargs (x) == 1
 	    && decl_in_std_namespace_p (callee)
 	    && DECL_NAME (callee) != NULL_TREE
@@ -3881,6 +3934,7 @@ cp_fold (tree x, fold_flags_t flags)
 	   Do constexpr expansion of expressions where the call itself is not
 	   constant, but the call followed by an INDIRECT_REF is.  */
 	if (callee && DECL_DECLARED_CONSTEXPR_P (callee)
+	    && !(flags & ff_only_non_odr)
 	    && (!flag_no_inline
 		|| lookup_attribute ("always_inline",
 				     DECL_ATTRIBUTES (callee))))

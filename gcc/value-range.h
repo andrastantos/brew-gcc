@@ -102,7 +102,9 @@ public:
   virtual bool singleton_p (tree *result = NULL) const = 0;
   virtual bool contains_p (tree cst) const = 0;
   virtual bool zero_p () const = 0;
-  virtual bool nonzero_p () const = 0;
+  // True if val == 0 may hold for some value in the range; for a float
+  // range that means +0.0 or -0.0.
+  virtual bool contains_zero_p () const = 0;
   virtual void set_nonzero (tree type) = 0;
   virtual void set_zero (tree type) = 0;
   virtual void set_nonnegative (tree type) = 0;
@@ -124,8 +126,8 @@ public:
   virtual void verify_range () const { }
 protected:
   vrange (enum value_range_discriminator d) : m_discriminator (d) { }
-  ENUM_BITFIELD(value_range_kind) m_kind : 8;
-  const ENUM_BITFIELD(value_range_discriminator) m_discriminator : 4;
+  enum value_range_kind m_kind : 8;
+  const enum value_range_discriminator m_discriminator : 4;
 };
 
 namespace inchash
@@ -209,7 +211,7 @@ irange_bitmask::get_precision () const
   return m_mask.get_precision ();
 }
 
-// The following two functions are meant for backwards compatability
+// The following two functions are meant for backwards compatibility
 // with the nonzero bitmask.  A cleared bit means the value must be 0.
 // A set bit means we have no information for the bit.
 
@@ -314,7 +316,7 @@ public:
 
   // Predicates.
   virtual bool zero_p () const override;
-  virtual bool nonzero_p () const override;
+  virtual bool contains_zero_p () const override;
   virtual bool singleton_p (tree *result = NULL) const override;
   bool singleton_p (wide_int &) const;
   bool contains_p (const wide_int &) const;
@@ -324,7 +326,7 @@ public:
   // In-place operators.
   virtual bool union_ (const vrange &) override;
   virtual bool intersect (const vrange &) override;
-  void invert ();
+  bool invert ();
 
   // Operator overloads.
   irange& operator= (const irange &);
@@ -421,7 +423,7 @@ public:
   virtual bool fits_p (const vrange &v) const final override;
   virtual bool singleton_p (tree *result = NULL) const final override;
   virtual bool zero_p () const final override;
-  virtual bool nonzero_p () const final override;
+  virtual bool contains_zero_p () const final override;
   virtual void set (tree, tree, value_range_kind = VR_RANGE) final override;
   virtual tree type () const final override;
   virtual bool union_ (const vrange &v) final override;
@@ -433,13 +435,60 @@ public:
   bool operator== (const prange &) const;
   void set (tree type, const wide_int &, const wide_int &,
 	    value_range_kind = VR_RANGE);
-  void invert ();
+  bool invert ();
   bool contains_p (const wide_int &) const;
   wide_int lower_bound () const;
   wide_int upper_bound () const;
   virtual void verify_range () const final override;
   irange_bitmask get_bitmask () const final override;
   void update_bitmask (const irange_bitmask &) final override;
+
+  // prange interface to address information.
+  // It can be known to be a particular address, or exclude that address.
+  // This represents both sides of a conditional. ie:
+  //   if (p == &foo)
+  //     // p known to be foo.
+  //   else
+  //     // p excludes foo.
+
+  // The address is is_gimple_min_invariant, which is relative to the
+  // current function -- it is NOT is_gimple_ip_invariant, and may name a
+  // local.  Any consumer crossing a function boundary must re-check.
+
+  // Set this address to the same as R, if any.
+  void set_addr (const prange &r);
+  void set_addr (tree addr, bool known_p = true);
+
+  void set_addr_unknown ();
+  bool addr_unknown_p () const;
+
+  // If addr is local to a function, clear it.
+  bool clear_function_local_addr ();
+
+  // Return expression or NULL_TREE for known or excluded.
+  tree addr_known () const;
+  tree addr_excluded () const;
+
+  // Return true if THIS and R are known to be the same address.
+  bool addr_same_known_p (const prange &r) const;
+  // Return true if THIS and R both exclude the same address.
+  bool addr_same_excluded_p (const prange &r) const;
+
+  // If either known or excluded, invert and return TRUE.
+  bool addr_invert ();
+  // Return true if THIS and R refer to the same address, and one is inverted
+  // from the other,  Ie, both known and excluded
+  bool addr_inverted_p (const prange &r) const;
+
+  // These routines decompose addr to its component parts for a known address.
+
+  // addr_base () - object/allocation the pointer refers into.
+  tree addr_base () const;
+  // addr_offset () - possible byte offset range from BASE.
+  void addr_offset (irange &) const;
+  // addr_size () - possible size range of the referenced object.
+  void addr_size (irange &) const;
+
 protected:
   bool varying_compatible_p () const;
 
@@ -447,6 +496,13 @@ protected:
   wide_int m_min;
   wide_int m_max;
   irange_bitmask m_bitmask;
+
+  // A prange can be known to be a particular address, or known to exclude
+  // one.
+  tree m_addr;		// Address referred to.
+  bool m_known_p;	// Is it known (TRUE), or excluded (FALSE).
+  // Return TRUE if P has the same address fields as THIS.
+  bool addr_equal_p (const class prange &p) const;
 };
 
 // Unsupported temporaries may be created by ranger before it's known
@@ -476,7 +532,7 @@ public:
   bool singleton_p (tree * = NULL) const final override;
   bool contains_p (tree) const final override;
   bool zero_p () const final override;
-  bool nonzero_p () const final override;
+  bool contains_zero_p () const final override;
   void set_nonzero (tree type) final override;
   void set_zero (tree type) final override;
   void set_nonnegative (tree type) final override;
@@ -539,10 +595,18 @@ nan_state::neg_p () const
   return m_neg_nan;
 }
 
+// A sub-range in an frange.
+
+struct frange_pair
+{
+  REAL_VALUE_TYPE min;
+  REAL_VALUE_TYPE max;
+};
+
 // A subset of possible values for a floating point type.
 //
-// The representation is a type with a couple of endpoints, unioned
-// with a subset of { -NaN, +NaN }.
+// The representation is a handful of disjoint intervals, unioned with a
+// subset of { -NaN, +NaN }.
 
 class frange final : public vrange
 {
@@ -580,7 +644,7 @@ public:
   virtual bool supports_type_p (const_tree type) const override;
   virtual void accept (const vrange_visitor &v) const override;
   virtual bool zero_p () const override;
-  virtual bool nonzero_p () const override;
+  virtual bool contains_zero_p () const override;
   virtual void set_nonzero (tree type) override;
   virtual void set_zero (tree type) override;
   virtual void set_nonnegative (tree type) override;
@@ -612,6 +676,13 @@ public:
   bool known_isnormal () const;
   bool known_isdenormal_or_zero () const;
   virtual void verify_range () const override;
+
+  static const unsigned int MAX_PAIRS = 2;
+  unsigned num_pairs () const { return m_num_ranges; }
+  const REAL_VALUE_TYPE &lower_bound (unsigned pair) const;
+  const REAL_VALUE_TYPE &upper_bound (unsigned pair) const;
+
+  void widen (tree);
 protected:
   virtual bool contains_p (tree cst) const override;
   virtual void set (tree, tree, value_range_kind = VR_RANGE) override;
@@ -621,11 +692,14 @@ private:
   bool normalize_kind ();
   bool union_nans (const frange &);
   bool intersect_nans (const frange &);
-  bool combine_zeros (const frange &, bool union_p);
+  void set_pairs (frange_pair *, unsigned);
+  void canonicalize_zeros (frange_pair &);
+  void set_excluding (tree type, const REAL_VALUE_TYPE &,
+		      const REAL_VALUE_TYPE &, const nan_state &);
 
   tree m_type;
-  REAL_VALUE_TYPE m_min;
-  REAL_VALUE_TYPE m_max;
+  frange_pair m_pairs[MAX_PAIRS];
+  unsigned char m_num_ranges;
   bool m_pos_nan;
   bool m_neg_nan;
 };
@@ -634,14 +708,30 @@ inline const REAL_VALUE_TYPE &
 frange::lower_bound () const
 {
   gcc_checking_assert (!undefined_p () && !known_isnan ());
-  return m_min;
+  return m_pairs[0].min;
 }
 
 inline const REAL_VALUE_TYPE &
 frange::upper_bound () const
 {
   gcc_checking_assert (!undefined_p () && !known_isnan ());
-  return m_max;
+  return m_pairs[m_num_ranges - 1].max;
+}
+
+inline const REAL_VALUE_TYPE &
+frange::lower_bound (unsigned pair) const
+{
+  gcc_checking_assert (!undefined_p () && !known_isnan ());
+  gcc_checking_assert (pair < m_num_ranges);
+  return m_pairs[pair].min;
+}
+
+inline const REAL_VALUE_TYPE &
+frange::upper_bound (unsigned pair) const
+{
+  gcc_checking_assert (!undefined_p () && !known_isnan ());
+  gcc_checking_assert (pair < m_num_ranges);
+  return m_pairs[pair].max;
 }
 
 // Return the NAN state.
@@ -767,13 +857,13 @@ public:
 //
 // Using any of the various constructors initializes the object
 // appropriately, but the default constructor is uninitialized and
-// must be initialized either with set_type() or by assigning into it.
+// must be initialized either with set_range_class() or by assigning into it.
 //
 // Assigning between incompatible types is allowed.  For example if a
 // temporary holds an irange, you can assign an frange into it, and
 // all the right things will happen.  However, before passing this
 // object to a function accepting a vrange, the correct type must be
-// set.  If it isn't, you can do so with set_type().
+// set.  If it isn't, you can do so with set_range_class().
 
 class value_range
 {
@@ -784,7 +874,7 @@ public:
   value_range (tree, tree, value_range_kind kind = VR_RANGE);
   value_range (const value_range &);
   ~value_range ();
-  void set_type (tree type);
+  void set_range_class (tree type);
   vrange& operator= (const vrange &);
   value_range& operator= (const value_range &);
   bool operator== (const value_range &r) const;
@@ -792,6 +882,7 @@ public:
   operator vrange &();
   operator const vrange &() const;
   void dump (FILE *) const;
+  void print (pretty_printer *) const;
   static bool supports_type_p (const_tree type);
 
   tree type () { return m_vrange->type (); }
@@ -807,7 +898,7 @@ public:
   void set_zero (tree type) { init (type); return m_vrange->set_zero (type); }
   void set_nonzero (tree type)
     { init (type); return m_vrange->set_nonzero (type); }
-  bool nonzero_p () const { return m_vrange->nonzero_p (); }
+  bool contains_zero_p () const { return m_vrange->contains_zero_p (); }
   bool zero_p () const { return m_vrange->zero_p (); }
   tree lbound () const { return m_vrange->lbound (); }
   tree ubound () const { return m_vrange->ubound (); }
@@ -832,7 +923,7 @@ private:
 };
 
 // The default constructor is uninitialized and must be initialized
-// with either set_type() or with an assignment into it.
+// with either set_range_class() or with an assignment into it.
 
 inline
 value_range::value_range ()
@@ -885,9 +976,10 @@ value_range::~value_range ()
 
 // Initialize object to an UNDEFINED range that can hold ranges of
 // TYPE.  Clean-up memory if there was a previous object.
+// Note that this does *not* set the type of the underlying vrange.
 
 inline void
-value_range::set_type (tree type)
+value_range::set_range_class (tree type)
 {
   if (m_vrange)
     m_vrange->~vrange ();
@@ -896,6 +988,7 @@ value_range::set_type (tree type)
 
 // Initialize object to an UNDEFINED range that can hold ranges of
 // TYPE.
+// Note that this does *not* set the type of the underlying vrange.
 
 inline void
 value_range::init (tree type)
@@ -1048,13 +1141,13 @@ irange::zero_p () const
 }
 
 inline bool
-irange::nonzero_p () const
+irange::contains_zero_p () const
 {
   if (undefined_p ())
     return false;
 
   wide_int zero = wi::zero (TYPE_PRECISION (type ()));
-  return *this == int_range<2> (type (), zero, zero, VR_ANTI_RANGE);
+  return contains_p (zero);
 }
 
 inline bool
@@ -1257,16 +1350,6 @@ irange::normalize_kind ()
     verify_range ();
 }
 
-inline bool
-contains_zero_p (const irange &r)
-{
-  if (r.undefined_p ())
-    return false;
-
-  wide_int zero = wi::zero (TYPE_PRECISION (r.type ()));
-  return r.contains_p (zero);
-}
-
 inline wide_int
 irange_val_min (const_tree type)
 {
@@ -1326,6 +1409,7 @@ inline void
 prange::set_undefined ()
 {
   m_kind = VR_UNDEFINED;
+  set_addr_unknown ();
 }
 
 inline void
@@ -1336,6 +1420,7 @@ prange::set_varying (tree type)
   m_min = wi::zero (TYPE_PRECISION (type));
   m_max = wi::max_value (TYPE_PRECISION (type), UNSIGNED);
   m_bitmask.set_unknown (TYPE_PRECISION (type));
+  set_addr_unknown ();
 
   if (flag_checking)
     verify_range ();
@@ -1349,6 +1434,7 @@ prange::set_nonzero (tree type)
   m_min = wi::one (TYPE_PRECISION (type));
   m_max = wi::max_value (TYPE_PRECISION (type), UNSIGNED);
   m_bitmask.set_unknown (TYPE_PRECISION (type));
+  set_addr_unknown ();
 
   if (flag_checking)
     verify_range ();
@@ -1362,6 +1448,7 @@ prange::set_zero (tree type)
   wide_int zero = wi::zero (TYPE_PRECISION (type));
   m_min = m_max = zero;
   m_bitmask = irange_bitmask (zero, zero);
+  set_addr_unknown ();
 
   if (flag_checking)
     verify_range ();
@@ -1376,13 +1463,18 @@ prange::contains_p (tree cst) const
 inline bool
 prange::zero_p () const
 {
-  return m_kind == VR_RANGE && m_min == 0 && m_max == 0;
+  bool ret = m_kind == VR_RANGE && m_min == 0 && m_max == 0;
+  return ret;
 }
 
 inline bool
-prange::nonzero_p () const
+prange::contains_zero_p () const
 {
-  return m_kind == VR_RANGE && m_min == 1 && m_max == -1;
+  if (undefined_p ())
+    return false;
+
+  wide_int zero = wi::zero (TYPE_PRECISION (type ()));
+  return contains_p (zero);
 }
 
 inline tree
@@ -1409,8 +1501,8 @@ prange::upper_bound () const
 inline bool
 prange::varying_compatible_p () const
 {
-  return (!undefined_p ()
-	  && m_min == 0 && m_max == -1 && get_bitmask ().unknown_p ());
+  return (!undefined_p () && m_min == 0 && m_max == -1
+	  && get_bitmask ().unknown_p () && addr_unknown_p ());
 }
 
 inline irange_bitmask
@@ -1425,6 +1517,110 @@ prange::fits_p (const vrange &) const
   return true;
 }
 
+// Copy the address information from R, if it has any.
+
+inline void
+prange::set_addr (const prange &r)
+{
+  // Do not set address info if this is zero or undefined.
+  if (!r.addr_unknown_p () && (undefined_p () || zero_p()))
+    return;
+
+  m_addr = r.m_addr;
+  m_known_p = r.m_known_p;
+
+  if (r.undefined_p ())
+    return;
+  // Check whether this is now VARYING or not.
+  if (varying_compatible_p ())
+    set_varying (type ());
+  else
+    m_kind = VR_RANGE;
+}
+
+// prange_pt methods.
+// ------------------------------------------------------------------
+
+inline void
+prange::set_addr_unknown ()
+{
+  m_addr = NULL_TREE;
+  m_known_p = false;
+  // If this is a transition from a range, check for varying compatibility.
+  if (m_kind == VR_RANGE && varying_compatible_p ())
+    m_kind = VR_VARYING;
+}
+
+inline bool
+prange::addr_unknown_p () const
+{
+  return (m_addr == NULL_TREE);
+}
+
+inline bool
+prange::addr_equal_p (const prange &p) const
+{
+  // A prange object invokes vrp_operand_equal_p as we want ranges to compare
+  // equal to each other if they refer to the same object, even if the
+  // tree has become unshared.
+  return (m_known_p == p.m_known_p
+	  && vrp_operand_equal_p (m_addr, p.m_addr));
+}
+
+inline bool
+prange::addr_inverted_p (const prange &r) const
+{
+  return m_addr && vrp_operand_equal_p (m_addr, r.m_addr)
+	 && m_known_p != r.m_known_p;
+}
+
+inline bool
+prange::addr_invert ()
+{
+  if (m_addr)
+    {
+      m_known_p = !m_known_p;
+      return true;
+    }
+  return false;
+}
+
+inline tree
+prange::addr_known () const
+{
+  if (m_addr && m_known_p)
+    return m_addr;
+  return NULL_TREE;
+}
+
+inline tree
+prange::addr_excluded () const
+{
+  if (m_addr && !m_known_p)
+    return m_addr;
+  return NULL_TREE;
+}
+
+inline bool
+prange::addr_same_known_p (const prange &r) const
+{
+  if (m_addr && m_known_p && vrp_operand_equal_p (r.m_addr, m_addr)
+      && m_known_p == r.m_known_p)
+    return true;
+  return false;
+}
+
+inline bool
+prange::addr_same_excluded_p (const prange &r) const
+{
+  if (m_addr && !m_known_p && vrp_operand_equal_p (r.m_addr, m_addr)
+      && m_known_p == r.m_known_p)
+    return true;
+  return false;
+}
+
+
+// -----------------------------------------------------------------------
 
 inline
 frange::frange ()
@@ -1479,8 +1675,9 @@ frange::set_varying (tree type)
 {
   m_kind = VR_VARYING;
   m_type = type;
-  m_min = frange_val_min (type);
-  m_max = frange_val_max (type);
+  m_num_ranges = 1;
+  m_pairs[0].min = frange_val_min (type);
+  m_pairs[0].max = frange_val_max (type);
   if (HONOR_NANS (m_type))
     {
       m_pos_nan = true;
@@ -1498,9 +1695,10 @@ frange::set_undefined ()
 {
   m_kind = VR_UNDEFINED;
   m_type = NULL;
+  m_num_ranges = 1;
   m_pos_nan = false;
   m_neg_nan = false;
-  // m_min and m_min are uninitialized as they are REAL_VALUE_TYPE ??.
+  // Leave the rest undefined; as it speeds up initializing undefined ranges.
   if (flag_checking)
     verify_range ();
 }
@@ -1634,6 +1832,7 @@ frange::set_nan (tree type, const nan_state &nan)
     {
       m_kind = VR_NAN;
       m_type = type;
+      m_num_ranges = 1;
       m_neg_nan = nan.neg_p ();
       m_pos_nan = nan.pos_p ();
       if (flag_checking)
@@ -1668,7 +1867,9 @@ frange::known_isfinite () const
 {
   if (undefined_p () || varying_p () || m_kind == VR_ANTI_RANGE)
     return false;
-  return (!maybe_isnan () && !real_isinf (&m_min) && !real_isinf (&m_max));
+  return (!maybe_isnan ()
+	  && !real_isinf (&lower_bound ())
+	  && !real_isinf (&upper_bound ()));
 }
 
 // Return TRUE if range is known to be normal.
@@ -1680,9 +1881,11 @@ frange::known_isnormal () const
     return false;
 
   machine_mode mode = TYPE_MODE (type ());
-  return (!real_isdenormal (&m_min, mode) && !real_isdenormal (&m_max, mode)
-	  && !real_iszero (&m_min) && !real_iszero (&m_max)
-	  && (!real_isneg (&m_min) || real_isneg (&m_max)));
+  const REAL_VALUE_TYPE &min = lower_bound ();
+  const REAL_VALUE_TYPE &max = upper_bound ();
+  return (!real_isdenormal (&min, mode) && !real_isdenormal (&max, mode)
+	  && !real_iszero (&min) && !real_iszero (&max)
+	  && (!real_isneg (&min) || real_isneg (&max)));
 }
 
 // Return TRUE if range is known to be denormal.
@@ -1694,8 +1897,10 @@ frange::known_isdenormal_or_zero () const
     return false;
 
   machine_mode mode = TYPE_MODE (type ());
-  return ((real_isdenormal (&m_min, mode) || real_iszero (&m_min))
-	  && (real_isdenormal (&m_max, mode) || real_iszero (&m_max)));
+  const REAL_VALUE_TYPE &min = lower_bound ();
+  const REAL_VALUE_TYPE &max = upper_bound ();
+  return ((real_isdenormal (&min, mode) || real_iszero (&min))
+	  && (real_isdenormal (&max, mode) || real_iszero (&max)));
 }
 
 // Return TRUE if range may be infinite.
@@ -1707,7 +1912,7 @@ frange::maybe_isinf () const
     return false;
   if (varying_p ())
     return true;
-  return real_isinf (&m_min) || real_isinf (&m_max);
+  return real_isinf (&lower_bound ()) || real_isinf (&upper_bound ());
 }
 
 // Return TRUE if range is known to be the [-INF,-INF] or [+INF,+INF].
@@ -1716,9 +1921,10 @@ inline bool
 frange::known_isinf () const
 {
   return (m_kind == VR_RANGE
+	  && m_num_ranges == 1
 	  && !maybe_isnan ()
-	  && real_identical (&m_min, &m_max)
-	  && real_isinf (&m_min));
+	  && real_identical (&m_pairs[0].min, &m_pairs[0].max)
+	  && real_isinf (&m_pairs[0].min));
 }
 
 // Return TRUE if range is possibly a NAN.
@@ -1766,9 +1972,9 @@ frange::signbit_p (bool &signbit) const
   // No NAN.
   if (!m_pos_nan && !m_neg_nan)
     {
-      if (m_min.sign == m_max.sign)
+      if (lower_bound ().sign == upper_bound ().sign)
 	{
-	  signbit = m_min.sign;
+	  signbit = lower_bound ().sign;
 	  return true;
 	}
       return false;
@@ -1776,7 +1982,8 @@ frange::signbit_p (bool &signbit) const
   // NAN with known sign.
   bool nan_sign = m_neg_nan;
   if (known_isnan ()
-      || (nan_sign == m_min.sign && nan_sign == m_max.sign))
+      || (nan_sign == lower_bound ().sign
+	  && nan_sign == upper_bound ().sign))
     {
       signbit = nan_sign;
       return true;

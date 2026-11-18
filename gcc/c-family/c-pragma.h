@@ -141,6 +141,7 @@ enum pragma_omp_clause {
   PRAGMA_OMP_CLAUSE_LASTPRIVATE,
   PRAGMA_OMP_CLAUSE_LINEAR,
   PRAGMA_OMP_CLAUSE_LINK,
+  PRAGMA_OMP_CLAUSE_LOCAL,
   PRAGMA_OMP_CLAUSE_MAP,
   PRAGMA_OMP_CLAUSE_MERGEABLE,
   PRAGMA_OMP_CLAUSE_NOCONTEXT,
@@ -302,5 +303,9 @@ extern enum cpp_ttype c_lex_with_flags (tree *, location_t *, unsigned char *,
 extern void c_pp_lookup_pragma (unsigned int, const char **, const char **);
 
 extern GTY(()) tree pragma_extern_prefix;
+
+/* For recording #pragma GCC suppress_coverage locations.  */
+extern void suppress_coverage_begin (location_t);
+extern bool suppress_coverage_end (location_t);
 
 #endif /* GCC_C_PRAGMA_H */

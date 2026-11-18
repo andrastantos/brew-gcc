@@ -406,7 +406,8 @@ void
 Dump::do_typepathfunction (TypePathFunction &e)
 {
   visit_collection ("params", e.get_params ());
-  visit_field ("return_type", e.get_return_type ());
+  if (e.has_return_type ())
+    visit_field ("return_type", e.get_return_type ());
 }
 
 void
@@ -733,7 +734,7 @@ Dump::visit (PathInExpression &e)
   do_pathexpr (e);
 
   put_field ("has_opening_scope_resolution",
-	     std::to_string (e.opening_scope_resolution ()));
+	     std::to_string (e.has_opening_scope_resolution ()));
   end ("PathInExpression");
 }
 
@@ -785,7 +786,7 @@ Dump::visit (TypePath &e)
 {
   begin ("TypePath");
   put_field ("has_opening_scope_resolution",
-	     std::to_string (e.has_opening_scope_resolution_op ()));
+	     std::to_string (e.has_opening_scope_resolution ()));
 
   visit_collection ("segments", e.get_segments ());
 
@@ -1392,17 +1393,6 @@ Dump::visit (RangeFullExpr &e)
 }
 
 void
-Dump::visit (RangeFromToInclExpr &e)
-{
-  begin ("RangeFromToInclExpr");
-
-  visit_field ("from", e.get_from_expr ());
-  visit_field ("to", e.get_to_expr ());
-
-  end ("RangeFromToInclExpr");
-}
-
-void
 Dump::visit (RangeToInclExpr &e)
 {
   begin ("RangeToInclExpr");
@@ -1410,6 +1400,17 @@ Dump::visit (RangeToInclExpr &e)
   visit_field ("to", e.get_to_expr ());
 
   end ("RangeToInclExpr");
+}
+
+void
+Dump::visit (BoxExpr &e)
+{
+  begin ("BoxExpr");
+  do_mappings (e.get_mappings ());
+
+  visit_field ("box_expr", e.get_expr ());
+
+  end ("BoxExpr");
 }
 
 void
@@ -2375,6 +2376,8 @@ Dump::visit (SlicePatternItemsHasRest &e)
 {
   begin ("SlicePatternItemsHasRest");
   visit_collection ("lower_patterns", e.get_lower_patterns ());
+  if (e.has_rest_bind ())
+    visit_field ("rest_bind", e.get_rest_bind ());
   visit_collection ("upper_patterns", e.get_upper_patterns ());
   end ("SlicePatternItemsHasRest");
 }

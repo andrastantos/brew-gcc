@@ -104,7 +104,14 @@ static const color_default gcc_color_defaults[] =
   { "valid", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_GREEN) },
   { "invalid", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_RED) },
   { "highlight-a", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_GREEN) },
-  { "highlight-b", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_BLUE) }
+  { "highlight-b", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_BLUE) },
+
+  /* For debugging the analyzer.  */
+  { "bit_contents", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_MAGENTA) },
+  { "bit_vector", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_CYAN) },
+  { "region", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_GREEN) },
+  { "scalar", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_RED) },
+  { "svalue", SGR_SEQ (COLOR_BOLD COLOR_SEPARATOR COLOR_FG_YELLOW) }
 };
 
 class diagnostic_color_dict
@@ -443,7 +450,7 @@ auto_enable_urls ()
 
   /* When logging in a linux over serial line, we see TERM=linux
      and no COLORTERM, it is unlikely that the URL escapes will
-     work in that environmen either.  */
+     work in that environment either.  */
   if (!colorterm && term && !strcmp (term, "linux"))
     return false;
 

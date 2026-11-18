@@ -47,6 +47,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return an iterator pointing to the first element of
    *          the container.
    *  @param  __cont  Container.
+   *  @since  C++11
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -71,6 +72,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return an iterator pointing to one past the last element of
    *          the container.
    *  @param  __cont  Container.
+   *  @since  C++11
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -83,6 +85,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return an iterator pointing to one past the last element of
    *          the const container.
    *  @param  __cont  Container.
+   *  @since  C++11
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -94,6 +97,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /**
    *  @brief  Return an iterator pointing to the first element of the array.
    *  @param  __arr  Array.
+   *  @since  C++11
    */
   template<typename _Tp, size_t _Nm>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -105,6 +109,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return an iterator pointing to one past the last element
    *          of the array.
    *  @param  __arr  Array.
+   *  @since  C++11
    */
   template<typename _Tp, size_t _Nm>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -114,17 +119,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #if __cplusplus >= 201402L
 
+#if __glibcxx_valarray < 202511L
   template<typename _Tp> class valarray;
   // These overloads must be declared for cbegin and cend to use them.
   template<typename _Tp> _Tp* begin(valarray<_Tp>&) noexcept;
   template<typename _Tp> const _Tp* begin(const valarray<_Tp>&) noexcept;
   template<typename _Tp> _Tp* end(valarray<_Tp>&) noexcept;
   template<typename _Tp> const _Tp* end(const valarray<_Tp>&) noexcept;
+#endif
 
   /**
    *  @brief  Return an iterator pointing to the first element of
    *          the const container.
    *  @param  __cont  Container.
+   *  @since  C++14
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -137,6 +145,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return an iterator pointing to one past the last element of
    *          the const container.
    *  @param  __cont  Container.
+   *  @since  C++14
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -149,6 +158,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing to the last element of
    *          the container.
    *  @param  __cont  Container.
+   *  @since  C++14
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -161,6 +171,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing to the last element of
    *          the const container.
    *  @param  __cont  Container.
+   *  @since  C++14
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -173,6 +184,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing one past the first element of
    *          the container.
    *  @param  __cont  Container.
+   *  @since  C++14
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -185,6 +197,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing one past the first element of
    *          the const container.
    *  @param  __cont  Container.
+   *  @since  C++14
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -197,6 +210,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing to the last element of
    *          the array.
    *  @param  __arr  Array.
+   *  @since  C++14
    */
   template<typename _Tp, size_t _Nm>
     [[__nodiscard__]]
@@ -208,6 +222,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing one past the first element of
    *          the array.
    *  @param  __arr  Array.
+   *  @since  C++14
    */
   template<typename _Tp, size_t _Nm>
     [[__nodiscard__]]
@@ -219,6 +234,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing to the last element of
    *          the initializer_list.
    *  @param  __il  initializer_list.
+   *  @since  C++14
    */
   template<typename _Tp>
     [[__nodiscard__]]
@@ -230,6 +246,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing one past the first element of
    *          the initializer_list.
    *  @param  __il  initializer_list.
+   *  @since  C++14
    */
   template<typename _Tp>
     [[__nodiscard__]]
@@ -241,6 +258,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing to the last element of
    *          the const container.
    *  @param  __cont  Container.
+   *  @since  C++14
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -253,6 +271,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  Return a reverse iterator pointing one past the first element of
    *          the const container.
    *  @param  __cont  Container.
+   *  @since  C++14
    */
   template<typename _Container>
     [[__nodiscard__, __gnu__::__always_inline__]]
@@ -267,6 +286,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /**
    *  @brief  Return the size of a container.
    *  @param  __cont  Container.
+   *  @since  C++17
    */
   template <typename _Container>
     [[nodiscard, __gnu__::__always_inline__]]
@@ -277,6 +297,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /**
    *  @brief  Return the size of an array.
+   *  @param  - An array.
+   *  @return The number of elements in the array.
+   *  @since  C++17
    */
   template <typename _Tp, size_t _Nm>
     [[nodiscard, __gnu__::__always_inline__]]
@@ -287,6 +310,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /**
    *  @brief  Return whether a container is empty.
    *  @param  __cont  Container.
+   *  @since  C++17
    */
   template <typename _Container>
     [[nodiscard, __gnu__::__always_inline__]]
@@ -297,6 +321,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /**
    *  @brief  Return whether an array is empty (always false).
+   *  @param  - An array.
+   *  @since  C++17
    */
   template <typename _Tp, size_t _Nm>
     [[nodiscard, __gnu__::__always_inline__]]
@@ -304,19 +330,23 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     empty(const _Tp (&)[_Nm]) noexcept
     { return false; }
 
+#if __glibcxx_initializer_list < 202511L
   /**
    *  @brief  Return whether an initializer_list is empty.
    *  @param  __il  Initializer list.
+   *  @since  C++17
    */
   template <typename _Tp>
     [[nodiscard, __gnu__::__always_inline__]]
     constexpr bool
     empty(initializer_list<_Tp> __il) noexcept
     { return __il.size() == 0;}
+#endif
 
   /**
    *  @brief  Return the data pointer of a container.
    *  @param  __cont  Container.
+   *  @since  C++17
    */
   template <typename _Container>
     [[nodiscard, __gnu__::__always_inline__]]
@@ -328,6 +358,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /**
    *  @brief  Return the data pointer of a const container.
    *  @param  __cont  Container.
+   *  @since  C++17
    */
   template <typename _Container>
     [[nodiscard, __gnu__::__always_inline__]]
@@ -339,6 +370,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /**
    *  @brief  Return the data pointer of an array.
    *  @param  __array  Array.
+   *  @since  C++17
    */
   template <typename _Tp, size_t _Nm>
     [[nodiscard, __gnu__::__always_inline__]]
@@ -346,18 +378,26 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     data(_Tp (&__array)[_Nm]) noexcept
     { return __array; }
 
+#if __glibcxx_initializer_list < 202511L
   /**
    *  @brief  Return the data pointer of an initializer list.
    *  @param  __il  Initializer list.
+   *  @since  C++17
    */
   template <typename _Tp>
     [[nodiscard, __gnu__::__always_inline__]]
     constexpr const _Tp*
     data(initializer_list<_Tp> __il) noexcept
     { return __il.begin(); }
+#endif
 #endif // __glibcxx_nonmember_container_access
 
 #ifdef __glibcxx_ssize // C++ >= 20
+  /**
+   *  @brief  Return the size of a container, as a signed integer.
+   *  @param  __cont  Container.
+   *  @since  C++20
+   */
   template<typename _Container>
     [[nodiscard, __gnu__::__always_inline__]]
     constexpr auto
@@ -368,6 +408,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return static_cast<common_type_t<ptrdiff_t, type>>(__cont.size());
     }
 
+  /**
+   *  @brief  Return the length of an array, as a signed integer.
+   *  @since  C++20
+   */
   template<typename _Tp, ptrdiff_t _Num>
     [[nodiscard, __gnu__::__always_inline__]]
     constexpr ptrdiff_t

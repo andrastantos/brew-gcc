@@ -41,27 +41,21 @@ along with GCC; see the file COPYING3.  If not see
 #include "varasm.h"
 #include "fold-const.h"
 #include "opts.h"
+#include "attr-handlers.h"
 
 #include "d-tree.h"
 
 
 /* Internal attribute handlers for built-in functions.  */
-static tree handle_noreturn_attribute (tree *, tree, tree, int, bool *);
-static tree handle_leaf_attribute (tree *, tree, tree, int, bool *);
-static tree handle_const_attribute (tree *, tree, tree, int, bool *);
-static tree handle_malloc_attribute (tree *, tree, tree, int, bool *);
-static tree handle_pure_attribute (tree *, tree, tree, int, bool *);
-static tree handle_novops_attribute (tree *, tree, tree, int, bool *);
-static tree handle_nonnull_attribute (tree *, tree, tree, int, bool *);
-static tree handle_nothrow_attribute (tree *, tree, tree, int, bool *);
-static tree handle_type_generic_attribute (tree *, tree, tree, int, bool *);
-static tree handle_transaction_pure_attribute (tree *, tree, tree, int, bool *);
-static tree handle_returns_twice_attribute (tree *, tree, tree, int, bool *);
-static tree handle_fnspec_attribute (tree *, tree, tree, int, bool *);
-static tree handle_omp_declare_simd_attribute (tree *, tree, tree, int, bool *);
+static tree d_handle_noreturn_attribute (tree *, tree, tree, int, bool *);
+static tree d_handle_malloc_attribute (tree *, tree, tree, int, bool *);
+static tree d_handle_nonnull_attribute (tree *, tree, tree, int, bool *);
+static tree d_handle_transaction_pure_attribute (tree *, tree, tree, int,
+						 bool *);
+static tree d_handle_omp_declare_simd_attribute (tree *, tree, tree, int,
+						 bool *);
 
 /* D attribute handlers for user defined attributes.  */
-static tree d_handle_noinline_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_always_inline_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_flatten_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_target_attribute (tree *, tree, tree, int, bool *);
@@ -78,7 +72,6 @@ static tree d_handle_alloc_size_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_cold_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_register_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_restrict_attribute (tree *, tree, tree, int, bool *);
-static tree d_handle_used_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_visibility_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_no_sanitize_attribute (tree *, tree, tree, int, bool *);
 static tree d_handle_no_split_stack_attribute (tree *, tree, tree, int, bool *);
@@ -89,72 +82,12 @@ static tree d_handle_simd_attribute (tree *, tree, tree, int, bool *);
   { name, function, type, variable }
 
 /* Define attributes that are mutually exclusive with one another.  */
-static const struct attribute_spec::exclusions attr_noreturn_exclusions[] =
-{
-  ATTR_EXCL ("alloc_size", true, true, true),
-  ATTR_EXCL ("const", true, true, true),
-  ATTR_EXCL ("malloc", true, true, true),
-  ATTR_EXCL ("pure", true, true, true),
-  ATTR_EXCL ("returns_twice", true, true, true),
-  ATTR_EXCL (NULL, false, false, false),
-};
-
-static const struct attribute_spec::exclusions attr_returns_twice_exclusions[] =
-{
-  ATTR_EXCL ("noreturn", true, true, true),
-  ATTR_EXCL (NULL, false, false, false),
-};
-
-static const struct attribute_spec::exclusions attr_const_pure_exclusions[] =
-{
-  ATTR_EXCL ("alloc_size", true, true, true),
-  ATTR_EXCL ("const", true, true, true),
-  ATTR_EXCL ("noreturn", true, true, true),
-  ATTR_EXCL ("pure", true, true, true),
-  ATTR_EXCL (NULL, false, false, false)
-};
-
-static const struct attribute_spec::exclusions attr_inline_exclusions[] =
-{
-  ATTR_EXCL ("noinline", true, true, true),
-  ATTR_EXCL ("target_clones", true, true, true),
-  ATTR_EXCL (NULL, false, false, false),
-};
-
-static const struct attribute_spec::exclusions attr_noinline_exclusions[] =
-{
-  ATTR_EXCL ("always_inline", true, true, true),
-  ATTR_EXCL (NULL, false, false, false),
-};
-
-static const struct attribute_spec::exclusions attr_target_exclusions[] =
-{
-  ATTR_EXCL ("target_clones", TARGET_HAS_FMV_TARGET_ATTRIBUTE,
-	     TARGET_HAS_FMV_TARGET_ATTRIBUTE, TARGET_HAS_FMV_TARGET_ATTRIBUTE),
-  ATTR_EXCL (NULL, false, false, false),
-};
-
 static const struct attribute_spec::exclusions attr_target_clones_exclusions[] =
 {
   ATTR_EXCL ("always_inline", true, true, true),
   ATTR_EXCL ("target", TARGET_HAS_FMV_TARGET_ATTRIBUTE,
 	     TARGET_HAS_FMV_TARGET_ATTRIBUTE, TARGET_HAS_FMV_TARGET_ATTRIBUTE),
   ATTR_EXCL (NULL, false, false, false),
-};
-
-static const struct attribute_spec::exclusions attr_alloc_exclusions[] =
-{
-  ATTR_EXCL ("const", true, true, true),
-  ATTR_EXCL ("noreturn", true, true, true),
-  ATTR_EXCL ("pure", true, true, true),
-  ATTR_EXCL (NULL, false, false, false),
-};
-
-extern const struct attribute_spec::exclusions attr_cold_hot_exclusions[] =
-{
-  ATTR_EXCL ("cold", true, true, true),
-  ATTR_EXCL ("hot", true, true, true),
-  ATTR_EXCL (NULL, false, false, false)
 };
 
 /* Helper to define an attribute.  */
@@ -168,23 +101,23 @@ extern const struct attribute_spec::exclusions attr_cold_hot_exclusions[] =
 static const attribute_spec d_langhook_common_attributes[] =
 {
   ATTR_SPEC ("noreturn", 0, 0, true, false, false, false,
-	     handle_noreturn_attribute, attr_noreturn_exclusions),
+	     d_handle_noreturn_attribute, attr_noreturn_exclusions),
   ATTR_SPEC ("leaf", 0, 0, true, false, false, false,
 	     handle_leaf_attribute, NULL),
   ATTR_SPEC ("const", 0, 0, true, false, false, false,
 	     handle_const_attribute, attr_const_pure_exclusions),
   ATTR_SPEC ("malloc", 0, 0, true, false, false, false,
-	     handle_malloc_attribute, NULL),
+	     d_handle_malloc_attribute, NULL),
   ATTR_SPEC ("returns_twice", 0, 0, true, false, false, false,
 	     handle_returns_twice_attribute, attr_returns_twice_exclusions),
   ATTR_SPEC ("pure", 0, 0, true, false, false, false,
 	     handle_pure_attribute, attr_const_pure_exclusions),
   ATTR_SPEC ("nonnull", 0, -1, false, true, true, false,
-	     handle_nonnull_attribute, NULL),
+	     d_handle_nonnull_attribute, NULL),
   ATTR_SPEC ("nothrow", 0, 0, true, false, false, false,
 	     handle_nothrow_attribute, NULL),
   ATTR_SPEC ("transaction_pure", 0, 0, false, true, true, false,
-	     handle_transaction_pure_attribute, NULL),
+	     d_handle_transaction_pure_attribute, NULL),
   ATTR_SPEC ("no vops", 0, 0, true, false, false, false,
 	     handle_novops_attribute, NULL),
   ATTR_SPEC ("type generic", 0, 0, false, true, true, false,
@@ -192,7 +125,7 @@ static const attribute_spec d_langhook_common_attributes[] =
   ATTR_SPEC ("fn spec", 1, 1, false, true, true, false,
 	     handle_fnspec_attribute, NULL),
   ATTR_SPEC ("omp declare simd", 0, -1, true,  false, false, false,
-	     handle_omp_declare_simd_attribute, NULL),
+	     d_handle_omp_declare_simd_attribute, NULL),
 };
 
 const scoped_attribute_specs d_langhook_common_attribute_table =
@@ -204,9 +137,9 @@ const scoped_attribute_specs d_langhook_common_attribute_table =
 static const attribute_spec d_langhook_gnu_attributes[] =
 {
   ATTR_SPEC ("noinline", 0, 0, true, false, false, false,
-	     d_handle_noinline_attribute, attr_noinline_exclusions),
+	     handle_noinline_attribute, attr_noinline_exclusions),
   ATTR_SPEC ("always_inline", 0, 0, true,  false, false, false,
-	     d_handle_always_inline_attribute, attr_inline_exclusions),
+	     d_handle_always_inline_attribute, attr_always_inline_exclusions),
   ATTR_SPEC ("flatten", 0, 0, true, false, false, false,
 	     d_handle_flatten_attribute, NULL),
   ATTR_SPEC ("target", 1, -1, true, false, false, false,
@@ -244,7 +177,7 @@ static const attribute_spec d_langhook_gnu_attributes[] =
   ATTR_SPEC ("simd", 0, 1, true,  false, false, false,
 	     d_handle_simd_attribute, NULL),
   ATTR_SPEC ("used", 0, 0, true, false, false, false,
-	     d_handle_used_attribute, NULL),
+	     handle_used_attribute, NULL),
   ATTR_SPEC ("visibility", 1, 1, false, false, false, false,
 	     d_handle_visibility_attribute, NULL),
 };
@@ -457,7 +390,7 @@ apply_user_attributes (Dsymbol *sym, tree node)
    struct attribute_spec.handler.  */
 
 static tree
-handle_noreturn_attribute (tree *node, tree, tree, int, bool *)
+d_handle_noreturn_attribute (tree *node, tree, tree, int, bool *)
 {
   tree type = TREE_TYPE (*node);
 
@@ -475,79 +408,15 @@ handle_noreturn_attribute (tree *node, tree, tree, int, bool *)
   return NULL_TREE;
 }
 
-/* Handle a "leaf" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_leaf_attribute (tree *node, tree name, tree, int, bool *no_add_attrs)
-{
-  if (TREE_CODE (*node) != FUNCTION_DECL)
-    {
-      warning (OPT_Wattributes, "%qE attribute ignored", name);
-      *no_add_attrs = true;
-    }
-  if (!TREE_PUBLIC (*node))
-    {
-      warning (OPT_Wattributes, "%qE attribute has no effect", name);
-      *no_add_attrs = true;
-    }
-
-  return NULL_TREE;
-}
-
-/* Handle a "const" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_const_attribute (tree *node, tree, tree, int, bool *)
-{
-  tree type = TREE_TYPE (*node);
-
-  if (TREE_CODE (*node) == FUNCTION_DECL)
-    TREE_READONLY (*node) = 1;
-  else if (TREE_CODE (type) == POINTER_TYPE
-	   && TREE_CODE (TREE_TYPE (type)) == FUNCTION_TYPE)
-    TREE_TYPE (*node)
-      = build_pointer_type
-	(build_type_variant (TREE_TYPE (type), 1,
-			     TREE_THIS_VOLATILE (TREE_TYPE (type))));
-  else
-    gcc_unreachable ();
-
-  return NULL_TREE;
-}
-
 /* Handle a "malloc" attribute; arguments as in
    struct attribute_spec.handler.  */
 
 tree
-handle_malloc_attribute (tree *node, tree, tree, int, bool *)
+d_handle_malloc_attribute (tree *node, tree, tree, int, bool *)
 {
   gcc_assert (TREE_CODE (*node) == FUNCTION_DECL
 	      && POINTER_TYPE_P (TREE_TYPE (TREE_TYPE (*node))));
   DECL_IS_MALLOC (*node) = 1;
-  return NULL_TREE;
-}
-
-/* Handle a "pure" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_pure_attribute (tree *node, tree, tree, int, bool *)
-{
-  gcc_assert (TREE_CODE (*node) == FUNCTION_DECL);
-  DECL_PURE_P (*node) = 1;
-  return NULL_TREE;
-}
-
-/* Handle a "no vops" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_novops_attribute (tree *node, tree, tree, int, bool *)
-{
-  gcc_assert (TREE_CODE (*node) == FUNCTION_DECL);
-  DECL_IS_NOVOPS (*node) = 1;
   return NULL_TREE;
 }
 
@@ -568,7 +437,7 @@ get_nonnull_operand (tree arg_num_expr, unsigned HOST_WIDE_INT *valp)
 /* Handle the "nonnull" attribute.  */
 
 static tree
-handle_nonnull_attribute (tree *node, tree, tree args, int, bool *)
+d_handle_nonnull_attribute (tree *node, tree, tree args, int, bool *)
 {
   tree type = *node;
 
@@ -614,66 +483,15 @@ handle_nonnull_attribute (tree *node, tree, tree args, int, bool *)
   return NULL_TREE;
 }
 
-/* Handle a "nothrow" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_nothrow_attribute (tree *node, tree, tree, int, bool *)
-{
-  gcc_assert (TREE_CODE (*node) == FUNCTION_DECL);
-  TREE_NOTHROW (*node) = 1;
-  return NULL_TREE;
-}
-
-/* Handle a "type generic" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_type_generic_attribute (tree *node, tree, tree, int, bool *)
-{
-  /* Ensure we have a function type.  */
-  gcc_assert (TREE_CODE (*node) == FUNCTION_TYPE);
-
-  /* Ensure we have a variadic function.  */
-  gcc_assert (!prototype_p (*node) || stdarg_p (*node));
-
-  return NULL_TREE;
-}
-
 /* Handle a "transaction_pure" attribute; arguments as in
    struct attribute_spec.handler.  */
 
 static tree
-handle_transaction_pure_attribute (tree *node, tree, tree, int, bool *)
+d_handle_transaction_pure_attribute (tree *node, tree, tree, int, bool *)
 {
   /* Ensure we have a function type.  */
   gcc_assert (TREE_CODE (*node) == FUNCTION_TYPE);
 
-  return NULL_TREE;
-}
-
-/* Handle a "returns_twice" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-handle_returns_twice_attribute (tree *node, tree, tree, int, bool *)
-{
-  gcc_assert (TREE_CODE (*node) == FUNCTION_DECL);
-
-  DECL_IS_RETURNS_TWICE (*node) = 1;
-
-  return NULL_TREE;
-}
-
-/* Handle a "fn spec" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-tree
-handle_fnspec_attribute (tree *, tree, tree args, int, bool *)
-{
-  gcc_assert (args
-	      && TREE_CODE (TREE_VALUE (args)) == STRING_CST
-	      && !TREE_CHAIN (args));
   return NULL_TREE;
 }
 
@@ -681,7 +499,7 @@ handle_fnspec_attribute (tree *, tree, tree args, int, bool *)
    struct attribute_spec.handler.  */
 
 tree
-handle_omp_declare_simd_attribute (tree *node, tree, tree, int, bool *)
+d_handle_omp_declare_simd_attribute (tree *node, tree, tree, int, bool *)
 {
   gcc_assert (TREE_CODE (*node) == FUNCTION_DECL);
   return NULL_TREE;
@@ -690,24 +508,6 @@ handle_omp_declare_simd_attribute (tree *node, tree, tree, int, bool *)
 /* Language specific attribute handlers.
    These functions take the arguments:
    (tree *node, tree name, tree args, int flags, bool *no_add_attrs)  */
-
-/* Handle a "noinline" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-d_handle_noinline_attribute (tree *node, tree name, tree, int,
-			     bool *no_add_attrs)
-{
-  if (TREE_CODE (*node) == FUNCTION_DECL)
-    DECL_UNINLINABLE (*node) = 1;
-  else
-    {
-      warning (OPT_Wattributes, "%qE attribute ignored", name);
-      *no_add_attrs = true;
-    }
-
-  return NULL_TREE;
-}
 
 /* Handle a "always_inline" attribute; arguments as in
    struct attribute_spec.handler.  */
@@ -923,12 +723,18 @@ d_handle_optimize_attribute (tree *node, tree name, tree args, int,
   else
     {
       struct cl_optimization cur_opts;
+      struct cl_target_option cur_target;
       tree old_opts = DECL_FUNCTION_SPECIFIC_OPTIMIZATION (*node);
+      tree old_target = DECL_FUNCTION_SPECIFIC_TARGET (*node);
 
       /* Save current options.  */
       cl_optimization_save (&cur_opts, &global_options, &global_options_set);
-      tree prev_target_node = build_target_option_node (&global_options,
-							&global_options_set);
+      cl_target_option_save (&cur_target, &global_options, &global_options_set);
+
+      tree prev_target_node
+	= old_target
+	    ? old_target
+	    : build_target_option_node (&global_options, &global_options_set);
 
       /* If we previously had some optimization options, use them as the
 	 default.  */
@@ -943,6 +749,10 @@ d_handle_optimize_attribute (tree *node, tree name, tree args, int,
 	cl_optimization_restore (&global_options, &global_options_set,
 				 TREE_OPTIMIZATION (old_opts));
 
+      if (old_target)
+	cl_target_option_restore (&global_options, &global_options_set,
+				  TREE_TARGET_OPTION (old_target));
+
       /* Parse options, and update the vector.  */
       parse_optimize_options (args);
       DECL_FUNCTION_SPECIFIC_OPTIMIZATION (*node)
@@ -956,7 +766,7 @@ d_handle_optimize_attribute (tree *node, tree name, tree args, int,
       cl_optimization_restore (&global_options, &global_options_set,
 			       &cur_opts);
       cl_target_option_restore (&global_options, &global_options_set,
-				TREE_TARGET_OPTION (prev_target_node));
+				&cur_target);
       if (saved_global_options != NULL)
 	{
 	  cl_optimization_compare (saved_global_options, &global_options);
@@ -1340,7 +1150,7 @@ d_handle_alloc_size_attribute (tree *node, tree name, tree args, int,
   tree next = TREE_CHAIN (args);
 
   /* NUM_ARG is null when the attribute includes just one argument, or is
-     explictly set to null if it has been left uninitialized by the caller.  */
+     explicitly set to null if it has been left uninitialized by the caller.  */
   tree num_arg = NULL_TREE;
   if (next != NULL_TREE)
     {
@@ -1560,30 +1370,6 @@ d_handle_simd_attribute (tree *node, tree name, tree args, int,
   DECL_ATTRIBUTES (*node) =
     tree_cons (omp_attr, build_tree_list (NULL_TREE, omp_flags),
 	       DECL_ATTRIBUTES (*node));
-
-  return NULL_TREE;
-}
-
-/* Handle a "used" attribute; arguments as in
-   struct attribute_spec.handler.  */
-
-static tree
-d_handle_used_attribute (tree *node, tree name, tree, int, bool *no_add_attrs)
-{
-  if (TREE_CODE (*node) == FUNCTION_DECL
-      || (VAR_P (*node) && TREE_STATIC (*node))
-      || (TREE_CODE (*node) == TYPE_DECL))
-    {
-      TREE_USED (*node) = 1;
-      DECL_PRESERVE_P (*node) = 1;
-      if (VAR_P (*node))
-	DECL_READ_P (*node) = 1;
-    }
-  else
-    {
-      warning (OPT_Wattributes, "%qE attribute ignored", name);
-      *no_add_attrs = true;
-    }
 
   return NULL_TREE;
 }

@@ -1,5 +1,5 @@
 // PR target/59788
-// { dg-do run { target { *-*-solaris2* && { ! gld } } } }
+// { dg-do run { target solaris_ld } }
 // { dg-options "-Wl,-Bdirect" }
 
 #include <stdexcept>

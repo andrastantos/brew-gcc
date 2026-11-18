@@ -1023,8 +1023,6 @@ pdp11_rtx_costs (rtx x, machine_mode mode, int outer_code,
 	*total = 2;
       return true;
     }
-  if (GET_RTX_LENGTH (code) > 1)
-    src = XEXP (x, 1);
   dest = XEXP (x, 0);
 
   /* If optimizing for size, claim everything costs 2 per word, plus
@@ -1098,6 +1096,7 @@ pdp11_rtx_costs (rtx x, machine_mode mode, int outer_code,
      continue accordingly to handle the operands.  */
   if (code == SET)
     {
+      src = XEXP (x, 1);
       switch (GET_CODE (src))
 	{
 	case REG:
@@ -1122,6 +1121,7 @@ pdp11_rtx_costs (rtx x, machine_mode mode, int outer_code,
     }
   else if (code == PLUS || code == MINUS)
     {
+      src = XEXP (x, 1);
       if (GET_CODE (src) == CONST_INT &&
 	  (INTVAL (src) == 1 || INTVAL (src) == -1))
 	{
@@ -1228,7 +1228,7 @@ pdp11_insn_cost (rtx_insn *insn, bool speed)
     default:
       break;
     }
-  /* There are some other cases where souce and dest are distinct.  */
+  /* There are some other cases where source and dest are distinct.  */
   if (FLOAT_MODE_P (mode) &&
       (op == FLOAT_TRUNCATE || op == FLOAT_EXTEND || op == FIX || op == FLOAT))
     {
@@ -1805,7 +1805,8 @@ output_addr_const_pdp11 (FILE *file, rtx x)
       break;
 
     case LABEL_REF:
-      ASM_GENERATE_INTERNAL_LABEL (buf, "L", CODE_LABEL_NUMBER (XEXP (x, 0)));
+      ASM_GENERATE_INTERNAL_LABEL (buf, "L",
+				   CODE_LABEL_NUMBER (label_ref_label (x)));
       assemble_name (file, buf);
       break;
 
@@ -2209,13 +2210,13 @@ pdp11_function_arg_advance (cumulative_args_t cum_v,
 static void
 pdp11_conditional_register_usage (void)
 {
-  int i;
+  unsigned int i;
   HARD_REG_SET x;
   if (!TARGET_FPU)
     {
       x = reg_class_contents[FPU_REGS];
-      for (i = 0; i < FIRST_PSEUDO_REGISTER; i++ )
-       if (TEST_HARD_REG_BIT (x, i))
+      hard_reg_set_iterator hrsi;
+      EXECUTE_IF_SET_IN_HARD_REG_SET (x, 0, i, hrsi)
 	fixed_regs[i] = call_used_regs[i] = 1;
     }
 

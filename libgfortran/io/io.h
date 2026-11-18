@@ -37,6 +37,9 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 /* Used for building error message strings.  */
 #define IOMSG_LEN 256
 
+/* Size of the namelist read error message buffer.  */
+#define NML_ERR_MSG_LEN 200
+
 /* POSIX 2008 specifies that the extended locale stuff is found in
    locale.h, but some systems have them in xlocale.h.  */
 
@@ -145,7 +148,8 @@ typedef enum
   FMT_LPAREN, FMT_RPAREN, FMT_X, FMT_S, FMT_SS, FMT_SP, FMT_STRING,
   FMT_BADSTRING, FMT_P, FMT_I, FMT_B, FMT_BN, FMT_BZ, FMT_O, FMT_Z, FMT_F,
   FMT_E, FMT_EN, FMT_ES, FMT_G, FMT_L, FMT_A, FMT_D, FMT_H, FMT_END, FMT_DC,
-  FMT_DP, FMT_STAR, FMT_RC, FMT_RD, FMT_RN, FMT_RP, FMT_RU, FMT_RZ, FMT_DT
+  FMT_DP, FMT_STAR, FMT_RC, FMT_RD, FMT_RN, FMT_RP, FMT_RU, FMT_RZ, FMT_DT, FMT_EX,
+  FMT_LPS, FMT_LPZ, FMT_LZ
 }
 format_token;
 
@@ -534,7 +538,7 @@ typedef struct st_parameter_dt
 	     character string is being read so don't use commas to shorten a
 	     formatted field width.  */
 	  unsigned sf_read_comma : 1;
-	  /* A namelist specific flag used to enable reading input from 
+	  /* A namelist specific flag used to enable reading input from
 	     line_buffer for logical reads.  */
 	  unsigned line_buffer_enabled : 1;
 	  /* An internal unit specific flag used to identify that the associated
@@ -552,7 +556,10 @@ typedef struct st_parameter_dt
 	  unsigned expanded_read : 1;
 	  /* Flag to indicate if the statement has async="YES". */
 	  unsigned async : 1;
-	  /* 12 unused bits.  */
+	  /* A namelist specific flag set when a read error message has
+	     been saved into the unit's nml_err_msg buffer.  */
+	  unsigned nml_err_pending : 1;
+	  /* 11 unused bits.  */
 
 	  int child_saved_iostat;
 	  int nml_delim;
@@ -648,12 +655,21 @@ typedef struct gfc_unit
 {
   int unit_number;
   stream *s;
-  
+
+  uint64_t file_dev, file_ino;
+
   /* Treap links.  */
   struct gfc_unit *left, *right;
   int priority;
 
   int read_bad, current_record, saved_pos, previous_nonadvancing_write;
+
+  /* Position information for better diagnostics.  */
+  int line_number, column_number;
+
+  /* Error message buffer used while a namelist read is in progress.  Valid
+     only when the transfer's nml_err_pending flag is set.  */
+  char nml_err_msg[NML_ERR_MSG_LEN];
 
   enum
   { NO_ENDFILE, AT_ENDFILE, AFTER_ENDFILE }
@@ -705,10 +721,10 @@ typedef struct gfc_unit
 
   /* The format hash table.  */
   struct format_hash_entry format_hash_table[FORMAT_HASH_SIZE];
-  
+
   /* Formatting buffer.  */
   struct fbuf *fbuf;
-  
+
   /* Function pointer, points to list_read worker functions.  */
   int (*next_char_fn_ptr) (st_parameter_dt *);
   void (*push_char_fn_ptr) (st_parameter_dt *, int);
@@ -718,6 +734,9 @@ typedef struct gfc_unit
   gfc_charlen_type internal_unit_len;
   gfc_array_char *string_unit_desc;
   int internal_unit_kind;
+
+  /* Track when a gfc_unit is reserved for an internal unit.  */
+  bool internal_reserved;
 
   /* DTIO Parent/Child procedure, 0 = parent, >0 = child level.  */
   int child_dtio;
@@ -779,6 +798,9 @@ internal_proto(unit_rwlock);
 
 extern int close_unit (gfc_unit *);
 internal_proto(close_unit);
+
+extern void recycle_unit (gfc_unit *);
+internal_proto(recycle_unit);
 
 extern gfc_unit *set_internal_unit (st_parameter_dt *, gfc_unit *, int);
 internal_proto(set_internal_unit);
@@ -886,6 +908,9 @@ internal_proto(read_a);
 extern void read_f (st_parameter_dt *, const fnode *, char *, int);
 internal_proto(read_f);
 
+extern void read_ex (st_parameter_dt *, const fnode *, char *, int);
+internal_proto(read_ex);
+
 extern void read_l (st_parameter_dt *, const fnode *, char *, int);
 internal_proto(read_l);
 
@@ -946,6 +971,9 @@ internal_proto(write_en);
 extern void write_es (st_parameter_dt *, const fnode *, const char *, int);
 internal_proto(write_es);
 
+extern void write_ex (st_parameter_dt *, const fnode *, const char *, int);
+internal_proto(write_ex);
+
 extern void write_f (st_parameter_dt *, const fnode *, const char *, int);
 internal_proto(write_f);
 
@@ -995,6 +1023,54 @@ internal_proto(size_from_complex_kind);
 extern void free_ionml (st_parameter_dt *);
 internal_proto(free_ionml);
 
+/* Accessors for u->s.  */
+
+static inline void
+set_unit_stream (gfc_unit *u, stream *s)
+{
+#ifdef HAVE_ATOMIC_FETCH_ADD
+  __atomic_store_n (&u->s, s, __ATOMIC_RELEASE);
+#else
+  u->s = s;
+#endif
+}
+
+static inline stream *
+get_unit_stream (gfc_unit *u)
+{
+#ifdef HAVE_ATOMIC_FETCH_ADD
+  return __atomic_load_n (&u->s, __ATOMIC_ACQUIRE);
+#else
+  return u->s;
+#endif
+}
+
+/* Record the unit's file identity.  Must be called before the matching
+   set_unit_stream.  */
+
+static inline void
+set_unit_file_id (gfc_unit *u, uint64_t dev, uint64_t ino)
+{
+#ifdef HAVE_ATOMIC_FETCH_ADD
+  __atomic_store_n (&u->file_dev, dev, __ATOMIC_RELAXED);
+  __atomic_store_n (&u->file_ino, ino, __ATOMIC_RELAXED);
+#else
+  u->file_dev = dev;
+  u->file_ino = ino;
+#endif
+}
+
+static inline bool
+unit_file_id_matches (gfc_unit *u, uint64_t dev, uint64_t ino)
+{
+#ifdef HAVE_ATOMIC_FETCH_ADD
+  return (__atomic_load_n (&u->file_dev, __ATOMIC_RELAXED) == dev
+	  && __atomic_load_n (&u->file_ino, __ATOMIC_RELAXED) == ino);
+#else
+  return u->file_dev == dev && u->file_ino == ino;
+#endif
+}
+
 static inline void
 inc_waiting_locked (gfc_unit *u)
 {
@@ -1013,7 +1089,7 @@ predec_waiting_locked (gfc_unit *u)
 
      if (predec_waiting_locked (u) == 0)
          // destroy u
-	 
+
      could be further optimized by making this be an __ATOMIC_RELEASE,
      and then inserting a
 

@@ -697,6 +697,11 @@ dump_type (cxx_pretty_printer *pp, tree t, int flags)
 	pp_string (pp, M_("<brace-enclosed initializer list>"));
       else if (t == unknown_type_node)
 	pp_string (pp, M_("<unresolved overloaded function type>"));
+      else if (REFLECTION_TYPE_P (t))
+	{
+	  pp_cxx_ws_string (pp, "std::meta::info");
+	  pp_c_type_qualifier_list (pp, t);
+	}
       else
 	{
 	  pp_cxx_cv_qualifier_seq (pp, t);
@@ -876,10 +881,7 @@ dump_type (cxx_pretty_printer *pp, tree t, int flags)
 
     case NULLPTR_TYPE:
       pp_cxx_ws_string (pp, "std::nullptr_t");
-      break;
-
-    case META_TYPE:
-      pp_cxx_ws_string (pp, "std::meta::info");
+      pp_c_type_qualifier_list (pp, t);
       break;
 
     case SPLICE_SCOPE:
@@ -1145,7 +1147,6 @@ dump_type_prefix (cxx_pretty_printer *pp, tree t, int flags)
     case FIXED_POINT_TYPE:
     case NULLPTR_TYPE:
     case PACK_INDEX_TYPE:
-    case META_TYPE:
     case SPLICE_SCOPE:
       dump_type (pp, t, flags);
       pp->set_padding (pp_before);
@@ -1280,7 +1281,6 @@ dump_type_suffix (cxx_pretty_printer *pp, tree t, int flags)
     case FIXED_POINT_TYPE:
     case NULLPTR_TYPE:
     case PACK_INDEX_TYPE:
-    case META_TYPE:
     case SPLICE_SCOPE:
       break;
 
@@ -1913,7 +1913,7 @@ dump_lambda_function (cxx_pretty_printer *pp,
       pp_c_ws_string (pp, "static");
     }
   else if (!(TYPE_QUALS (class_of_this_parm (TREE_TYPE (fn)))
-	     & TYPE_QUAL_CONST))
+	     .has (TYPE_QUAL_CONST)))
     {
       pp->set_padding (pp_before);
       pp_c_ws_string (pp, "mutable");
@@ -2472,8 +2472,23 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
 	pp_cxx_ws_string (pp, M_("<unknown>"));
       break;
 
-    case VOID_CST:
     case INTEGER_CST:
+      if (TYPE_PTRDATAMEM_P (TREE_TYPE (t)) && integer_all_onesp (t))
+	{
+	  /* OFFSET_TYPE -1 is a null pointer to member.  */
+	  if (flags & TFF_EXPR_IN_PARENS)
+	    pp_cxx_left_paren (pp);
+	  pp_cxx_left_paren (pp);
+	  dump_type (pp, TREE_TYPE (t), flags);
+	  pp_cxx_right_paren (pp);
+	  pp->constant (cxx_dialect < cxx11 ? null_pointer_node : nullptr_node);
+	  if (flags & TFF_EXPR_IN_PARENS)
+	    pp_cxx_right_paren (pp);
+	  break;
+	}
+      /* FALLTHRU */
+
+    case VOID_CST:
     case REAL_CST:
     case STRING_CST:
     case COMPLEX_CST:
@@ -2629,7 +2644,6 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
     case EQ_EXPR:
     case NE_EXPR:
     case SPACESHIP_EXPR:
-    case EXACT_DIV_EXPR:
       dump_binary_op (pp, OVL_OP_INFO (false, TREE_CODE (t))->name, t, flags);
       break;
 
@@ -2637,6 +2651,7 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
     case FLOOR_DIV_EXPR:
     case ROUND_DIV_EXPR:
     case RDIV_EXPR:
+    case EXACT_DIV_EXPR:
       dump_binary_op (pp, "/", t, flags);
       break;
 
@@ -3331,21 +3346,178 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
 
     case REFLECT_EXPR:
       {
-	pp_string (pp, "^^");
 	tree h = REFLECT_EXPR_HANDLE (t);
-	if (DECL_P (h))
-	  dump_decl (pp, h, flags);
-	else if (TYPE_P (h))
-	  dump_type (pp, h, flags);
-	else if (TREE_CODE (h) == TREE_VEC)
+	bool any;
+	switch (REFLECT_EXPR_KIND (t))
 	  {
-	    pp_format_decoder (pp) = cp_printer;
-	    pp->set_format_postprocessor
-	      (std::make_unique<cxx_format_postprocessor> ());
-	    dump_data_member_spec (pp, h);
+	  case REFLECT_ANNOTATION:
+	    pp_string (pp, "^^[[=");
+	    pp->set_padding (pp_none);
+	    dump_expr (pp, TREE_VALUE (TREE_VALUE (h)), flags);
+	    pp_string (pp, "]]");
+	    break;
+	  case REFLECT_DATA_MEMBER_SPEC:
+	    pp_cxx_ws_string (pp, "data_member_spec");
+	    pp_string (pp, "(^^");
+	    pp->set_padding (pp_none);
+	    dump_type (pp, TREE_VEC_ELT (h, 0), flags);
+	    pp_string (pp, ",{");
+	    any = false;
+	    if (TREE_VEC_ELT (h, 1))
+	      {
+		pp_string (pp, ".name=");
+		pp_doublequote (pp);
+		pp->set_padding (pp_none);
+		dump_decl (pp, TREE_VEC_ELT (h, 1), flags);
+		pp_doublequote (pp);
+		any = true;
+	      }
+	    if (TREE_VEC_ELT (h, 2))
+	      {
+		if (any)
+		  pp_comma (pp);
+		pp_string (pp, ".alignment=");
+		pp->set_padding (pp_none);
+		dump_expr (pp, TREE_VEC_ELT (h, 2), flags);
+		any = true;
+	      }
+	    if (TREE_VEC_ELT (h, 3))
+	      {
+		if (any)
+		  pp_comma (pp);
+		pp_string (pp, ".bit_width=");
+		pp->set_padding (pp_none);
+		dump_expr (pp, TREE_VEC_ELT (h, 3), flags);
+		any = true;
+	      }
+	    if (TREE_VEC_ELT (h, 4) && !integer_zerop (TREE_VEC_ELT (h, 4)))
+	      {
+		if (any)
+		  pp_comma (pp);
+		pp_string (pp, ".no_unique_address=");
+		pp->set_padding (pp_none);
+		dump_expr (pp, TREE_VEC_ELT (h, 4), flags);
+		any = true;
+	      }
+	    if (TREE_VEC_LENGTH (h) > 5)
+	      {
+		if (any)
+		  pp_comma (pp);
+		pp_string (pp, ".annotations={");
+		pp->set_padding (pp_none);
+		for (int i = 5; i < TREE_VEC_LENGTH (h); ++i)
+		  {
+		    dump_expr (pp, TREE_VEC_ELT (h, i), flags);
+		    if (i != TREE_VEC_LENGTH (h) - 1)
+		      pp_comma (pp);
+		    pp->set_padding (pp_none);
+		  }
+		pp_right_brace (pp);
+	      }
+	    pp_string (pp, "})");
+	    break;
+	  case REFLECT_BASE:
+	    {
+	      pp_cxx_ws_string (pp, "bases_of");
+	      pp_string (pp, "(^^");
+	      pp->set_padding (pp_none);
+	      tree d = direct_base_derived (h);
+	      dump_type (pp, d, flags);
+	      pp_string (pp, ",std::meta::access_context::unchecked())[");
+	      pp->set_padding (pp_none);
+	      tree binfo = TYPE_BINFO (d), base_binfo;
+	      for (unsigned i = 0; BINFO_BASE_ITERATE (binfo, i, base_binfo);
+		   i++)
+		if (base_binfo == h)
+		  {
+		    pp_wide_integer (pp, i);
+		    break;
+		  }
+	      pp_string (pp, "] {aka ");
+	      pp->set_padding (pp_none);
+	      dump_type (pp, BINFO_TYPE (h), flags);
+	      pp_right_brace (pp);
+	      break;
+	    }
+	  case REFLECT_PARM:
+	    {
+	      pp_cxx_ws_string (pp, "parameters_of");
+	      pp_string (pp, "(^^");
+	      pp->set_padding (pp_none);
+	      h = maybe_update_function_parm (h);
+	      dump_decl (pp, DECL_CONTEXT (h), flags);
+	      pp_string (pp, ")[");
+	      pp->set_padding (pp_none);
+	      unsigned int i = 0;
+	      for (tree arg = FUNCTION_FIRST_USER_PARM (DECL_CONTEXT (h));
+		   arg; arg = DECL_CHAIN (arg), ++i)
+		if (arg == h)
+		  {
+		    pp_wide_integer (pp, i);
+		    break;
+		  }
+	      pp_right_bracket (pp);
+	      if (MULTIPLE_NAMES_PARM_P (h))
+		break;
+	      if (DECL_NAME (h))
+		h = DECL_NAME (h);
+	      else if (tree opn = lookup_attribute ("old parm name",
+						    DECL_ATTRIBUTES (h)))
+		h = TREE_VALUE (TREE_VALUE (opn));
+	      else
+		break;
+	      pp_string (pp, " {aka ");
+	      dump_decl (pp, h, flags);
+	      pp_right_brace (pp);
+	      break;
+	    }
+	  case REFLECT_OBJECT:
+	    pp_cxx_ws_string (pp, "std::meta::reflect_object");
+	    pp_left_paren (pp);
+	    pp->set_padding (pp_none);
+	    dump_expr (pp, h, flags);
+	    pp_right_paren (pp);
+	    break;
+	  case REFLECT_VALUE:
+	    pp_cxx_ws_string (pp, "std::meta::reflect_constant");
+	    pp_left_paren (pp);
+	    pp->set_padding (pp_none);
+	    dump_expr (pp, h, flags);
+	    pp_right_paren (pp);
+	    break;
+	  default:
+	    if (null_reflection_p (t))
+	      {
+		pp_cxx_ws_string (pp, "std::meta::info{}");
+		break;
+	      }
+	    pp_string (pp, "^^");
+	    pp->set_padding (pp_none);
+	    if (DECL_P (h))
+	      dump_decl (pp, h, flags);
+	    else if (TYPE_P (h))
+	      {
+		/* For reflection we care about the difference
+		   between std::meta::info/std::nullptr_t and
+		   decltype(^^int)/decltype(nullptr).  */
+		if (REFLECTION_TYPE_P (h) && !typedef_variant_p (h))
+		  {
+		    pp_cxx_ws_string (pp, "decltype(^^int)");
+		    pp_c_type_qualifier_list (pp, h);
+		  }
+		else if (TREE_CODE (h) == NULLPTR_TYPE
+			 && !typedef_variant_p (h))
+		  {
+		    pp_cxx_ws_string (pp, "decltype(nullptr)");
+		    pp_c_type_qualifier_list (pp, h);
+		  }
+		else
+		  dump_type (pp, h, flags);
+	      }
+	    else
+	      dump_expr (pp, h, flags);
+	    break;
 	  }
-	else
-	  dump_expr (pp, h, flags);
 	break;
       }
 
@@ -4013,12 +4185,16 @@ inform_tree_category (tree t)
     inform (loc, "but %qE is a function template", t);
   else if (DECL_CLASS_TEMPLATE_P (t))
     inform (loc, "but %qE is a class template", t);
+  else if (DECL_ALIAS_TEMPLATE_P (t))
+    inform (loc, "but %qE is an alias template", t);
   else if (variable_template_p (t))
     inform (loc, "but %qE is a variable template", t);
   else if (TREE_CODE (t) == NAMESPACE_DECL)
     inform (loc, "but %qE is a namespace", t);
   else if (TREE_CODE (t) == CONST_DECL && !DECL_TEMPLATE_PARM_P (t))
     inform (loc, "but %qE is an enumerator", t);
+  else if (concept_definition_p (t))
+    inform (loc, "but %qE is a concept", t);
 }
 
 /* Disable warnings about missing quoting in GCC diagnostics for
@@ -4383,7 +4559,7 @@ print_requires_expression_info (diagnostics::text_sink &text_output,
   cxx_pretty_printer *const pp
     = static_cast <cxx_pretty_printer *> (text_output.get_printer ());
 
-  tree parms = TREE_OPERAND (expr, 0);
+  tree parms = REQUIRES_EXPR_PARMS (expr);
   pp_verbatim (pp, parms ? G_("in requirements with ")
 			 : G_("in requirements "));
   while (parms)

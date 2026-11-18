@@ -313,10 +313,10 @@ struct GTY((desc("0"), tag("0"),
 	    chain_next ("RTX_NEXT (&%h)"),
 	    chain_prev ("RTX_PREV (&%h)"))) rtx_def {
   /* The kind of value the expression has.  */
-  ENUM_BITFIELD(machine_mode) mode : MACHINE_MODE_BITSIZE;
+  machine_mode mode : MACHINE_MODE_BITSIZE;
 
   /* The kind of expression this is.  */
-  ENUM_BITFIELD(rtx_code) code: RTX_CODE_BITSIZE;
+  enum rtx_code code: RTX_CODE_BITSIZE;
 
   /* 1 in a MEM if we should keep the alias set for this mem unchanged
      when we access a component.
@@ -347,6 +347,7 @@ struct GTY((desc("0"), tag("0"),
      1 in a CONCAT is VAL_EXPR_IS_CLOBBERED in var-tracking.cc.
      1 in a preserved VALUE is PRESERVED_VALUE_P in cselib.cc.
      1 in a clobber temporarily created for LRA.
+     1 in an ADDR_VEC or ADDR_DIFF_VEC for a shared jump table.
      Dumped as "/u" in RTL dumps.  */
   unsigned int unchanging : 1;
   /* 1 in a MEM or ASM_OPERANDS expression if the memory reference is volatile.
@@ -361,6 +362,7 @@ struct GTY((desc("0"), tag("0"),
      In a PREFETCH, this flag indicates that it should be considered a
      scheduling barrier.
      1 in a CONCAT is VAL_NEEDS_RESOLUTION in var-tracking.cc.
+     1 in a CONCATN is used internally by lower-subreg.cc.
      Dumped as "/v" in RTL dumps.  */
   unsigned int volatil : 1;
   /* 1 in a REG if the register is used only in exit code a loop.
@@ -425,6 +427,9 @@ struct GTY((desc("0"), tag("0"),
     /* In a CONST_WIDE_INT (aka hwivec_def), this is the number of
        HOST_WIDE_INTs in the hwivec_def.  */
     unsigned int num_elem;
+
+    /* The unique identifier of a VALUE rtx.  */
+    int value_uid;
 
     /* Information about a CONST_VECTOR.  */
     struct
@@ -1578,9 +1583,18 @@ jump_table_for_label (const rtx_code_label *label)
   (RTL_FLAG_CHECK6 ("RTX_FRAME_RELATED_P", (RTX), DEBUG_INSN, INSN,	\
 		    CALL_INSN, JUMP_INSN, BARRIER, SET)->frame_related)
 
-/* 1 if JUMP RTX is a crossing jump.  */
-#define CROSSING_JUMP_P(RTX) \
-  (RTL_FLAG_CHECK1 ("CROSSING_JUMP_P", (RTX), JUMP_INSN)->jump)
+/* If JUMP RTX is a crossing jump.  */
+inline bool
+CROSSING_JUMP_P (const rtx_insn *insn)
+{
+  return RTL_FLAG_CHECK1 ("CROSSING_JUMP_P", insn, JUMP_INSN)->jump;
+}
+
+inline void
+set_crossing_jump (rtx_insn *insn, bool set)
+{
+  RTL_FLAG_CHECK1 ("CROSSING_JUMP_P", insn, JUMP_INSN)->jump = set;
+}
 
 /* 1 if RTX is a call to a const function.  Built from ECF_CONST and
    TREE_READONLY.  */
@@ -1609,13 +1623,24 @@ jump_table_for_label (const rtx_code_label *label)
 #define INSN_ANNULLED_BRANCH_P(RTX)					\
   (RTL_FLAG_CHECK1 ("INSN_ANNULLED_BRANCH_P", (RTX), JUMP_INSN)->unchanging)
 
-/* 1 if RTX is an insn in a delay slot and is from the target of the branch.
+/* If RTX is an insn in a delay slot and is from the target of the branch.
    If the branch insn has INSN_ANNULLED_BRANCH_P set, this insn should only be
    executed if the branch is taken.  For annulled branches with this bit
    clear, the insn should be executed only if the branch is not taken.  */
-#define INSN_FROM_TARGET_P(RTX)						\
-  (RTL_FLAG_CHECK3 ("INSN_FROM_TARGET_P", (RTX), INSN, JUMP_INSN, \
-		    CALL_INSN)->in_struct)
+
+inline bool
+INSN_FROM_TARGET_P (const rtx_insn *insn)
+{
+  return RTL_FLAG_CHECK3 ("INSN_FROM_TARGET_P", insn, INSN, JUMP_INSN,
+		    CALL_INSN)->in_struct;
+}
+
+inline void
+set_insn_from_target (rtx_insn *insn, bool set)
+{
+  RTL_FLAG_CHECK3 ("INSN_FROM_TARGET_P", insn, INSN, JUMP_INSN,
+		    CALL_INSN)->in_struct = set;
+}
 
 /* In an ADDR_DIFF_VEC, the flags for RTX for use by branch shortening.
    See the comments for ADDR_DIFF_VEC in rtl.def.  */
@@ -1624,6 +1649,10 @@ jump_table_for_label (const rtx_code_label *label)
 /* In a VALUE, the value cselib has assigned to RTX.
    This is a "struct cselib_val", see cselib.h.  */
 #define CSELIB_VAL_PTR(RTX) X0CSELIB (RTX, 0)
+
+/* A VALUE's unique identifier.  */
+#define CSELIB_VAL_UID(RTX) \
+  RTL_FLAG_CHECK1 ("CSELIB_VAL_UID", (RTX), VALUE)->u2.value_uid
 
 /* Holds a list of notes on what this insn does to various REGs.
    It is a chain of EXPR_LIST rtx's, where the second operand is the
@@ -1669,6 +1698,10 @@ extern const char * const reg_note_name[];
      Pseudo registers cannot be mentioned in this list.  */
 #define CALL_INSN_FUNCTION_USAGE(INSN)	XEXP(INSN, 7)
 
+/* Specifies the callee's ABI as an index in the range [0, NUM_ABI_IDS - 1].
+   See function-abi.h for more details.  */
+#define CALL_INSN_ABI_ID(INSN) XCINT(INSN, 8, CALL_INSN)
+
 /* The label-number of a code-label.  The assembler label
    is made from `L' and the label-number printed in decimal.
    Label numbers are unique in a compilation.  */
@@ -1695,10 +1728,6 @@ extern const char * const reg_note_name[];
 /* In a NOTE that is a line number, this is the line number.
    Other kinds of NOTEs are identified by negative numbers here.  */
 #define NOTE_KIND(INSN) XCINT (INSN, 4, NOTE)
-
-/* Nonzero if INSN is a note marking the beginning of a basic block.  */
-#define NOTE_INSN_BASIC_BLOCK_P(INSN) \
-  (NOTE_P (INSN) && NOTE_KIND (INSN) == NOTE_INSN_BASIC_BLOCK)
 
 /* Nonzero if INSN is a debug nonbind marker note,
    for which NOTE_MARKER_LOCATION can be used.  */
@@ -1728,10 +1757,12 @@ extern const char * const reg_note_name[];
 
 /* Evaluate to TRUE if INSN is a debug insn that denotes a variable
    location/value tracking annotation.  */
-#define DEBUG_BIND_INSN_P(INSN)			\
-  (DEBUG_INSN_P (INSN)				\
-   && (GET_CODE (PATTERN (INSN))		\
-       == VAR_LOCATION))
+inline bool
+DEBUG_BIND_INSN_P (const rtx_insn *insn)
+{
+  return DEBUG_INSN_P (insn) && GET_CODE (PATTERN (insn)) == VAR_LOCATION;
+}
+
 /* Evaluate to TRUE if INSN is a debug insn that denotes a program
    source location marker.  */
 #define DEBUG_MARKER_INSN_P(INSN)		\
@@ -1782,8 +1813,17 @@ extern const char * const reg_note_name[];
 
 /* 1 if RTX is emitted after a call, but it should take effect before
    the call returns.  */
-#define NOTE_DURING_CALL_P(RTX)				\
-  (RTL_FLAG_CHECK1 ("NOTE_VAR_LOCATION_DURING_CALL_P", (RTX), NOTE)->call)
+inline bool
+NOTE_DURING_CALL_P (const rtx_insn *note)
+{
+  return RTL_FLAG_CHECK1 ("NOTE_VAR_LOCATION_DURING_CALL_P", note, NOTE)->call;
+}
+
+inline void
+set_note_during_call_p (rtx_insn *note, bool set)
+{
+  RTL_FLAG_CHECK1 ("NOTE_VAR_LOCATION_DURING_CALL_P", note, NOTE)->call = set;
+}
 
 /* DEBUG_EXPR_DECL corresponding to a DEBUG_EXPR RTX.  */
 #define DEBUG_EXPR_TREE_DECL(RTX) XCTREE (RTX, 0, DEBUG_EXPR)
@@ -1811,6 +1851,14 @@ enum insn_note
 
   NOTE_INSN_MAX
 };
+
+/* Nonzero if INSN is a note marking the beginning of a basic block.  */
+
+inline bool
+NOTE_INSN_BASIC_BLOCK_P (const rtx_insn *insn)
+{
+  return NOTE_P (insn) && NOTE_KIND (insn) == NOTE_INSN_BASIC_BLOCK;
+}
 
 /* Names for NOTE insn's other than line numbers.  */
 
@@ -2219,6 +2267,10 @@ struct address_info {
 
   /* True if this is an RTX_AUTOINC address.  */
   bool autoinc_p;
+
+  /* The MEM whose address this is, or null if this describes an address
+     operand with no enclosing MEM (an ADDRESS rather than a MEM address).  */
+  rtx mem;
 
   /* A pointer to the top-level address.  */
   rtx *outer;
@@ -2642,6 +2694,11 @@ do {								        \
 #define MEM_READONLY_P(RTX) \
   (RTL_FLAG_CHECK1 ("MEM_READONLY_P", (RTX), MEM)->unchanging)
 
+/* 1 if RTX is a mem whose address vector elements all point to
+   independent memory locations, without overlapping each other.  */
+#define MEM_INDEPENDENT_P(RTX) \
+  (RTL_FLAG_CHECK1 ("MEM_INDEPENDENT_P", (RTX), MEM)->return_val)
+
 /* 1 if RTX is a mem and we should keep the alias set for this mem
    unchanged when we access a component.  Set to 1, or example, when we
    are already in a non-addressable component of an aggregate.  */
@@ -2715,6 +2772,7 @@ do {								        \
    MEM_READONLY_P (LHS) = MEM_READONLY_P (RHS),			\
    MEM_KEEP_ALIAS_SET_P (LHS) = MEM_KEEP_ALIAS_SET_P (RHS),	\
    MEM_POINTER (LHS) = MEM_POINTER (RHS),			\
+   MEM_INDEPENDENT_P (LHS) = MEM_INDEPENDENT_P (RHS),		\
    MEM_ATTRS (LHS) = MEM_ATTRS (RHS))
 
 /* 1 if RTX is a label_ref for a nonlocal label.  */
@@ -2726,6 +2784,14 @@ do {								        \
 /* 1 if RTX is a code_label that should always be considered to be needed.  */
 #define LABEL_PRESERVE_P(RTX)						\
   (RTL_FLAG_CHECK2 ("LABEL_PRESERVE_P", (RTX), CODE_LABEL, NOTE)->in_struct)
+
+/* 1 if RTX is the pattern of a jump table that has been shared by two jump
+   instructions.  The flag is sticky even if one is later removed.  The table
+   entries must not be edited in place: redirecting one dispatch would
+   silently redirect all the others.  */
+#define JUMP_TABLE_SHARED_P(RTX)					\
+  (RTL_FLAG_CHECK2 ("JUMP_TABLE_SHARED_P", (RTX), ADDR_VEC,		\
+		    ADDR_DIFF_VEC)->unchanging)
 
 /* During sched, 1 if RTX is an insn that must be scheduled together
    with the preceding insn.  */
@@ -3069,6 +3135,7 @@ enum class expand_opcode {
 
 extern rtx expand_rtx (const uint8_t *, rtx *);
 extern rtx_insn *complete_seq (const uint8_t *, rtx *);
+extern void note_split (const char *);
 extern rtx copy_rtx_if_shared (rtx);
 
 /* In rtl.cc */
@@ -3081,7 +3148,7 @@ extern bool rtx_equal_p (const_rtx, const_rtx,
 			 rtx_equal_p_callback_function = NULL);
 
 extern bool rtvec_all_equal_p (const_rtvec);
-extern bool rtvec_series_p (rtvec, int);
+extern bool rtvec_series_p (rtvec, poly_int64);
 
 /* Return true if X is a vector constant with a duplicated element value.  */
 
@@ -3146,7 +3213,7 @@ extern bool const_vec_series_p_1 (const_rtx, rtx *, rtx *);
 
    { B, B + S, B + 2 * S, B + 3 * S, ... }
 
-   for a nonzero S.  Store B and S in *BASE_OUT and *STEP_OUT on sucess.  */
+   for a nonzero S.  Store B and S in *BASE_OUT and *STEP_OUT on success.  */
 
 inline bool
 const_vec_series_p (const_rtx x, rtx *base_out, rtx *step_out)
@@ -3164,7 +3231,7 @@ const_vec_series_p (const_rtx x, rtx *base_out, rtx *step_out)
    { B, B + S, B + 2 * S, B + 3 * S, ... }
 
    where B and S are constant or nonconstant.  Store B and S in
-   *BASE_OUT and *STEP_OUT on sucess.  */
+   *BASE_OUT and *STEP_OUT on success.  */
 
 inline bool
 vec_series_p (const_rtx x, rtx *base_out, rtx *step_out)
@@ -3351,6 +3418,7 @@ extern rtx convert_memory_address_addr_space (scalar_int_mode, rtx,
 extern const char *get_insn_name (int);
 extern rtx_insn *get_last_insn_anywhere (void);
 extern rtx_insn *get_first_nonnote_insn (void);
+extern rtx_insn *get_first_nonnote_nondebug_insn (void);
 extern rtx_insn *get_last_nonnote_insn (void);
 extern void start_sequence (void);
 extern void push_to_sequence (rtx_insn *);
@@ -3426,7 +3494,7 @@ extern rtx_insn *emit_clobber (rtx);
 extern rtx_insn *gen_use (rtx);
 extern rtx_insn *emit_use (rtx);
 extern rtx_insn *make_insn_raw (rtx);
-extern void add_function_usage_to (rtx, rtx);
+extern void add_function_usage_to (rtx_insn *, rtx);
 extern rtx_call_insn *last_call_insn (void);
 extern rtx_insn *previous_insn (rtx_insn *);
 extern rtx_insn *next_insn (rtx_insn *);
@@ -3441,7 +3509,7 @@ extern rtx_insn *next_nonnote_nondebug_insn_bb (rtx_insn *);
 extern rtx_insn *prev_real_insn (rtx_insn *);
 extern rtx_insn *next_real_insn (rtx_insn *);
 extern rtx_insn *prev_real_nondebug_insn (rtx_insn *);
-extern rtx_insn *next_real_nondebug_insn (rtx);
+extern rtx_insn *next_real_nondebug_insn (rtx_insn *);
 extern rtx_insn *prev_active_insn (rtx_insn *);
 extern rtx_insn *next_active_insn (rtx_insn *);
 extern bool active_insn_p (const rtx_insn *);
@@ -3496,6 +3564,7 @@ public:
 				  rtx, rtx, rtx);
   rtx simplify_relational_operation (rtx_code, machine_mode, machine_mode,
 				     rtx, rtx);
+  rtx simplify_ior_with_common_term (machine_mode, rtx, rtx);
   rtx simplify_subreg (machine_mode, rtx, machine_mode, poly_uint64);
 
   rtx lowpart_subreg (machine_mode, rtx, machine_mode);
@@ -3657,9 +3726,9 @@ extern machine_mode choose_hard_reg_mode (unsigned int, unsigned int,
 extern const HARD_REG_SET &simplifiable_subregs (const subreg_shape &);
 
 /* In emit-rtl.cc  */
-extern rtx set_for_reg_notes (rtx);
-extern rtx set_unique_reg_note (rtx, enum reg_note, rtx);
-extern rtx set_dst_reg_note (rtx, enum reg_note, rtx, rtx);
+extern rtx set_for_reg_notes (rtx_insn *);
+extern rtx set_unique_reg_note (rtx_insn *, enum reg_note, rtx);
+extern rtx set_dst_reg_note (rtx_insn *, enum reg_note, rtx, rtx);
 extern void set_insn_deleted (rtx_insn *);
 
 /* Functions in rtlanal.cc */
@@ -3686,7 +3755,7 @@ inline rtx single_set (const rtx_insn *insn)
   return single_set_2 (insn, PATTERN (insn));
 }
 
-extern scalar_int_mode get_address_mode (rtx mem);
+extern machine_mode get_address_mode (rtx mem);
 extern bool rtx_addr_can_trap_p (const_rtx);
 extern bool nonzero_address_p (const_rtx);
 extern bool rtx_unstable_p (const_rtx);
@@ -3711,7 +3780,7 @@ extern bool modified_between_p (const_rtx, const rtx_insn *, const rtx_insn *);
 extern bool no_labels_between_p (const rtx_insn *, const rtx_insn *);
 extern bool modified_in_p (const_rtx, const_rtx);
 extern bool reg_set_p (const_rtx, const_rtx);
-extern bool multiple_sets (const_rtx);
+extern bool multiple_sets (const rtx_insn *);
 extern bool set_noop_p (const_rtx);
 extern bool noop_move_p (const rtx_insn *);
 extern bool refers_to_regno_p (unsigned int, unsigned int, const_rtx, rtx *);
@@ -3728,14 +3797,14 @@ extern void note_stores (const rtx_insn *,
 extern void note_uses (rtx *, void (*) (rtx *, void *), void *);
 extern bool dead_or_set_p (const rtx_insn *, const_rtx);
 extern bool dead_or_set_regno_p (const rtx_insn *, unsigned int);
-extern rtx find_reg_note (const_rtx, enum reg_note, const_rtx);
-extern rtx find_regno_note (const_rtx, enum reg_note, unsigned int);
-extern rtx find_reg_equal_equiv_note (const_rtx);
+extern rtx find_reg_note (const rtx_insn *, enum reg_note, const_rtx);
+extern rtx find_regno_note (const rtx_insn *, enum reg_note, unsigned int);
+extern rtx find_reg_equal_equiv_note (const rtx_insn *);
 extern rtx find_constant_src (const rtx_insn *);
-extern bool find_reg_fusage (const_rtx, enum rtx_code, const_rtx);
-extern bool find_regno_fusage (const_rtx, enum rtx_code, unsigned int);
+extern bool find_reg_fusage (const rtx_insn *, enum rtx_code, const_rtx);
+extern bool find_regno_fusage (const rtx_insn *, enum rtx_code, unsigned int);
 extern rtx alloc_reg_note (enum reg_note, rtx, rtx);
-extern void add_reg_note (rtx, enum reg_note, rtx);
+extern void add_reg_note (rtx_insn *, enum reg_note, rtx);
 extern void add_int_reg_note (rtx_insn *, enum reg_note, int);
 extern void add_args_size_note (rtx_insn *, poly_int64);
 extern void add_shallow_copy_of_reg_note (rtx_insn *, rtx);
@@ -3749,18 +3818,21 @@ extern bool volatile_insn_p (const_rtx);
 extern bool may_trap_p_1 (const_rtx, unsigned);
 extern bool may_trap_p (const_rtx);
 extern bool may_trap_or_fault_p (const_rtx);
-extern bool can_throw_internal (const_rtx);
-extern bool can_throw_external (const_rtx);
-extern bool insn_could_throw_p (const_rtx);
-extern bool insn_nothrow_p (const_rtx);
+extern bool can_throw_internal (const rtx_insn *);
+extern bool can_throw_external (const rtx_insn *);
+extern bool insn_could_throw_p (const rtx_insn *);
+extern bool insn_nothrow_p (const rtx_insn *);
 extern bool can_nonlocal_goto (const rtx_insn *);
-extern void copy_reg_eh_region_note_forward (rtx, rtx_insn *, rtx);
-extern void copy_reg_eh_region_note_backward (rtx, rtx_insn *, rtx);
+extern void copy_reg_eh_region_note_forward (rtx, rtx_insn *, rtx_insn *);
+extern void copy_reg_eh_region_note_backward (rtx, rtx_insn *, rtx_insn *);
 extern rtx replace_rtx (rtx, rtx, rtx, bool = false);
-extern void replace_label (rtx *, rtx, rtx, bool);
+extern void replace_label (rtx *, rtx_insn *, rtx_insn *, bool);
 extern void replace_label_in_insn (rtx_insn *, rtx_insn *, rtx_insn *, bool);
 extern bool rtx_referenced_p (const_rtx, const_rtx);
 extern bool tablejump_p (const rtx_insn *, rtx_insn **, rtx_jump_table_data **);
+extern bool shared_tablejump_p (const rtx_insn *, rtx_insn **,
+				rtx_jump_table_data **);
+extern void verify_jump_tables (void);
 extern rtx tablejump_casesi_pattern (const rtx_insn *insn);
 extern bool computed_jump_p (const rtx_insn *);
 extern bool tls_referenced_p (const_rtx);
@@ -3789,9 +3861,9 @@ extern bool auto_inc_p (const_rtx);
 extern bool in_insn_list_p (const rtx_insn_list *, const rtx_insn *);
 extern void remove_node_from_insn_list (const rtx_insn *, rtx_insn_list **);
 extern bool loc_mentioned_in_p (rtx *, const_rtx);
-extern rtx_insn *find_first_parameter_load (rtx_insn *, rtx_insn *);
+extern rtx_insn *find_first_parameter_load (rtx_call_insn *, rtx_insn *);
 extern bool keep_with_call_p (const rtx_insn *);
-extern bool label_is_jump_target_p (const_rtx, const rtx_insn *);
+extern bool label_is_jump_target_p (const rtx_insn *, const rtx_insn *);
 extern int pattern_cost (rtx, bool);
 extern int insn_cost (rtx_insn *, bool);
 extern unsigned seq_cost (const rtx_insn *, bool);
@@ -4170,6 +4242,65 @@ extern int reload_completed;
 /* Nonzero after thread_prologue_and_epilogue_insns has run.  */
 extern int epilogue_completed;
 
+/* Set to true once the first split pass after register allocation has
+   been run.  Ports can treat that split pass as a "lowering" pass,
+   with some instructions only being valid before the lowering
+   and others only being valid after the lowering.
+
+   One use of this variable is to cope with address calculations during
+   register allocation.  The register allocator needs to be able to perform
+   address arithmetic (such as addition) at arbitrary points in the program,
+   regardless of whether the condition-code flags are live at that point.
+   If a target cannot add without clobbering the condition-code flags,
+   it must either (1) hide the condition-code flags entirely from RTL
+   or (2) ensure that the condition-code flags are never live before
+   or during register allocation.
+
+   (2) requires a boundary between "the condition-code flags are never live"
+   and "the condition-code flags might be live".  reload_completed can be
+   used for this purpose, provided that all clobbers of the CC register
+   are explicit before and during register allocation.
+
+   However, if the condition-code flags are never live before or during
+   register allocation, there is no real need for patterns to have an explicit
+   clobber of the flags at that point.  Not having a clobber would allow more
+   recog attempts to succeed, both before and during register allocation.
+
+   post_ra_split_completed is an alternative boundary to reload_completed.
+   It allows sets and uses of the condition-code flags, such as individual
+   comparison and jump instructions, to be introduced in the first split pass
+   after register allocation, while also allowing new implicit clobbers of
+   the condition-code flags to be introduced at any time before that point.
+
+   Ports that use post_ra_split_completed for this purpose would have an
+   "unlowered" form with the following properties:
+
+   (a) The condition-code flags are never live between instructions.
+       (That is, they are never defined by one instruction and used
+       by another instruction.)
+
+   (b) As a consequence, new clobbers of the condition-code flags
+       can be introduced at any time.
+
+   (c) RTL instruction patterns (such as addition) can omit clobbers of the
+       condition-code flags even if the flags are in fact clobbered.
+
+   In contrast, the "lowered" form would have these properties:
+
+   (d) The condition-code flags can be live between instructions.
+       That is, RTL instruction patterns can set the condition-code flags
+       or use the condition-code flags.
+
+   (e) All clobbers of the condition-code flags must be explicit in the RTL
+       instruction patterns.
+
+   Instructions covered by (c) would require !post_ra_split_completed
+   and would need to be split into instructions that satisfy (d) or (e).
+   Instructions covered by (d) would require post_ra_split_completed,
+   so that they are not accidentally matched before lowering has taken
+   place.  */
+extern bool post_ra_split_completed;
+
 /* Set to 1 while reload_as_needed is operating.
    Required by some machines to handle any generated moves differently.  */
 
@@ -4235,7 +4366,7 @@ extern bool invert_jump (rtx_jump_insn *, rtx, int);
 extern bool rtx_renumbered_equal_p (const_rtx, const_rtx);
 extern int true_regnum (const_rtx);
 extern unsigned int reg_or_subregno (const_rtx);
-extern bool redirect_jump_1 (rtx_insn *, rtx);
+extern bool redirect_jump_1 (rtx_jump_insn *, rtx);
 extern void redirect_jump_2 (rtx_jump_insn *, rtx, rtx, int, int);
 extern bool redirect_jump (rtx_jump_insn *, rtx, int);
 extern void rebuild_jump_labels (rtx_insn *);
@@ -4317,7 +4448,7 @@ extern void print_inline_rtx (FILE *, const_rtx, int);
 /* In stmt.cc */
 extern void expand_null_return (void);
 extern void expand_naked_return (void);
-extern void emit_jump (rtx);
+extern void emit_jump (rtx_code_label *);
 
 /* Memory operation built-ins differ by return value.  Mapping
    of the enum values is following:
@@ -4550,7 +4681,7 @@ extern void init_alias_target (void);
 extern void init_alias_analysis (void);
 extern void end_alias_analysis (void);
 extern void vt_equate_reg_base_value (const_rtx, const_rtx);
-extern bool memory_modified_in_insn_p (const_rtx, const_rtx);
+extern bool memory_modified_in_insn_p (const_rtx, const rtx_insn *);
 extern bool may_be_sp_based_p (rtx);
 extern rtx gen_hard_reg_clobber (machine_mode, unsigned int);
 extern rtx get_reg_known_value (unsigned int);
@@ -4559,7 +4690,7 @@ extern rtx get_reg_base_value (unsigned int);
 extern rtx extract_mem_from_operand (rtx);
 
 #ifdef STACK_REGS
-extern bool stack_regs_mentioned (const_rtx insn);
+extern bool stack_regs_mentioned (const rtx_insn *insn);
 #endif
 
 /* In toplev.cc */
@@ -4612,7 +4743,8 @@ extern location_t curr_insn_location (void);
 extern void set_insn_locations (rtx_insn *, location_t);
 
 /* rtl-error.cc */
-extern void _fatal_insn_not_found (const_rtx, const char *, int, const char *)
+extern void _fatal_insn_not_found (const rtx_insn *, const char *, int,
+				   const char *)
      ATTRIBUTE_NORETURN ATTRIBUTE_COLD;
 extern void _fatal_insn (const char *, const_rtx, const char *, int, const char *)
      ATTRIBUTE_NORETURN ATTRIBUTE_COLD;

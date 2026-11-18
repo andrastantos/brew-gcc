@@ -59,7 +59,7 @@ enum loongarch_symbol_type {
 #define NUM_SYMBOL_TYPES (SYMBOL_TLSLDM + 1)
 
 /* Routines implemented in loongarch.cc.  */
-extern rtx loongarch_emit_move (rtx, rtx);
+extern rtx_insn *loongarch_emit_move (rtx, rtx);
 extern HOST_WIDE_INT loongarch_initial_elimination_offset (int, int);
 extern void loongarch_expand_prologue (void);
 extern void loongarch_expand_epilogue (int);
@@ -235,4 +235,5 @@ extern bool loongarch_parse_fmv_features (location_t, string_slice,
 extern void get_feature_mask_for_version (tree, loongarch_fmv_feature_mask *,
 					  auto_vec<unsigned int> *);
 extern int loongarch_compare_version_priority (tree, tree);
+extern void loongarch_output_asm_load_canary (rtx reg, rtx canary, rtx tmp);
 #endif /* ! GCC_LOONGARCH_PROTOS_H */

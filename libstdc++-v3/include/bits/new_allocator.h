@@ -37,6 +37,7 @@
 #if __cplusplus >= 201103L
 #include <type_traits>
 #endif
+#include <bits/memoryfwd.h>
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -123,6 +124,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wc++17-extensions" // if constexpr
 
+      __attribute__((__always_inline__))
+      _GLIBCXX20_CONSTEXPR static void
+      _S_check_allocation_limit(size_t __n)
+      {
+	if (__builtin_expect(__n > _S_max_size(), false))
+	  {
+	    // _GLIBCXX_RESOLVE_LIB_DEFECTS
+	    // 3190. allocator::allocate sometimes returns too little storage
+	    if (__n > (std::size_t(-1) / sizeof(_Tp)))
+	      std::__throw_bad_array_new_length();
+	    std::__throw_bad_alloc();
+	  }
+      }
+
       // NB: __n is permitted to be 0.  The C++ standard says nothing
       // about what the return value is when __n == 0.
       _GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR _Tp*
@@ -142,25 +157,59 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	else
 #endif
 #endif
-	if (__builtin_expect(__n > this->_M_max_size(), false))
 	  {
-	    // _GLIBCXX_RESOLVE_LIB_DEFECTS
-	    // 3190. allocator::allocate sometimes returns too little storage
-	    if (__n > (std::size_t(-1) / sizeof(_Tp)))
-	      std::__throw_bad_array_new_length();
-	    std::__throw_bad_alloc();
-	  }
+	    _S_check_allocation_limit(__n);
 #if __cpp_aligned_new && __cplusplus >= 201103L
-	else if constexpr (alignof(_Tp) > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+	    if constexpr (alignof(_Tp) > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+	      {
+		std::align_val_t __al = std::align_val_t(alignof(_Tp));
+		return static_cast<_Tp*>(
+		  _GLIBCXX_OPERATOR_NEW(__n * sizeof(_Tp), __al));
+	      }
+	    else
+#endif
+	      return static_cast<_Tp*>(
+		_GLIBCXX_OPERATOR_NEW(__n * sizeof(_Tp)));
+	  }
+      }
+
+#ifdef __glibcxx_allocate_at_least  // C++23
+      [[nodiscard]] constexpr std::allocation_result<_Tp*, size_t>
+      allocate_at_least(size_t __n)
+      {
+#if __cpp_aligned_new
+	if ! consteval
 	  {
-	    std::align_val_t __al = std::align_val_t(alignof(_Tp));
-	    return static_cast<_Tp*>(_GLIBCXX_OPERATOR_NEW(__n * sizeof(_Tp),
-							   __al));
+	    if constexpr (requires { sizeof(_Tp); })
+	    if constexpr (alignof(_Tp) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+	    if constexpr ( sizeof(_Tp) <  __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+	      {
+		_S_check_allocation_limit(__n);
+		size_t __bytes = __n * sizeof(_Tp);
+		const size_t __mask = __STDCPP_DEFAULT_NEW_ALIGNMENT__ - 1;
+		size_t __max = (__bytes + __mask) & ~__mask;
+		// Avoid seeming to ask for 2^63 bytes (PR108377):
+		__max -= __max >> (__SIZE_WIDTH__ - 1);
+		auto __spare = static_cast<unsigned>(__max - __bytes);
+		if constexpr (sizeof(_Tp) < (__mask + 1) / 2)
+		  {
+		    auto __bonus = __spare / sizeof(_Tp);
+		    __n += __bonus;
+		    __bytes += __bonus * sizeof(_Tp);
+		  }
+		else if (sizeof(_Tp) <= __spare)
+		  {
+		    __n += 1;
+		    __bytes += sizeof(_Tp);
+		  }
+		void* __p = _GLIBCXX_OPERATOR_NEW(__bytes);
+		return { static_cast<_Tp*>(__p), __n };
+	      }
 	  }
 #endif
-	else
-	  return static_cast<_Tp*>(_GLIBCXX_OPERATOR_NEW(__n * sizeof(_Tp)));
+	return { allocate(__n), __n };
       }
+#endif
 
       // __p is not permitted to be a null pointer.
       _GLIBCXX20_CONSTEXPR void
@@ -177,10 +226,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  {
 	    _GLIBCXX_OPERATOR_DELETE(_GLIBCXX_SIZED_DEALLOC(__p, __n),
 				     std::align_val_t(alignof(_Tp)));
-	    return;
 	  }
+	else
 #endif
-	_GLIBCXX_OPERATOR_DELETE(_GLIBCXX_SIZED_DEALLOC(__p, __n));
+	  _GLIBCXX_OPERATOR_DELETE(_GLIBCXX_SIZED_DEALLOC(__p, __n));
       }
 
 #pragma GCC diagnostic pop
@@ -192,7 +241,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       __attribute__((__always_inline__))
       size_type
       max_size() const _GLIBCXX_USE_NOEXCEPT
-      { return _M_max_size(); }
+      { return _S_max_size(); }
 
 #if __cplusplus >= 201103L
       template<typename _Up, typename... _Args>
@@ -238,8 +287,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
     private:
       __attribute__((__always_inline__))
-      _GLIBCXX_CONSTEXPR size_type
-      _M_max_size() const _GLIBCXX_USE_NOEXCEPT
+      _GLIBCXX_CONSTEXPR static size_type
+      _S_max_size() _GLIBCXX_USE_NOEXCEPT
       {
 #if __PTRDIFF_MAX__ < __SIZE_MAX__
 	return std::size_t(__PTRDIFF_MAX__) / sizeof(_Tp);

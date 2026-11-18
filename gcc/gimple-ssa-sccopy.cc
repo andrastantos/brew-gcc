@@ -70,11 +70,11 @@ along with GCC; see the file COPYING3.  If not see
    and replace references to the statement with the value -- we propagate the
    copy.
 
-   _3 = _2; // Replace all occurences of _3 by _2
+   _3 = _2; // Replace all occurrences of _3 by _2
 
    _8 = PHI <_9, _10>;
    _9 = PHI <_8, _10>;
-   _10 = PHI <_8, _9, _1>; // Replace all occurences of _8, _9 and _10 by _1
+   _10 = PHI <_8, _9, _1>; // Replace all occurrences of _8, _9 and _10 by _1
 
    To find all three types of copy statements we use an algorithm based on
    strongly-connected components (SCCs) in dataflow graph.  The algorithm was
@@ -405,22 +405,6 @@ stmt_may_generate_copy (gimple *stmt)
   if (SSA_NAME_OCCURS_IN_ABNORMAL_PHI (rhs))
     return false;
 
-  /* It is possible that lhs has more alignment or value range information.  By
-     propagating we would lose this information.  So in the case that alignment
-     or value range information differs, we are conservative and do not
-     propagate.
-
-     FIXME: Propagate alignment and value range info the same way copy-prop
-     does.  */
-  if (POINTER_TYPE_P (TREE_TYPE (lhs))
-      && POINTER_TYPE_P (TREE_TYPE (rhs))
-      && SSA_NAME_PTR_INFO (lhs) != SSA_NAME_PTR_INFO (rhs))
-    return false;
-  if (!POINTER_TYPE_P (TREE_TYPE (lhs))
-      && !POINTER_TYPE_P (TREE_TYPE (rhs))
-      && SSA_NAME_RANGE_INFO (lhs) != SSA_NAME_RANGE_INFO (rhs))
-    return false;
-
   return true;  /* A statement of type _2 = _1;.  */
 }
 
@@ -497,6 +481,8 @@ scc_copy_prop::replace_scc_by_value (vec<gimple *> scc, tree val)
 	  
 	}
       replace_uses_by (name, val);
+      if (TREE_CODE (val) == SSA_NAME)
+        maybe_duplicate_ssa_info_at_copy (name, val);
       bitmap_set_bit (dead_stmts, SSA_NAME_VERSION (name));
       didsomething = true;
     }

@@ -99,6 +99,10 @@ mrelax
 Target Optimization
 Optimization. Relax branches.
 
+mprune-vectab
+Target Optimization
+Optimization. Prune AVR-LibC vector table provided relaxation is on.
+
 mpmem-wrap-around
 Target
 Make the linker relaxation machine assume that a program counter wrap-around occurs.
@@ -114,6 +118,10 @@ Optimization. Split shifts of 4-byte values into a byte shift and a residual bit
 msplit-ldst
 Target Var(avropt_split_ldst) Init(0) Optimization
 Optimization. Split most of the load and store instructions into byte load and stores.
+
+mstrict-addr-space-subsets
+Target Var(avropt_strict_addr_space_subsets) Init(0)
+Implement strict named address space subset relations.
 
 mstrict-X
 Target Var(avropt_strict_X) Init(0) Optimization
@@ -132,6 +140,10 @@ msp8
 Target RejectNegative Var(avropt_sp8) Init(0)
 This option is used internally for multilib generation and selection. The device has no SPH special function register.
 
+mdemote-switch
+Target Var(avropt_demote_switch) Init(0) Optimization
+Optimization. Demote switch values to the size as used in the program.
+
 mfuse-add
 Target Alias(mfuse-add=, 2, 0) Optimization
 Optimization. Split register additions from load/store instructions. Most useful on Reduced Tiny.
@@ -139,6 +151,14 @@ Optimization. Split register additions from load/store instructions. Most useful
 mfuse-add=
 Target Joined RejectNegative UInteger Var(avropt_fuse_add) Init(0) Optimization IntegerRange(0, 3)
 -mfuse-add=<0,2>	Optimization. Split register additions from load/store instructions. Most useful on Reduced Tiny.
+
+masm-len-notes
+Target Var(avropt_asmlen_notes) Init(1) Save
+Recognize [[len=<spec>]] notes to specify the size of inline asm constructs. Enabled by default.
+
+Wasm-len-notes
+Warning C C++ Var(avropt_warn_asmlen_notes) Init(1) Save
+Warn about unrecognized [[len=<spec>]] notes in inline asm constructs. Enabled by default.
 
 Waddr-space-convert
 Warning C Var(avropt_warn_addr_space_convert) Init(0)
@@ -152,6 +172,10 @@ mfract-convert-truncate
 Target Mask(FRACT_CONV_TRUNC)
 Allow to use truncation instead of rounding towards zero for fractional fixed-point types.
 
+mfuse-ifelse
+Target Var(avropt_fuse_ifelse) Init(0) Optimization
+Optimize compare-branch-compare-branch sequences to compare-branch-branch.
+
 mfuse-move
 Target Alias(mfuse-move=, 23, 0) Optimization
 Optimization. Run a post-reload pass that tweaks move instructions.
@@ -163,6 +187,10 @@ Target Joined RejectNegative UInteger Var(avropt_fuse_move) Init(0) Optimization
 mfuse-move2
 Target Var(avropt_fuse_move2) Init(0) Optimization
 Optimization. Fuse some move insns after insn combine.
+
+moptimize
+Target Var(avropt_optimize) Init(0) Optimization
+Optimization. Enable avr-specific optimizations.
 
 mabsdata
 Target Mask(ABSDATA)

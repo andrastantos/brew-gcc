@@ -18,6 +18,7 @@
 
 #include "rust-feature-collector.h"
 #include "rust-attribute-values.h"
+#include "rust-session-manager.h"
 
 namespace Rust {
 namespace Features {

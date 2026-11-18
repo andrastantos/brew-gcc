@@ -20,6 +20,13 @@
 
 (include "../arm/common.md")
 
+;; Similar to register_operand, but don't allow subregs.  This is needed
+;; if we want to use operations like gen_highpart while expanding
+;; a pattern.
+(define_predicate "pure_register_operand"
+  (and (match_code "reg")
+       (match_operand 0 "register_operand")))
+
 (define_predicate "aarch64_sysreg_string"
   (and (match_code "const_string")
        (match_test "aarch64_valid_sysreg_name_p (XSTR (op, 0))")))
@@ -36,10 +43,14 @@
   (ior (match_code "symbol_ref")
        (match_operand 0 "register_operand")))
 
+;; True if OP is an allocated general register, i.e. x0-x30 but not the
+;; stack pointer.  REGNO_REG_CLASS returns the smallest class holding the
+;; register, and x8-x15 belong to the W8_W11_REGS and W12_W15_REGS
+;; subclasses, so it cannot be compared against GENERAL_REGS here.
 (define_predicate "aarch64_general_reg"
   (and (match_operand 0 "register_operand")
-       (match_test "REGNO_REG_CLASS (REGNO (op)) == STUB_REGS
-		    || REGNO_REG_CLASS (REGNO (op)) == GENERAL_REGS")))
+       (match_test "REG_P (op)
+		    && GP_REGNUM_P (REGNO (op))")))
 
 ;; Return true if OP a (const_int 0) operand.
 (define_predicate "const0_operand"
@@ -49,6 +60,10 @@
 (define_predicate "const0_to_1_operand"
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), 0, 1)")))
+
+(define_predicate "const_0_to_3_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), 0, 3)")))
 
 (define_predicate "const_0_to_7_operand"
   (and (match_code "const_int")
@@ -254,15 +269,11 @@
 
 (define_predicate "aarch64_shift_imm_si"
   (and (match_code "const_int")
-       (match_test "(unsigned HOST_WIDE_INT) INTVAL (op) < 32")))
+       (match_test "UINTVAL (op) < 32")))
 
 (define_predicate "aarch64_shift_imm_di"
   (and (match_code "const_int")
-       (match_test "(unsigned HOST_WIDE_INT) INTVAL (op) < 64")))
-
-(define_predicate "aarch64_shift_imm64_di"
-  (and (match_code "const_int")
-       (match_test "(unsigned HOST_WIDE_INT) INTVAL (op) <= 64")))
+       (match_test "UINTVAL (op) < 64")))
 
 (define_predicate "aarch64_reg_or_shift_imm_si"
   (ior (match_operand 0 "register_operand")
@@ -272,11 +283,16 @@
   (ior (match_operand 0 "register_operand")
        (match_operand 0 "aarch64_shift_imm_di")))
 
-;; The imm3 field is a 3-bit field that only accepts immediates in the
+;; The aarch64_shift_imm3 field is a 3-bit field that only accepts immediates in the
 ;; range 0..4.
-(define_predicate "aarch64_imm3"
+(define_predicate "aarch64_shift_imm3"
   (and (match_code "const_int")
-       (match_test "(unsigned HOST_WIDE_INT) INTVAL (op) <= 4")))
+       (match_test "UINTVAL (op) <= 4")))
+
+;; The imm1 field is a 1-bit field that only accepts immediates 0 and 1.
+(define_predicate "aarch64_imm1"
+  (and (match_code "const_int")
+       (match_test "UINTVAL (op) <= 1")))
 
 ;; The imm2 field is a 2-bit field that only accepts immediates in the
 ;; range 0..3.
@@ -286,9 +302,15 @@
 
 ;; The imm3 field is a 3-bit field that only accepts immediates in the
 ;; range 0..7.
-(define_predicate "aarch64_lane_imm3"
+(define_predicate "aarch64_imm3"
   (and (match_code "const_int")
        (match_test "UINTVAL (op) <= 7")))
+
+;; The imm4 field is a 4-bit field that only accepts immediates in the
+;; range 0..15.
+(define_predicate "aarch64_imm4"
+  (and (match_code "const_int")
+       (match_test "UINTVAL (op) <= 15")))
 
 ;; An immediate that fits into 24 bits, but needs splitting.
 (define_predicate "aarch64_split_imm24"
@@ -645,6 +667,15 @@
 	    (match_test "op == const0_rtx")
 	    (match_operand 0 "aarch64_simd_or_scalar_imm_zero"))))
 
+;; Same as above, but a zero const_vector is only allowed when a
+;; corresponding single-insn (i.e. not involving MOVPRFX) alternative is
+;; enabled.  Used for zeroing predication forms of some SVE2.2
+;; instructions.
+(define_predicate "aarch64_simd_reg_or_direct_zero"
+  (ior (and (match_test "TARGET_SVE2p2_OR_SME2p2")
+	    (match_operand 0 "aarch64_simd_reg_or_zero"))
+       (match_operand 0 "register_operand")))
+
 (define_predicate "aarch64_simd_reg_or_minus_one"
   (ior (match_operand 0 "register_operand")
        (match_operand 0 "aarch64_simd_imm_minus_one")))
@@ -709,21 +740,6 @@
 			GET_MODE_UNIT_BITSIZE (GET_MODE (op)) / 2,
 			GET_MODE_UNIT_BITSIZE (GET_MODE (op)) / 2)")))
 
-(define_predicate "aarch64_simd_umax_half_mode"
-  (and (match_code "const_vector")
-       (match_test "aarch64_const_vec_all_same_in_range_p (op,
-				(HOST_WIDE_INT_1U
-				<< (GET_MODE_UNIT_BITSIZE (mode) / 2)) - 1,
-				(HOST_WIDE_INT_1U
-				<< (GET_MODE_UNIT_BITSIZE (mode) / 2)) - 1)")))
-
-(define_predicate "aarch64_simd_umax_quarter_mode"
-  (and (match_code "const_vector")
-       (match_test "aarch64_const_vec_all_same_in_range_p (op,
-				(HOST_WIDE_INT_1U
-				<< (GET_MODE_UNIT_BITSIZE (mode) / 4)) - 1,
-				(HOST_WIDE_INT_1U
-				<< (GET_MODE_UNIT_BITSIZE (mode) / 4)) - 1)")))
 (define_predicate "aarch64_simd_shift_imm_vec_qi"
   (and (match_code "const_vector")
        (match_test "aarch64_const_vec_all_same_in_range_p (op, 1, 8)")))
@@ -779,6 +795,9 @@
 
 (define_predicate "aarch64_constant_vector_operand"
   (match_code "const,const_vector"))
+
+(define_predicate "aarch64_nonnegative_constant_operand"
+  (match_test "aarch64_nonnegative_constant_p (op, GET_MODE (op))"))
 
 (define_predicate "aarch64_sve_ld1r_operand"
   (and (match_operand 0 "memory_operand")

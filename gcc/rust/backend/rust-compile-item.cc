@@ -17,14 +17,59 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "rust-compile-item.h"
+#include "rust-attribute-values.h"
 #include "rust-compile-implitem.h"
 #include "rust-compile-extern.h"
+#include "rust-rib.h"
 #include "rust-substitution-mapper.h"
 #include "rust-type-util.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
+#include "tree.h"
+#include "stringpool.h"
+#include "target.h"
 
 namespace Rust {
 namespace Compile {
+
+static void
+handle_used_attr (HIR::StaticItem &var, tree decl)
+{
+  auto used_compiler = false; /* equivalent to C's used attribute */
+  auto used_linker = false;   /* equivalent to C's retain attribute */
+
+  // If the attribute has no argument, then it is equivalent to `used(compiler)`
+  for (const auto &attr : var.get_outer_attrs ())
+    {
+      if (attr.as_string () == Values::Attributes::USED)
+	used_compiler = true;
+
+      // We've already checked that the attribute was used properly, so just
+      // fetch the information we need
+      if (attr.has_attr_input ())
+	{
+	  auto input
+	    = static_cast<const AST::DelimTokenTree &> (attr.get_attr_input ())
+		.parse_to_meta_item ();
+
+	  for (const auto &item : input->get_items ())
+	    if (item->as_string () == "linker")
+	      used_linker = true;
+	}
+    }
+
+  if (used_compiler)
+    {
+      DECL_PRESERVE_P (decl) = 1;
+      DECL_READ_P (decl) = 1;
+    }
+
+  // Check that the linker supports the attribute, and then add it
+  if (SUPPORTS_SHF_GNU_RETAIN && used_linker)
+    {
+      DECL_ATTRIBUTES (decl)
+	= tree_cons (get_identifier ("retain"), NULL, DECL_ATTRIBUTES (decl));
+    }
+}
 
 void
 CompileItem::visit (HIR::StaticItem &var)
@@ -50,11 +95,11 @@ CompileItem::visit (HIR::StaticItem &var)
 
   tree type = TyTyResolveCompile::compile (ctx, resolved_type);
 
-  auto &nr_ctx
-    = Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
+  auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
 
   Resolver::CanonicalPath canonical_path
-    = nr_ctx.to_canonical_path (var.get_mappings ().get_nodeid ());
+    = nr_ctx.to_canonical_path (var.get_mappings ().get_nodeid (),
+				Resolver2_0::Namespace::Values);
 
   ctx->push_const_context ();
   tree value
@@ -73,6 +118,10 @@ CompileItem::visit (HIR::StaticItem &var)
   Bvariable *static_global
     = Backend::global_variable (name, asm_name, type, is_external, is_hidden,
 				in_unique_section, var.get_locus ());
+
+  // Static items are concerned by the #[used] attribute which needs to be
+  // handled here
+  handle_used_attr (var, static_global->get_decl ());
 
   tree init = value == error_mark_node ? error_mark_node : DECL_INITIAL (value);
   Backend::global_variable_set_init (static_global, init);
@@ -103,12 +152,12 @@ CompileItem::visit (HIR::ConstantItem &constant)
     const_value_expr.get_mappings ().get_hirid (), &expr_type);
   rust_assert (ok);
 
-  auto &nr_ctx
-    = Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
+  auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
 
   // canonical path
   Resolver::CanonicalPath canonical_path
-    = nr_ctx.to_canonical_path (mappings.get_nodeid ());
+    = nr_ctx.to_canonical_path (mappings.get_nodeid (),
+				Resolver2_0::Namespace::Values);
   if (constant_type->is<const TyTy::FnType> ())
     {
       if (concrete == nullptr)
@@ -179,32 +228,32 @@ CompileItem::visit (HIR::Function &function)
 				    TyTy::TyWithLocation (concrete),
 				    function.get_locus ());
 
-	  rust_assert (resolved->is<TyTy::FnType> ());
+	  if (!resolved->is<TyTy::FnType> ())
+	    return;
+
 	  fntype = resolved->as<TyTy::FnType> ();
 	}
 
       fntype->monomorphize ();
     }
-  else
+
+  Resolver::AssociatedImplTrait *impl = nullptr;
+  HirId id = function.get_mappings ().get_hirid ();
+  if (auto impl_item = ctx->get_mappings ().lookup_hir_implitem (id))
     {
-      // if this is part of a trait impl block which is not generic we need to
-      // ensure associated types are setup
-      HirId id = function.get_mappings ().get_hirid ();
-      if (auto impl_item = ctx->get_mappings ().lookup_hir_implitem (id))
-	{
-	  Resolver::AssociatedImplTrait *impl = nullptr;
-	  bool found = ctx->get_tyctx ()->lookup_associated_trait_impl (
-	    impl_item->second, &impl);
-	  if (found)
-	    impl->setup_raw_associated_types ();
-	}
+      ctx->get_tyctx ()->lookup_associated_trait_impl (impl_item->second,
+						       &impl);
     }
 
-  auto &nr_ctx
-    = Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
+  auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
+
+  tl::optional<Resolver::ImplTraitFrameGuard> guard;
+  if (impl)
+    guard.emplace (impl->get_frame ());
 
   Resolver::CanonicalPath canonical_path
-    = nr_ctx.to_canonical_path (function.get_mappings ().get_nodeid ());
+    = nr_ctx.to_canonical_path (function.get_mappings ().get_nodeid (),
+				Resolver2_0::Namespace::Values);
 
   const std::string asm_name = ctx->mangle_item (fntype, canonical_path);
 
@@ -227,7 +276,7 @@ CompileItem::visit (HIR::Function &function)
   if (function.get_qualifiers ().is_const ())
     ctx->push_const_context ();
 
-  auto lookup_root_item = ctx->get_mappings ().lookup_hir_item (
+  auto lookup_root_item = ctx->get_mappings ().hir.items.lookup (
     function.get_mappings ().get_hirid ());
   bool is_root_item = lookup_root_item.has_value ();
   tree fndecl

@@ -21,9 +21,9 @@ along with GCC; see the file COPYING3.  If not see
 #define GCC_TREE_VRP_H
 
 #include "value-range.h"
+#include "value-range-storage.h"
 
 extern int compare_values (tree, tree);
-extern int compare_values_warnv (tree, tree, bool *);
 
 extern enum value_range_kind intersect_range_with_nonzero_bits
   (enum value_range_kind, wide_int *, wide_int *, const wide_int &, signop);

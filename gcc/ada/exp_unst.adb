@@ -27,7 +27,6 @@ with Atree;          use Atree;
 with Debug;          use Debug;
 with Einfo.Entities; use Einfo.Entities;
 with Einfo.Utils;    use Einfo.Utils;
-with Elists;         use Elists;
 with Lib;            use Lib;
 with Namet;          use Namet;
 with Nlists;         use Nlists;
@@ -54,6 +53,13 @@ package body Exp_Unst is
    -----------------------
    -- Local Subprograms --
    -----------------------
+
+   function Maybe_Subp_Index (Sub : Entity_Id) return SI_Type;
+   --  Returns the subps index value if it has been set, 0 if not
+
+   procedure Nullify_Renamings (Renamings : Elist_Id);
+   --  Iterates over all renamings in the Renamings list and replace them with
+   --  null statements.
 
    procedure Unnest_Subprogram
      (Subp : Entity_Id; Subp_Body : Node_Id; For_Inline : Boolean := False);
@@ -264,8 +270,14 @@ package body Exp_Unst is
    ----------------
 
    function Subp_Index (Sub : Entity_Id) return SI_Type is
-      E : Entity_Id := Sub;
+      Ret : constant SI_Type := Maybe_Subp_Index (Sub);
+   begin
+      pragma Assert (Ret /= 0);
+      return Ret;
+   end Subp_Index;
 
+   function Maybe_Subp_Index (Sub : Entity_Id) return SI_Type is
+      E : Entity_Id := Sub;
    begin
       pragma Assert (Is_Subprogram (E));
 
@@ -283,9 +295,54 @@ package body Exp_Unst is
          end if;
       end if;
 
-      pragma Assert (Subps_Index (E) /= Uint_0);
-      return SI_Type (UI_To_Int (Subps_Index (E)));
-   end Subp_Index;
+      if not Field_Is_Initial_Zero (E, F_Subps_Index) then
+         return SI_Type (UI_To_Int (Subps_Index (E)));
+      else
+         --  Field has not been set, don't try to access it yet
+         return 0;
+      end if;
+   end Maybe_Subp_Index;
+
+   procedure Nullify_Renamings (Renamings : Elist_Id) is
+      Iterator : Elmt_Id := First_Elmt (Renamings);
+      Nod : Node_Id;
+      F_Nod : Node_Id;
+   begin
+      if Debug_Flag_Dot_3 and then Present (Iterator) then
+         Nod := Node (Iterator);
+         Write_Str ("Dropping renamings for ");
+         Write_Name (Chars (Entity (Name (Nod))));
+         Write_Eol;
+      end if;
+
+      while Present (Iterator) loop
+         Nod := Node (Iterator);
+
+         if Debug_Flag_Dot_3 then
+            Write_Str (" -  ");
+            Write_Name (Chars (Defining_Unit_Name (Specification (Nod))));
+            Write_Eol;
+         end if;
+
+         --  Remove the freeze node if there is one
+
+         F_Nod := Freeze_Node (Defining_Unit_Name
+           (Specification (Nod)));
+         if Present (F_Nod) then
+            Rewrite (F_Nod,
+                     Make_Null_Statement (Sloc (Nod)));
+         end if;
+
+         Rewrite (Nod,
+                  Make_Null_Statement (Sloc (Nod)));
+
+         Next_Elmt (Iterator);
+      end loop;
+
+      while Present (First_Elmt (Renamings)) loop
+         Remove_Last_Elmt (Renamings);
+      end loop;
+   end Nullify_Renamings;
 
    -----------------------
    -- Unnest_Subprogram --
@@ -482,6 +539,11 @@ package body Exp_Unst is
             --  is an access type, check whether the designated type
             --  has dynamic bounds.
 
+            procedure Move_Pending_Renamings (Subp : Entity_Id;
+                                              Renamings : in out Elist_Id);
+            --  Move all pending renamings that are renaming Subp to its own
+            --  Renamings list.
+
             procedure Note_Uplevel_Ref
               (E      : Entity_Id;
                N      : Node_Id;
@@ -537,22 +599,19 @@ package body Exp_Unst is
                     (N : Node_Id) return Traverse_Result
                   is
                   begin
-                     --  Entity name case. Make sure that the entity is
-                     --  declared in a subprogram. This may not be the case for
-                     --  a type in a loop appearing in a precondition. Exclude
-                     --  explicitly discriminants (that can appear in bounds of
-                     --  discriminated components), enumeration literals and
-                     --  block.
+                     --  The main case is the name of an object entity declared
+                     --  in a subprogram.
 
                      if Is_Entity_Name (N) then
                         if Present (Entity (N))
                           and then not Is_Type (Entity (N))
-                          and then Present
-                            (Enclosing_Subprogram (Entity (N)))
                           and then
-                            Ekind (Entity (N))
-                              not in E_Discriminant | E_Enumeration_Literal
-                                | E_Block
+                            Ekind (Entity (N)) not in E_Block
+                                                    | E_Discriminant
+                                                    | E_Enumeration_Literal
+                                                    | E_Package
+                          and then
+                            Present (Enclosing_Subprogram (Entity (N)))
                         then
                            Note_Uplevel_Ref
                              (E      => Entity (N),
@@ -560,25 +619,22 @@ package body Exp_Unst is
                               Caller => Current_Subprogram,
                               Callee => Enclosing_Subprogram (Entity (N)));
                         end if;
-                     end if;
 
-                     --  N_Function_Call are handled later, don't touch them
-                     --  yet.
-                     if Nkind (N) in N_Function_Call
-                     then
+                     --  N_Function_Call is handled later
+
+                     elsif Nkind (N) = N_Function_Call then
                         return Skip;
 
-                     --  In N_Selected_Component and N_Expanded_Name, only the
-                     --  prefix may be referencing a uplevel entity.
+                     --  For N_Expanded_Name and N_Selected_Component, only the
+                     --  prefix may have an uplevel reference.
 
-                     elsif Nkind (N) in N_Selected_Component
-                         | N_Expanded_Name
+                     elsif Nkind (N) in N_Expanded_Name | N_Selected_Component
                      then
                         Do_Note_Uplevel_Bound (Prefix (N));
                         return Skip;
 
-                     --  The type of the prefix may be have an uplevel
-                     --  reference if this needs bounds.
+                     --  For an attribute, the type of the prefix may have an
+                     --  uplevel reference if it contains bounds.
 
                      elsif Nkind (N) = N_Attribute_Reference then
                         declare
@@ -587,10 +643,9 @@ package body Exp_Unst is
                            DT   : Boolean := False;
 
                         begin
-                           if Attr in
-                                Attribute_First
-                                | Attribute_Last
-                                | Attribute_Length
+                           if Attr in Attribute_First
+                                    | Attribute_Last
+                                    | Attribute_Length
                              and then Is_Constrained (Etype (Prefix (N)))
                            then
                               Check_Static_Type
@@ -601,6 +656,7 @@ package body Exp_Unst is
 
                      return OK;
                   end Note_Uplevel_Bound_Trav;
+
                begin
                   Do_Note_Uplevel_Bound (N);
                end Note_Uplevel_Bound;
@@ -759,17 +815,41 @@ package body Exp_Unst is
                Urefs.Append ((N, Full_E, Caller, Callee));
             end Note_Uplevel_Ref;
 
+            procedure Move_Pending_Renamings (Subp : Entity_Id;
+                                              Renamings : in out Elist_Id) is
+               Iterator : Elmt_Id := First_Elmt (Pending_Renamings);
+               Nod : Node_Id;
+            begin
+               while Present (Iterator) loop
+                  Nod := Node (Iterator);
+
+                  if Entity (Name (Nod)) = Subp then
+                     Append_New_Elmt (Nod, Renamings);
+                  end if;
+                  Next_Elmt (Iterator);
+               end loop;
+
+               Iterator := First_Elmt (Renamings);
+               while Present (Iterator) loop
+                  Remove (Pending_Renamings, Node (Iterator));
+                  Next_Elmt (Iterator);
+               end loop;
+            end Move_Pending_Renamings;
+
             -------------------------
             -- Register_Subprogram --
             -------------------------
 
             procedure Register_Subprogram (E : Entity_Id; Bod : Node_Id) is
                L : constant Nat := Get_Level (Subp, E);
-
+               Renamings : Elist_Id := New_Elmt_List;
             begin
-               --  Subprograms declared in tasks and protected types cannot be
-               --  eliminated because calls to them may be in other units, so
-               --  they must be treated as reachable.
+               Move_Pending_Renamings (E, Renamings);
+
+               --  Subprograms declared in tasks and protected types or whose
+               --  address is taken (through attribute Address or Access)
+               --  cannot be eliminated because calls to them may be in other
+               --  units, so they must be treated as reachable.
 
                Subps.Append
                  ((Ent           => E,
@@ -786,7 +866,8 @@ package body Exp_Unst is
                    ARECnT        => Empty,
                    ARECnPT       => Empty,
                    ARECnP        => Empty,
-                   ARECnU        => Empty));
+                   ARECnU        => Empty,
+                   Renamings     => Renamings));
 
                Set_Subps_Index (E, UI_From_Int (Subps.Last));
 
@@ -1222,6 +1303,54 @@ package body Exp_Unst is
                      return Skip;
                   end if;
 
+               when N_Subprogram_Renaming_Declaration =>
+                  --  Record the subprogram renaming. If the reachability
+                  --  analysis decides to drop the procedure, we also need to
+                  --  drop all the associated renamings.
+
+                  if Nkind (Name (N)) in N_Has_Entity then
+                     declare
+                        E : constant Entity_Id := Entity (Name (N));
+                        SE : Subp_Entry;
+                     begin
+                        --  Do not record renamings for something not a
+                        --  subprogram. e.g.
+                        --    function t return boolean renames true;
+
+                        if Is_Subprogram (E) then
+                           if Maybe_Subp_Index (E) /= 0
+                             and then Enclosing_Subprogram (E) /= Empty
+                           then
+                              SE := Subps.Table (Subp_Index (E));
+                              Append_Elmt (N, SE.Renamings);
+
+                              if Debug_Flag_Dot_3 then
+                                 Write_Str ("Record renaming ");
+                                 Write_Name (Chars (Entity (Name (N))));
+                                 Write_Str (" for subp ");
+                                 Write_Name (Chars (SE.Ent));
+                                 Write_Str (" at ");
+                                 Write_Location (Sloc (E));
+                                 Write_Eol;
+                              end if;
+                           else
+                              Append_Elmt (N, Pending_Renamings);
+
+                              if Debug_Flag_Dot_3 then
+                                 Write_Str ("Record pending renaming ");
+                                 Write_Name (Chars (
+                                   Defining_Unit_Name (Specification (N))));
+                                 Write_Str (" for subp ");
+                                 Write_Name (Chars (E));
+                                 Write_Str (" at ");
+                                 Write_Location (Sloc (E));
+                                 Write_Eol;
+                              end if;
+                           end if;
+                        end if;
+                     end;
+                  end if;
+
                --  Otherwise record an uplevel reference in a local identifier
 
                when others =>
@@ -1530,6 +1659,8 @@ package body Exp_Unst is
 
                   if Present (STJ.Bod) then
                      Spec := Corresponding_Spec (STJ.Bod);
+
+                     Nullify_Renamings (STJ.Renamings);
 
                      if Present (Spec) then
                         Decl := Parent (Declaration_Node (Spec));
@@ -2129,18 +2260,16 @@ package body Exp_Unst is
                                     Insert_After (Ins, Asn);
                                  end if;
 
-                                 --  Analyze the assignment statement. We do
-                                 --  not need to establish the relevant scope
-                                 --  stack entries here, because we have
-                                 --  already set the correct entity references,
-                                 --  so no name resolution is required, and no
-                                 --  new entities are created, so we don't even
-                                 --  need to set the current scope.
+                                 --  Analyze the assignment statement. We set
+                                 --  the scope of the current subprogram, so
+                                 --  that newly created entities go in the
+                                 --  right entity chain.
 
                                  --  We analyze with all checks suppressed
                                  --  (since we do not expect any exceptions).
-
+                                 Push_Scope (STJ.Ent);
                                  Analyze (Asn, Suppress => All_Checks);
+                                 Pop_Scope;
                               end;
 
                               Next_Elmt (Elmt);

@@ -94,7 +94,7 @@ const pass_data pass_data_insert_bti =
 
 /* Decide if BTI J is needed after a call instruction.  */
 static bool
-call_needs_bti_j (rtx_insn *insn)
+call_needs_bti_j (rtx_call_insn *insn)
 {
   /* Call returns twice, one of which may be indirect.  */
   if (find_reg_note (insn, REG_SETJMP, NULL))
@@ -138,7 +138,7 @@ rest_of_insert_bti (void)
 	    }
 
 	  /* There could still be more labels that are valid targets of a
-	     BTI J instuction.  To find them we start looking through the
+	     BTI J instruction.  To find them we start looking through the
 	     JUMP_INSN.  If it jumps to a jump table, then we find all labels
 	     of the jump table to protect with a BTI J.  */
 	  if (JUMP_P (insn))
@@ -165,7 +165,8 @@ rest_of_insert_bti (void)
 
 	  /* Also look for calls that may return indirectly, such as setjmp,
 	     and put a BTI J after them.  */
-	  if (CALL_P (insn) && call_needs_bti_j (insn))
+	  auto call = dyn_cast<rtx_call_insn *> (insn);
+	  if (call && call_needs_bti_j (call))
 	    {
 	      bti_insn = aarch_gen_bti_j ();
 	      emit_insn_after (bti_insn, insn);
@@ -183,7 +184,7 @@ rest_of_insert_bti (void)
     {
       bb = ENTRY_BLOCK_PTR_FOR_FN (cfun)->next_bb;
       insn = BB_HEAD (bb);
-      if (!aarch_pac_insn_p (get_first_nonnote_insn ()))
+      if (!aarch_pac_insn_p (get_first_nonnote_nondebug_insn ()))
 	{
 	  bti_insn = aarch_gen_bti_c ();
 	  emit_insn_before (bti_insn, insn);

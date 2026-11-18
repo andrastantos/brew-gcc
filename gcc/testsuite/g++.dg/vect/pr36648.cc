@@ -1,4 +1,4 @@
-/* { dg-do compile } */
+/* { dg-do compile { target { ! implicit_constexpr } } } */
 /* { dg-require-effective-target vect_float } */
 /* { dg-additional-options "-fdisable-tree-cunrolli" } */
 

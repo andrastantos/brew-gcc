@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-options "-fdefaultbyte 51" }
        *> { dg-output-file "group2/ALLOCATE_Rules_6_-_9_Without_OPTION_INITIALIZE_With_-fdefaultbyte___UTF16_.out" }
 

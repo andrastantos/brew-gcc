@@ -14,5 +14,5 @@ f (double *restrict res, double *restrict ptr)
   res[1] = x1;
 }
 
-/* { dg-final { scan-assembler {\twhilelo\t(p[0-7])\.d,.*\tfmaxnm\tz[0-9]+\.d, \1/m, z[0-9]+\.d, z[0-9]+\.d\n} } } */
+/* { dg-final { scan-assembler-not {\twhilelo\t(p[0-7])\.d,.*\tfmaxnm\tz[0-9]+\.d, \1/m, z[0-9]+\.d, z[0-9]+\.d\n} } } */
 /* { dg-final { scan-assembler-times {\tfmaxnmv\td[0-9]+, p[0-7], z[0-9]+\.d\n} 2 } } */

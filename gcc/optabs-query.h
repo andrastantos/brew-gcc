@@ -90,7 +90,7 @@ trapv_binoptab_p (optab binoptab)
 }
 
 /* Return insn code for a comparison operator with VMODE
-   resultin MASK_MODE, unsigned if UNS is true.  */
+   result in MASK_MODE, unsigned if UNS is true.  */
 
 inline enum insn_code
 get_vec_cmp_icode (machine_mode vmode, machine_mode mask_mode, bool uns)
@@ -100,7 +100,7 @@ get_vec_cmp_icode (machine_mode vmode, machine_mode mask_mode, bool uns)
 }
 
 /* Return insn code for a comparison operator with VMODE
-   resultin MASK_MODE (only for EQ/NE).  */
+   result in MASK_MODE (only for EQ/NE).  */
 
 inline enum insn_code
 get_vec_cmp_eq_icode (machine_mode vmode, machine_mode mask_mode)
@@ -173,7 +173,9 @@ bool supports_vec_gather_load_p (machine_mode = E_VOIDmode,
 bool supports_vec_scatter_store_p (machine_mode = E_VOIDmode);
 opt_machine_mode get_absneg_bit_mode (optab, machine_mode,
 				      scalar_float_mode, int *);
-bool can_vec_extract (machine_mode, machine_mode);
+
+opt_machine_mode vec_extract_perm_p (machine_mode, machine_mode, poly_uint64);
+opt_machine_mode can_vec_extract (machine_mode, machine_mode);
 bool can_open_code_p (optab, machine_mode);
 bool can_implement_p (optab, machine_mode);
 

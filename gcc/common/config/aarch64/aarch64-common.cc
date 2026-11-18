@@ -465,7 +465,7 @@ aarch64_parse_cpu (const char *to_parse, aarch64_cpu *res_cpu,
 	      if (ext_res != AARCH_PARSE_OK)
 		return ext_res;
 	    }
-	  /* Extension parsing was successfull.  Confirm the result
+	  /* Extension parsing was successful.  Confirm the result
 	     cpu and ISA flags.  */
 	  *res_cpu = cpu->processor;
 	  *res_flags = isa_flags;
@@ -642,7 +642,7 @@ aarch64_get_extension_string_for_isa_flags
   /* The alias bits should only be used to support the aliases
      during option processing, and should be cleared at all other times.
      Verify this property for the supplied flags bitmask.  */
-  gcc_assert (!(feature_deps::alias_flags & aarch64_isa_flags));
+  gcc_assert (!(feature_deps::alias_flags & isa_flags));
   aarch64_feature_flags current_flags = default_arch_flags;
 
   /* As a special case, do not assume that the assembler will enable CRC
@@ -653,8 +653,12 @@ aarch64_get_extension_string_for_isa_flags
 
      However, assemblers with Armv8-R AArch64 support should not have this
      issue, so we don't need this fix when targeting Armv8-R.  */
-  auto explicit_flags = (!(current_flags & AARCH64_FL_V8R)
-			 ? AARCH64_FL_CRC : 0);
+  aarch64_feature_flags explicit_flags =
+#ifndef DISABLE_AARCH64_AS_CRC_BUGFIX
+     (!(current_flags & AARCH64_FL_V8R) ? AARCH64_FL_CRC : 0);
+#else
+     0;
+#endif
 
   /* Add the features in isa_flags & ~current_flags using the smallest
      possible number of extensions.  We can do this by iterating over the
@@ -711,7 +715,7 @@ aarch64_get_extension_string_for_isa_flags
   for (auto alias: all_extensions)
     {
       /* Only allow "+nocrypto" when "sm4" is not already enabled
-	 (to avoid dependending on whether "+nocrypto" also disables "sm4").  */
+	 (to avoid depending on whether "+nocrypto" also disables "sm4").  */
       if (alias.flag_canonical == AARCH64_FL_CRYPTO
 	  && (current_flags & AARCH64_FL_SM4))
 	continue;

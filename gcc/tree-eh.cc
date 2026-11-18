@@ -1002,7 +1002,7 @@ lower_try_finally_fallthru_label (struct leh_tf_state *tf)
   return label;
 }
 
-/* A subroutine of lower_try_finally.  If FINALLY consits of a
+/* A subroutine of lower_try_finally.  If FINALLY consists of a
    GIMPLE_EH_ELSE node, return it.  */
 
 static inline geh_else *
@@ -2118,7 +2118,7 @@ lower_eh_constructs_2 (struct leh_state *state, gimple_stmt_iterator *gsi)
       if (stmt_could_throw_p (cfun, stmt)
 	  && gimple_has_lhs (stmt)
 	  && gimple_stmt_may_fallthru (stmt)
-	  && !tree_could_throw_p (gimple_get_lhs (stmt))
+	  && !lhs_could_trap_p (gimple_get_lhs (stmt))
 	  && is_gimple_reg_type (TREE_TYPE (gimple_get_lhs (stmt))))
 	{
 	  tree lhs = gimple_get_lhs (stmt);
@@ -2752,12 +2752,61 @@ ref_outside_object_p (tree size, poly_offset_int off, tree refsz)
   return false;
 }
 
-/* Return true if EXPR can trap, as in dereferencing an invalid pointer
-   location or floating point arithmetic.  C.f. the rtl version, may_trap_p.
-   This routine expects only GIMPLE lhs or rhs input.  */
+/* If PTR is a PARM_DECL or its default SSA definition, return the
+   PARM_DECL.  Otherwise return NULL_TREE.  */
 
-bool
-tree_could_trap_p (tree expr)
+static tree
+parm_decl_from_ptr (tree ptr)
+{
+  if (TREE_CODE (ptr) == SSA_NAME)
+    {
+      if (!SSA_NAME_IS_DEFAULT_DEF (ptr))
+	return NULL_TREE;
+      ptr = SSA_NAME_VAR (ptr);
+    }
+
+  return ptr && TREE_CODE (ptr) == PARM_DECL ? ptr : NULL_TREE;
+}
+
+/* If PTR is a parameter of the current function, or the default definition
+   of one, that is known to designate a whole object, return the size of that
+   object in bytes.  Otherwise return NULL_TREE.
+
+   Two kinds of parameter qualify.  The this pointer of a method points to
+   an object of the method base type.  A parameter whose reference type
+   refers to an object type is bound to an object of the referenced type.
+   In both cases the pointed-to object is at least as large as that type.  */
+
+static tree
+whole_object_param_size (tree ptr)
+{
+  tree type;
+
+  if (!cfun)
+    return NULL_TREE;
+
+  ptr = parm_decl_from_ptr (ptr);
+  if (!ptr)
+    return NULL_TREE;
+
+  if (TREE_CODE (TREE_TYPE (ptr)) == REFERENCE_TYPE)
+    type = TREE_TYPE (TREE_TYPE (ptr));
+  else if (TREE_CODE (TREE_TYPE (cfun->decl)) == METHOD_TYPE
+	   && ptr == DECL_ARGUMENTS (cfun->decl))
+    type = TYPE_METHOD_BASETYPE (TREE_TYPE (cfun->decl));
+  else
+    return NULL_TREE;
+
+  return nonnull_arg_p (ptr) ? TYPE_SIZE_UNIT (type) : NULL_TREE;
+}
+
+/* Return true if EXPR can trap, as in dereferencing an invalid pointer
+   location or evaluating floating-point arithmetic.  See may_trap_p for the
+   RTL counterpart.  This routine expects only GIMPLE lhs or rhs input.  LHS
+   is true when EXPR is the lhs of a store.  */
+
+static bool
+tree_could_trap_1 (tree expr, bool lhs)
 {
   enum tree_code code;
   bool fp_operation = false;
@@ -2813,7 +2862,7 @@ tree_could_trap_p (tree expr)
 
     case ARRAY_RANGE_REF:
       base = TREE_OPERAND (expr, 0);
-      if (tree_could_trap_p (base))
+      if (tree_could_trap_1 (base, lhs))
 	return true;
       if (TREE_THIS_NOTRAP (expr))
 	return false;
@@ -2821,7 +2870,7 @@ tree_could_trap_p (tree expr)
 
     case ARRAY_REF:
       base = TREE_OPERAND (expr, 0);
-      if (tree_could_trap_p (base))
+      if (tree_could_trap_1 (base, lhs))
 	return true;
       if (TREE_THIS_NOTRAP (expr))
 	return false;
@@ -2830,7 +2879,7 @@ tree_could_trap_p (tree expr)
     case TARGET_MEM_REF:
     case MEM_REF:
       if (TREE_CODE (TREE_OPERAND (expr, 0)) == ADDR_EXPR
-	  && tree_could_trap_p (TREE_OPERAND (TREE_OPERAND (expr, 0), 0)))
+	  && tree_could_trap_1 (TREE_OPERAND (TREE_OPERAND (expr, 0), 0), lhs))
 	return true;
       if (TREE_THIS_NOTRAP (expr))
 	return false;
@@ -2851,21 +2900,16 @@ tree_could_trap_p (tree expr)
 	  tree refsz = TYPE_SIZE_UNIT (TREE_TYPE (expr));
 	  return ref_outside_object_p (size, off, refsz);
 	}
-      if (cfun
-	  && TREE_CODE (TREE_TYPE (cfun->decl)) == METHOD_TYPE
-	  && ((TREE_CODE (TREE_OPERAND (expr, 0)) == SSA_NAME
-	       && SSA_NAME_IS_DEFAULT_DEF (TREE_OPERAND (expr, 0))
-	       && (SSA_NAME_VAR (TREE_OPERAND (expr, 0))
-		   == DECL_ARGUMENTS (cfun->decl)))
-	      || TREE_OPERAND (expr, 0) == DECL_ARGUMENTS (cfun->decl)))
+      if (!lhs)
 	{
-	  poly_offset_int off = mem_ref_offset (expr);
-	  if (maybe_lt (off, 0))
-	    return true;
-	  tree size = TYPE_SIZE_UNIT
-			(TYPE_METHOD_BASETYPE (TREE_TYPE (cfun->decl)));
-	  tree refsz = TYPE_SIZE_UNIT (TREE_TYPE (expr));
-	  return ref_outside_object_p (size, off, refsz);
+	  if (tree size = whole_object_param_size (TREE_OPERAND (expr, 0)))
+	    {
+	      poly_offset_int off = mem_ref_offset (expr);
+	      if (maybe_lt (off, 0))
+		return true;
+	      tree refsz = TYPE_SIZE_UNIT (TREE_TYPE (expr));
+	      return ref_outside_object_p (size, off, refsz);
+	    }
 	}
       return true;
 
@@ -2884,10 +2928,13 @@ tree_could_trap_p (tree expr)
       if (!t || !DECL_P (t))
 	return true;
       if (DECL_WEAK (t))
-	return tree_could_trap_p (t);
+	return tree_could_trap_1 (t, lhs);
       return false;
 
     case FUNCTION_DECL:
+      /* Functions will cause a trap if on the lhs.  */
+      if (lhs)
+	return true;
       /* Assume that accesses to weak functions may trap, unless we know
 	 they are certainly defined in current TU or in some other
 	 LTO partition.  */
@@ -2901,6 +2948,9 @@ tree_could_trap_p (tree expr)
       return false;
 
     case VAR_DECL:
+      /* Readonly non-local decls can cause a trap on the lhs.  */
+      if (lhs && !auto_var_p (expr) && TREE_READONLY (expr))
+	return true;
       /* Assume that accesses to weak vars may trap, unless we know
 	 they are certainly defined in current TU or in some other
 	 LTO partition.  */
@@ -2912,10 +2962,34 @@ tree_could_trap_p (tree expr)
 	  return !(node && node->in_other_partition);
 	}
       return false;
-
+    /* Strings, const and labels will cause a trap if on the lhs.  */
+    case LABEL_DECL:
+    case CONST_DECL:
+    case STRING_CST:
+      return lhs;
+    /* Result and arguments will never cause a trap.  */
+    case RESULT_DECL:
+    case PARM_DECL:
+      return false;
     default:
       return false;
     }
+}
+
+/* Return true if EXPR can trap when evaluated as an rvalue.  See may_trap_p
+   for the RTL counterpart.  */
+
+bool
+tree_could_trap_p (tree expr)
+{
+  return tree_could_trap_1 (expr, false);
+}
+
+/* Return true if LHS can trap as a store.  */
+bool
+lhs_could_trap_p (tree lhs)
+{
+  return tree_could_trap_1 (lhs, true);
 }
 
 /* Return non-NULL if there is an integer operation with trapping overflow
@@ -3021,7 +3095,7 @@ stmt_could_throw_1_p (gassign *stmt)
     }
 
   /* First check the LHS.  */
-  if (tree_could_trap_p (gimple_assign_lhs (stmt)))
+  if (tree_could_trap_1 (gimple_assign_lhs (stmt), true))
     return true;
 
   /* Check if the main expression may trap.  */
@@ -3058,7 +3132,17 @@ stmt_could_throw_p (function *fun, gimple *stmt)
       return true;
 
     case GIMPLE_CALL:
-      return !gimple_call_nothrow_p (as_a <gcall *> (stmt));
+      {
+	gcall *call = as_a <gcall *> (stmt);
+	if (!gimple_call_nothrow_p (call))
+	  return true;
+	/* Return slot optimization can fall back to a temporary and a
+	   caller-side copy.  */
+	if ((fun && !fun->can_throw_non_call_exceptions)
+	    || !gimple_store_p (call))
+	  return false;
+	return lhs_could_trap_p (gimple_call_lhs (call));
+      }
 
     case GIMPLE_COND:
       {
@@ -3108,7 +3192,7 @@ tree_could_throw_p (tree t)
   if (TREE_CODE (t) == MODIFY_EXPR)
     {
       if (cfun->can_throw_non_call_exceptions
-          && tree_could_trap_p (TREE_OPERAND (t, 0)))
+	  && tree_could_trap_1 (TREE_OPERAND (t, 0), true))
         return true;
       t = TREE_OPERAND (t, 1);
     }
@@ -3927,7 +4011,7 @@ lower_eh_dispatch (basic_block src, geh_dispatch *stmt)
 	hash_set<tree> seen_values;
 
 	/* Collect the labels for a switch.  Zero the post_landing_pad
-	   field becase we'll no longer have anything keeping these labels
+	   field because we'll no longer have anything keeping these labels
 	   in existence and the optimizer will be free to merge these
 	   blocks at will.  */
 	for (c = r->u.eh_try.first_catch; c ; c = c->next_catch)

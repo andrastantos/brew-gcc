@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/INSPECT_CONVERTING_TO_figurative_constants.out" }
         identification division.
         program-id. clouseau.

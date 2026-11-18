@@ -235,12 +235,17 @@ Crate::as_string () const
   return str + "\n";
 }
 
-void
+NodeId
 Crate::inject_extern_crate (std::string name)
 {
-  items.push_back (std::make_unique<AST::ExternCrate> (
+  auto extern_crate = std::make_unique<AST::ExternCrate> (
     AST::ExternCrate (name, AST::Visibility::create_public (UNKNOWN_LOCATION),
-		      {}, UNKNOWN_LOCATION)));
+		      {}, UNKNOWN_LOCATION));
+  auto node_id = extern_crate->get_node_id ();
+  // We need to insert the new crate at the top of the file as its
+  // definition must be resolved before any module.
+  items.insert (items.begin (), std::move (extern_crate));
+  return node_id;
 }
 
 void
@@ -1414,6 +1419,59 @@ TypeAlias::as_string () const
     str += where_clause.as_string ();
 
   str += "\n Type: " + existing_type->as_string ();
+
+  return str;
+}
+
+std::string
+TraitAlias::as_string () const
+{
+  std::string str = VisItem::as_string ();
+
+  str += " " + alias_name.as_string ();
+
+  // generic params
+  str += "\n Generic params: ";
+  if (!has_generics ())
+    {
+      str += "none";
+    }
+  else
+    {
+      auto i = generic_params.begin ();
+      auto e = generic_params.end ();
+
+      for (; i != e; i++)
+	{
+	  str += (*i)->as_string ();
+	  if (e != i + 1)
+	    str += ", ";
+	}
+    }
+
+  str += "\n Bounds: ";
+  if (alias_bounds.empty ())
+    {
+      str += "none";
+    }
+  else
+    {
+      bool needs_plus = false;
+
+      for (auto &bound : alias_bounds)
+	{
+	  if (needs_plus)
+	    str += " + ";
+	  needs_plus = true;
+	  str += bound->as_string ();
+	}
+    }
+
+  str += "\n Where clause: ";
+  if (!has_where_clause ())
+    str += "none";
+  else
+    str += where_clause.as_string ();
 
   return str;
 }
@@ -3620,6 +3678,7 @@ AttributeParser::parse_meta_item_inner ()
 	case BYTE_CHAR_LITERAL:
 	case BYTE_STRING_LITERAL:
 	case RAW_STRING_LITERAL:
+	case C_STRING_LITERAL:
 	case INT_LITERAL:
 	case FLOAT_LITERAL:
 	case TRUE_LITERAL:
@@ -4749,6 +4808,12 @@ Function::accept_vis (ASTVisitor &vis)
 
 void
 TypeAlias::accept_vis (ASTVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+TraitAlias::accept_vis (ASTVisitor &vis)
 {
   vis.visit (*this);
 }

@@ -21,9 +21,6 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_SEL_SCHED_IR_H
 #define GCC_SEL_SCHED_IR_H
 
-/* For state_t.  */
-/* For reg_note.  */
-
 /* tc_t is a short for target context.  This is a state of the target
    backend.  */
 typedef void *tc_t;
@@ -44,12 +41,6 @@ typedef struct idata_def *idata_t;
 /* A virtual instruction, i.e. an instruction as seen by the scheduler.  */
 struct vinsn_def;
 typedef struct vinsn_def *vinsn_t;
-
-/* RTX list.
-   This type is the backend for ilist.  */
-typedef _list_t _xlist_t;
-#define _XLIST_X(L) ((L)->u.x)
-#define _XLIST_NEXT(L) (_LIST_NEXT (L))
 
 /* Instruction.  */
 typedef rtx_insn *insn_t;
@@ -143,17 +134,17 @@ struct _expr
 
   /* True when this expression needs a speculation check to be scheduled.
      This is used during find_used_regs.  */
-  BOOL_BITFIELD needs_spec_check_p : 1;
+  bool needs_spec_check_p : 1;
 
   /* True when the expression was substituted.  Used for statistical
      purposes.  */
-  BOOL_BITFIELD was_substituted : 1;
+  bool was_substituted : 1;
 
   /* True when the expression was renamed.  */
-  BOOL_BITFIELD was_renamed : 1;
+  bool was_renamed : 1;
 
   /* True when expression can't be moved.  */
-  BOOL_BITFIELD cant_move : 1;
+  bool cant_move : 1;
 };
 
 typedef struct _expr expr_def;
@@ -289,16 +280,16 @@ struct _fence
   rtx_insn *sched_next;
 
   /* True if fill_insns processed this fence.  */
-  BOOL_BITFIELD processed_p : 1;
+  bool processed_p : 1;
 
   /* True if fill_insns actually scheduled something on this fence.  */
-  BOOL_BITFIELD scheduled_p : 1;
+  bool scheduled_p : 1;
 
   /* True when the next insn scheduled here would start a cycle.  */
-  BOOL_BITFIELD starts_cycle_p : 1;
+  bool starts_cycle_p : 1;
 
   /* True when the next insn scheduled here would be scheduled after a stall.  */
-  BOOL_BITFIELD after_stall_p : 1;
+  bool after_stall_p : 1;
 };
 typedef struct _fence *fence_t;
 
@@ -405,7 +396,7 @@ struct _list_iterator
   /* The list we're iterating.  */
   _list_t *lp;
 
-  /* True when this iterator supprts removing.  */
+  /* True when this iterator supports removing.  */
   bool can_remove_p;
 
   /* True when we've actually removed something.  */
@@ -456,51 +447,6 @@ _list_iter_remove_nofree (_list_iterator *ip)
   for (_list_iter_start (&(I), (LP), true);                         \
        _list_iter_cond_##TYPE (*(I).lp, &(ELEM));                   \
        _list_iter_next (&(I)))
-
-
-/* _xlist_t functions.  */
-
-inline void
-_xlist_add (_xlist_t *lp, rtx x)
-{
-  _list_add (lp);
-  _XLIST_X (*lp) = x;
-}
-
-#define _xlist_remove(LP) (_list_remove (LP))
-#define _xlist_clear(LP) (_list_clear (LP))
-
-inline bool
-_xlist_is_in_p (_xlist_t l, rtx x)
-{
-  while (l)
-    {
-      if (_XLIST_X (l) == x)
-        return true;
-      l = _XLIST_NEXT (l);
-    }
-
-  return false;
-}
-
-/* Used through _FOR_EACH.  */
-inline bool
-_list_iter_cond_x (_xlist_t l, rtx *xp)
-{
-  if (l)
-    {
-      *xp = _XLIST_X (l);
-      return true;
-    }
-
-  return false;
-}
-
-#define _xlist_iter_remove(IP) (_list_iter_remove (IP))
-
-typedef _list_iterator _xlist_iterator;
-#define _FOR_EACH_X(X, I, L) _FOR_EACH (x, (X), (I), (L))
-#define _FOR_EACH_X_1(X, I, LP) _FOR_EACH_1 (x, (X), (I), (LP))
 
 
 /* ilist_t functions.  */
@@ -705,10 +651,10 @@ struct transformed_insns
   enum local_trans_type type;
 
   /* Whether a conflict on the target register happened.  */
-  BOOL_BITFIELD was_target_conflict : 1;
+  bool was_target_conflict : 1;
 
   /* Whether a check was needed.  */
-  BOOL_BITFIELD needs_check : 1;
+  bool needs_check : 1;
 };
 
 /* Indexed by INSN_LUID, the collection of all data associated with
@@ -765,14 +711,14 @@ public:
   ds_t spec_checked_ds;
 
   /* Whether the live set valid or not.  */
-  BOOL_BITFIELD live_valid_p : 1;
+  bool live_valid_p : 1;
   /* Insn is an ASM.  */
-  BOOL_BITFIELD asm_p : 1;
+  bool asm_p : 1;
 
   /* True when an insn is scheduled after we've determined that a stall is
      required.
      This is used when emulating the Haifa scheduler for bundling.  */
-  BOOL_BITFIELD after_stall_p : 1;
+  bool after_stall_p : 1;
 };
 
 typedef class _sel_insn_data sel_insn_data_def;
@@ -1008,7 +954,7 @@ struct succ_iterator
 /* A structure returning all successor's information.  */
 struct succs_info
 {
-  /* Flags that these succcessors were computed with.  */
+  /* Flags that these successors were computed with.  */
   short flags;
 
   /* Successors that correspond to the flags.  */
@@ -1210,7 +1156,7 @@ get_all_loop_exits (basic_block bb)
 /* Include all successors.  */
 #define SUCCS_ALL (SUCCS_NORMAL | SUCCS_BACK | SUCCS_OUT)
 
-/* We need to return a succ_iterator to avoid 'unitialized' warning
+/* We need to return a succ_iterator to avoid 'uninitialized' warning
    during bootstrap.  */
 inline succ_iterator
 _succ_iter_start (insn_t *succp, insn_t insn, int flags)
@@ -1557,7 +1503,7 @@ extern void clear_expr (expr_t);
 extern unsigned expr_dest_regno (expr_t);
 extern rtx expr_dest_reg (expr_t);
 extern int find_in_history_vect (vec<expr_history_def> ,
-                                 rtx, vinsn_t, bool);
+                                 rtx_insn *, vinsn_t, bool);
 extern void insert_in_history_vect (vec<expr_history_def> *,
                                     unsigned, enum local_trans_type,
                                     vinsn_t, vinsn_t, ds_t);
@@ -1580,8 +1526,6 @@ extern void av_set_substract_cond_branches (av_set_t *);
 extern void av_set_split_usefulness (av_set_t, int, int);
 extern void av_set_code_motion_filter (av_set_t *, av_set_t);
 
-extern void sel_save_haifa_priorities (void);
-
 extern void sel_init_global_and_expr (bb_vec_t);
 extern void sel_finish_global_and_expr (void);
 
@@ -1596,14 +1540,11 @@ extern int tick_check_p (expr_t, deps_t, fence_t);
 
 /* Functions to work with insns.  */
 extern bool lhs_of_insn_equals_to_dest_p (insn_t, rtx);
-extern bool insn_eligible_for_subst_p (insn_t);
-extern void get_dest_and_mode (rtx, rtx *, machine_mode *);
+extern void get_dest_and_mode (rtx_insn *, rtx *, machine_mode *);
 
 extern bool bookkeeping_can_be_created_if_moved_through_p (insn_t);
 extern bool sel_remove_insn (insn_t, bool, bool);
 extern bool bb_header_p (insn_t);
-extern void sel_init_invalid_data_sets (insn_t);
-extern bool insn_at_boundary_p (insn_t);
 
 /* Basic block and CFG functions.  */
 
@@ -1647,15 +1588,14 @@ extern bool sel_is_loop_preheader_p (basic_block);
 extern void clear_outdated_rtx_info (basic_block);
 extern void free_data_sets (basic_block);
 extern void exchange_data_sets (basic_block, basic_block);
-extern void copy_data_sets (basic_block, basic_block);
 
 extern void sel_register_cfg_hooks (void);
 extern void sel_unregister_cfg_hooks (void);
 
 /* Expression transformation routines.  */
-extern rtx_insn *create_insn_rtx_from_pattern (rtx, rtx);
+extern rtx_insn *create_insn_rtx_from_pattern (rtx, rtx_insn *);
 extern vinsn_t create_vinsn_from_insn_rtx (rtx_insn *, bool);
-extern rtx_insn *create_copy_of_insn_rtx (rtx);
+extern rtx_insn *create_copy_of_insn_rtx (rtx_insn *);
 extern void change_vinsn_in_expr (expr_t, vinsn_t);
 
 /* Various initialization functions.  */

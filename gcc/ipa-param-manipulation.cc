@@ -50,9 +50,11 @@ along with GCC; see the file COPYING3.  If not see
 #include "sreal.h"
 #include "ipa-cp.h"
 #include "ipa-prop.h"
+#include "data-streamer.h"
 #include "attr-callback.h"
+#include "callback-info.h"
 
-/* Actual prefixes of different newly synthetized parameters.  Keep in sync
+/* Actual prefixes of different newly synthesized parameters.  Keep in sync
    with IPA_PARAM_PREFIX_* defines.  */
 
 static const char *ipa_param_prefixes[IPA_PARAM_PREFIX_COUNT]
@@ -314,7 +316,7 @@ drop_type_attribute_if_params_changed_p (tree name)
 static bool
 drop_decl_attribute_if_params_changed_p (tree name)
 {
-  if (is_attribute_p (CALLBACK_ATTR_IDENT, name))
+  if (is_attribute_p ("callback_only", name))
     return true;
   return false;
 }
@@ -439,7 +441,7 @@ ipa_param_adjustments::get_surviving_params (vec<bool> *surviving_params)
 }
 
 /* Fill NEW_INDICES with new indices of each surviving parameter or -1 for
-   those which do not survive.  Any parameter outside of lenght of the vector
+   those which do not survive.  Any parameter outside of length of the vector
    does not survive.  There is currently no support for a parameter to be
    copied to two distinct new parameters.  */
 
@@ -520,7 +522,8 @@ ipa_param_adjustments::build_new_function_type (
 
   /* Check if any params type cares about are modified.  In this case will
      need to drop some type attributes.  */
-  bool modified = false;
+  bool modified = m_adj_params == NULL && TYPE_ARG_TYPES (old_type)
+		  && m_always_copy_start > 0;
   size_t index = 0;
   if (m_adj_params)
     for (tree t = TYPE_ARG_TYPES (old_type);
@@ -646,7 +649,7 @@ purge_all_uses (tree name, hash_set <tree> *killed_ssas)
 	{
 	  if (gimple_debug_bind_p (stmt))
 	    {
-	      /* When runing within tree-inline, we will never end up here but
+	      /* When running within tree-inline, we will never end up here but
 		 adding the SSAs to killed_ssas will do the trick in this case
 		 and the respective debug statements will get reset. */
 	      gimple_debug_bind_reset_value (stmt);
@@ -719,7 +722,17 @@ ipa_param_adjustments::modify_call (cgraph_edge *cs,
 
   unsigned len = vec_safe_length (m_adj_params);
   auto_vec<tree, 16> vargs (len);
-  unsigned old_nargs = gimple_call_num_args (stmt);
+  /* Argument remapping has to be used in this function, because it builds the
+     new call statement from the parameter descriptors, rather than the actual
+     arguments, as in ipa_param_adjustments::modify_call_stmt.  */
+  callback_info *ci = callback_info_sum->get (cs);
+
+  /* Callback edges should be here only if they are pointing towards .ASSUME
+     bodies, which always have a complete argument mapping.  */
+  if (ci)
+    gcc_assert (cs->callee->assume_function);
+
+  unsigned old_nargs = callback_call_num_args_summary (stmt, ci);
   unsigned orig_nargs = mod_info ? mod_info->index_map.length () : old_nargs;
   auto_vec<bool, 16> kept (old_nargs);
   kept.quick_grow_cleared (old_nargs);
@@ -727,6 +740,9 @@ ipa_param_adjustments::modify_call (cgraph_edge *cs,
   cgraph_node *current_node = cgraph_node::get (current_function_decl);
   if (update_references)
     current_node->remove_stmt_references (stmt);
+
+  if (cs->callback && cs->callee->assume_function)
+    vargs.safe_push (build_fold_addr_expr (callee_decl));
 
   gimple_stmt_iterator gsi = gsi_for_stmt (stmt);
   gimple_stmt_iterator prev_gsi = gsi;
@@ -747,7 +763,7 @@ ipa_param_adjustments::modify_call (cgraph_edge *cs,
 	      gcc_assert (index >= 0);
 	    }
 
-	  tree arg = gimple_call_arg (stmt, index);
+	  tree arg = callback_call_arg_summary (stmt, index, ci);
 
 	  vargs.quick_push (arg);
 	  kept[index] = true;
@@ -797,7 +813,7 @@ ipa_param_adjustments::modify_call (cgraph_edge *cs,
 	  index = mod_info->index_map[apm->base_index];
 	  gcc_assert (index >= 0);
 	}
-      tree base = gimple_call_arg (stmt, index);
+      tree base = callback_call_arg_summary (stmt, index, ci);
 
       /* We create a new parameter out of the value of the old one, we can
 	 do the following kind of transformations:
@@ -919,6 +935,8 @@ ipa_param_adjustments::modify_call (cgraph_edge *cs,
 	  always_copy_start += mod_info->always_copy_delta;
 	  gcc_assert (always_copy_start >= 0);
 	}
+
+      gcc_assert (!ci || always_copy_start >= (int) old_nargs);
       for (unsigned i = always_copy_start; i < old_nargs; i++)
 	vargs.safe_push (gimple_call_arg (stmt, i));
     }
@@ -1005,7 +1023,11 @@ ipa_param_adjustments::modify_call (cgraph_edge *cs,
       print_gimple_stmt (dump_file, gsi_stmt (gsi), 0);
     }
 
-  gcall *new_stmt = gimple_build_call_vec (callee_decl, vargs);
+  gcall *new_stmt;
+  if (cs->callback && cs->callee->assume_function)
+    new_stmt = gimple_build_call_internal_vec (IFN_ASSUME, vargs);
+  else
+    new_stmt = gimple_build_call_vec (callee_decl, vargs);
 
   hash_set <tree> *ssas_to_remove = NULL;
   if (tree lhs = gimple_call_lhs (stmt))
@@ -1185,7 +1207,7 @@ ipa_param_body_adjustments::mark_dead_statements (tree dead_param,
 {
   /* Current IPA analyses which remove unused parameters never remove a
      non-gimple register ones which have any use except as parameters in other
-     calls, so we can safely leve them as they are.  */
+     calls, so we can safely leave them as they are.  */
   tree parm_ddef = get_ddef_if_exists_and_is_used (dead_param);
   if (!parm_ddef)
     return;
@@ -1324,7 +1346,7 @@ replace_with_mapped_expr (tree *remap, int *walk_subtrees, void *data)
   return 0;
 }
 
-/* Replace all occurances of SSAs in m_dead_ssa_debug_equiv in t with what they
+/* Replace all occurrences of SSAs in m_dead_ssa_debug_equiv in t with what they
    are mapped to.  */
 
 void
@@ -1386,8 +1408,8 @@ ipa_param_body_adjustments::prepare_debug_expressions (tree dead_ssa)
 	}
 
       gcc_assert (TREE_CODE (value) == SSA_NAME);
-      tree *d = m_dead_ssa_debug_equiv.get (value);
-      m_dead_ssa_debug_equiv.put (dead_ssa, *d);
+      tree d = *m_dead_ssa_debug_equiv.get (value);
+      m_dead_ssa_debug_equiv.put (dead_ssa, d);
       return true;
     }
 
@@ -1751,7 +1773,7 @@ ipa_param_body_adjustments::get_new_param_chain ()
 /* Modify the function parameters FNDECL and its type according to the plan in
    ADJUSTMENTS.  This function needs to be called when the decl has not already
    been processed with ipa_param_adjustments::adjust_decl, otherwise just
-   seting DECL_ARGUMENTS to whatever get_new_param_chain will do is enough.  */
+   setting DECL_ARGUMENTS to whatever get_new_param_chain will do is enough.  */
 
 void
 ipa_param_body_adjustments::modify_formal_parameters ()
@@ -2205,7 +2227,7 @@ record_argument_state (copy_body_data *id, gimple *orig_stmt,
    up call_graph edges.
 
    If the method is invoked as a part of IPA clone materialization and if any
-   parameter split is pass-through, i.e. it applies to the functin that is
+   parameter split is pass-through, i.e. it applies to the function that is
    being modified and also to the callee of the statement, replace the
    parameter passed to old callee with all of the replacement a callee might
    possibly want and record the performed argument modifications in
@@ -2223,6 +2245,18 @@ ipa_param_body_adjustments::modify_call_stmt (gcall **stmt_p,
   unsigned nargs = gimple_call_num_args (stmt);
   bool recreate = false;
   gcc_assert (m_sorted_replacements_p);
+
+  callback_info *ci = NULL;
+  if (callback_ifn_assume_call_p (orig_stmt))
+    {
+      cgraph_edge *cbei = cgraph_node::get (m_fndecl)->get_edge (orig_stmt);
+      if (cbei)
+	{
+	  gcc_checking_assert (cbei->callback);
+	  ci = callback_info_sum->get (cbei);
+	  gcc_assert (ci);
+	}
+    }
 
   for (unsigned i = 0; i < gimple_call_num_args (stmt); i++)
     {
@@ -2349,7 +2383,16 @@ ipa_param_body_adjustments::modify_call_stmt (gcall **stmt_p,
 	      if (m_replacements[j].unit_offset < agg_arg_offset)
 		continue;
 	      pass_through_split_map pt_map;
-	      pt_map.base_index = i;
+	      /* The base index wouldn't match for callback calls, as the
+		 analysis is done on their remapped indices.  */
+	      if (ci)
+		{
+		  int remapped_idx = ci->inverted_mapping[i];
+		  gcc_checking_assert (remapped_idx != -1);
+		  pt_map.base_index = remapped_idx;
+		}
+	      else
+		pt_map.base_index = i;
 	      pt_map.unit_offset
 		= m_replacements[j].unit_offset - agg_arg_offset;
 	      pt_map.new_index = new_arg_idx;
@@ -2379,7 +2422,11 @@ ipa_param_body_adjustments::modify_call_stmt (gcall **stmt_p,
 	}
     }
 
-  gcall *new_stmt = gimple_build_call_vec (gimple_call_fn (stmt), vargs);
+  gcall *new_stmt;
+  if (callback_ifn_assume_call_p (orig_stmt))
+    new_stmt = gimple_build_call_internal_vec (IFN_ASSUME, vargs);
+  else
+    new_stmt = gimple_build_call_vec (gimple_call_fn (stmt), vargs);
   if (gimple_has_location (stmt))
     gimple_set_location (new_stmt, gimple_location (stmt));
   gimple_call_set_chain (new_stmt, gimple_call_chain (stmt));
@@ -2635,7 +2682,7 @@ ipa_param_body_adjustments::perform_cfun_body_modifications ()
 
 
 /* If there are any initialization statements that need to be emitted into
-   the basic block BB right at ther start of the new function, do so.  */
+   the basic block BB right at the start of the new function, do so.  */
 void
 ipa_param_body_adjustments::append_init_stmts (basic_block bb)
 {

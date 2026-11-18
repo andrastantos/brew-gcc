@@ -57,7 +57,7 @@ checking whether the ccreg is set before the conditional branch
 by testing another register for != 0, which was set by a ccreg store.
 This can be optimized by eliminating the redundant comparison and
 inverting the branch condition.  There can be multiple comparisons in
-different basic blocks that all end up in the redunant test insn before the
+different basic blocks that all end up in the redundant test insn before the
 conditional branch.  Some example RTL ...
 
 Example 1)
@@ -313,13 +313,13 @@ find_set_of_reg_bb (rtx reg, rtx_insn *insn)
 }
 
 static bool
-reg_dead_after_insn (const_rtx reg, const_rtx insn)
+reg_dead_after_insn (const_rtx reg, const rtx_insn *insn)
 {
   return find_regno_note (insn, REG_DEAD, REGNO (reg)) != NULL_RTX;
 }
 
 static bool
-reg_unused_after_insn (const_rtx reg, const_rtx insn)
+reg_unused_after_insn (const_rtx reg, const rtx_insn *insn)
 {
   return find_regno_note (insn, REG_UNUSED, REGNO (reg)) != NULL_RTX;
 }
@@ -344,7 +344,7 @@ is_adjacent_bb (basic_block a, basic_block b)
 // Internal function of trace_reg_uses.
 static void
 trace_reg_uses_1 (rtx reg, rtx_insn *start_insn, basic_block bb, int& count,
-		  std::vector<basic_block>& visited_bb, rtx abort_at_insn)
+		  std::vector<basic_block>& visited_bb, rtx_insn *abort_at_insn)
 {
   if (bb == NULL)
     return;
@@ -361,7 +361,7 @@ trace_reg_uses_1 (rtx reg, rtx_insn *start_insn, basic_block bb, int& count,
   if (start_insn == NULL_RTX)
     log_return_void ("[bb %d] start_insn is null\n", bb->index);
 
-  rtx end_insn = NEXT_INSN (BB_END (bb));
+  rtx_insn *end_insn = NEXT_INSN (BB_END (bb));
   if (end_insn == NULL_RTX)
     log_return_void ("[bb %d] end_insn is null\n", bb->index);
 
@@ -401,7 +401,7 @@ trace_reg_uses_1 (rtx reg, rtx_insn *start_insn, basic_block bb, int& count,
 // that insn.  If the insn 'abort_at_insn' uses the specified reg, it is also
 // counted.
 static int
-trace_reg_uses (rtx reg, rtx_insn *start_insn, rtx abort_at_insn)
+trace_reg_uses (rtx reg, rtx_insn *start_insn, rtx_insn *abort_at_insn)
 {
   log_msg ("\ntrace_reg_uses\nreg = ");
   log_rtx (reg);
@@ -586,14 +586,14 @@ private:
 
   // Create an insn rtx that performs a logical not (test != 0) on the src_reg
   // and stores the result in dst_reg.
-  rtx make_not_reg_insn (rtx dst_reg, rtx src_reg) const;
+  rtx_insn *make_not_reg_insn (rtx dst_reg, rtx src_reg) const;
 
   // Create an insn rtx that inverts the ccreg.
   rtx_insn *make_inv_ccreg_insn (void) const;
 
   // Adds the specified insn to the set of modified or newly added insns that
   // might need splitting at the end of the pass.
-  rtx touched_insn (rtx i);
+  rtx_insn *touched_insn (rtx_insn *i);
 
   // Try to invert the branch condition of the specified trace.
   bool try_invert_branch_condition (cbranch_trace& trace);
@@ -919,7 +919,7 @@ sh_treg_combine::can_remove_comparison (const bb_entry& e,
   return true;
 }
 
-rtx
+rtx_insn *
 sh_treg_combine::make_not_reg_insn (rtx dst_reg, rtx src_reg) const
 {
   // On SH we can do only SImode and DImode comparisons.
@@ -959,8 +959,8 @@ sh_treg_combine::make_inv_ccreg_insn (void) const
   return i;
 }
 
-rtx
-sh_treg_combine::touched_insn (rtx i)
+rtx_insn *
+sh_treg_combine::touched_insn (rtx_insn *i)
 {
   m_touched_insns.push_back (i);
   return i;
@@ -1078,14 +1078,14 @@ sh_treg_combine::try_combine_comparisons (cbranch_trace& trace,
   // Check that all ccset insns are comparisons and all comparison types in
   // all BBs are the same and could be combined into one single comparison.
   rtx comp = NULL_RTX;
-  rtx comp_insn = NULL_RTX;
+  rtx_insn *comp_insn = nullptr;
 
   for (std::list<bb_entry>::const_iterator i = trace.bb_entries.begin ();
        i != trace.bb_entries.end (); ++i)
     {
       int i_empty_count = i->setcc.empty () + i->cstore.empty ();
 
-      // A completly empty entry is OK (could be the BB of the cbranch).
+      // A completely empty entry is OK (could be the BB of the cbranch).
       if (i_empty_count == 2)
 	continue;
 
@@ -1186,8 +1186,9 @@ sh_treg_combine::try_combine_comparisons (cbranch_trace& trace,
   log_rtx (common_comp_pat);
   log_msg ("\n");
 
-  rtx common_comp_insn = touched_insn (emit_insn_after (common_comp_pat,
-							trace.setcc.insn));
+  rtx_insn *common_comp_insn
+    = emit_insn_after (common_comp_pat, trace.setcc.insn);
+  touched_insn (common_comp_insn);
 
   if (REG_P (comp_op0))
     add_reg_note (common_comp_insn, REG_DEAD, copy_rtx (comp_op0));
@@ -1211,9 +1212,10 @@ sh_treg_combine::try_combine_comparisons (cbranch_trace& trace,
 	  log_msg ("replacing comparison and cstore with reg move "
 		   "in [bb %d]\n", i->bb->index);
 
-	  rtx new_i = touched_insn (
-		emit_insn_after (gen_move_insn (comp_op0, i_comp_op0),
-				 i->setcc.insn));
+	  rtx_insn *new_i
+	    = emit_insn_after (gen_move_insn (comp_op0, i_comp_op0),
+			       i->setcc.insn);
+	  touched_insn (new_i);
 
 	  if (REG_P (i_comp_op0)
 	      && reg_dead_after_insn (i_comp_op0, i->setcc.insn))
@@ -1223,9 +1225,9 @@ sh_treg_combine::try_combine_comparisons (cbranch_trace& trace,
 	  // Otherwise assume it's a const_int and just reference it.
 	  if (REG_P (comp_op1))
 	    {
-	      new_i = touched_insn (
-		  emit_insn_after (gen_move_insn (comp_op1, i_comp_op1),
-				   i->setcc.insn));
+	      new_i = emit_insn_after (gen_move_insn (comp_op1, i_comp_op1),
+				       i->setcc.insn);
+	      touched_insn (new_i);
 
 	      if (reg_dead_after_insn (i_comp_op1, i->setcc.insn))
 		add_reg_note (new_i, REG_DEAD, copy_rtx (i_comp_op1));
@@ -1236,7 +1238,7 @@ sh_treg_combine::try_combine_comparisons (cbranch_trace& trace,
 	  log_msg ("replacing comparison and cstore with inverting reg move "
 		   "in [bb %d]\n", i->bb->index);
 
-	  rtx new_i = make_not_reg_insn (comp_op0, i_comp_op0);
+	  rtx_insn *new_i = make_not_reg_insn (comp_op0, i_comp_op0);
 	  if (REG_P (i_comp_op0)
 	      && reg_dead_after_insn (i_comp_op0, i->setcc.insn))
 	    add_reg_note (new_i, REG_DEAD, copy_rtx (i_comp_op0));
@@ -1261,7 +1263,7 @@ sh_treg_combine::try_eliminate_cstores (cbranch_trace& trace,
   for (std::list<bb_entry>::const_iterator i = trace.bb_entries.begin ();
        i != trace.bb_entries.end (); ++i)
     {
-      // A completly empty entry is OK (could be the BB of the cbranch).
+      // A completely empty entry is OK (could be the BB of the cbranch).
       if (i->setcc.empty () && i->cstore.empty ())
 	continue;
 

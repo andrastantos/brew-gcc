@@ -30,6 +30,11 @@
 --  content of entities in the tree, so this package is used for routines that
 --  require more than minimal semantic knowledge.
 
+--  However, this package is in the closure of the binder executable. If you're
+--  looking for the home of a new helper function that uses significant
+--  semantic knowledge, Sem_Util, which is not in the closure of the binder
+--  executable, will be a more convenient place.
+
 with Alloc;
 with Einfo.Entities; use Einfo.Entities;
 with Namet; use Namet;
@@ -122,13 +127,13 @@ package Sem_Aux is
    --  stored discriminants are the same as the actual discriminants of the
    --  type, and hence this function is the same as First_Discriminant.
    --
-   --  For derived untagged types that rename discriminants in the root type
+   --  For derived untagged types that rename discriminants in the root type,
    --  this is the first of the discriminants that occur in the root type. To
    --  be precise, in this case stored discriminants are entities attached to
-   --  the entity chain of the derived type which are a copy of the
-   --  discriminants of the root type. Furthermore their Is_Completely_Hidden
-   --  flag is set since although they are actually stored in the object, they
-   --  are not in the set of discriminants that is visible in the type.
+   --  the entity chain of the derived type but which are a mere copy of the
+   --  discriminants of the root type. Furthermore, their Is_Completely_Hidden
+   --  flag is set since, although they are actually stored in the object, they
+   --  are not in the set of discriminants that are visible in the type.
    --
    --  For derived untagged types, the set of stored discriminants are the real
    --  discriminants from Gigi's standpoint, i.e. those that will be stored in
@@ -314,20 +319,24 @@ package Sem_Aux is
    --  should be cleaned up???
 
    function Is_Immutably_Limited_Type (Ent : Entity_Id) return Boolean;
-   --  Implements definition in Ada 2012 RM-7.5 (8.1/3). This differs from the
-   --  following predicate in that an untagged record with immutably limited
-   --  components is NOT by itself immutably limited. This matters, e.g. when
-   --  checking the legality of an access to the current instance.
+   --  Ent is any entity. True if and only if Ent is a type that's immutably
+   --  limited as defined by RM 7.5 (8.1/3).
 
    function Is_Inherently_Limited_Type (Ent : Entity_Id) return Boolean;
-   --  Ent is any entity. True for a type that is "inherently" limited (i.e.
-   --  cannot become nonlimited). From the Ada 2005 RM-7.5(8.1/2), "a type with
-   --  a part that is of a task, protected, or explicitly limited record type".
-   --  These are the types that are defined as return-by-reference types in Ada
-   --  95 (see RM95-6.5(11-16)). In Ada 2005, these are the types that require
-   --  build-in-place for function calls. Note that build-in-place is allowed
-   --  for other types, too. This is also used for identifying pure procedures
-   --  whose calls should not be eliminated (RM 10.2.1(18/2)).
+   --  Ent is any entity. True if and only if Ent is a type such that objects
+   --  of type Ent must be built in place because of RM 7.6 (17.2/3).
+   --
+   --  Note that Is_Immutably_Limited_Type => Is_Inherently_Limited_Type holds,
+   --  but the reverse implication doesn't. For example with
+   --
+   --     type T1 is limited null record;
+   --
+   --     type T2 is record
+   --        C : T1;
+   --     end record;
+   --
+   --  Is_Inherently_Limited_Type (T2) = True and
+   --  Is_Immutably_Limited_Type (T2) = False.
 
    function Nearest_Ancestor (Typ : Entity_Id) return Entity_Id;
    --  Given a subtype Typ, this function finds out the nearest ancestor from

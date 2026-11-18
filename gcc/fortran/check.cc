@@ -166,8 +166,8 @@ oct2bin(int nbits, char *oct)
 }
 
 
-/* Convert a hexidecimal string into a binary string.  This is used in the
-   fallback conversion of a hexidecimal string to a REAL.  */
+/* Convert a hexadecimal string into a binary string.  This is used in the
+   fallback conversion of a hexadecimal string to a REAL.  */
 
 static char *
 hex2bin(int nbits, char *hex)
@@ -1080,7 +1080,7 @@ allocatable_check (gfc_expr *e, int n)
 {
   symbol_attribute attr;
 
-  attr = gfc_variable_attr (e, NULL);
+  attr = gfc_variable_attr (e);
   if (!attr.allocatable
      || (attr.associate_var && !attr.select_rank_temporary))
     {
@@ -2502,7 +2502,7 @@ get_ul_from_cst_cl (const gfc_charlen *cl)
 {
   return cl && cl->length && cl->length->expr_type == EXPR_CONSTANT
 	 ? mpz_get_ui (cl->length->value.integer) : 0;
-};
+}
 
 
 /* Checks shared between co_reduce and reduce.  */
@@ -4820,7 +4820,7 @@ gfc_check_move_alloc (gfc_expr *from, gfc_expr *to, gfc_expr *stat,
       return false;
     }
 
-  /*  This is based losely on F2003 12.4.1.7. It is intended to prevent
+  /*  This is based loosely on F2003 12.4.1.7. It is intended to prevent
       the likes of to = sym->cmp1->cmp2 and from = sym->cmp1, where cmp1
       and cmp2 are allocatable.  After the allocation is transferred,
       the 'to' chain is broken by the nullification of the 'from'. A bit
@@ -4933,7 +4933,7 @@ gfc_check_null (gfc_expr *mold)
   if (!variable_check (mold, 0, true))
     return false;
 
-  attr = gfc_variable_attr (mold, NULL);
+  attr = gfc_variable_attr (mold);
 
   if (!attr.pointer && !attr.proc_pointer && !attr.allocatable)
     {
@@ -6306,6 +6306,148 @@ gfc_check_c_f_procpointer (gfc_expr *cptr, gfc_expr *fptr)
 }
 
 
+/* Handle both forms of this intrinsic, differentiated by whether
+   the first argument is a scalar or array.  */
+
+bool
+gfc_check_c_f_strpointer (gfc_expr *arg0, gfc_expr *fstrptr,
+			  gfc_expr *nchars)
+{
+  bool arg0_is_scalar = false;
+  const char *arg0name = "cstrarray";
+
+  if (arg0->rank == 0)
+    {
+      arg0_is_scalar = true;
+      arg0name = "cstrptr";
+
+      /* cstrptr is a scalar of type c_ptr.  It is an intent in argument
+	 holding the C address of a contiguous array s of nchars characters.
+	 Its value must not be the C address of a Fortran variable without
+	 the target attribute.  */
+      if (arg0->ts.type != BT_DERIVED
+	  || arg0->ts.u.derived->from_intmod != INTMOD_ISO_C_BINDING
+	  || arg0->ts.u.derived->intmod_sym_id != ISOCBINDING_PTR)
+	{
+	  gfc_error ("%qs argument of %qs intrinsic at %L shall be "
+		     "a scalar of type C_PTR",
+		     arg0name, gfc_current_intrinsic, &arg0->where);
+	  return false;
+	}
+
+      if (!nchars)
+	{
+	  gfc_error ("%qs argument of %qs intrinsic shall be present "
+		     "when the %qs argument at %L is a C_PTR",
+		     gfc_current_intrinsic_arg[2]->name,
+		     gfc_current_intrinsic, arg0name, &arg0->where);
+	  return false;
+	}
+    }
+  else
+    {
+      /* arg0 is a rank-one character array of kind c_char and character
+	 length one.  It is an intent in argument.  Its actual argument
+	 must be simply contiguous and have the target attribute.  */
+      if (arg0->rank != 1
+	  || arg0->ts.type != BT_CHARACTER
+	  || arg0->ts.kind != gfc_default_character_kind
+	  || get_ul_from_cst_cl (arg0->ts.u.cl) != 1)
+	{
+	  gfc_error ("%qs argument of %qs intrinsic at %L shall be "
+		     "a rank-one character array of kind C_CHAR and "
+		     "character length one",
+		     arg0name, gfc_current_intrinsic, &arg0->where);
+	  return false;
+	}
+      if (!gfc_is_simply_contiguous (arg0, true, false))
+	{
+	  gfc_error ("%qs argument of %qs intrinsic at %L shall be "
+		     "simply contiguous",
+		     arg0name, gfc_current_intrinsic, &arg0->where);
+	  return false;
+	}
+      if (!gfc_expr_attr (arg0).target)
+	{
+	  gfc_error ("%qs argument of %qs intrinsic at %L shall have "
+		     "the TARGET attribute",
+		     arg0name, gfc_current_intrinsic, &arg0->where);
+	  return false;
+	}
+
+      /* If cstrarray is assumed-size, nchars must be present.  */
+      if (!nchars)
+	{
+	  gfc_array_ref *ar = gfc_find_array_ref (arg0);
+	  if (ar->as && ar->as->type == AS_ASSUMED_SIZE
+	      && (ar->type == AR_FULL || ar->end[0] == nullptr))
+	    {
+	      gfc_error ("%qs argument of %qs intrinsic shall be present "
+			 "when the %qs argument at %L is assumed-size",
+			 gfc_current_intrinsic_arg[2]->name,
+			 gfc_current_intrinsic, arg0name, &arg0->where);
+	      return false;
+	    }
+	}
+    }
+
+  /* fstrptr is a scalar deferred-length character pointer of kind c_char.
+     It is an intent out argument [...]  */
+  if (fstrptr->rank != 0
+      || fstrptr->ts.type != BT_CHARACTER
+      || fstrptr->ts.kind != gfc_default_character_kind
+      || !fstrptr->ts.deferred
+      || !gfc_expr_attr (fstrptr).pointer)
+    {
+      gfc_error ("%qs argument of %qs intrinsic at %L shall be "
+		 "a scalar deferred-length character pointer of kind C_CHAR",
+		 gfc_current_intrinsic_arg[1]->name, gfc_current_intrinsic,
+		 &fstrptr->where);
+      return false;
+    }
+  if (gfc_expr_attr (fstrptr).intent == INTENT_IN)
+    {
+      gfc_error ("%qs argument of %qs intrinsic at %L cannot be INTENT(IN)",
+		 gfc_current_intrinsic_arg[1]->name, gfc_current_intrinsic,
+		 &fstrptr->where);
+      return false;
+    }
+
+  /* For the array form: nchars is an optional integer scalar with intent in.
+     If nchars is present, its value must be nonnegative and not greater
+     than the size of cstrarray.
+     For the scalar form: nchars is an integer scalar with intent in.  Its
+     value must be nonnegative.  */
+  if (!nchars)
+    return true;
+  if (nchars->rank != 0 || nchars->ts.type != BT_INTEGER)
+    {
+      gfc_error ("%qs argument of %qs intrinsic at %L shall be "
+		 "a scalar integer",
+		 gfc_current_intrinsic_arg[2]->name, gfc_current_intrinsic,
+		 &nchars->where);
+      return false;
+    }
+  if (nchars->expr_type != EXPR_CONSTANT)
+    return true;
+  if (!nonnegative_check (gfc_current_intrinsic_arg[2]->name, nchars))
+    return false;
+  if (!arg0_is_scalar)
+    {
+      mpz_t asize;
+      if (gfc_array_size (arg0, &asize)
+	  && mpz_cmp (nchars->value.integer, asize) > 0)
+	{
+	  gfc_error ("%qs at %L must not be greater than the size of %qs",
+		     gfc_current_intrinsic_arg[2]->name, &nchars->where,
+		     arg0name);
+	  return false;
+	}
+    }
+
+  return true;
+}
+
 bool
 gfc_check_c_funloc (gfc_expr *x)
 {
@@ -6320,7 +6462,7 @@ gfc_check_c_funloc (gfc_expr *x)
 
   attr = gfc_expr_attr (x);
 
-  if (attr.function && !attr.proc_pointer && x->expr_type == EXPR_VARIABLE
+  if (!attr.proc_pointer && x->expr_type == EXPR_VARIABLE
       && x->symtree->n.sym == x->symtree->n.sym->result)
     for (gfc_namespace *ns = gfc_current_ns; ns; ns = ns->parent)
       if (x->symtree->n.sym == ns->proc_name)
@@ -6753,10 +6895,54 @@ gfc_check_stat_sub (gfc_expr *name, gfc_expr *values, gfc_expr *status)
 }
 
 
-bool
-gfc_check_image_index (gfc_expr *coarray, gfc_expr *sub,
-		       gfc_expr *team_or_team_number)
+/* Check the TEAM and TEAM_NUMBER arguments of IMAGE_INDEX and NUM_IMAGES,
+   moving a positional INTEGER argument to TEAM_NUMBER.  N is the formal
+   index of TEAM.  */
+
+static bool
+check_team_or_team_number (gfc_actual_arglist *team_arg,
+			   gfc_actual_arglist *team_number_arg, int n)
 {
+  gfc_expr *team = team_arg->expr, *team_number = team_number_arg->expr;
+
+  if (team && team_number)
+    {
+      gfc_error ("%qs and %qs arguments of %qs intrinsic at %L are mutually "
+		 "exclusive", gfc_current_intrinsic_arg[n]->name,
+		 gfc_current_intrinsic_arg[n + 1]->name, gfc_current_intrinsic,
+		 &team->where);
+      return false;
+    }
+
+  if (team && !team_arg->name && team->ts.type == BT_INTEGER)
+    {
+      team_number_arg->expr = team;
+      team_arg->expr = NULL;
+      team_number = team;
+      team = NULL;
+    }
+
+  if (!team && !team_number)
+    return true;
+
+  if (!gfc_notify_std (GFC_STD_F2018,
+		       "%<team%> or %<team_number%> argument to %qs at %L",
+		       gfc_current_intrinsic,
+		       team ? &team->where : &team_number->where))
+    return false;
+
+  if (team)
+    return scalar_check (team, n) && team_type_check (team, n);
+
+  return type_check (team_number, n + 1, BT_INTEGER)
+	 && scalar_check (team_number, n + 1);
+}
+
+
+bool
+gfc_check_image_index (gfc_actual_arglist *args)
+{
+  gfc_expr *coarray = args->expr, *sub = args->next->expr;
   mpz_t nelems;
 
   if (flag_coarray == GFC_FCOARRAY_NONE)
@@ -6792,23 +6978,12 @@ gfc_check_image_index (gfc_expr *coarray, gfc_expr *sub,
       mpz_clear (nelems);
     }
 
-  if (team_or_team_number)
-    {
-      if (!type_check2 (team_or_team_number, 2, BT_DERIVED, BT_INTEGER)
-	  || !scalar_check (team_or_team_number, 2))
-	return false;
-
-      /* Check team is of team_type.  */
-      if (team_or_team_number->ts.type == BT_DERIVED
-	  && !team_type_check (team_or_team_number, 2))
-	return false;
-    }
-
-  return true;
+  return check_team_or_team_number (args->next->next,
+				    args->next->next->next, 2);
 }
 
 bool
-gfc_check_num_images (gfc_expr *team_or_team_number)
+gfc_check_num_images (gfc_actual_arglist *args)
 {
   if (flag_coarray == GFC_FCOARRAY_NONE)
     {
@@ -6817,23 +6992,7 @@ gfc_check_num_images (gfc_expr *team_or_team_number)
       return false;
     }
 
-  if (!team_or_team_number)
-    return true;
-
-  if (!gfc_notify_std (GFC_STD_F2008,
-		       "%<team%> or %<team_number%> argument to %qs at %L",
-		       gfc_current_intrinsic, &team_or_team_number->where))
-    return false;
-
-  if (!type_check2 (team_or_team_number, 0, BT_DERIVED, BT_INTEGER)
-      || !scalar_check (team_or_team_number, 0))
-    return false;
-
-  if (team_or_team_number->ts.type == BT_DERIVED
-      && !team_type_check (team_or_team_number, 0))
-    return false;
-
-  return true;
+  return check_team_or_team_number (args, args->next, 0);
 }
 
 

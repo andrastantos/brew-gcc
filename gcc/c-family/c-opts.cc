@@ -118,6 +118,7 @@ static void set_std_cxx17 (int);
 static void set_std_cxx20 (int);
 static void set_std_cxx23 (int);
 static void set_std_cxx26 (int);
+static void set_std_cxx29 (int);
 static void set_std_c89 (int, int);
 static void set_std_c99 (int);
 static void set_std_c11 (int);
@@ -701,6 +702,12 @@ c_common_handle_option (size_t scode, const char *arg, HOST_WIDE_INT value,
 	set_std_cxx26 (code == OPT_std_c__26 /* ISO */);
       break;
 
+    case OPT_std_c__29:
+    case OPT_std_gnu__29:
+      if (!preprocessing_asm_p)
+	set_std_cxx29 (code == OPT_std_c__29 /* ISO */);
+      break;
+
     case OPT_std_c90:
     case OPT_std_iso9899_199409:
       if (!preprocessing_asm_p)
@@ -865,7 +872,7 @@ c_common_post_options (const char **pfilename)
   sanitize_cpp_opts ();
 
   /* Don't register include chains if under -fpreprocessed since we might not
-     have correct sysroot this mode, and this may cause file permssion
+     have correct sysroot this mode, and this may cause file permission
      issue.  */
   if (!cpp_opts->preprocessed)
     register_include_chains (parse_in, sysroot, iprefix, imultilib,
@@ -918,8 +925,13 @@ c_common_post_options (const char **pfilename)
     flag_permitted_flt_eval_methods = PERMITTED_FLT_EVAL_METHODS_C11;
 
   if (cxx_dialect >= cxx26)
-    SET_OPTION_IF_UNSET (&global_options, &global_options_set,
-			 flag_auto_var_init, AUTO_INIT_CXX26);
+    {
+      SET_OPTION_IF_UNSET (&global_options, &global_options_set,
+			   flag_auto_var_init, AUTO_INIT_CXX26);
+      if (flag_auto_var_init > AUTO_INIT_UNINITIALIZED)
+	flag_auto_var_init
+	  = auto_init_type (flag_auto_var_init | AUTO_INIT_CXX26);
+    }
 
   /* The -Wtrivial-auto-var-init warning is useless for C++, where we always
      add .DEFERRED_INIT calls when some (vacuous) initializers are bypassed
@@ -1249,7 +1261,7 @@ c_common_post_options (const char **pfilename)
   SET_OPTION_IF_UNSET (&global_options, &global_options_set,
 		       flag_range_for_ext_temps, cxx_dialect >= cxx23);
 
-  /* Contracts are in C++26.  */
+  /* Contracts are in C++26.  Keep lang_specific_driver in sync.  */
   SET_OPTION_IF_UNSET (&global_options, &global_options_set,
 		       flag_contracts, cxx_dialect >= cxx26);
 
@@ -2093,6 +2105,22 @@ set_std_cxx26 (int iso)
   flag_isoc11 = 1;
   cxx_dialect = cxx26;
   lang_hooks.name = "GNU C++26";
+}
+
+/* Set the C++ 2029 standard (without GNU extensions if ISO).  */
+static void
+set_std_cxx29 (int iso)
+{
+  cpp_set_lang (parse_in, iso ? CLK_CXX29 : CLK_GNUCXX29);
+  flag_no_gnu_keywords = iso;
+  flag_no_nonansi_builtin = iso;
+  flag_iso = iso;
+  /* C++29 includes the C11 standard library.  */
+  flag_isoc94 = 1;
+  flag_isoc99 = 1;
+  flag_isoc11 = 1;
+  cxx_dialect = cxx29;
+  lang_hooks.name = "GNU C++29";
 }
 
 /* Args to -d specify what to dump.  Silently ignore

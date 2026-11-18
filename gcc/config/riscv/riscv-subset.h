@@ -45,7 +45,7 @@ class riscv_subset_list
 {
 public:
   /* Because the parse method is called in several places, to prevent repeated
-     errors, use this flag to prevent it from repeating parse. */
+     errors, use this flag to prevent it from repeating the parse.  */
   static bool parse_failed;
 
 private:
@@ -178,6 +178,7 @@ public:
   const_iterator end() const   { return const_iterator(nullptr); }
 };
 
+extern bool riscv_ext_is_known_p (const char *);
 extern const riscv_subset_list *riscv_cmdline_subset_list (void);
 extern void
 riscv_set_arch_by_subset_list (riscv_subset_list *, struct gcc_options *);

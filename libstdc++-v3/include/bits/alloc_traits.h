@@ -239,6 +239,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       = typename __allocator_traits_base::template __rebind<_Alloc, _Up>::type;
   /// @endcond
 
+#if __cplusplus > 202002L
+# define _GLIBCXX_NO_ALLOC_TRAITS_SPECIALIZATIONS _GLIBCXX_NO_SPECIALIZATIONS
+#else
+# define _GLIBCXX_NO_ALLOC_TRAITS_SPECIALIZATIONS
+#endif
+
   /**
    * @brief  Uniform interface to all allocator types.
    * @headerfile memory
@@ -246,7 +252,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    * @since C++11
   */
   template<typename _Alloc>
-    struct allocator_traits : __allocator_traits_base
+    struct _GLIBCXX_NO_ALLOC_TRAITS_SPECIALIZATIONS allocator_traits
+    : __allocator_traits_base
     {
       /// The allocator type
       typedef _Alloc allocator_type;
@@ -417,9 +424,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  is obliged to reserve more space than required for the cited
        *  `n` objects, it may deliver the extra space to the caller.
       */
-      [[nodiscard]] static constexpr auto
+      [[nodiscard]] static constexpr allocation_result<pointer, size_type>
       allocate_at_least(_Alloc& __a, size_type __n)
-	-> allocation_result<pointer, size_type>
       {
 	if constexpr (requires { __a.allocate_at_least(__n); })
 	  return __a.allocate_at_least(__n);
@@ -572,7 +578,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     };
 #pragma GCC diagnostic pop
 
+#undef _GLIBCXX_NO_ALLOC_TRAITS_SPECIALIZATIONS
+
 #if _GLIBCXX_HOSTED
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-specialization"
+
   /**
    * @brief  Partial specialization for `std::allocator`
    * @headerfile memory
@@ -664,14 +675,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  @brief  Allocate memory, generously.
        *  @param  __a  An allocator.
        *  @param  __n  The minimum number of objects to allocate space for.
-       *  @return Memory of suitable size and alignment for `n` or more
-       *  contiguous objects of type `value_type`.
+       *  @return Memory of suitable size and alignment for `m >= n`
+       *  contiguous objects of type `value_type`, and `m`.
        *
        *  Returns `a.allocate_at_least(n)`.
       */
-      [[nodiscard]] static constexpr auto
+      [[nodiscard,__gnu__::__always_inline__]]
+      static constexpr allocation_result<pointer, size_type>
       allocate_at_least(allocator_type& __a, size_type __n)
-	-> allocation_result<pointer, size_type>
       { return __a.allocate_at_least(__n); }
 #endif
 
@@ -822,6 +833,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       static void*
       allocate(allocator_type&, size_type, const void* = nullptr) = delete;
 
+#ifdef __glibcxx_allocate_at_least
+      static allocation_result<void*, size_type>
+      allocate_at_least(allocator_type&, size_type) = delete;
+#endif
+
       /// deallocate is ill-formed for allocator<void>
       static void
       deallocate(allocator_type&, void*, size_type) = delete;
@@ -872,7 +888,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       select_on_container_copy_construction(const allocator_type& __rhs)
       { return __rhs; }
     };
-#endif
+#pragma GCC diagnostic pop
+#endif // _GLIBCXX_HOSTED
 
   /// @cond undocumented
 #pragma GCC diagnostic push

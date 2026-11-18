@@ -430,8 +430,8 @@
   (match_code "const,symbol_ref,label_ref")
 {
   /* Split symbol to high and low if return false.
-     If defined TARGET_CMODEL_EXTREME, all symbol would be splited,
-     else if offset is not zero, the symbol would be splited.  */
+     If defined TARGET_CMODEL_EXTREME, all symbol would be split,
+     else if offset is not zero, the symbol would be split.  */
 
   enum loongarch_symbol_type symbol_type;
   loongarch_symbolic_constant_p (op, &symbol_type);
@@ -447,7 +447,7 @@
     return true;
 
   /* When compiling with '-mcmodel=medium -mexplicit-relocs'
-     symbols are splited in loongarch_legitimize_call_address.
+     symbols are split in loongarch_legitimize_call_address.
 
      When compiling with '-mcmodel=medium -mno-explicit-relocs',
      first obtain the symbolic address or the address of the
@@ -610,6 +610,14 @@
  (ior (match_operand 0 "register_operand")
       (match_operand 0 "symbolic_off64_operand")))
 
+;; Currently stack canary must be the global symbol __stack_chk_guard.
+(define_predicate "ssp_operand" (match_code "symbol_ref"))
+
+;; If the stack canary is within the normal/medium code model.
+(define_predicate "ssp_normal_operand"
+  (and (match_operand 0 "ssp_operand")
+       (not (match_operand 0 "symbolic_off64_operand"))))
+
 (define_predicate "equality_operator"
   (match_code "eq,ne"))
 
@@ -676,7 +684,7 @@
 						       op));
 })
 
-(define_predicate "par_const_vector_shf_set_operand"
+(define_special_predicate "par_const_vector_shf_set_operand"
   (match_code "parallel")
 {
   return loongarch_const_vector_shuffle_set_p (op, mode);

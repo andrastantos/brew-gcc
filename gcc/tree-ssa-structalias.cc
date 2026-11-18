@@ -313,7 +313,7 @@ determine_global_memory_access (gcall *stmt,
   cgraph_node *node;
   modref_summary *summary;
 
-  /* We need to detrmine reads to set uses.  */
+  /* We need to determine reads to set uses.  */
   gcc_assert (!uses_global_memory || reads_global_memory);
 
   if ((callee = gimple_call_fndecl (stmt)) != NULL_TREE
@@ -745,12 +745,15 @@ static void
 set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt,
 		   tree fndecl)
 {
+  const varinfo_t escaped_vi = get_varinfo (var_rep[escaped_id]);
+  const varinfo_t escaped_return_vi = get_varinfo (var_rep[escaped_return_id]);
+  const bool everything_escaped
+    = escaped_vi->solution && bitmap_bit_p (escaped_vi->solution, anything_id);
+  const bool everything_escaped_return
+    = escaped_return_vi->solution
+      && bitmap_bit_p (escaped_return_vi->solution, anything_id);
   unsigned int i;
   bitmap_iterator bi;
-  varinfo_t escaped_vi = get_varinfo (var_rep[escaped_id]);
-  varinfo_t escaped_return_vi = get_varinfo (var_rep[escaped_return_id]);
-  bool everything_escaped
-    = escaped_vi->solution && bitmap_bit_p (escaped_vi->solution, anything_id);
 
   EXECUTE_IF_SET_IN_BITMAP (from, 0, i, bi)
     {
@@ -766,8 +769,10 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt,
 	  pt->vars_contains_escaped = true;
 	  pt->vars_contains_escaped_heap |= vi->is_heap_var;
 	}
-      if (escaped_return_vi->solution
-	  && bitmap_bit_p (escaped_return_vi->solution, i))
+
+      if (everything_escaped_return
+	  || (escaped_return_vi->solution
+	      && bitmap_bit_p (escaped_return_vi->solution, i)))
 	pt->vars_contains_escaped_heap |= vi->is_heap_var;
 
       if (vi->is_restrict_var)
@@ -800,6 +805,13 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt,
 		  && fndecl
 		  && ! auto_var_in_fn_p (vi->decl, fndecl)))
 	    pt->vars_contains_nonlocal = true;
+
+	  /* If the variable is an automatic in the local stack frame, record
+	     that.  Note this does not include PARM_DECL and RESULT_DECL which
+	     are managed by the caller.  */
+	  if (VAR_P (vi->decl)
+	      && auto_var_in_fn_p (vi->decl, fndecl))
+	    pt->vars_contains_auto = true;
 
 	  /* If we have a variable that is interposable record that fact
 	     for pointer comparison simplification.  */
@@ -856,17 +868,15 @@ find_what_var_points_to (tree fndecl, varinfo_t orig_vi)
   *slot = pt = XOBNEW (&final_solutions_obstack, struct pt_solution);
   memset (pt, 0, sizeof (struct pt_solution));
 
-  /* Translate artificial variables into SSA_NAME_PTR_INFO
+  /* Translate artificial variables into points-to info
      attributes.  */
   EXECUTE_IF_SET_IN_BITMAP (vi->solution, 0, i, bi)
     {
       varinfo_t vi = get_varinfo (i);
 
-      if (vi->is_artificial_var)
+      if (vi->is_artificial_var && vi->id != nothing_id)
 	{
-	  if (vi->id == nothing_id)
-	    pt->null = 1;
-	  else if (vi->id == escaped_id)
+	  if (vi->id == escaped_id)
 	    {
 	      if (in_ipa_mode)
 		pt->ipa_escaped = 1;
@@ -917,12 +927,11 @@ find_what_var_points_to (tree fndecl, varinfo_t orig_vi)
 static void
 find_what_p_points_to (tree fndecl, tree p)
 {
-  struct ptr_info_def *pi;
   tree lookup_p = p;
   varinfo_t vi;
   prange vr;
   get_range_query (DECL_STRUCT_FUNCTION (fndecl))->range_of_expr (vr, p);
-  bool nonnull = vr.nonzero_p ();
+  bool nonnull = !vr.contains_zero_p ();
 
   /* For parameters, get at the points-to set for the actual parm
      decl.  */
@@ -936,10 +945,8 @@ find_what_p_points_to (tree fndecl, tree p)
   if (!vi)
     return;
 
-  pi = get_ptr_info (p);
-  pi->pt = find_what_var_points_to (fndecl, vi);
-  /* Conservatively set to NULL from PTA (to true). */
-  pi->pt.null = 1;
+  pt_solution pt = find_what_var_points_to (fndecl, vi);
+  set_ssa_name_pt_solution (p, pt);
   /* Preserve pointer nonnull globally computed.  */
   if (nonnull)
     set_ptr_nonnull (p);
@@ -982,7 +989,6 @@ pt_solution_reset (struct pt_solution *pt)
 {
   memset (pt, 0, sizeof (struct pt_solution));
   pt->anything = true;
-  pt->null = true;
 }
 
 /* Set the points-to solution *PT to point only to the variables
@@ -1035,7 +1041,6 @@ pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
   dest->nonlocal |= src->nonlocal;
   dest->escaped |= src->escaped;
   dest->ipa_escaped |= src->ipa_escaped;
-  dest->null |= src->null;
   dest->const_pool |= src->const_pool ;
   dest->vars_contains_nonlocal |= src->vars_contains_nonlocal;
   dest->vars_contains_escaped |= src->vars_contains_escaped;
@@ -1078,7 +1083,7 @@ pt_solution_empty_p (const pt_solution *pt)
    return the var uid in *UID.  */
 
 bool
-pt_solution_singleton_or_null_p (struct pt_solution *pt, unsigned *uid)
+pt_solution_singleton_or_null_p (const pt_solution *pt, unsigned *uid)
 {
   if (pt->anything || pt->nonlocal || pt->escaped || pt->ipa_escaped
       || pt->vars == NULL
@@ -1094,7 +1099,7 @@ pt_solution_singleton_or_null_p (struct pt_solution *pt, unsigned *uid)
    considered global.  */
 
 bool
-pt_solution_includes_global (struct pt_solution *pt, bool escaped_local_p)
+pt_solution_includes_global (const pt_solution *pt, bool escaped_local_p)
 {
   if (pt->anything
       || pt->nonlocal
@@ -1120,11 +1125,32 @@ pt_solution_includes_global (struct pt_solution *pt, bool escaped_local_p)
   return false;
 }
 
+/* Return true if the points-to solution *PT includes local automatic
+   storage.  */
+
+bool
+pt_solution_includes_auto (const pt_solution *pt)
+{
+  if (pt->anything
+      || pt->vars_contains_auto)
+    return true;
+
+  /* 'escaped' is also a placeholder so we have to look into it.  */
+  if (pt->escaped)
+    return pt_solution_includes_auto (&cfun->gimple_df->escaped);
+
+  if (pt->ipa_escaped)
+    return pt_solution_includes_auto (&ipa_escaped_pt);
+
+  return false;
+}
+
+
 /* Return true if the points-to solution *PT includes the variable
    declaration DECL.  */
 
 static bool
-pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
+pt_solution_includes_1 (const pt_solution *pt, const_tree decl)
 {
   if (pt->anything)
     return true;
@@ -1151,7 +1177,7 @@ pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
 }
 
 bool
-pt_solution_includes (struct pt_solution *pt, const_tree decl)
+pt_solution_includes (const pt_solution *pt, const_tree decl)
 {
   bool res = pt_solution_includes_1 (pt, decl);
   if (res)
@@ -1165,7 +1191,7 @@ pt_solution_includes (struct pt_solution *pt, const_tree decl)
    constant pool entry.  */
 
 bool
-pt_solution_includes_const_pool (struct pt_solution *pt)
+pt_solution_includes_const_pool (const pt_solution *pt)
 {
   return (pt->const_pool
 	  || pt->nonlocal
@@ -1177,7 +1203,7 @@ pt_solution_includes_const_pool (struct pt_solution *pt)
    intersection.  */
 
 static bool
-pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
+pt_solutions_intersect_1 (const pt_solution *pt1, const pt_solution *pt2)
 {
   if (pt1->anything || pt2->anything)
     return true;
@@ -1226,7 +1252,7 @@ pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
 }
 
 bool
-pt_solutions_intersect (struct pt_solution *pt1, struct pt_solution *pt2)
+pt_solutions_intersect (const pt_solution *pt1, const pt_solution *pt2)
 {
   bool res = pt_solutions_intersect_1 (pt1, pt2);
   if (res)
@@ -1555,7 +1581,7 @@ clear_dependence_clique (gimple *, tree base, tree, void *data)
   return false;
 }
 
-/* Compute the set of independend memory references based on restrict
+/* Compute the set of independent memory references based on restrict
    tags and their conservative propagation to the points-to sets.  */
 
 static void
@@ -1802,8 +1828,8 @@ make_pass_build_ealias (gcc::context *ctxt)
 
 /* IPA PTA solutions for ESCAPED.  */
 struct pt_solution ipa_escaped_pt
-  = { true, false, false, false, false, false,
-      false, false, false, false, false, NULL };
+  = { true, false, false, false, false,
+      false, false, false, false, false, false, NULL };
 
 
 /* Execute the driver for IPA PTA.  */
@@ -1872,21 +1898,18 @@ ipa_pta_execute (void)
 	 arguments to recursive invocations.  */
       else if (fi->is_global_var)
 	{
-	  for (varinfo_t ai = fi; ai; ai = vi_next (ai))
+	  varinfo_t vi = get_varinfo (var_rep[fi->id]);
+	  bitmap_iterator bi;
+	  unsigned j;
+	  EXECUTE_IF_SET_IN_BITMAP (vi->solution, 0, j, bi)
 	    {
-	      varinfo_t vi = get_varinfo (var_rep[ai->id]);
-	      bitmap_iterator bi;
-	      unsigned j;
-	      EXECUTE_IF_SET_IN_BITMAP (vi->solution, 0, j, bi)
+	      varinfo_t pt = get_varinfo (j);
+	      if (pt->shadow_var_uid == 0
+		  && pt->decl
+		  && auto_var_p (pt->decl))
 		{
-		  varinfo_t pt = get_varinfo (j);
-		  if (pt->shadow_var_uid == 0
-		      && pt->decl
-		      && auto_var_p (pt->decl))
-		    {
-		      pt->shadow_var_uid = allocate_decl_uid ();
-		      shadow_var_cnt++;
-		    }
+		  pt->shadow_var_uid = allocate_decl_uid ();
+		  shadow_var_cnt++;
 		}
 	    }
 	}

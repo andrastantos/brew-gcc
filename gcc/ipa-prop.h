@@ -230,21 +230,25 @@ class ipa_argagg_value_list
 {
 public:
   ipa_argagg_value_list () = delete;
-  ipa_argagg_value_list (const vec<ipa_argagg_value, va_gc> *values)
-    : m_elts (values)
+  ipa_argagg_value_list (const vec<ipa_argagg_value, va_gc> *values,
+			 array_slice<const tree> known_vals = {})
+    : m_elts (values), m_known_vals (known_vals)
   {}
-  ipa_argagg_value_list (const vec<ipa_argagg_value> *values)
-    : m_elts (*values)
+  ipa_argagg_value_list (const vec<ipa_argagg_value> *values,
+			 array_slice<const tree> known_vals = {})
+    : m_elts (*values), m_known_vals (known_vals)
   {}
   ipa_argagg_value_list (const ipa_auto_call_arg_values *aavals);
   ipa_argagg_value_list (const ipa_call_arg_values *gavals);
   ipa_argagg_value_list (const ipcp_transformation *tinfo);
 
   /* Return the aggregate constant stored for INDEX at UNIT_OFFSET, if it is
-     passed by reference or not according to BY_REF, or NULL_TREE
-     otherwise.  */
+     passed by reference or not according to BY_REF (and if MAYBE_MODIFIED is
+     true, only when the memory passed by reference is read-only), or
+     NULL_TREE otherwise.  */
 
-  tree get_value (int index, unsigned unit_offset, bool by_ref) const;
+  tree get_value (int index, unsigned unit_offset, bool by_ref,
+		  bool maybe_modified = false) const;
 
   /* Return the aggregate constant stored for INDEX at UNIT_OFFSET, not
      performing any check of whether value is passed by reference.  Return
@@ -297,6 +301,10 @@ public:
   /* Array slice pointing to the actual storage.  */
 
   array_slice<const ipa_argagg_value> m_elts;
+
+  /* Array slice of known scalar values of arguments, if available.  */
+
+  array_slice<const tree> m_known_vals;
 };
 
 /* Info about value ranges.  */
@@ -339,7 +347,7 @@ struct GTY (()) ipa_jump_func
   struct ipa_agg_jump_function agg;
 
   /* Information about value range, containing valid data only when vr_known is
-     true.  The pointed to structure is shared betweed different jump
+     true.  The pointed to structure is shared between different jump
      functions.  Use ipa_set_jfunc_vr to set this field.  */
   ipa_vr *m_vr;
 
@@ -356,7 +364,7 @@ struct GTY (()) ipa_jump_func
 };
 
 
-/* Return the constant stored in a constant jump functin JFUNC.  */
+/* Return the constant stored in a constant jump function JFUNC.  */
 
 inline tree
 ipa_get_jf_constant (struct ipa_jump_func *jfunc)
@@ -517,7 +525,7 @@ ipa_get_jf_ancestor_keep_null (struct ipa_jump_func *jfunc)
 class ipa_auto_call_arg_values
 {
 public:
-  /* If m_known_vals (vector of known "scalar" values) is sufficiantly long,
+  /* If m_known_vals (vector of known "scalar" values) is sufficiently long,
      return its element at INDEX, otherwise return NULL.  */
   tree safe_sval_at (int index)
   {
@@ -542,7 +550,7 @@ public:
 inline
 ipa_argagg_value_list
 ::ipa_argagg_value_list (const ipa_auto_call_arg_values *aavals)
-  : m_elts (aavals->m_known_aggs)
+  : m_elts (aavals->m_known_aggs), m_known_vals (aavals->m_known_vals)
 {}
 
 /* Class bundling the various potentially known properties about actual
@@ -569,7 +577,7 @@ public:
       m_known_value_ranges (aavals->m_known_value_ranges.to_vec_legacy ())
   {}
 
-  /* If m_known_vals (vector of known "scalar" values) is sufficiantly long,
+  /* If m_known_vals (vector of known "scalar" values) is sufficiently long,
      return its element at INDEX, otherwise return NULL.  */
   tree safe_sval_at (int index)
   {
@@ -594,7 +602,7 @@ public:
 inline
 ipa_argagg_value_list
 ::ipa_argagg_value_list (const ipa_call_arg_values *gavals)
-  : m_elts (gavals->m_known_aggs)
+  : m_elts (gavals->m_known_aggs), m_known_vals (gavals->m_known_vals)
 {}
 
 /* Summary describing a single formal parameter.  */
@@ -1092,7 +1100,7 @@ public:
 		  ipa_node_params *data2) final override;
 };
 
-/* Summary to manange ipa_edge_args structures.  */
+/* Summary to manage ipa_edge_args structures.  */
 
 class GTY((user)) ipa_edge_args_sum_t : public call_summary <ipa_edge_args *>
 {
@@ -1210,12 +1218,13 @@ void ipa_analyze_var_static_initializer (varpool_node *node);
 
 /* Aggregate jump function related functions.  */
 tree ipa_find_agg_cst_from_init (tree scalar, HOST_WIDE_INT offset,
-				 bool by_ref);
+				 bool by_ref, tree type = NULL);
 bool ipa_load_from_parm_agg (struct ipa_func_body_info *fbi,
 			     vec<ipa_param_descriptor, va_gc> *descriptors,
 			     gimple *stmt, tree op, int *index_p,
 			     HOST_WIDE_INT *offset_p, poly_int64 *size_p,
-			     bool *by_ref, bool *guaranteed_unmodified = NULL);
+			     bool *by_ref, bool *guaranteed_unmodified = NULL,
+			     bool *unknown_offset_p = NULL);
 
 /* Debugging interface.  */
 void ipa_print_node_params (FILE *, struct cgraph_node *node);
@@ -1283,6 +1292,8 @@ void ipa_cp_cc_finalize (void);
 bool ipa_return_value_range (value_range &range, tree decl);
 void ipa_record_return_value_range (value_range val);
 bool ipa_jump_functions_equivalent_p (ipa_jump_func *jf1, ipa_jump_func *jf2);
+tree ipa_get_jf_arith_result (enum tree_code, tree, tree, tree);
+tree ipa_get_jf_ancestor_result (struct ipa_jump_func *, tree);
 
 
 #endif /* IPA_PROP_H */

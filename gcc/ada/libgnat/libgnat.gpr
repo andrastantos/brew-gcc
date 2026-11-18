@@ -7,7 +7,17 @@ library project Libgnat is
    for Source_List_File use "libgnat.lst";
    for Object_Dir use "../obj-" & Libgnat_Common.Library_Kind;
 
-   for Library_Name use "gnat";
+   case Libgnat_Common.Library_Kind is
+      when "static-pic" =>
+         for Library_Name use "gnat_pic";
+      when "dynamic" =>
+         for Library_Name use "gnat";
+         for Library_Version use
+           "libgnat-" & Libgnat_Common.Version & ".so";
+      when others =>
+         for Library_Name use "gnat";
+   end case;
+
    for Library_Dir use "../adalib";
    for Library_Kind use Libgnat_Common.Library_Kind;
 
@@ -16,12 +26,12 @@ library project Libgnat is
       for Switches ("C") use Libgnat_Common.C_Flags;
       for Switches ("Ada") use Libgnat_Common.Ada_Flags;
 
-      for Switches ("s-traceb.adb") use
+      for Switches ("?-traceb.adb") use
         Libgnat_Common.Ada_Flags & Libgnat_Common.Force_Debug &
         Libgnat_Common.No_Inline & Libgnat_Common.No_Sibling;
-      --  Force no sibling call optimization on s-traceb.o so the number of
-      --  stack frames to be skipped when computing a call chain is not
-      --  modified by optimization. We don.t want inlining, either.
+      --  Prevent inlining and sibling call optimization on s-traceb.o and
+      --  g-traceb.o so the number of stack frames to be skipped when computing
+      --  a call chain is not modified by optimization.
 
       for Switches ("a-except.adb") use
         Libgnat_Common.Ada_Flags & ("-O1") &

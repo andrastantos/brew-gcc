@@ -398,11 +398,8 @@ rust_be_debug_p (void)
 }
 
 void
-rust_debug_loc (const location_t location, const char *fmt, ...)
+rust_debug_loc_internal (const location_t location, const char *fmt, ...)
 {
-  if (!rust_be_debug_p ())
-    return;
-
   va_list ap;
 
   va_start (ap, fmt);
@@ -418,6 +415,19 @@ rust_debug_loc (const location_t location, const char *fmt, ...)
   std::string rval = std::string (mbuf);
   free (mbuf);
   rust_be_inform (location, rval);
+}
+
+void
+rust_debug_fmt_at (const location_t location, const char *fmt, ...)
+{
+  if (!rust_be_debug_p ())
+    return;
+
+  va_list ap;
+
+  va_start (ap, fmt);
+  rust_be_inform (location, expand_message (fmt, ap));
+  va_end (ap);
 }
 
 namespace Rust {

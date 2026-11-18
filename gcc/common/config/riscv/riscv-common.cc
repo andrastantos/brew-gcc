@@ -135,7 +135,7 @@ public:
   /* Return true if any change.  */
   bool apply_implied_ext (riscv_subset_list *subset_list) const;
 
-  const std::vector<riscv_implied_info_t> implied_exts () const
+  const std::vector<riscv_implied_info_t> &implied_exts () const
   {
     return m_implied_exts;
   }
@@ -279,9 +279,26 @@ static const riscv_profiles riscv_profiles_table[] =
     {NULL, NULL}
 };
 
+/* Alternate/alias name for a CPU we know about.  */
+struct riscv_cpu_alias_info {
+  /* This CPU's canonical name.  */
+  const char *name;
+
+  /* This CPU's alternate name.  */
+  const char *alias;
+};
+
+static const riscv_cpu_alias_info riscv_cpu_alias_table[] =
+{
+#define RISCV_CORE_ALIAS(CANONICAL_NAME, ALIAS_NAME) \
+    {CANONICAL_NAME, ALIAS_NAME},
+#include "../../../config/riscv/riscv-cores.def"
+    {NULL, NULL}
+};
+
 static const riscv_cpu_info riscv_cpu_tables[] =
 {
-#define RISCV_CORE(CORE_NAME, ARCH, TUNE) \
+#define RISCV_CORE(CORE_NAME, ARCH, TUNE, MVENDORID, MARCHID, MIMPID) \
     {CORE_NAME, ARCH, TUNE},
 #include "../../../config/riscv/riscv-cores.def"
     {NULL, NULL, NULL}
@@ -315,7 +332,6 @@ struct riscv_multi_lib_info_t {
   riscv_subset_list *subset_list;
 
   static bool parse (struct riscv_multi_lib_info_t *,
-		     const std::string &,
 		     const std::vector<std::string> &);
 };
 
@@ -352,7 +368,7 @@ riscv_subset_list::~riscv_subset_list ()
     }
 }
 
-/* Compute the match score of two arch string, return 0 if incompatible.  */
+/* Compute the match score of two arch strings, return 0 if incompatible.  */
 int
 riscv_subset_list::match_score (riscv_subset_list *list) const
 {
@@ -442,7 +458,6 @@ multi_letter_subset_rank (const std::string &subset)
       break;
     default:
       gcc_unreachable ();
-      return -1;
     }
 
   if (multiletter_class == 'z')
@@ -495,10 +510,10 @@ subset_cmp (const std::string &a, const std::string &b)
     }
   else
     {
-      int rank_a = multi_letter_subset_rank(a);
-      int rank_b = multi_letter_subset_rank(b);
+      int rank_a = multi_letter_subset_rank (a);
+      int rank_b = multi_letter_subset_rank (b);
 
-      /* Using alphabetical/lexicographical order if they have same rank.  */
+      /* Use alphabetical/lexicographical order if they have the same rank.  */
       if (rank_a == rank_b)
 	/* The return value of strcmp has opposite meaning.  */
 	return -strcmp (a.c_str (), b.c_str ());
@@ -507,10 +522,11 @@ subset_cmp (const std::string &a, const std::string &b)
     }
 }
 
-/* Return true if EXT is a standard extension.  */
+/* Return true if EXT names an extension this compiler knows about, whether
+   standard or vendor defined.  */
 
-static bool
-standard_extensions_p (const char *ext)
+bool
+riscv_ext_is_known_p (const char *ext)
 {
   auto itr = riscv_ext_infos.find (ext);
   return itr != riscv_ext_infos.end ();
@@ -529,7 +545,7 @@ riscv_subset_list::add (const char *subset, int major_version,
     {
       if (ext->implied_p)
 	{
-	  /* We won't add impiled `ext` if it already in list. */
+	  /* We won't add implied `ext` if it is already in list.  */
 	  gcc_assert (!implied_p);
 	  ext->implied_p = implied_p;
 	  ext->major_version = major_version;
@@ -547,7 +563,7 @@ riscv_subset_list::add (const char *subset, int major_version,
 	}
       return;
     }
-  else if (strlen (subset) == 1 && !standard_extensions_p (subset))
+  else if (strlen (subset) == 1 && !riscv_ext_is_known_p (subset))
     {
       if (m_loc)
 	error_at (*m_loc,
@@ -556,7 +572,7 @@ riscv_subset_list::add (const char *subset, int major_version,
 		  m_arch, subset);
       return;
     }
-  else if (subset[0] == 'z' && !standard_extensions_p (subset))
+  else if (subset[0] == 'z' && !riscv_ext_is_known_p (subset))
     {
       if (m_loc)
 	error_at (*m_loc,
@@ -565,7 +581,7 @@ riscv_subset_list::add (const char *subset, int major_version,
 		  m_arch, subset);
       return;
     }
-  else if (subset[0] == 's' && !standard_extensions_p (subset))
+  else if (subset[0] == 's' && !riscv_ext_is_known_p (subset))
     {
       if (m_loc)
 	error_at (*m_loc,
@@ -574,7 +590,7 @@ riscv_subset_list::add (const char *subset, int major_version,
 		  m_arch, subset);
       return;
     }
-  else if (subset[0] == 'x' && !standard_extensions_p (subset))
+  else if (subset[0] == 'x' && !riscv_ext_is_known_p (subset))
     {
       if (m_loc)
 	error_at (*m_loc,
@@ -749,7 +765,7 @@ riscv_subset_list::to_string (bool version_p) const
       if (!first &&
 	  (version_p
 	   || subset->explicit_version_p
-	   || subset->name.length() > 1))
+	   || subset->name.length () > 1))
 	oss << '_';
       first = false;
 
@@ -799,7 +815,7 @@ riscv_subset_list::lookup (const char *subset, int major_version,
 static const char *
 riscv_supported_std_ext (void)
 {
-  return "mafdqlcbkjtpvnh";
+  return "mafdqlcbkjtvph";
 }
 
 /* Parsing subset version.
@@ -894,19 +910,19 @@ riscv_subset_list::parse_profiles (const char *arch)
     2. Mixed Profiles with other extensions
 
     Use '_' to split Profiles and other extension.  */
-    std::string p(arch);
-    const size_t p_len = p.size();
+    std::string p (arch);
+    const size_t p_len = p.size ();
 
     for (int i = 0; riscv_profiles_table[i].profile_name != nullptr; ++i)
     {
       const std::string& p_name = riscv_profiles_table[i].profile_name;
       const std::string& p_str = riscv_profiles_table[i].profile_string;
-      size_t pos = p.find(p_name);
+      size_t pos = p.find (p_name);
       /* Find profile at the begin.  */
-      if (pos == 0 && pos + p_name.size() <= p_len)
+      if (pos == 0 && pos + p_name.size () <= p_len)
 	{
-	  size_t after_pos = pos + p_name.size();
-	  std::string after_part = p.substr(after_pos);
+	  size_t after_pos = pos + p_name.size ();
+	  std::string after_part = p.substr (after_pos);
 
 	  /* If there're only profile, return the profile_string directly.  */
 	  if (after_part[0] == '\0')
@@ -1135,7 +1151,7 @@ riscv_subset_list::handle_combine_ext ()
       /* Add combine extensions */
       if (is_combined)
 	{
-	  riscv_version_t ver = ext_info.default_version();
+	  riscv_version_t ver = ext_info.default_version ();
 	  add (ext_name.c_str (), ver.major_version,
 	       ver.minor_version, false, true);
 	}
@@ -1151,7 +1167,7 @@ riscv_subset_list::check_conflict_ext ()
   if (lookup ("zcf") && m_xlen == 64)
     error_at (*m_loc, "%<-march=%s%>: zcf extension supports in rv32 only",
 	      m_arch);
-  
+
   if (lookup ("zilsd") && m_xlen == 64)
     error_at (*m_loc, "%<-march=%s%>: zilsd extension supports in rv32 only",
 	      m_arch);
@@ -1266,7 +1282,7 @@ riscv_subset_list::parse_single_multiletter_ext (const char *p,
 	  found_any_number = true;
 	  continue;
 	}
-      /* Might be version seperator, but need to check one more char,
+      /* Might be version separator, but need to check one more char,
 	 we only allow <major>p<minor>, so we could stop parsing if found
 	 any more `p`.  */
       if (subset[i] == 'p' &&
@@ -1367,8 +1383,8 @@ riscv_subset_list::parse (const char *arch, location_t *loc)
   riscv_subset_list *subset_list = new riscv_subset_list (arch, loc);
 
   const char *p = arch;
-  std::string a = subset_list->parse_profiles(p);
-  p = subset_list->parse_base_ext (a.c_str());
+  std::string a = subset_list->parse_profiles (p);
+  p = subset_list->parse_base_ext (a.c_str ());
   if (p == NULL)
     goto fail;
 
@@ -1425,7 +1441,7 @@ riscv_subset_list::set_loc (location_t *loc)
 }
 
 /* Make sure the implied or combined extension is included after add
-   a new std extension to subset list or likewise.  For exmaple as below,
+   a new std extension to subset list or likewise.  For example as below,
 
    void __attribute__((target("arch=+v"))) func () with -march=rv64gc.
 
@@ -1458,14 +1474,14 @@ riscv_arch_str (bool version_p)
   if (cmdline_subset_list)
     return cmdline_subset_list->to_string (version_p);
   else
-    return std::string();
+    return std::string ();
 }
 
 #define RISCV_EXT_FLAG_ENTRY(NAME, VAR, MASK) \
   {NAME, &gcc_options::VAR, &cl_target_option::VAR, MASK}
 
 /* Mapping table between extension to internal flag,
-   this table is not needed to add manually unless there is speical rule.  */
+   this table is not needed to add manually unless there is special rule.  */
 static const riscv_extra_ext_flag_table_t riscv_extra_ext_flag_table[] =
 {
   RISCV_EXT_FLAG_ENTRY ("zve32x", x_riscv_isa_flags, MASK_VECTOR),
@@ -1483,8 +1499,14 @@ static const riscv_extra_ext_flag_table_t riscv_extra_ext_flag_table[] =
   RISCV_EXT_FLAG_ENTRY ("zve64d",   x_riscv_vector_elen_flags, MASK_VECTOR_ELEN_FP_64),
   RISCV_EXT_FLAG_ENTRY ("zvfbfmin", x_riscv_vector_elen_flags, MASK_VECTOR_ELEN_BF_16),
   RISCV_EXT_FLAG_ENTRY ("zvfbfwma", x_riscv_vector_elen_flags, MASK_VECTOR_ELEN_BF_16),
+  RISCV_EXT_FLAG_ENTRY ("zvfwdota16bf", x_riscv_vector_elen_flags,
+			MASK_VECTOR_ELEN_BF_16),
+  RISCV_EXT_FLAG_ENTRY ("zvfwbdota16bf", x_riscv_vector_elen_flags,
+			MASK_VECTOR_ELEN_BF_16),
   RISCV_EXT_FLAG_ENTRY ("zvfhmin",  x_riscv_vector_elen_flags, MASK_VECTOR_ELEN_FP_16),
   RISCV_EXT_FLAG_ENTRY ("zvfh",     x_riscv_vector_elen_flags, MASK_VECTOR_ELEN_FP_16),
+  RISCV_EXT_FLAG_ENTRY ("zvfofp8min", x_riscv_vector_elen_flags,
+			MASK_VECTOR_ELEN_FP_32),
 
   RISCV_EXT_FLAG_ENTRY ("xtheadvector",  x_riscv_vector_elen_flags, MASK_VECTOR_ELEN_32),
   RISCV_EXT_FLAG_ENTRY ("xtheadvector",  x_riscv_vector_elen_flags, MASK_VECTOR_ELEN_64),
@@ -1698,6 +1720,14 @@ riscv_find_cpu (const char *cpu)
       if (strcmp (cpu, name) == 0)
 	return cpu_info;
     }
+
+  /* We did not find CPU, check if CPU is a core's alias name and look it
+     up using its canonical name.  */
+  const riscv_cpu_alias_info *alias_info = &riscv_cpu_alias_table[0];
+  for (; alias_info->alias != NULL; alias_info++)
+    if (strcmp (cpu, alias_info->alias) == 0)
+      return riscv_find_cpu (alias_info->name);
+
   return NULL;
 }
 
@@ -1705,12 +1735,43 @@ riscv_find_cpu (const char *cpu)
 
 static bool
 riscv_handle_option (struct gcc_options *opts,
-		     struct gcc_options *opts_set ATTRIBUTE_UNUSED,
+		     struct gcc_options *opts_set,
 		     const struct cl_decoded_option *decoded,
 		     location_t loc)
 {
   switch (decoded->opt_index)
     {
+    case OPT_mstrict_align:
+      opts->x_riscv_zilsd_align
+	= decoded->value ? RISCV_ZILSD_ALIGN_STRICT : RISCV_ZILSD_ALIGN_BYTE;
+      opts->x_riscv_zilsd_align_explicit = 0;
+      if (opts_set)
+	{
+	  opts_set->x_riscv_zilsd_align = opts->x_riscv_zilsd_align;
+	  opts_set->x_riscv_zilsd_align_explicit = 0;
+	}
+      return true;
+
+    case OPT_mzilsd_word_align:
+      opts->x_riscv_zilsd_align = RISCV_ZILSD_ALIGN_WORD;
+      opts->x_riscv_zilsd_align_explicit = 1;
+      if (opts_set)
+	{
+	  opts_set->x_riscv_zilsd_align = opts->x_riscv_zilsd_align;
+	  opts_set->x_riscv_zilsd_align_explicit = 1;
+	}
+      return true;
+
+    case OPT_mzilsd_strict_align:
+      opts->x_riscv_zilsd_align = RISCV_ZILSD_ALIGN_STRICT;
+      opts->x_riscv_zilsd_align_explicit = 1;
+      if (opts_set)
+	{
+	  opts_set->x_riscv_zilsd_align = opts->x_riscv_zilsd_align;
+	  opts_set->x_riscv_zilsd_align_explicit = 1;
+	}
+      return true;
+
     case OPT_march_:
       if (riscv_find_cpu (decoded->arg) == NULL)
 	riscv_parse_arch_string (decoded->arg, opts, loc);
@@ -1794,7 +1855,7 @@ riscv_expand_arch_from_cpu (int argc ATTRIBUTE_UNUSED,
 
   riscv_parse_arch_string (arch_str, NULL, loc);
   const std::string arch = riscv_arch_str (false);
-  return xasprintf ("-march=%s", arch.c_str());
+  return xasprintf ("-march=%s", arch.c_str ());
 }
 
 /* Report error if not found suitable multilib.  */
@@ -1853,13 +1914,12 @@ prefixed_with (const std::string &str, const char *prefix)
 bool
 riscv_multi_lib_info_t::parse (
   struct riscv_multi_lib_info_t *multi_lib_info,
-  const std::string &path,
   const std::vector<std::string> &conds)
 {
   const char *default_arch_str = STRINGIZING (TARGET_RISCV_DEFAULT_ARCH);
   const char *default_abi_str = STRINGIZING (TARGET_RISCV_DEFAULT_ABI);
   multi_lib_info->conds = conds;
-  if (path == ".")
+  if (multi_lib_info->path == ".")
     {
       multi_lib_info->arch_str = default_arch_str;
       multi_lib_info->abi_str = default_abi_str;
@@ -1867,15 +1927,19 @@ riscv_multi_lib_info_t::parse (
   else
     {
       std::vector<std::string>::const_iterator itr;
+      bool only_arch_abi = true;
       for (itr = conds.begin (); itr != conds.end (); ++itr)
 	if (prefixed_with (*itr, "march="))
 	  multi_lib_info->arch_str = itr->c_str () + strlen ("march=");
 	else if (prefixed_with (*itr, "mabi="))
 	  multi_lib_info->abi_str = itr->c_str () + strlen ("mabi=");
+	else
+	  only_arch_abi = false;
 
-	/* Skip this multi-lib if this configuration is exactly same as
-	   default multi-lib settings.  */
-      if (multi_lib_info->arch_str == default_arch_str
+      /* Skip a multi-lib that is exactly equivalent to the default: same
+	 march and mabi with no other distinguishing option. */
+      if (only_arch_abi
+	  && multi_lib_info->arch_str == default_arch_str
 	  && multi_lib_info->abi_str == default_abi_str)
 	return false;
     }
@@ -2013,12 +2077,9 @@ riscv_select_multilib (
     }
 
   if (best_match_multi_lib == -1)
-    {
-      riscv_no_matched_multi_lib = true;
-      return NULL;
-    }
-  else
-    return xstrdup (multilib_infos[best_match_multi_lib].path.c_str ());
+    return NULL;
+
+  return xstrdup (multilib_infos[best_match_multi_lib].path.c_str ());
 }
 
 #ifndef RISCV_USE_CUSTOMISED_MULTI_LIB
@@ -2054,9 +2115,17 @@ riscv_compute_multilib (
   std::string option_cond;
   riscv_multi_lib_info_t multilib_info;
 
-  /* Already found suitable, multi-lib, just use that.  */
-  if (multilib_dir != NULL)
-    return multilib_dir;
+  /* The generic textual matcher in gcc.cc:set_multilib_dir does not
+     understand RISC-V arch supersetting and treats MULTILIB_DEFAULTS
+     entries as if they were on the command line via default_arg ().
+     That can pick the wrong multilib when the user's -march is a
+     superset of one of MULTILIB_OPTIONS' arches but does not textually
+     match.  Run our own match-score-based selection regardless.  The
+     default "." multilib is included in multilib_infos with the
+     compiler's default arch/abi, so the smart matcher handles every
+     case the generic matcher can reach; if it still returns NULL the
+     request is genuinely incompatible and riscv_multi_lib_check will
+     emit the proper diagnostic.  */
 
   /* Find march.  */
   riscv_current_arch_str =
@@ -2078,7 +2147,7 @@ riscv_compute_multilib (
     return multilib_dir;
 
   /* Parsing MULTILIB_SELECT, ignore MULTILIB_REUSE here, we have our own rules.
-     TODO: most codes are grab from gcc.c, maybe we should refine that?  */
+     TODO: most code is grabbed from gcc.c, maybe we should refine that?  */
   p = multilib_select;
 
   while (*p != '\0')
@@ -2137,7 +2206,6 @@ riscv_compute_multilib (
       result =
 	riscv_multi_lib_info_t::parse (
 	  &multilib_info,
-	  std::string (this_path, this_path_len),
 	  option_conds);
 
       if (result)
@@ -2146,19 +2214,28 @@ riscv_compute_multilib (
       p++;
     }
 
+  const char *selected = NULL;
   switch (select_kind)
     {
     case select_by_abi:
-      return riscv_select_multilib_by_abi (riscv_current_abi_str,
-					   multilib_infos);
+      selected = riscv_select_multilib_by_abi (riscv_current_abi_str,
+					       multilib_infos);
+      break;
     case select_by_abi_arch_cmodel:
-      return riscv_select_multilib (riscv_current_abi_str, subset_list,
-				    switches, n_switches, multilib_infos);
+      selected = riscv_select_multilib (riscv_current_abi_str, subset_list,
+					switches, n_switches, multilib_infos);
+      break;
     case select_by_builtin:
-      gcc_unreachable ();
     default:
       gcc_unreachable ();
     }
+
+  /* Either select function may return NULL when nothing is compatible;
+     ensure the flag is set so riscv_multi_lib_check fires its
+     "Cannot find suitable multilib" diagnostic.  */
+  if (selected == NULL)
+    riscv_no_matched_multi_lib = true;
+  return selected;
 }
 
 #undef TARGET_COMPUTE_MULTILIB
@@ -2188,12 +2265,30 @@ riscv_get_valid_option_values (int option_code,
 	    int i;
 	    const char *str;
 	    FOR_EACH_VEC_ELT (v, i, str)
-	      {
-		if (!strcmp (str, cpu_info->name))
+	      if (!strcmp (str, cpu_info->name))
+		{
 		  skip = true;
-	      }
+		  break;
+		}
 	    if (!skip)
 	      v.safe_push (cpu_info->name);
+	  }
+
+	const riscv_cpu_alias_info *alias_info = &riscv_cpu_alias_table[0];
+	for (; alias_info->alias; alias_info++)
+	  {
+	    /* Skip duplicates.  */
+	    bool skip = false;
+	    int i;
+	    const char *str;
+	    FOR_EACH_VEC_ELT (v, i, str)
+	      if (!strcmp (str, alias_info->alias))
+		{
+		  skip = true;
+		  break;
+		}
+	    if (!skip)
+	      v.safe_push (alias_info->alias);
 	  }
       }
       break;
@@ -2202,6 +2297,10 @@ riscv_get_valid_option_values (int option_code,
 	const riscv_cpu_info *cpu_info = &riscv_cpu_tables[0];
 	for (;cpu_info->name; ++cpu_info)
 	  v.safe_push (cpu_info->name);
+
+	const riscv_cpu_alias_info *alias_info = &riscv_cpu_alias_table[0];
+	for (; alias_info->alias; alias_info++)
+	  v.safe_push (alias_info->alias);
       }
       break;
     default:
@@ -2217,7 +2316,7 @@ riscv_arch_help (int, const char **)
   /* Collect all exts, and sort it in canonical order.  */
   struct extension_comparator {
     bool operator()(const std::string& a, const std::string& b) const {
-      return subset_cmp(a, b) >= 1;
+      return subset_cmp (a, b) >= 1;
     }
   };
   std::map<std::string, std::set<unsigned>, extension_comparator> all_exts;
@@ -2232,24 +2331,24 @@ riscv_arch_help (int, const char **)
 	}
     }
 
-  printf("All available -march extensions for RISC-V:\n");
-  printf("\t%-20sVersion\n", "Name");
+  printf ("All available -march extensions for RISC-V:\n");
+  printf ("\t%-20sVersion\n", "Name");
   for (auto const &ext_info : all_exts)
     {
-      printf("\t%-20s\t", ext_info.first.c_str());
+      printf ("\t%-20s\t", ext_info.first.c_str ());
       bool first = true;
       for (auto version : ext_info.second)
 	{
 	  if (first)
 	    first = false;
 	  else
-	    printf(", ");
+	    printf (", ");
 	  unsigned major = version / RISCV_MAJOR_VERSION_BASE;
 	  unsigned minor = (version % RISCV_MAJOR_VERSION_BASE)
 			    / RISCV_MINOR_VERSION_BASE;
-	  printf("%u.%u", major, minor);
+	  printf ("%u.%u", major, minor);
 	}
-      printf("\n");
+      printf ("\n");
     }
   exit (0);
 }
@@ -2261,6 +2360,10 @@ static const struct default_options riscv_option_optimization_table[] =
     /* Enable -fsched-pressure starting at -O1.  */
     { OPT_LEVELS_1_PLUS, OPT_fsched_pressure, NULL, 1 },
     { OPT_LEVELS_2_PLUS, OPT_free, NULL, 1 },
+    /* Turn on -funroll-loops with -munroll-only-small-loops to enable small
+       loop unrolling at -O2 and above.  */
+    { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_funroll_loops, NULL, 1 },
+    { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_munroll_only_small_loops, NULL, 1 },
 #if TARGET_DEFAULT_ASYNC_UNWIND_TABLES == 1
     { OPT_LEVELS_ALL, OPT_fasynchronous_unwind_tables, NULL, 1 },
     { OPT_LEVELS_ALL, OPT_funwind_tables, NULL, 1},

@@ -26,12 +26,39 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree.h"
 #include "gimple.h"
 #include "ssa.h"
-#include "tree-pretty-print.h"
+#include "tree-ssanames.h"
 #include "fold-const.h"
 #include "value-query.h"
 #include "alloc-pool.h"
 #include "gimple-range.h"
 #include "value-range-storage.h"
+#include "target.h"
+
+// Attempt to make Q the current range query for FUN.  If it is already the
+// current range query, return NULL.
+// If the specified query is not compatible with being the current query,
+// instead push the global query for safety.  This is most common when
+// the requested query is a path ranger, and it can be unstable to make
+// arbitrary queries which may be in the middle or after a path.
+
+range_query *
+set_range_query (struct function *fun, range_query *q)
+{
+  // Set the global query if it hasn't been set.
+  if (!fun->x_range_query)
+    fun->x_range_query = get_global_range_query ();
+
+  // If this is not a compatible range query, revert to the global query.
+  if (!q->active_query_compatible_p ())
+    q = get_global_range_query ();
+
+  if (q == fun->x_range_query)
+    return NULL;
+
+  range_query *orig = fun->x_range_query;
+  fun->x_range_query = q;
+  return orig;
+}
 
 // range_query default methods.
 
@@ -68,8 +95,25 @@ range_query::range_of_stmt (vrange &r, gimple *stmt, tree name)
 
 // Default for updating range info is to do nothing.
 void
+range_query::update_range_info (tree)
+{
+}
+
+// Default for updating range info is to do nothing.
+void
 range_query::update_range_info (tree, const vrange &)
 {
+}
+
+// Default for resetting range info for NAME is to clear the oracles.
+
+void
+range_query::reset_range_info (tree name)
+{
+  relation ().clear (name);
+  if (gori_ssa ())
+    gori_ssa ()->clear (name);
+  infer_oracle ().clear (name);
 }
 
 // If the range of expr EXPR at STMT is a single value, return it.
@@ -235,18 +279,17 @@ range_query::destroy_infer_oracle ()
 }
 
 // Create dominance based range oracle for the current query if dom info is
-// available.  DO_TRANS_P indicates whether transitive relations should
-// be created.  This can cost more in compile time.
+// available.
 
 void
-range_query::create_relation_oracle (bool do_trans_p)
+range_query::create_relation_oracle ()
 {
   gcc_checking_assert (this != &global_ranges);
   gcc_checking_assert (m_relation == &default_relation_oracle);
 
   if (!dom_info_available_p (CDI_DOMINATORS))
     return;
-  m_relation = new dom_oracle (do_trans_p);
+  m_relation = new dom_oracle ();
   gcc_checking_assert (m_relation);
 }
 
@@ -336,7 +379,7 @@ range_query::get_tree_range (vrange &r, tree expr, gimple *stmt,
   else
     type = TREE_TYPE (expr);
 
-  if (!value_range::supports_type_p (type))
+  if (!r.supports_type_p (type))
     {
       r.set_undefined ();
       return false;
@@ -382,22 +425,110 @@ range_query::get_tree_range (vrange &r, tree expr, gimple *stmt,
 
     case ADDR_EXPR:
       {
-	// Handle &var which can show up in phi arguments.
-	bool ov;
-	if (tree_single_nonzero_warnv_p (expr, &ov))
-	  {
-	    r.set_nonzero (type);
-	    return true;
-	  }
-	break;
+	// Handle &expr, and set points to.
+	if (tree_single_nonzero_p (expr))
+	 r.set_nonzero (type);
+	else
+	  r.set_varying (type);
+	// Set points to field.
+	gcc_checking_assert (is_a <prange> (r));
+	prange &ptr = as_a <prange> (r);
+	ptr.set_addr (expr, true);
+	return true;
       }
 
     default:
       if (POLY_INT_CST_P (expr))
 	{
 	  unsigned int precision = TYPE_PRECISION (type);
-	  r.set_varying (type);
-	  r.update_bitmask ({ wi::zero (precision), get_nonzero_bits (expr) });
+	  signop sign = TYPE_SIGN (type);
+	  bool have_poly_bound = targetm.poly_int_indeterminate_bound;
+	  poly_uint64 indeterminate_bound;
+
+	  if (have_poly_bound)
+	    indeterminate_bound = targetm.poly_int_indeterminate_bound ();
+
+	  auto val = wi::to_poly_wide (expr);
+	  auto type_min = wi::to_wide (TYPE_MIN_VALUE (type));
+	  auto type_max = wi::to_wide (TYPE_MAX_VALUE (type));
+
+	  /* Start with the invariant part of the poly-int, then account
+	     for each coefficient below.
+
+	     The target hook gives a per-coefficient upper bound for the
+	     indeterminate.  Since those indeterminates are unsigned and
+	     nonnegative, a positive coefficient can only increase the upper
+	     bound and a negative coefficient can only decrease the lower
+	     bound.  The opposite bound is unaffected by that coefficient:
+
+		[A, +C] with C >= 0  => max += C * bound
+		[A, -C] with C >= 0  => min -= C * bound.  */
+	  wide_int bounds[2] = { val.coeffs[0], val.coeffs[0] };
+	  bool ovf[2] = { false, false };
+
+	  for (unsigned int i = 1; i < NUM_POLY_INT_COEFFS; ++i)
+	    {
+	      const auto &coeff = val.coeffs[i];
+	      if (wi::eq_p (coeff, 0))
+		continue;
+
+	      /* Select the only bound affected by this coefficient.  A
+		 negative coefficient contributes to the minimum and a positive
+		 coefficient contributes to the maximum.  */
+	      bool coeff_neg = wi::neg_p (coeff, sign);
+	      wide_int &bound = bounds[coeff_neg ? 0 : 1];
+	      bool &bound_ovf = ovf[coeff_neg ? 0 : 1];
+
+	      if (bound_ovf)
+		continue;
+
+	      /* A missing hook, or a -1 bound for this coefficient, means the
+		 indeterminate has no finite target-specific limit.  Treat that
+		 like an overflow of the affected bound.  */
+	      if (!have_poly_bound
+		  || indeterminate_bound.coeffs[i] == HOST_WIDE_INT_M1U)
+		bound_ovf = true;
+	      else
+		{
+		  auto indeterminate
+		    = wi::uhwi (indeterminate_bound.coeffs[i], precision);
+		  wi::overflow_type mul_ovf = wi::OVF_NONE;
+		  auto term = wi::mul (coeff, indeterminate, sign, &mul_ovf);
+		  wi::overflow_type add_ovf = wi::OVF_NONE;
+		  bound = wi::add (bound, term, sign, &add_ovf);
+		  bound_ovf = (mul_ovf != wi::OVF_NONE
+			       || add_ovf != wi::OVF_NONE);
+		}
+
+	      if (TYPE_OVERFLOW_WRAPS (type) && bound_ovf)
+		{
+		  r.set_varying (type);
+		  r.update_bitmask (irange_bitmask (wi::zero (precision),
+						    get_nonzero_bits (expr)));
+		  return true;
+		}
+
+	      if (bound_ovf)
+		{
+		  if (coeff_neg)
+		    bounds[0] = type_min;
+		  else
+		    bounds[1] = type_max;
+		}
+	    }
+
+	  /* Check that the target filled in sensible bounds information.  */
+	  gcc_assert (wi::le_p (bounds[0], bounds[1], sign));
+
+	  irange &ir = as_a <irange> (r);
+	  ir.set (type, bounds[0], bounds[1]);
+
+	  /* Preserve alignment/step information that is not visible in the
+	     intervals.  For example, a poly-int like [8, 8] can
+	     only produce multiples of 8, but the interval range might be
+	     [8, 136], which also contains values with low bits set.  */
+	  ir.update_bitmask (irange_bitmask (wi::zero (precision),
+					     get_nonzero_bits (expr)));
 	  return true;
 	}
       break;
@@ -451,7 +582,6 @@ static inline void
 get_ssa_name_range_info (vrange &r, const_tree name)
 {
   tree type = TREE_TYPE (name);
-  gcc_checking_assert (!POINTER_TYPE_P (type));
   gcc_checking_assert (TREE_CODE (name) == SSA_NAME);
 
   vrange_storage *ri = SSA_NAME_RANGE_INFO (name);
@@ -460,26 +590,6 @@ get_ssa_name_range_info (vrange &r, const_tree name)
     ri->get_vrange (r, TREE_TYPE (name));
   else
     r.set_varying (type);
-}
-
-// Return nonnull attribute of pointer NAME from SSA_NAME_PTR_INFO.
-
-static inline bool
-get_ssa_name_ptr_info_nonnull (const_tree name)
-{
-  gcc_assert (POINTER_TYPE_P (TREE_TYPE (name)));
-  struct ptr_info_def *pi = SSA_NAME_PTR_INFO (name);
-  if (pi == NULL)
-    return false;
-  /* TODO Now pt->null is conservatively set to true in PTA
-     analysis. vrp is the only pass (including ipa-vrp)
-     that clears pt.null via set_ptr_nonnull when it knows
-     for sure. PTA will preserves the pt.null value set by VRP.
-
-     When PTA analysis is improved, pt.anything, pt.nonlocal
-     and pt.escaped may also has to be considered before
-     deciding that pointer cannot point to NULL.  */
-  return !pi->pt.null;
 }
 
 // Update the global range for NAME into the SSA_RANGE_NAME_INFO and
@@ -502,21 +612,19 @@ gimple_range_global (vrange &r, tree name, struct function *fun)
       // Use a range from an SSA_NAME's available range.
       if (TREE_CODE (sym) == PARM_DECL)
 	{
-	  // Try to use the "nonnull" attribute to create ~[0, 0]
-	  // anti-ranges for pointers.  Note that this is only valid with
-	  // default definitions of PARM_DECLs.
-	  if (POINTER_TYPE_P (type)
-	      && ((cfun && fun == cfun && nonnull_arg_p (sym))
-		  || get_ssa_name_ptr_info_nonnull (name)))
-	    r.set_nonzero (type);
-	  else if (!POINTER_TYPE_P (type))
-	    {
-	      get_ssa_name_range_info (r, name);
-	      if (r.undefined_p ())
-		r.set_varying (type);
-	    }
-	  else
+	  get_ssa_name_range_info (r, name);
+	  if (r.undefined_p ())
 	    r.set_varying (type);
+	  // Try to use the "nonnull" attribute to refine a pointer to
+	  // ~[0, 0].  Note that this is only valid with default definitions
+	  // of PARM_DECLs
+	  if (POINTER_TYPE_P (type)
+	      && ((cfun && fun == cfun && nonnull_arg_p (sym))))
+	   {
+	     prange nz (type);
+	     nz.set_nonzero (type);
+	     r.intersect (nz);
+	   }
 	}
       // If this is a local automatic with no definition, use undefined.
       else if (TREE_CODE (sym) != RESULT_DECL)
@@ -524,17 +632,10 @@ gimple_range_global (vrange &r, tree name, struct function *fun)
       else
 	r.set_varying (type);
    }
-  else if (!POINTER_TYPE_P (type) && SSA_NAME_RANGE_INFO (name))
+  else if (SSA_NAME_RANGE_INFO (name))
     {
       get_ssa_name_range_info (r, name);
       if (r.undefined_p ())
-	r.set_varying (type);
-    }
-  else if (POINTER_TYPE_P (type) && SSA_NAME_PTR_INFO (name))
-    {
-      if (get_ssa_name_ptr_info_nonnull (name))
-	r.set_nonzero (type);
-      else
 	r.set_varying (type);
     }
   else

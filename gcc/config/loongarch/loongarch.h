@@ -271,7 +271,7 @@ along with GCC; see the file COPYING3.  If not see
       && GET_MODE_SIZE (MODE) < UNITS_PER_WORD) \
     { \
       if ((MODE) == SImode \
-	  && !(TYPE && TREE_CODE (TYPE) == BITINT_TYPE \
+	  && !(TYPE && BITINT_TYPE_P (TYPE) \
 	       && TYPE_PRECISION (TYPE) < 32)) \
 	(UNSIGNEDP) = 0; \
       (MODE) = Pmode; \
@@ -368,8 +368,7 @@ along with GCC; see the file COPYING3.  If not see
   ((unsigned int) ((int) (REGNO) - LASX_REG_FIRST) < LASX_REG_NUM)
 
 #define FP_REG_RTX_P(X) (REG_P (X) && FP_REG_P (REGNO (X)))
-#define LSX_REG_RTX_P(X) (REG_P (X) && LSX_REG_P (REGNO (X)))
-#define LASX_REG_RTX_P(X) (REG_P (X) && LASX_REG_P (REGNO (X)))
+#define GP_REG_RTX_P(X) (REG_P (X) && GP_REG_P (REGNO (X)))
 
 /* Select a register mode required for caller save of hard regno REGNO.  */
 #define HARD_REGNO_CALLER_SAVE_MODE(REGNO, NREGS, MODE) \
@@ -1074,7 +1073,7 @@ typedef struct {
 		...
 		.uleb128 foo-$LFBxxx
 
-   The .uleb128 requies $LFBxxx to match the FDE start address, which is
+   The .uleb128 requires $LFBxxx to match the FDE start address, which is
    likewise a byte pointer rather than an ISA-encoded address.
 
    At the time of writing, this hook is not used for the function end

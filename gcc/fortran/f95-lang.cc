@@ -100,6 +100,8 @@ static const attribute_spec gfc_gnu_attributes[] =
     gfc_handle_omp_declare_target_attribute, NULL },
   { "oacc function", 0, -1, true,  false, false, false,
     gfc_handle_omp_declare_target_attribute, NULL },
+  { "omp groupprivate", 0, 0, true,  false, false, false,
+    gfc_handle_omp_declare_target_attribute, NULL },
 };
 
 static const scoped_attribute_specs gfc_gnu_attribute_table =
@@ -135,6 +137,7 @@ gfc_get_sarif_source_language (const char *)
 #undef LANG_HOOKS_TYPE_FOR_SIZE
 #undef LANG_HOOKS_INIT_TS
 #undef LANG_HOOKS_OMP_ARRAY_DATA
+#undef LANG_HOOKS_OMP_ARRAY_DATA_PRIVATIZE
 #undef LANG_HOOKS_OMP_ARRAY_SIZE
 #undef LANG_HOOKS_OMP_IS_ALLOCATABLE_OR_PTR
 #undef LANG_HOOKS_OMP_CHECK_OPTIONAL_ARGUMENT
@@ -178,6 +181,7 @@ gfc_get_sarif_source_language (const char *)
 #define LANG_HOOKS_TYPE_FOR_SIZE	gfc_type_for_size
 #define LANG_HOOKS_INIT_TS		gfc_init_ts
 #define LANG_HOOKS_OMP_ARRAY_DATA		gfc_omp_array_data
+#define LANG_HOOKS_OMP_ARRAY_DATA_PRIVATIZE	gfc_omp_array_data_privatize
 #define LANG_HOOKS_OMP_ARRAY_SIZE		gfc_omp_array_size
 #define LANG_HOOKS_OMP_IS_ALLOCATABLE_OR_PTR	gfc_omp_is_allocatable_or_ptr
 #define LANG_HOOKS_OMP_CHECK_OPTIONAL_ARGUMENT	gfc_omp_check_optional_argument
@@ -580,7 +584,7 @@ gfc_builtin_function (tree decl)
 #define ATTR_COLD_NORETURN_NOTHROW_LEAF_LIST \
 					(ECF_COLD | ECF_NORETURN | \
 					 ECF_NOTHROW | ECF_LEAF)
-#define ATTR_CALLBACK_GOMP_LIST (ECF_CB_1_2 | ATTR_NOTHROW_LIST)
+#define ATTR_CALLBACK_ONLY_GOMP_LIST (ECF_CB_1_2 | ATTR_NOTHROW_LIST)
 #define ATTR_PURE_NOTHROW_LIST (ECF_PURE | ECF_NOTHROW)
 
 static void
@@ -1035,6 +1039,11 @@ gfc_init_builtin_functions (void)
 				    size_type_node, NULL_TREE);
   gfc_define_builtin ("__builtin_realloc", ftype, BUILT_IN_REALLOC,
 		      "realloc", ATTR_NOTHROW_LEAF_LIST);
+
+  ftype = build_function_type_list (size_type_node, pchar_type_node,
+				    size_type_node, NULL_TREE);
+  gfc_define_builtin ("__builtin_strnlen", ftype, BUILT_IN_STRNLEN,
+		      "strnlen", ATTR_PURE_NOTHROW_LEAF_LIST);
 
   /* Type-generic floating-point classification built-ins.  */
 

@@ -26,8 +26,12 @@ struct cselib_val
   /* The hash value.  */
   unsigned int hash;
 
-  /* A unique id assigned to values.  */
-  int uid;
+  /* True if this value is entered in cselib_preserved_hash_table.  */
+  unsigned int in_preserved_table_p : 1;
+
+  /* True if every value referenced by every element of LOCS is known
+     to be a preserved value.  */
+  unsigned int all_locs_preserved_p : 1;
 
   /* A VALUE rtx that points back to this structure.  */
   rtx val_rtx;
@@ -84,7 +88,7 @@ extern bool fp_setter_insn (rtx_insn *);
 extern machine_mode cselib_reg_set_mode (const_rtx);
 extern bool rtx_equal_for_cselib_1 (rtx, rtx, machine_mode, int);
 extern bool cselib_redundant_set_p (rtx);
-extern bool references_value_p (const_rtx, int);
+extern bool references_value_p (const_rtx);
 extern rtx cselib_expand_value_rtx (rtx, bitmap, int);
 typedef rtx (*cselib_expand_callback)(rtx, bitmap, int, void *);
 extern rtx cselib_expand_value_rtx_cb (rtx, bitmap, int,
@@ -120,7 +124,7 @@ canonical_cselib_val (cselib_val *val)
 
   if (!val->locs || val->locs->next
       || !val->locs->loc || GET_CODE (val->locs->loc) != VALUE
-      || val->uid < CSELIB_VAL_PTR (val->locs->loc)->uid)
+      || CSELIB_VAL_UID (val->val_rtx) < CSELIB_VAL_UID (val->locs->loc))
     return val;
 
   canon = CSELIB_VAL_PTR (val->locs->loc);

@@ -187,16 +187,6 @@ a68_pop_range (void)
   current_range = range->next;
   tree type = (range->mode == NULL ? void_type_node : CTYPE (range->mode));
 
-  /* If TYPE is a pointer type and the last expression in the statement list is
-     a variable of the type pointed by TYPE then take its address.  */
-  tree_stmt_iterator i = tsi_last (range->stmt_list);
-  if (POINTER_TYPE_P (type) && TREE_TYPE (type) == TREE_TYPE (tsi_stmt (i)))
-    {
-      append_to_statement_list_force (a68_consolidate_ref (range->mode, tsi_stmt (i)),
-				      &range->stmt_list);
-      tsi_delink (&i);
-    }
-
   tree clause = NULL_TREE;
   if (range->frameless)
     clause = range->stmt_list;
@@ -263,6 +253,27 @@ a68_add_stmt (tree exp)
 				  &current_range->stmt_list);
 }
 
+/* Add a new declaration to the global range.  */
+
+void
+a68_add_global_decl (tree decl)
+{
+  gcc_assert (current_range != NULL);
+
+  tree n = global_range->names;
+  while (n != decl && n != NULL)
+    n = TREE_CHAIN (n);
+  if (n != decl)
+    {
+      if (decl != current_function_decl)
+	DECL_CONTEXT (decl) = global_range->context;
+      /* Note this list needs to be in reverse order for compatibility with
+	 GCC.  */
+      TREE_CHAIN (decl) = global_range->names;
+      global_range->names = decl;
+    }
+}
+
 /* Add a new declaration to the current range.  */
 
 void
@@ -318,30 +329,15 @@ a68_add_completer (void)
   struct range *range = current_range;
 
   /* The last statement in the statements list is either a single unit or a
-     labeled unit, i.e a COMPOUND_EXPR whose first expression is a label and
-     second expression is the unit.  Consolidate the unit within the labeled
-     unit to a ref.  */
+     labeled unit.  Consolidate the unit within the labeled unit to a ref and
+     put it in the clause result decl.  */
   tree_stmt_iterator i = tsi_last (range->stmt_list);
-  tree last_expr = tsi_stmt (i);
+  *tsi_stmt_ptr (i) = fold_build2 (MODIFY_EXPR,
+				   void_type_node,
+				   range->clause_result_decl,
+				   a68_consolidate_ref (range->mode, tsi_stmt (i)));
 
-  if (TREE_CODE (last_expr) == COMPOUND_EXPR
-      && TREE_CODE (TREE_OPERAND (last_expr, 0)) == LABEL_EXPR)
-    {
-      TREE_OPERAND (last_expr, 1) = a68_consolidate_ref (range->mode,
-							 TREE_OPERAND (last_expr, 1));
-      TREE_TYPE (last_expr) = TREE_TYPE (TREE_OPERAND (last_expr, 1));
-    }
-  else
-    last_expr = a68_consolidate_ref (range->mode, last_expr);
-
-  /* Now assign the labeled unit to the clause result decl then jump to the end
-     of the serial clause.  */
-  append_to_statement_list_force (fold_build2 (MODIFY_EXPR,
-					       void_type_node,
-					       range->clause_result_decl,
-					       last_expr),
-				  &range->stmt_list);
-  tsi_delink (&i);
+  /* Jump to the end of the serial clause.  */
   append_to_statement_list_force (fold_build1 (GOTO_EXPR, void_type_node,
 					       range->clause_exit_label_decl),
 				  &range->stmt_list);
@@ -355,6 +351,14 @@ a68_range_context (void)
 {
   gcc_assert (current_range != NULL);
   return current_range->context;
+}
+
+/* Get the global context.  */
+
+tree
+a68_global_context (void)
+{
+  return global_range->context;
 }
 
 /* Get the list of declarations in the current range.  */
@@ -562,18 +566,7 @@ a68_pop_serial_clause_range (void)
      serial clause.  */
   {
     tree_stmt_iterator si = tsi_last (range->stmt_list);
-    tree last_expr = tsi_stmt (si);
-    if (TREE_CODE (last_expr) == COMPOUND_EXPR
-	&& TREE_CODE (TREE_OPERAND (last_expr, 0)) == LABEL_EXPR)
-      {
-	TREE_OPERAND (last_expr, 1) = a68_consolidate_ref (range->mode,
-							   TREE_OPERAND (last_expr, 1));
-	TREE_TYPE (last_expr) = TREE_TYPE (TREE_OPERAND (last_expr, 1));
-      }
-    else
-      last_expr = a68_consolidate_ref (range->mode, last_expr);
-    a68_add_stmt (last_expr);
-    tsi_delink (&si);
+    *tsi_stmt_ptr (si) = a68_consolidate_ref (range->mode, tsi_stmt (si));
   }
 
   /* If the serial clause has completers, we have to make use of the
@@ -624,19 +617,24 @@ a68_pop_serial_clause_range (void)
      same than the type corresponding to the clause mode.  */
   {
     tree_stmt_iterator si = tsi_last (range->stmt_list);
-    if (TREE_TYPE (tsi_stmt (si)) != clause_type
+    tree last_stmt_type = TREE_TYPE (tsi_stmt (si));
+
+    /* We need original type to compare below.  */
+    if (typedef_variant_p (last_stmt_type))
+      last_stmt_type = DECL_ORIGINAL_TYPE (TYPE_NAME (last_stmt_type));
+
+    if (last_stmt_type != clause_type
 	/* But NIL can appear in a context expecting VOID with no widening.  */
 	&& !(clause_type == a68_void_type
-	     && POINTER_TYPE_P (TREE_TYPE (tsi_stmt (si)))
+	     && POINTER_TYPE_P (last_stmt_type)
 	     && TREE_CODE (tsi_stmt (si)) == INTEGER_CST
 	     && tree_to_shwi (tsi_stmt (si)) == 0)
 	/* And any row type is valid when M_ROWS is expected.  */
-	&& !(A68_ROWS_TYPE_P (clause_type)
-	     && A68_ROWS_TYPE_P (TREE_TYPE (tsi_stmt (si))))
+	&& !(A68_ROWS_TYPE_P (clause_type) && A68_ROWS_TYPE_P (last_stmt_type))
 	/* Do not rely on comparing pointer types, as the equality fails in
 	   that case.  We need a better way of comparing types, either using
 	   TYPE_CANONICAL or caching.  */
-	&& !(POINTER_TYPE_P (TREE_TYPE (tsi_stmt (si))) && POINTER_TYPE_P (clause_type)))
+	&& !(POINTER_TYPE_P (last_stmt_type) && POINTER_TYPE_P (clause_type)))
       {
 	printf ("last statement:\n");
 	debug_tree (tsi_stmt (si));

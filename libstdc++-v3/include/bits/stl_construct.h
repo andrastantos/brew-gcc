@@ -346,6 +346,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline _Tp*
     start_lifetime_as_array(void* __p, size_t __n) noexcept
     {
+      static_assert(sizeof(_Tp), "template argument must be a complete type");
+
       auto __q = reinterpret_cast<_Tp*>(__p);
       if (!__n)
 	return __q;
@@ -360,6 +362,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline const _Tp*
     start_lifetime_as_array(const void* __p, size_t __n) noexcept
     {
+      static_assert(sizeof(_Tp), "template argument must be a complete type");
+
       auto __q = reinterpret_cast<const _Tp*>(__p);
       if (!__n)
 	return __q;
@@ -376,6 +380,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline volatile _Tp*
     start_lifetime_as_array(volatile void* __p, size_t __n) noexcept
     {
+      static_assert(sizeof(_Tp), "template argument must be a complete type");
+
       auto __q = reinterpret_cast<volatile _Tp*>(__p);
       if (!__n)
 	return __q;
@@ -392,6 +398,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline const volatile _Tp*
     start_lifetime_as_array(const volatile void* __p, size_t __n) noexcept
     {
+      static_assert(sizeof(_Tp), "template argument must be a complete type");
+
       auto __q = reinterpret_cast<const volatile _Tp*>(__p);
       if (!__n)
 	return __q;
@@ -403,6 +411,21 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return __q;
     }
 #endif // C++23
+
+#if __glibcxx_start_lifetime >= 202603L // C++ >= 26
+  template <typename _Tp>
+    constexpr void
+    start_lifetime(_Tp& __r) noexcept
+    {
+#ifdef __cpp_lib_is_implicit_lifetime
+      static_assert(std::is_implicit_lifetime_v<_Tp>);
+#endif
+#ifdef __cpp_lib_is_aggregate
+      static_assert(std::is_aggregate_v<_Tp>);
+#endif
+      __builtin_start_lifetime(__builtin_addressof(__r));
+    }
+#endif // C++26
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std

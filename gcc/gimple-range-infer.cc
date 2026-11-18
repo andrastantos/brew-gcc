@@ -36,6 +36,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-walk.h"
 #include "cfganal.h"
 #include "tree-dfa.h"
+#include "fold-const.h"
 
 // Create the global oracle.
 
@@ -61,9 +62,17 @@ private:
 // stmt range inference instance.
 
 static bool
-non_null_loadstore (gimple *, tree op, tree, void *data)
+non_null_loadstore (gimple *stmt, tree op, tree, void *data)
 {
-  if (TREE_CODE (op) == MEM_REF || TREE_CODE (op) == TARGET_MEM_REF)
+  if (TREE_CODE (op) == MEM_REF
+      || (TREE_CODE (op) == TARGET_MEM_REF
+	  && !TMR_INDEX2 (op)
+	  && (!TMR_INDEX (op)
+	      || (TMR_STEP (op)
+		  && expr_not_equal_to (TMR_STEP (op),
+					wi::one (TYPE_PRECISION (TREE_TYPE
+							(TMR_STEP (op)))),
+					stmt)))))
     {
       /* Some address spaces may legitimately dereference zero.  */
       addr_space_t as = TYPE_ADDR_SPACE (TREE_TYPE (op));
@@ -299,9 +308,10 @@ class exit_range
 {
 public:
   tree name;
-  gimple *stmt;
+  unsigned bbi;
   vrange_storage *range;
   exit_range *next;
+  exit_range *name_link;
 };
 
 
@@ -344,8 +354,8 @@ infer_range_manager::infer_range_manager (bool do_search, range_query *q)
     m_seen = NULL;
   obstack_init (&m_list_obstack);
   // Non-zero elements are very common, so cache them for each ssa-name.
-  m_nonzero.create (0);
-  m_nonzero.safe_grow_cleared (num_ssa_names + 1);
+  m_name_info.create (0);
+  m_name_info.safe_grow_cleared (num_ssa_names + 1);
   m_range_allocator = new vrange_allocator;
 }
 
@@ -353,7 +363,7 @@ infer_range_manager::infer_range_manager (bool do_search, range_query *q)
 
 infer_range_manager::~infer_range_manager ()
 {
-  m_nonzero.release ();
+  m_name_info.release ();
   obstack_free (&m_list_obstack, NULL);
   m_on_exit.release ();
   bitmap_obstack_release (&m_bitmaps);
@@ -367,15 +377,15 @@ const vrange&
 infer_range_manager::get_nonzero (tree name)
 {
   unsigned v = SSA_NAME_VERSION (name);
-  if (v >= m_nonzero.length ())
-    m_nonzero.safe_grow_cleared (num_ssa_names + 20);
-  if (!m_nonzero[v])
+  if (v >= m_name_info.length ())
+    m_name_info.safe_grow_cleared (num_ssa_names + 20);
+  if (!m_name_info[v].nonzero)
     {
-      m_nonzero[v]
+      m_name_info[v].nonzero
 	= (irange *) m_range_allocator->alloc (sizeof (int_range <2>));
-      m_nonzero[v]->set_nonzero (TREE_TYPE (name));
+      m_name_info[v].nonzero->set_nonzero (TREE_TYPE (name));
     }
-  return *(m_nonzero[v]);
+  return *(m_name_info[v].nonzero);
 }
 
 // Return TRUE if NAME has a range inference in block BB.  If NAME is NULL,
@@ -444,6 +454,9 @@ infer_range_manager::add_range (tree name, gimple *s, const vrange &r)
   if (bb->index >= (int)m_on_exit.length ())
     m_on_exit.safe_grow_cleared (last_basic_block_for_fn (cfun) + 1);
 
+  if (SSA_NAME_VERSION (name) >= m_name_info.length ())
+    m_name_info.safe_grow_cleared (num_ssa_names + 20);
+
   // Create the summary list bitmap if it doesn't exist.
   if (!m_on_exit[bb->index].m_names)
       m_on_exit[bb->index].m_names = BITMAP_ALLOC (&m_bitmaps);
@@ -456,6 +469,8 @@ infer_range_manager::add_range (tree name, gimple *s, const vrange &r)
      r.dump (dump_file);
      fprintf (dump_file, "\n");
    }
+
+  get_range_query (cfun)->update_range_info (name);
 
   // If NAME already has a range, intersect them and done.
   exit_range *ptr = m_on_exit[bb->index].find_ptr (name);
@@ -471,7 +486,6 @@ infer_range_manager::add_range (tree name, gimple *s, const vrange &r)
 	ptr->range->set_vrange (cur);
       else
 	ptr->range = m_range_allocator->clone (cur);
-      ptr->stmt = s;
       return;
     }
 
@@ -480,8 +494,10 @@ infer_range_manager::add_range (tree name, gimple *s, const vrange &r)
   ptr = (exit_range *)obstack_alloc (&m_list_obstack, sizeof (exit_range));
   ptr->range = m_range_allocator->clone (r);
   ptr->name = name;
-  ptr->stmt = s;
+  ptr->bbi =  bb->index;
   ptr->next = m_on_exit[bb->index].head;
+  ptr->name_link = m_name_info[SSA_NAME_VERSION (name)].name_link;
+  m_name_info[SSA_NAME_VERSION (name)].name_link = ptr;
   m_on_exit[bb->index].head = ptr;
 }
 
@@ -520,4 +536,26 @@ infer_range_manager::register_all_uses (tree name)
 	    add_range (name, s, infer.range (x));
 	}
     }
+}
+
+// Clear all inferred ranges for NAME.
+
+void
+infer_range_manager::clear(tree name)
+{
+  // Check if this name has any inferred ranges.
+  unsigned v = SSA_NAME_VERSION (name);
+  if (v >= m_name_info.length ())
+    return;
+
+  exit_range *ptr = m_name_info[v].name_link;
+  for ( ; ptr ; ptr = ptr->name_link)
+    {
+      bitmap_clear_bit (m_on_exit[ptr->bbi].m_names, v);
+      ptr->name = NULL;
+    }
+
+  m_name_info[v].name_link = NULL;
+  if (m_seen)
+    bitmap_clear_bit (m_seen, v);
 }

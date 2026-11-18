@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-options "-fdefaultbyte 64" }
        *> { dg-output-file "group2/INITIALIZE_with_-defaultbyte__ASCII_.out" }
 
@@ -19,9 +20,9 @@
            02 PHONE-NUMBER.
               03 NAME      PIC A(30).
               03 AREA-CODE PIC 999.
-              03 DASH      PIC X VALUE'-'.
+              03 DASH      PIC X VALUE '-'.
               03 PREFIX    PIC 999.
-              03 DASH      PIC X VALUE'-'.
+              03 DASH      PIC X VALUE '-'.
               03 LOCAL     PIC 999.
         77 WHO-AM-I PIC X(12).
         PROCEDURE        DIVISION.

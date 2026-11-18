@@ -18,6 +18,8 @@
 
 #include "rust-hir-item.h"
 #include "optional.h"
+#include "rust-attribute-values.h"
+#include "rust-attributes.h"
 
 namespace Rust {
 namespace HIR {
@@ -259,6 +261,76 @@ Module::operator= (Module const &other)
     items.push_back (e->clone_item ());
 
   return *this;
+}
+
+tl::optional<std::vector<size_t>>
+Function::get_legacy_const_generic_indexes () const
+{
+  std::vector<size_t> legacy_const_generic_indexes;
+  const auto &attrs = get_outer_attrs ();
+  for (const auto &attr : attrs)
+    {
+      const auto possibly_builtin = Analysis::lookup_builtin (attr);
+      if (!possibly_builtin.has_value ())
+	continue;
+
+      const auto &mapping = possibly_builtin.value ();
+      if (mapping.name != Values::Attributes::RUSTC_ARGS_REQUIRED_CONST)
+	continue;
+
+      if (!attr.has_attr_input ())
+	{
+	  rust_error_at (attr.get_locus (), "malformed %qs attribute",
+			 mapping.name.c_str ());
+	  return tl::nullopt;
+	}
+
+      auto parsed_attr = attr;
+      parsed_attr.parse_attr_to_meta_item ();
+      if (!parsed_attr.is_parsed_to_meta_item ())
+	{
+	  rust_error_at (attr.get_locus (), "malformed %qs attribute",
+			 mapping.name.c_str ());
+	  return tl::nullopt;
+	}
+
+      const auto &container
+	= static_cast<const AST::AttrInputMetaItemContainer &> (
+	  parsed_attr.get_attr_input ());
+      const auto &items = container.get_items ();
+      for (const auto &item : items)
+	{
+	  if (item->get_kind () != AST::MetaItemInner::Kind::LitExpr)
+	    {
+	      rust_error_at (item->get_locus (),
+			     "expected an integer argument index");
+	      return tl::nullopt;
+	    }
+	  const auto &literal
+	    = static_cast<AST::MetaItemLitExpr &> (*item).get_literal ();
+	  if (literal.get_lit_type () != AST::Literal::INT)
+	    {
+	      rust_error_at (item->get_locus (),
+			     "expected an integer argument index");
+	      return tl::nullopt;
+	    }
+
+	  mpz_t value;
+	  if (mpz_init_set_str (value, literal.as_string ().c_str (), 10) != 0)
+	    {
+	      mpz_clear (value);
+	      rust_error_at (item->get_locus (), "failed load argument index");
+	      return tl::nullopt;
+	    }
+
+	  size_t index = 0;
+	  mpz_export (&index, nullptr, 1, sizeof (index), 0, 0, value);
+	  mpz_clear (value);
+	  legacy_const_generic_indexes.push_back (index);
+	}
+    }
+
+  return legacy_const_generic_indexes;
 }
 
 Function::Function (Analysis::NodeMapping mappings, Identifier function_name,
@@ -630,7 +702,8 @@ TraitFunctionDecl::TraitFunctionDecl (
 TraitFunctionDecl::TraitFunctionDecl (TraitFunctionDecl const &other)
   : qualifiers (other.qualifiers), function_name (other.function_name),
     function_params (other.function_params),
-    return_type (other.return_type->clone_type ()),
+    return_type (other.return_type != nullptr ? other.return_type->clone_type ()
+					      : nullptr),
     where_clause (other.where_clause), self (other.self)
 {
   generic_params.reserve (other.generic_params.size ());
@@ -644,7 +717,9 @@ TraitFunctionDecl::operator= (TraitFunctionDecl const &other)
   function_name = other.function_name;
   qualifiers = other.qualifiers;
   function_params = other.function_params;
-  return_type = other.return_type->clone_type ();
+  return_type
+    = other.return_type != nullptr ? other.return_type->clone_type () : nullptr;
+
   where_clause = other.where_clause;
   self = other.self;
 
@@ -998,17 +1073,18 @@ ExternalTypeItem::ExternalTypeItem (ExternalTypeItem const &other)
 {}
 
 ExternBlock::ExternBlock (
-  Analysis::NodeMapping mappings, ABI abi,
+  Analysis::NodeMapping mappings, ABI abi, bool explicit_abi,
   std::vector<std::unique_ptr<ExternalItem>> extern_items, Visibility vis,
   AST::AttrVec inner_attrs, AST::AttrVec outer_attrs, location_t locus)
   : VisItem (std::move (mappings), std::move (vis), std::move (outer_attrs)),
     WithInnerAttrs (std::move (inner_attrs)), abi (abi),
-    extern_items (std::move (extern_items)), locus (locus)
+    explicit_abi (explicit_abi), extern_items (std::move (extern_items)),
+    locus (locus)
 {}
 
 ExternBlock::ExternBlock (ExternBlock const &other)
   : VisItem (other), WithInnerAttrs (other.inner_attrs), abi (other.abi),
-    locus (other.locus)
+    explicit_abi (other.explicit_abi), locus (other.locus)
 {
   extern_items.reserve (other.extern_items.size ());
   for (const auto &e : other.extern_items)
@@ -1020,6 +1096,7 @@ ExternBlock::operator= (ExternBlock const &other)
 {
   VisItem::operator= (other);
   abi = other.abi;
+  explicit_abi = other.explicit_abi;
   inner_attrs = other.inner_attrs;
   locus = other.locus;
 

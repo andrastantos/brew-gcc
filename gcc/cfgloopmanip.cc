@@ -34,7 +34,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "sreal.h"
 #include "tree-cfg.h"
 #include "tree-pass.h"
-#include "hierarchical_discriminator.h"
 
 static void copy_loops_to (class loop **, int,
 			   class loop *);
@@ -559,7 +558,7 @@ loop_exit_for_scaling (class loop *loop)
    If DESIRED_COUNT is NULL, loop entry count will be used.
    In consistent profile usually loop exists as many times as it is entred.
 
-   Return updated exit if successfull and NULL otherwise. */
+   Return updated exit if successful and NULL otherwise. */
 
 edge
 update_loop_exit_probability_scale_dom_bbs (class loop *loop,
@@ -619,7 +618,7 @@ update_loop_exit_probability_scale_dom_bbs (class loop *loop,
 
       If B2 count is smaller than desired exit edge count
       the profile was inconsistent with the newly discovered upper bound.
-      Probablity of edge B1->B2 is too low.  We do not attempt to fix
+      Probability of edge B1->B2 is too low.  We do not attempt to fix
       that (as it is hard in general).  */
   if (desired_count > exit_edge->src->count
       && exit_edge->src->count.differs_from_p (desired_count))
@@ -630,7 +629,7 @@ update_loop_exit_probability_scale_dom_bbs (class loop *loop,
 		   loop->num);
 	  exit_edge->src->count.dump (dump_file, cfun);
 	  fprintf (dump_file,
-		   " which is smaller then desired count of exitting loop ");
+		   " which is smaller then desired count of exiting loop ");
 	  desired_count.dump (dump_file, cfun);
 	  fprintf (dump_file, ". Profile update is impossible.\n");
 	}
@@ -689,9 +688,9 @@ update_loop_exit_probability_scale_dom_bbs (class loop *loop,
 /* Scale profile in LOOP by P.
    If ITERATION_BOUND is not -1, scale even further if loop is predicted
    to iterate too many times.
-   Before caling this function, preheader block profile should be already
+   Before calling this function, preheader block profile should be already
    scaled to final count.  This is necessary because loop iterations are
-   determined by comparing header edge count to latch ege count and thus
+   determined by comparing header edge count to latch edge count and thus
    they need to be scaled synchronously.  */
 
 void
@@ -1419,39 +1418,6 @@ duplicate_loop_body_to_header_edge (class loop *loop, edge e,
   spec_edges[SE_LATCH] = latch_edge;
 
   place_after = e->src;
-  location_t loop_loc = UNKNOWN_LOCATION;
-  unsigned int loop_copyid_base = 0;
-
-  /* Find a location from the loop header - works for both GIMPLE and RTL.  */
-  if (current_ir_type () == IR_GIMPLE)
-    {
-      gimple *last = last_nondebug_stmt (loop->header);
-      loop_loc = last ? gimple_location (last) : UNKNOWN_LOCATION;
-    }
-  else
-    {
-      /* For RTL, try to find an instruction with a valid location.  */
-      rtx_insn *insn = BB_END (loop->header);
-      while (insn && insn != BB_HEAD (loop->header))
-	{
-	  /* Only check location if this is a valid insn.  */
-	  if (INSN_P (insn))
-	    {
-	      location_t loc = INSN_LOCATION (insn);
-	      if (loc != UNKNOWN_LOCATION)
-		{
-		  loop_loc = get_pure_location (loc);
-		  break;
-		}
-	    }
-	  insn = PREV_INSN (insn);
-	}
-    }
-
-  /* Allocate copyid base for this loop duplication - works for both
-     GIMPLE and RTL since allocator is per-function.  */
-  if (loop_loc != UNKNOWN_LOCATION)
-    loop_copyid_base = allocate_copyid_base (loop_loc, ndupl);
 
   for (j = 0; j < ndupl; j++)
     {
@@ -1469,49 +1435,6 @@ duplicate_loop_body_to_header_edge (class loop *loop, edge e,
 	    gcc_assert (!new_bbs[i]->aux);
 	    new_bbs[i]->aux = (void *)(size_t)(j + 1);
 	  }
-
-      /* Assign hierarchical discriminators to distinguish loop iterations.  */
-      if (flags & DLTHE_RECORD_HIERARCHICAL_DISCRIMINATOR
-	  && loop_copyid_base > 0)
-	{
-	  /* Calculate copyid for this iteration.  */
-	  unsigned int copyid = loop_copyid_base + j;
-	  if (copyid > DISCR_COPYID_MAX)
-	    copyid = DISCR_COPYID_MAX;
-
-	  if (current_ir_type () == IR_GIMPLE)
-	    {
-	      /* Update all basic blocks created in this iteration.  */
-	      for (i = 0; i < n; i++)
-		assign_discriminators_to_bb (new_bbs[i], 0, copyid);
-	    }
-	  else
-	    {
-	      /* For RTL, manually update instruction locations.  */
-	      for (i = 0; i < n; i++)
-		{
-		  basic_block bb = new_bbs[i];
-		  rtx_insn *insn;
-
-		  /* Iterate through all instructions in the block.  */
-		  FOR_BB_INSNS (bb, insn)
-		    {
-		      if (INSN_HAS_LOCATION (insn))
-			{
-			  location_t loc = INSN_LOCATION (insn);
-			  /* Get existing discriminator components.  */
-			  discriminator_components comp
-			    = get_discriminator_components_from_loc (loc);
-			  comp.copyid = copyid;
-
-			  /* Apply hierarchical discriminator format.  */
-			  INSN_LOCATION (insn)
-			    = location_with_discriminator_components (loc, comp);
-			}
-		    }
-		}
-	    }
-	}
 
       /* Note whether the blocks and edges belong to an irreducible loop.  */
       if (add_irreducible_flag)
@@ -1640,14 +1563,14 @@ duplicate_loop_body_to_header_edge (class loop *loop, edge e,
 }
 
 /* A callback for make_forwarder block, to redirect all edges except for
-   MFB_KJ_EDGE to the entry part.  E is the edge for that we should decide
+   OTHER(DATA) to the entry part.  E is the edge for that we should decide
    whether to redirect it.  */
 
-edge mfb_kj_edge;
 bool
-mfb_keep_just (edge e)
+mfb_keep_just (edge e, void *data)
 {
-  return e != mfb_kj_edge;
+  edge other = (edge)data;
+  return e != other;
 }
 
 /* True when a candidate preheader BLOCK has predecessors from LOOP.  */
@@ -1729,15 +1652,16 @@ create_preheader (class loop *loop, int flags)
 	return NULL;
     }
 
-  mfb_kj_edge = loop_latch_edge (loop);
-  latch_edge_was_fallthru = (mfb_kj_edge->flags & EDGE_FALLTHRU) != 0;
+  edge latch;
+  latch = loop_latch_edge (loop);
+  latch_edge_was_fallthru = (latch->flags & EDGE_FALLTHRU) != 0;
   if (nentry == 1
       && ((flags & CP_FALLTHRU_PREHEADERS) == 0
   	  || (single_entry->flags & EDGE_CROSSING) == 0))
     dummy = split_edge (single_entry);
   else
     {
-      edge fallthru = make_forwarder_block (loop->header, mfb_keep_just, NULL);
+      edge fallthru = make_forwarder_block (loop->header, mfb_keep_just, latch);
       dummy = fallthru->src;
       loop->header = fallthru->dest;
     }

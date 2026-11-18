@@ -116,14 +116,6 @@ static bitmap blocks_with_phis_to_rewrite;
    NULL if they need to be initialized by create_new_def_for.  */
 static struct function *update_ssa_initialized_fn = NULL;
 
-/* Global data to attach to the main dominator walk structure.  */
-struct mark_def_sites_global_data
-{
-  /* This bitmap contains the variables which are set before they
-     are used in a basic block.  */
-  bitmap kills;
-};
-
 /* It is advantageous to avoid things like life analysis for variables which
    do not need PHI nodes.  This enum describes whether or not a particular
    variable may need a PHI node.  */
@@ -154,7 +146,7 @@ struct common_info
   /* This field indicates whether or not the variable may need PHI nodes.
      See the enum's definition for more detailed information about the
      states.  */
-  ENUM_BITFIELD (need_phi_state) need_phi_state : 2;
+  enum need_phi_state need_phi_state : 2;
 
   /* The current reaching definition replacing this var.  */
   tree current_def;
@@ -346,7 +338,7 @@ get_ssa_name_ann (tree name)
   return info;
 }
 
-/* Return and allocate the auxiliar information for DECL.  */
+/* Return and allocate the auxiliary information for DECL.  */
 
 static inline var_info *
 get_var_info (tree decl)
@@ -374,12 +366,12 @@ clear_ssa_name_info (void)
   current_info_for_ssa_name_age++;
 
   /* If current_info_for_ssa_name_age wraps we use stale information.
-     Asser that this does not happen.  */
+     Assert that this does not happen.  */
   gcc_assert (current_info_for_ssa_name_age != 0);
 }
 
 
-/* Get access to the auxiliar information stored per SSA name or decl.  */
+/* Get access to the auxiliary information stored per SSA name or decl.  */
 
 static inline common_info *
 get_common_info (tree var)
@@ -780,10 +772,13 @@ prune_unused_phi_nodes (bitmap phis, bitmap kills, bitmap uses)
       return;
     }
 
-  /* We want to remove the unnecessary phi nodes, but we do not want to compute
-     liveness information, as that may be linear in the size of CFG, and if
-     there are lot of different variables to rewrite, this may lead to quadratic
-     behavior.
+  /* We want to remove the unnecessary phi nodes without computing the
+     liveness of each variable here.  That takes time linear in the size of
+     the CFG for each variable, which is quadratic when many variables with
+     overlapping live ranges are rewritten.  Virtual operands do not have
+     overlapping live ranges, so for old virtual names
+     insert_updated_phi_nodes_for computes the blocks where they are live on
+     entry, and restricts their IDF to them, before this function runs.
 
      Instead, we basically emulate standard dce.  We put all uses to worklist,
      then for each of them find the nearest def that dominates them.  If this
@@ -3178,6 +3173,36 @@ release_ssa_name_after_update_ssa (tree name)
 }
 
 
+/* Set LIVE to the blocks where the variable described by DB is live on
+   entry.  These are the blocks in DB->LIVEIN_BLOCKS and, transitively,
+   their predecessors that do not define the variable.  */
+
+static void
+compute_livein_region (def_blocks *db, bitmap live)
+{
+  auto_vec<int, 64> worklist;
+  bitmap_iterator bi;
+  unsigned i;
+
+  bitmap_copy (live, db->livein_blocks);
+  EXECUTE_IF_SET_IN_BITMAP (live, 0, i, bi)
+    worklist.safe_push (i);
+
+  while (!worklist.is_empty ())
+    {
+      basic_block bb = BASIC_BLOCK_FOR_FN (cfun, worklist.pop ());
+      edge e;
+      edge_iterator ei;
+
+      FOR_EACH_EDGE (e, ei, bb->preds)
+	if (e->src->index >= NUM_FIXED_BLOCKS
+	    && !bitmap_bit_p (db->def_blocks, e->src->index)
+	    && bitmap_set_bit (live, e->src->index))
+	  worklist.safe_push (e->src->index);
+    }
+}
+
+
 /* Insert new PHI nodes to replace VAR.  DFS contains dominance
    frontier information.
 
@@ -3223,8 +3248,21 @@ insert_updated_phi_nodes_for (tree var, bitmap_head *dfs,
   if (db == NULL || bitmap_empty_p (db->def_blocks))
     return;
 
-  /* Compute the initial iterated dominance frontier.  */
-  pruned_idf = compute_idf (db->def_blocks, dfs);
+  /* Compute the initial iterated dominance frontier.  For an old
+     virtual name, restrict it to the blocks where the name is live on
+     entry.  insert_phi_nodes_for removes the other blocks anyway.  At
+     most one virtual name is live at any point, so the live-in regions
+     of the old virtual names do not overlap and computing them is
+     linear in the size of the CFG in total.  This is not true for real
+     names.  */
+  auto_bitmap region;
+  bitmap live = NULL;
+  if (TREE_CODE (var) == SSA_NAME && virtual_operand_p (var))
+    {
+      compute_livein_region (db, region);
+      live = region;
+    }
+  pruned_idf = compute_idf (db->def_blocks, dfs, live);
 
   if (TREE_CODE (var) == SSA_NAME)
     {
@@ -3315,7 +3353,7 @@ insert_updated_phi_nodes_compare_uids (const void *a, const void *b)
    calling create_new_def_for to create new defs for names that the
    caller wants to replace.
 
-   The caller cretaes the new names to be inserted and the names that need
+   The caller creates the new names to be inserted and the names that need
    to be replaced by calling create_new_def_for for each old definition
    to be replaced.  Note that the function assumes that the
    new defining statement has already been inserted in the IL.
@@ -3477,7 +3515,7 @@ update_ssa (unsigned update_flags)
       statistics_counter_event (cfun, "Symbol to SSA rewrite", 1);
 
       /* If we rename bare symbols initialize the mapping to
-         auxiliar info we need to keep track of.  */
+         auxiliary info we need to keep track of.  */
       var_infos = new hash_table<var_info_hasher> (47);
 
       /* If we have to rename some symbols from scratch, we need to

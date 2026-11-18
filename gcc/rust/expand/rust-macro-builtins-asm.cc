@@ -774,12 +774,52 @@ parse_asm_arg (InlineAsmContext inline_asm_ctx)
   return tl::expected<InlineAsmContext, InlineAsmParseError> (inline_asm_ctx);
 }
 
+// same split as the backend, these operands go in the output list
+static bool
+is_output_operand (const AST::InlineAsmOperand &operand)
+{
+  switch (operand.get_register_type ())
+    {
+    case AST::InlineAsmOperand::RegisterType::Out:
+    case AST::InlineAsmOperand::RegisterType::InOut:
+    case AST::InlineAsmOperand::RegisterType::SplitInOut:
+      return true;
+    default:
+      return false;
+    }
+}
+
+// asm! numbers its operands as written, but the backend hands gcc all the
+// outputs first and then the inputs, so a placeholder has to be renumbered
+// to where its operand ends up.
+static std::vector<size_t>
+gcc_operand_numbers (const std::vector<AST::InlineAsmOperand> &operands)
+{
+  size_t outputs = 0;
+  for (auto &operand : operands)
+    if (is_output_operand (operand))
+      outputs++;
+
+  std::vector<size_t> numbers;
+  size_t out_seen = 0;
+  size_t in_seen = 0;
+  for (auto &operand : operands)
+    {
+      if (is_output_operand (operand))
+	numbers.push_back (out_seen++);
+      else
+	numbers.push_back (outputs + in_seen++);
+    }
+  return numbers;
+}
+
 tl::expected<InlineAsmContext, InlineAsmParseError>
 expand_inline_asm_strings (InlineAsmContext inline_asm_ctx)
 {
   auto &inline_asm = inline_asm_ctx.inline_asm;
 
   auto str_vec = inline_asm.get_template_strs ();
+  auto numbers = gcc_operand_numbers (inline_asm.get_operands ());
 
   decltype (str_vec) resulting_template_vec;
   for (auto &template_str : str_vec)
@@ -809,6 +849,14 @@ expand_inline_asm_strings (InlineAsmContext inline_asm_ctx)
 		case Fmt::ffi::Position::Tag::ArgumentImplicitlyIs:
 		  {
 		    auto idx = next_argument.position.argument_implicitly_is._0;
+		    if (idx >= numbers.size ())
+		      {
+			rust_error_at (inline_asm.get_locus (),
+				       "invalid reference to argument at "
+				       "index %lu",
+				       (unsigned long) idx);
+			break;
+		      }
 		    /*auto trait = next_argument.format;*/
 		    /*auto arg = arguments.at (idx);*/
 
@@ -819,7 +867,8 @@ expand_inline_asm_strings (InlineAsmContext inline_asm_ctx)
 		    /* args.push_back ({arg.get_expr ().clone_expr (),
 		     * trait});*/
 
-		    transformed_template_str += "%" + std::to_string (idx);
+		    transformed_template_str
+		      += "%" + std::to_string (numbers[idx]);
 		    // std::cout << "argument implicitly is: " << idx <<
 		    // std::endl; std::cout << "transformed template str is:"
 		    // << transformed_template_str << std::endl;
@@ -831,7 +880,16 @@ expand_inline_asm_strings (InlineAsmContext inline_asm_ctx)
 		case Fmt::ffi::Position::Tag::ArgumentIs:
 		  {
 		    auto idx = next_argument.position.argument_is._0;
-		    transformed_template_str += "%" + std::to_string (idx);
+		    if (idx >= numbers.size ())
+		      {
+			rust_error_at (inline_asm.get_locus (),
+				       "invalid reference to argument at "
+				       "index %lu",
+				       (unsigned long) idx);
+			break;
+		      }
+		    transformed_template_str
+		      += "%" + std::to_string (numbers[idx]);
 		    break;
 		  }
 		case Fmt::ffi::Position::Tag::ArgumentNamed:
@@ -990,7 +1048,7 @@ validate (InlineAsmContext inline_asm_ctx)
 }
 
 tl::optional<LlvmAsmContext>
-parse_llvm_templates (LlvmAsmContext ctx)
+parse_llvm_template (LlvmAsmContext ctx)
 {
   auto &parser = ctx.parser;
 
@@ -1002,19 +1060,12 @@ parse_llvm_templates (LlvmAsmContext ctx)
       return tl::nullopt;
     }
 
-  ctx.llvm_asm.get_templates ().emplace_back (token->get_locus (),
-					      strip_double_quotes (
-						token->as_string ()));
-  ctx.parser.skip_token ();
+  // TODO: improve string handling?
+  ctx.llvm_asm.set_template (
+    AST::TupleTemplateStr (token->get_locus (),
+			   strip_double_quotes (token->as_string ())));
 
-  token = parser.peek_current_token ();
-  if (token->get_id () != ctx.last_token_id && token->get_id () != COLON
-      && token->get_id () != SCOPE_RESOLUTION)
-    {
-      // We do not handle multiple template string, we provide minimal support
-      // for the black_box intrinsics.
-      rust_unreachable ();
-    }
+  ctx.parser.skip_token ();
 
   return ctx;
 }
@@ -1184,7 +1235,7 @@ parse_llvm_asm (location_t invoc_locus, AST::MacroInvocData &invoc,
   auto asm_ctx = LlvmAsmContext (llvm_asm, parser, last_token_id);
 
   tl::optional<LlvmAsmContext> resulting_context
-    = parse_llvm_templates (asm_ctx).and_then (parse_llvm_arguments);
+    = parse_llvm_template (asm_ctx).and_then (parse_llvm_arguments);
 
   if (resulting_context)
     {

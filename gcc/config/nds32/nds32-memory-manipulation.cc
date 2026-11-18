@@ -160,7 +160,10 @@ nds32_expand_cpymemsi_loop_unknown_size (rtx dstmem, rtx srcmem,
   rtx dst_end;
   rtx size_least_3_bit;
   rtx double_word_end;
-  rtx double_word_mode_loop, byte_mode_entry, byte_mode_loop, end_label;
+  rtx_code_label *double_word_mode_loop;
+  rtx_code_label *byte_mode_entry;
+  rtx_code_label *byte_mode_loop;
+  rtx_code_label *end_label;
   rtx tmp;
   rtx mask_least_3_bit;
   int start_regno;
@@ -261,7 +264,7 @@ nds32_expand_cpymemsi_loop_known_size (rtx dstmem, rtx srcmem,
   rtx dst_itr, src_itr;
   rtx dstmem_m, srcmem_m, dst_itr_m, src_itr_m;
   rtx dst_end;
-  rtx double_word_mode_loop, byte_mode_loop;
+  rtx_code_label *double_word_mode_loop, *byte_mode_loop;
   rtx tmp;
   int start_regno;
   bool align_to_4_bytes = (INTVAL (alignment) & 3) == 0;
@@ -404,7 +407,7 @@ nds32_expand_cpymemsi_unroll (rtx dstmem, rtx srcmem,
   bool align_to_4_bytes = (INTVAL (alignment) & 3) == 0;
   bool align_to_2_bytes = (INTVAL (alignment) & 1) == 0;
 
-  /* Because reduced-set regsiters has few registers
+  /* Because reduced-set registers has few registers
      (r0~r5, r6~10, r15, r28~r31, where 'r15' and 'r28~r31'
       cannot be used for register allocation),
      using 8 registers (32 bytes) for moving memory block
@@ -632,8 +635,8 @@ nds32_gen_dup_8_byte_to_double_word_value (rtx value)
 static rtx
 emit_setmem_doubleword_loop (rtx itr, rtx size, rtx value)
 {
-  rtx word_mode_label = gen_label_rtx ();
-  rtx word_mode_end_label = gen_label_rtx ();
+  rtx_code_label *word_mode_label = gen_label_rtx ();
+  rtx_code_label *word_mode_end_label = gen_label_rtx ();
   rtx byte_mode_size = gen_reg_rtx (SImode);
   rtx byte_mode_size_tmp = gen_reg_rtx (SImode);
   rtx word_mode_end = gen_reg_rtx (SImode);
@@ -679,8 +682,8 @@ static rtx
 emit_setmem_byte_loop (rtx itr, rtx size, rtx value, bool need_end)
 {
   rtx end  = gen_reg_rtx (Pmode);
-  rtx byte_mode_label = gen_label_rtx ();
-  rtx end_label = gen_label_rtx ();
+  rtx_code_label *byte_mode_label = gen_label_rtx ();
+  rtx_code_label *end_label = gen_label_rtx ();
 
   value = force_reg (QImode, value);
 
@@ -805,7 +808,7 @@ nds32_expand_setmem_loop_v3m (rtx dstmem, rtx size, rtx value)
   rtx new_base_reg;
   rtx value4byte, value4doubleword;
   rtx byte_mode_size;
-  rtx last_byte_loop_label = gen_label_rtx ();
+  rtx_code_label *last_byte_loop_label = gen_label_rtx ();
 
   size = force_reg (SImode, size);
 
@@ -1010,7 +1013,7 @@ nds32_expand_strlen (rtx result, rtx str,
   rtx base_reg, backup_base_reg;
   rtx ffb_result;
   rtx target_char_ptr, length;
-  rtx loop_label, tmp;
+  rtx tmp;
 
   if (optimize_size || optimize < 3)
     return false;
@@ -1019,7 +1022,7 @@ nds32_expand_strlen (rtx result, rtx str,
   gcc_assert (CONST_INT_P (target_char) || REG_P (target_char));
 
   base_reg = copy_to_mode_reg (SImode, XEXP (str, 0));
-  loop_label = gen_label_rtx ();
+  rtx_code_label *loop_label = gen_label_rtx ();
 
   ffb_result = gen_reg_rtx (Pmode);
   tmp = gen_reg_rtx (SImode);
@@ -1080,7 +1083,7 @@ nds32_expand_load_multiple (int base_regno, int count,
   rtx new_addr, mem, reg;
 
   /* Generate a unaligned load to prevent load instruction pull out from
-     parallel, and then it will generate lwi, and lose unaligned acces */
+     parallel, and then it will generate lwi, and lose unaligned access */
   if (count == 1)
     {
       reg = gen_rtx_REG (SImode, base_regno);

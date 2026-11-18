@@ -40,7 +40,7 @@ This manual contains no Invariant Sections.  The Front-Cover Texts are
 @c man end
 @end copying
 
-@c Create a separate index for command line options.
+@c Create a separate index for command-line options.
 @defcodeindex op
 @syncodeindex vr op
 
@@ -590,7 +590,7 @@ reject source code containing ``other'' tokens.  In ASCII, the only
 ``other'' characters are @samp{@@}, @samp{$}, @samp{`}, and control
 characters other than NUL (all bits zero).  (Note that @samp{$} is
 normally considered a letter.)  All bytes with the high bit set
-(numeric range 0x7F--0xFF) that were not succesfully interpreted as
+(numeric range 0x7F--0xFF) that were not successfully interpreted as
 part of an extended character in the input encoding are also ``other''
 in the present implementation.
 
@@ -1912,9 +1912,10 @@ selected, the value of the macro is
 @code{201703L} for the 2017 C++ standard,
 @code{202002L} for the 2020 C++ standard,
 @code{202302L} for the 2023 C++ standard,
-or an unspecified value strictly larger than @code{202302L} for the
-experimental languages enabled by @option{-std=c++26} and
-@option{-std=gnu++26}.
+@code{202603L} for the 2026 C++ standard,
+or an unspecified value strictly larger than @code{202603L} for the
+experimental languages enabled by @option{-std=c++29} and
+@option{-std=gnu++29}.
 
 @item __OBJC__
 This macro is defined, with value 1, when the Objective-C compiler is in
@@ -2483,6 +2484,10 @@ by another option such as @option{-ffast-math} or by default.
 
 @item __ROUNDING_MATH__
 This macro is defined if @option{-frounding-math} is used.
+
+@item __UNSAFE_MATH_OPTIMIZATIONS__
+This macro is defined if @option{-funsafe-math-optimizations} is used,
+or enabled by another option such as @option{-ffast-math}.
 
 @item __GNUC_EXECUTION_CHARSET_NAME
 @itemx __GNUC_WIDE_EXECUTION_CHARSET_NAME
@@ -3951,13 +3956,13 @@ as @samp{#include}.
 @item #embed <@var{file}>
 If @var{file} is an absolute filename, this includes the mentioned
 file, otherwise searches it in directories specified by the
-@option{--embed-dir=} command line option for the @var{file}.
+@option{--embed-dir=} command-line option for the @var{file}.
 
 @item #embed "@var{file}"
 This variant searches @var{file} in the same directory as the source
 file which uses the @code{#embed} directive and only if not found there
 continues searching directories specified by the @option{--embed-dir=}
-command line option.
+command-line option.
 @end table
 
 The @code{#embed} directive is expanded as if it was a sequence of

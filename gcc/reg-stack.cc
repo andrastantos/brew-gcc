@@ -139,6 +139,10 @@
       calculations.  This can be guaranteed by clobbering stack registers
       unrelated to the inputs and outputs.
 
+   7. Each operand must occupy a single register.  Operands that
+      need more, such as complex values, which take two, are not
+      supported.
+
    Here are a couple of reasonable asms to want to write.  This asm
    takes one input, which is internally popped, and produces two outputs.
 
@@ -304,7 +308,7 @@ stack_regs_mentioned_p (const_rtx pat)
 /* Return true if INSN mentions stacked registers, else return zero.  */
 
 bool
-stack_regs_mentioned (const_rtx insn)
+stack_regs_mentioned (const rtx_insn *insn)
 {
   unsigned int uid, max;
   int test;
@@ -504,6 +508,16 @@ check_asm_stack_operands (rtx_insn *insn)
 	&& REG_P (SUBREG_REG (recog_data.operand[i])))
       recog_data.operand[i] = SUBREG_REG (recog_data.operand[i]);
 
+  /* Enforce rule #7: Operands must occupy a single register.  */
+
+  for (i = 0; i < recog_data.n_operands; i++)
+    if (STACK_REG_P (recog_data.operand[i])
+	&& REG_NREGS (recog_data.operand[i]) > 1)
+      {
+	error_for_asm (insn, "operand %d must occupy a single register", i);
+	malformed_asm = true;
+      }
+
   /* Set up CLOBBER_REG.  */
 
   n_clobbers = 0;
@@ -542,7 +556,8 @@ check_asm_stack_operands (rtx_insn *insn)
       {
 	if (reg_class_size[(int) op_alt[i].cl] != 1)
 	  {
-	    error_for_asm (insn, "output constraint %d must specify a single register", i);
+	    error_for_asm (insn, "output constraint %d must "
+			   "specify a single register", i);
 	    malformed_asm = true;
 	  }
 	else
@@ -2447,8 +2462,8 @@ subst_stack_regs (rtx_insn *insn, stack_ptr regstack)
 
   /* If the target of the call doesn't clobber any stack registers,
      Don't clear the arguments.  */
-  if (CALL_P (insn)
-      && callee_clobbers_any_stack_reg (insn_callee_abi (insn)))
+  auto call = dyn_cast<rtx_call_insn *> (insn);
+  if (call && callee_clobbers_any_stack_reg (insn_callee_abi (call)))
     {
       int top = regstack->top;
 
@@ -2458,7 +2473,7 @@ subst_stack_regs (rtx_insn *insn, stack_ptr regstack)
 
       if (top >= 0)
 	{
-	  straighten_stack (insn, regstack);
+	  straighten_stack (call, regstack);
 
 	  /* Now mark the arguments as dead after the call.  */
 

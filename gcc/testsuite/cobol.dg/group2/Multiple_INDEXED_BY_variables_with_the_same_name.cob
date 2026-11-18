@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/Multiple_INDEXED_BY_variables_with_the_same_name.out" }
        IDENTIFICATION DIVISION.
        PROGRAM-ID. prog.

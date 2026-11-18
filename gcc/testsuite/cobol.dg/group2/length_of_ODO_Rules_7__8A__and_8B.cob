@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-output-file "group2/length_of_ODO_Rules_7__8A__and_8B.out" }
 
         identification division.

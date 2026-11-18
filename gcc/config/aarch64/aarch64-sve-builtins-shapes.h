@@ -20,7 +20,7 @@
 #ifndef GCC_AARCH64_SVE_BUILTINS_SHAPES_H
 #define GCC_AARCH64_SVE_BUILTINS_SHAPES_H
 
-namespace aarch64_sve
+namespace aarch64_acle
 {
   /* The naming convention is:
 
@@ -81,6 +81,7 @@ namespace aarch64_sve
     extern const function_shape *const adr_index;
     extern const function_shape *const adr_offset;
     extern const function_shape *const binary;
+    extern const function_shape *const binary_aes_lane;
     extern const function_shape *const binary_int_opt_n;
     extern const function_shape *const binary_int_opt_single_n;
     extern const function_shape *const binary_lane;
@@ -95,6 +96,7 @@ namespace aarch64_sve
     extern const function_shape *const binary_rotate;
     extern const function_shape *const binary_scalar;
     extern const function_shape *const binary_single;
+    extern const function_shape *const binary_to_pair_opt_n;
     extern const function_shape *const binary_to_uint;
     extern const function_shape *const binary_uint;
     extern const function_shape *const binary_uint_n;
@@ -171,6 +173,7 @@ namespace aarch64_sve
     extern const function_shape *const luti4_lane_zt;
     extern const function_shape *const luti4_zt;
     extern const function_shape *const mmla;
+    extern const function_shape *const mop4;
     extern const function_shape *const pattern_pred;
     extern const function_shape *const pmov_from_vector;
     extern const function_shape *const pmov_from_vector_lane;
@@ -233,10 +236,12 @@ namespace aarch64_sve
     extern const function_shape *const ternary_rotate;
     extern const function_shape *const ternary_shift_left_imm;
     extern const function_shape *const ternary_shift_right_imm;
+    extern const function_shape *const ternary_to_pair_opt_n;
     extern const function_shape *const ternary_uint;
     extern const function_shape *const ternary_uintq_intq;
     extern const function_shape *const ternary_uintq_intq_lane;
     extern const function_shape *const ternary_uintq_intq_opt_n;
+    extern const function_shape *const ternary_za_uint_dual_single;
     extern const function_shape *const tmad;
     extern const function_shape *const unary;
     extern const function_shape *const unary_convert;

@@ -430,13 +430,14 @@
 ;; power of 2, or if val + 1 is a power of two, where we check for a bunch
 ;; of zeros starting at bit 0).
 
-;; SImode.  This mode is the only one needed, since gcc automatically
-;; extends subregs for lower-size modes.
+;; SImode.  This mode is the only one needed, since we generate only
+;; SImode in the define_insn_and_split splitters.  Note that first
+;; operand can also be HImode or QImode.
 (define_insn "*btst<mode>"
   [(set (reg:ZnNNZSET CRIS_CC0_REGNUM)
 	(compare:ZnNNZSET
 	 (zero_extract:SI
-	  (match_operand:SI 0 "nonmemory_operand" "r, r,r, r,r, r,Kp")
+	  (match_operand 0 "nonmemory_operand"    "r, r,r, r,r, r,Kp")
 	  (match_operand:SI 1 "const_int_operand" "Kc,n,Kc,n,Kc,n,n")
 	  (match_operand:SI 2 "nonmemory_operand" "M, M,Kc,n,r, r,r"))
 	 (const_int 0)))]
@@ -445,7 +446,8 @@
    && CONST_INT_P (operands[1])
    && ((operands[1] == const1_rtx && <MODE>mode == CC_ZnNmode)
        || (operands[2] == const0_rtx && <MODE>mode == CC_NZmode))
-   && (REG_S_P (operands[0])
+   && ((REG_S_P (operands[0])
+        && GET_MODE_SIZE (GET_MODE (operands[0])) <= UNITS_PER_WORD)
        || (operands[1] == const1_rtx
 	   && REG_S_P (operands[2])
 	   && CONST_INT_P (operands[0])
@@ -533,7 +535,6 @@
       && ! reload_completed
       && ! lra_in_progress)
     {
-      rtx insns;
       rtx op0 = operands[0];
       rtx op1 = operands[1];
 
@@ -542,7 +543,7 @@
 		      operand_subword (op1, 0, 1, DImode));
       emit_move_insn (operand_subword (op0, 1, 1, DImode),
 		      operand_subword (op1, 1, 1, DImode));
-      insns = end_sequence ();
+      rtx_insn *insns = end_sequence ();
 
       emit_insn (insns);
       DONE;
@@ -2197,16 +2198,54 @@
   "swapwb %0"
   [(set_attr "slottable" "yes")])
 
+(define_insn "*bswapsi2_not<setcc><setnz><setnzvc>"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(bswap:SI
+	 (not:SI (match_operand:SI 1 "register_operand" "0"))))
+   (clobber (reg:CC CRIS_CC0_REGNUM))]
+  "TARGET_HAS_SWAP"
+  "swapnwb %0"
+  [(set_attr "slottable" "yes")])
+
 ;; This instruction swaps all bits in a register.
 ;; That means that the most significant bit is put in the place
 ;; of the least significant bit, and so on.
 
-(define_insn "cris_swap_bits"
+(define_insn "<acc><anz><anzvc>bitreversesi2<setcc><setnz><setnzvc>"
   [(set (match_operand:SI 0 "register_operand" "=r")
 	(bitreverse:SI (match_operand:SI 1 "register_operand" "0")))
    (clobber (reg:CC CRIS_CC0_REGNUM))]
   "TARGET_HAS_SWAP"
   "swapwbr %0"
+  [(set_attr "slottable" "yes")])
+
+;; Takes an cycle extra but is shorter than a BITREVERSE and a NOT.
+(define_insn "*bitreversesi2_not<setcc><setnz><setnzvc>"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(bitreverse:SI
+	 (not:SI (match_operand:SI 1 "register_operand" "0"))))
+   (clobber (reg:CC CRIS_CC0_REGNUM))]
+  "TARGET_HAS_SWAP"
+  "swapnwbr %0"
+  [(set_attr "slottable" "yes")])
+
+(define_insn "*rotsi2_16<setcc><setnz><setnzvc>"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(rotate:SI (match_operand:SI 1 "register_operand" "0")
+		   (const_int 16)))
+   (clobber (reg:CC CRIS_CC0_REGNUM))]
+  "TARGET_HAS_SWAP"
+  "swapw %0"
+  [(set_attr "slottable" "yes")])
+
+(define_insn "*rotsi2_16_not<setcc><setnz><setnzvc>"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(not:SI
+	 (rotate:SI (match_operand:SI 1 "register_operand" "0")
+		    (const_int 16))))
+   (clobber (reg:CC CRIS_CC0_REGNUM))]
+  "TARGET_HAS_SWAP"
+  "swapnw %0"
   [(set_attr "slottable" "yes")])
 
 ;; Implement ctz using two instructions, one for bit swap and one for clz.
@@ -2517,6 +2556,42 @@
    (set (match_dup 0)
 	(cond:SI (reg:<xCC> CRIS_CC0_REGNUM) (const_int 0)))]
   "")
+
+;; Test a field of bits starting at bit 0 against 0/non-0.
+(define_insn_and_split "*cstore<mode>4_btstqb0_<CC>"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(zcond
+	 (zero_extract:BWD
+	  (match_operand:BWD 1 "register_operand" "r")
+	  (match_operand 2 "const_int_operand" "Kc")
+	  (const_int 0))
+	 (const_int 0)))
+   (clobber (reg:CC CRIS_CC0_REGNUM))]
+  ""
+  "#"
+  "&& reload_completed"
+  [(set (reg:CC_NZ CRIS_CC0_REGNUM)
+	(compare:CC_NZ
+	 (zero_extract:SI (match_dup 1) (match_dup 2) (const_int 0))
+	 (const_int 0)))
+   (set (match_dup 0)
+	(zcond:SI (reg:CC_NZ CRIS_CC0_REGNUM) (const_int 0)))]
+  "")
+
+;; Setting a register to (the result of a test of zero against) a
+;; single bit at operand[0] (to 0 or non-0) is at the moment a bit too
+;; complicated to be worthwhile: for the non-zero case, it's a tie
+;; using btstq+smi or lsrq+andq.  For the zero case (in effect an
+;; extzv+negation) we could do with one insn less (no negation).
+;; However, for the negated combination, combine looks for a match
+;; against different patterns depending on which bit (number) is
+;; tested.  FIXME: Revisit for combine changes.  Guided by combine
+;; attempts, attempted extzv+matching an anonymous pattern that does
+;; (zero_extract:BWD (xor (reg:BWD) (const_int 1 << pos))
+;;                   (const_int 1) (const_int pos)))
+;; where pos is a Kc constant.  (Works for some values of pos, not for
+;; others.  Combine seems to always pick BWD=QI regardless of size of
+;; datum matched.)
 
 ;; Like bCC, we have to check the overflow bit for
 ;; signed conditions.

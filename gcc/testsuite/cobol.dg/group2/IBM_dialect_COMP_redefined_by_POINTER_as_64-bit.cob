@@ -1,4 +1,5 @@
-       *> { dg-do run }
+      *> Do not edit this generated file.  See README.txt
+      *> { dg-do run }
        *> { dg-options "-dialect ibm" }
        *> { dg-output-file "group2/IBM_dialect_COMP_redefined_by_POINTER_as_64-bit.out" }
 

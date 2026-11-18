@@ -355,6 +355,8 @@ print_mcu (const avr_mcu_t *mcu, const McuInfo &mi)
 
   fprintf (f, "*link_relax:\n\t%s\n\n", LINK_RELAX_SPEC);
 
+  fprintf (f, "*link_no_call_main:\n\t%s\n\n", "%{mno-call-main: --defsym __call_main=0}");
+
   fprintf (f, "*link_arch:\n\t%s", link_arch_spec);
   if (mi.is_device
       && rodata_pm_offset)
@@ -373,6 +375,12 @@ print_mcu (const avr_mcu_t *mcu, const McuInfo &mi)
       fprintf (f, "*link_text_start:\n");
       if (mcu->text_section_start != 0x0)
 	fprintf (f, "\t%%{!Ttext:-Ttext 0x%lX}", 0UL + mcu->text_section_start);
+      fprintf (f, "\n\n");
+
+      fprintf (f, "*link_prune_vectab:\n");
+#if defined (WITH_AVRLIBC) && defined (HAVE_LD_AVR_PRUNE_VECTAB)
+      fprintf (f, "\t%%{!r:%%{mprune-vectab:--prune-vectab}}");
+#endif // Have --prune-vectab
       fprintf (f, "\n\n");
     }
 

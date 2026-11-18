@@ -34,7 +34,7 @@ Removal of <code class="filename">&lt;ext/tree&gt;</code>, moved to <code class=
    GCC 3.4 onwards the default allocator uses <code class="code">new</code> anyway,
    but for the optional pooling allocators the functionality is enabled by
    setting <code class="literal">GLIBCXX_FORCE_NEW</code> in the environment, see
-   <a class="link" href="mt_allocator.html" title="Chapter 19. The mt_allocator">the mt allocator chapter</a>
+   <a class="link" href="mt_allocator.html" title="Chapter 20. The mt_allocator">the mt allocator chapter</a>
    for details.
    </p><p>Error handling in iostreams cleaned up, made consistent. </p></div><div class="section"><div class="titlepage"><div><div><h3 class="title"><a id="api.rel_330"></a><code class="constant">3.3</code></h3></div></div></div><p>
   </p></div><div class="section"><div class="titlepage"><div><div><h3 class="title"><a id="api.rel_340"></a><code class="constant">3.4</code></h3></div></div></div><p>
@@ -87,7 +87,7 @@ Debug mode first appears.
 </p><p>
 Precompiled header support <acronym class="acronym">PCH</acronym> support.
 </p><p>
-Macro guard for changed, from <code class="literal">_GLIBCPP_</code> to <code class="literal">_GLIBCXX_</code>.
+Macro guard changed, from <code class="literal">_GLIBCPP_</code> to <code class="literal">_GLIBCXX_</code>.
 </p><p>
 Extension <code class="filename">&lt;ext/stdio_sync_filebuf.h&gt;</code> added.
 </p><p>
@@ -141,7 +141,7 @@ Backward include edit.
     <code class="filename">&lt;auto_ptr.h&gt;</code> and <code class="filename">&lt;binders.h&gt;</code>
   </p></li></ul></div><p>
 Header dependency streamlining.
-</p><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p><code class="filename">&lt;algorithm&gt;</code> no longer includes <code class="filename">&lt;climits&gt;</code>, <code class="filename">&lt;cstring&gt;</code>, or <code class="filename">&lt;iosfwd&gt;</code> </p></li><li class="listitem"><p><code class="filename">&lt;bitset&gt;</code> no longer includes <code class="filename">&lt;istream&gt;</code> or <code class="filename">&lt;ostream&gt;</code>, adds <code class="filename">&lt;iosfwd&gt;</code> </p></li><li class="listitem"><p><code class="filename">&lt;functional&gt;</code> no longer includes <code class="filename">&lt;cstddef&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;iomanip&gt;</code> no longer includes <code class="filename">&lt;istream&gt;</code>, <code class="filename">&lt;istream&gt;</code>, or <code class="filename">&lt;functional&gt;</code>, adds <code class="filename">&lt;ioswd&gt;</code> </p></li><li class="listitem"><p><code class="filename">&lt;numeric&gt;</code> no longer includes <code class="filename">&lt;iterator&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;string&gt;</code> no longer includes <code class="filename">&lt;algorithm&gt;</code> or <code class="filename">&lt;memory&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;valarray&gt;</code> no longer includes <code class="filename">&lt;numeric&gt;</code> or <code class="filename">&lt;cstdlib&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;tr1/hashtable&gt;</code> no longer includes <code class="filename">&lt;memory&gt;</code> or <code class="filename">&lt;functional&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;tr1/memory&gt;</code> no longer includes <code class="filename">&lt;algorithm&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;tr1/random&gt;</code> no longer includes <code class="filename">&lt;algorithm&gt;</code> or <code class="filename">&lt;fstream&gt;</code></p></li></ul></div><p>
+</p><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p><code class="filename">&lt;algorithm&gt;</code> no longer includes <code class="filename">&lt;climits&gt;</code>, <code class="filename">&lt;cstring&gt;</code>, or <code class="filename">&lt;iosfwd&gt;</code> </p></li><li class="listitem"><p><code class="filename">&lt;bitset&gt;</code> no longer includes <code class="filename">&lt;istream&gt;</code> or <code class="filename">&lt;ostream&gt;</code>, adds <code class="filename">&lt;iosfwd&gt;</code> </p></li><li class="listitem"><p><code class="filename">&lt;functional&gt;</code> no longer includes <code class="filename">&lt;cstddef&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;iomanip&gt;</code> no longer includes <code class="filename">&lt;istream&gt;</code>, <code class="filename">&lt;ostream&gt;</code>, or <code class="filename">&lt;functional&gt;</code>, adds <code class="filename">&lt;iosfwd&gt;</code> </p></li><li class="listitem"><p><code class="filename">&lt;numeric&gt;</code> no longer includes <code class="filename">&lt;iterator&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;string&gt;</code> no longer includes <code class="filename">&lt;algorithm&gt;</code> or <code class="filename">&lt;memory&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;valarray&gt;</code> no longer includes <code class="filename">&lt;numeric&gt;</code> or <code class="filename">&lt;cstdlib&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;tr1/hashtable&gt;</code> no longer includes <code class="filename">&lt;memory&gt;</code> or <code class="filename">&lt;functional&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;tr1/memory&gt;</code> no longer includes <code class="filename">&lt;algorithm&gt;</code></p></li><li class="listitem"><p><code class="filename">&lt;tr1/random&gt;</code> no longer includes <code class="filename">&lt;algorithm&gt;</code> or <code class="filename">&lt;fstream&gt;</code></p></li></ul></div><p>
 Debug mode for <code class="filename">&lt;unordered_map&gt;</code> and <code class="filename">&lt;unordered_set&gt;</code>.
 </p><p>
 Parallel mode first appears.
@@ -515,4 +515,13 @@ Deprecated the non-standard overload of <code class="code">std::fabs</code> for
 </p><p>
 Made <code class="code">std::is_integral_v&lt;__int128&gt;</code> true for strict
 <code class="code">-std</code> dialects.
+</p></div><div class="section"><div class="titlepage"><div><div><h3 class="title"><a id="api.rel_17"></a><code class="constant">17</code></h3></div></div></div><p>
+Removed allocator-extended constructors and support for uses-allocator
+construction from <code class="classname">std::promise</code> and
+<code class="classname">std::packaged_task</code>.
+</p><p>
+<code class="code">std::numeric_limits::has_denorm</code>,
+<code class="code">std::numeric_limits::has_denorm_loss</code>,
+and <code class="code">enum std::float_denorm_style</code> and its enumerators
+were deprecated for C++23.
 </p></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="abi.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="appendix_porting.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="backwards.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top">ABI Policy and Guidelines </td><td width="20%" align="center"><a accesskey="h" href="../index.html">Home</a></td><td width="40%" align="right" valign="top"> Backwards Compatibility</td></tr></table></div></body></html>

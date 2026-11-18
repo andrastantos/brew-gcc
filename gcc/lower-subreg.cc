@@ -30,6 +30,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "memmodel.h"
 #include "tm_p.h"
 #include "expmed.h"
+#include "regs.h"
 #include "insn-config.h"
 #include "emit-rtl.h"
 #include "recog.h"
@@ -75,6 +76,10 @@ along with GCC; see the file COPYING3.  If not see
 #define LOG_COSTS 0
 #define FORCE_LOWERING 0
 
+/* True if a CONCATN was created by decompose_register.  */
+#define DECOMPOSED_REGISTER_P(x) \
+  (RTL_FLAG_CHECK1 ("DECOMPOSED_REGISTER_P", (x), CONCATN)->volatil)
+
 /* Bit N in this bitmap is set if regno N is used in a context in
    which we can decompose it.  */
 static bitmap decomposable_context;
@@ -112,6 +117,9 @@ interesting_mode_p (machine_mode mode, unsigned int *bytes,
 		    unsigned int *words)
 {
   if (!GET_MODE_SIZE (mode).is_constant (bytes))
+    return false;
+  if (maybe_lt ((unsigned) UNITS_PER_WORD,
+		(poly_uint64) REGMODE_NATURAL_SIZE (mode)))
     return false;
   *words = CEIL (*bytes, UNITS_PER_WORD);
   return true;
@@ -302,7 +310,20 @@ static bool
 simple_move_operand (rtx x)
 {
   if (GET_CODE (x) == SUBREG)
-    x = SUBREG_REG (x);
+    {
+      /* Exclude subregs whose outer mode can be split into multiple words
+	 but whose inner mode cannot.  Attempting to split such a subreg
+	 would mean trying to split the unsplittable inner register.
+
+	 If instead the subreg occupies a single word, we can keep it as-is,
+	 regardless of what the SUBREG_REG is.  If the outer mode cannot be
+	 split then the subreg makes things no worse than they already are.  */
+      unsigned int factor, size;
+      if (interesting_mode_p (GET_MODE (x), &size, &factor) && factor > 1
+	  && !interesting_mode_p (GET_MODE (SUBREG_REG (x)), &size, &factor))
+	return false;
+      x = SUBREG_REG (x);
+    }
 
   if (!OBJECT_P (x))
     return false;
@@ -633,6 +654,7 @@ decompose_register (unsigned int regno)
     RTVEC_ELT (v, i) = gen_reg_rtx_offset (reg, word_mode, i * UNITS_PER_WORD);
 
   PUT_CODE (reg, CONCATN);
+  DECOMPOSED_REGISTER_P (reg) = true;
   XVEC (reg, 0) = v;
 
   if (dump_file)
@@ -644,25 +666,49 @@ decompose_register (unsigned int regno)
     }
 }
 
+/* Return whether we should resolve X into the registers into which it
+   was decomposed.  */
+
+static bool
+resolve_reg_p (rtx x)
+{
+  return GET_CODE (x) == CONCATN && DECOMPOSED_REGISTER_P (x);
+}
+
+/* Return whether X is a SUBREG of a register which we need to
+   resolve.  */
+
+static bool
+resolve_subreg_p (rtx x)
+{
+  if (GET_CODE (x) != SUBREG)
+    return false;
+  return resolve_reg_p (SUBREG_REG (x));
+}
+
 /* Get a SUBREG of a CONCATN.  */
 
 static rtx
 simplify_subreg_concatn (machine_mode outermode, rtx op, poly_uint64 orig_byte)
 {
-  unsigned int outer_size, outer_words, inner_size, inner_words;
+  unsigned int outer_size, inner_size, inner_words;
   machine_mode innermode, partmode;
   rtx part;
   unsigned int final_offset;
   unsigned int byte;
 
+  gcc_assert (resolve_reg_p (op));
+
   innermode = GET_MODE (op);
-  if (!interesting_mode_p (outermode, &outer_size, &outer_words)
-      || !interesting_mode_p (innermode, &inner_size, &inner_words))
+
+  if (!interesting_mode_p (innermode, &inner_size, &inner_words))
     gcc_unreachable ();
 
-  /* Must be constant if interesting_mode_p passes.  */
+  if (!GET_MODE_SIZE (outermode).is_constant (&outer_size))
+    return NULL_RTX;
+
+  /* Must be constant if outer_size is.  */
   byte = orig_byte.to_constant ();
-  gcc_assert (GET_CODE (op) == CONCATN);
   gcc_assert (byte % outer_size == 0);
 
   gcc_assert (byte < inner_size);
@@ -701,7 +747,7 @@ simplify_gen_subreg_concatn (machine_mode outermode, rtx op,
      If OP is a SUBREG of a CONCATN, then it must be a simple mode
      change with the same size and offset 0, or it must extract a
      part.  We shouldn't see anything else here.  */
-  if (GET_CODE (op) == SUBREG && GET_CODE (SUBREG_REG (op)) == CONCATN)
+  if (resolve_subreg_p (op))
     {
       rtx op2;
 
@@ -729,7 +775,7 @@ simplify_gen_subreg_concatn (machine_mode outermode, rtx op,
       gcc_assert (innermode == GET_MODE (op));
     }
 
-  if (GET_CODE (op) == CONCATN)
+  if (resolve_reg_p (op))
     return simplify_subreg_concatn (outermode, op, byte);
 
   ret = simplify_gen_subreg (outermode, op, innermode, byte);
@@ -745,30 +791,10 @@ simplify_gen_subreg_concatn (machine_mode outermode, rtx op,
   return ret;
 }
 
-/* Return whether we should resolve X into the registers into which it
-   was decomposed.  */
-
-static bool
-resolve_reg_p (rtx x)
-{
-  return GET_CODE (x) == CONCATN;
-}
-
-/* Return whether X is a SUBREG of a register which we need to
-   resolve.  */
-
-static bool
-resolve_subreg_p (rtx x)
-{
-  if (GET_CODE (x) != SUBREG)
-    return false;
-  return resolve_reg_p (SUBREG_REG (x));
-}
-
 /* Look for SUBREGs in *LOC which need to be decomposed.  */
 
 static bool
-resolve_subreg_use (rtx *loc, rtx insn)
+resolve_subreg_use (rtx *loc, rtx_insn *insn)
 {
   subrtx_ptr_iterator::array_type array;
   FOR_EACH_SUBRTX_PTR (iter, array, loc, NONCONST)
@@ -815,7 +841,7 @@ resolve_reg_notes (rtx_insn *insn)
   if (note)
     {
       int old_count = num_validated_changes ();
-      if (resolve_subreg_use (&XEXP (note, 0), NULL_RTX))
+      if (resolve_subreg_use (&XEXP (note, 0), nullptr))
 	remove_note (insn, note);
       else
 	if (old_count != num_validated_changes ())
@@ -880,7 +906,7 @@ can_decompose_p (rtx x)
 static rtx
 resolve_operand_for_swap_move_operator (rtx opnd)
 {
-  gcc_assert (GET_CODE (opnd) == CONCATN);
+  gcc_assert (resolve_reg_p (opnd));
   rtx concatn = copy_rtx (opnd);
   rtx op0 = XVECEXP (concatn, 0, 0);
   rtx op1 = XVECEXP (concatn, 0, 1);
@@ -999,7 +1025,7 @@ resolve_simple_move (rtx set, rtx_insn *insn)
 
   /* It's possible for the code to use a subreg of a decomposed
      register while forming an address.  We need to handle that before
-     passing the address to emit_move_insn.  We pass NULL_RTX as the
+     passing the address to emit_move_insn.  We pass nullptr as the
      insn parameter to resolve_subreg_use because we cannot validate
      the insn yet.  */
   if (MEM_P (src) || MEM_P (dest))
@@ -1007,9 +1033,9 @@ resolve_simple_move (rtx set, rtx_insn *insn)
       int acg;
 
       if (MEM_P (src))
-	resolve_subreg_use (&XEXP (src, 0), NULL_RTX);
+	resolve_subreg_use (&XEXP (src, 0), nullptr);
       if (MEM_P (dest))
-	resolve_subreg_use (&XEXP (dest, 0), NULL_RTX);
+	resolve_subreg_use (&XEXP (dest, 0), nullptr);
       acg = apply_change_group ();
       gcc_assert (acg);
     }
@@ -1149,7 +1175,7 @@ resolve_simple_move (rtx set, rtx_insn *insn)
 
   insns = end_sequence ();
 
-  copy_reg_eh_region_note_forward (insn, insns, NULL_RTX);
+  copy_reg_eh_region_note_forward (insn, insns, nullptr);
 
   emit_insn_before (insns, insn);
 
@@ -1243,11 +1269,12 @@ resolve_debug (rtx_insn *insn)
 
 	  if (x)
 	    *loc = x;
-	  else
-	    x = copy_rtx (*loc);
 	}
-      if (resolve_reg_p (x))
-	*loc = copy_rtx (x);
+      else if (resolve_reg_p (x))
+	{
+	  *loc = copy_rtx (x);
+	  DECOMPOSED_REGISTER_P (*loc) = false;
+	}
     }
 
   df_insn_rescan (insn);
