@@ -1,6 +1,9 @@
 /* { dg-do run } */
 /* { dg-options "-fstack-protector" } */
 /* { dg-require-effective-target fstack_protector } */
+/* Brew starts the stack at the top of memory and crt0 puts no argv/environment
+   strings above main's frame, so the overrun faults before the canary is checked.  */
+/* { dg-xfail-run-if "overrun runs off the top of memory" { brew-*-* } } */
 
 #include <stdlib.h>
 
