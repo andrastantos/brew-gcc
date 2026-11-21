@@ -895,3 +895,18 @@
   "reload_completed"
   "$pc <- $lr"
 )
+
+;; -------------------------------------------------------------------------
+;; Trap
+;; -------------------------------------------------------------------------
+
+;; __builtin_trap: 'fill' (SWI 0, instruction code 0) raises exc_swi_0, the
+;; exception for executing unused space; the simulator stops with SIGILL in
+;; the user environment.  'break' (SWI 1) is left to debuggers.
+(define_insn "trap"
+  [(trap_if (const_int 1) (const_int 0))]
+  ""
+  "fill"
+)
+
+(include "sync.md")

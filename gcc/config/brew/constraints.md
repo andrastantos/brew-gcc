@@ -114,3 +114,11 @@
     (match_test "REG_P(XEXP(op, 0)) && REGNO_OK_FOR_BASE_P(REGNO(XEXP(op, 0)))")
   )
 )
+
+(define_memory_constraint "Q"
+  "A memory operand with a register-indirect address (memll, memsc)."
+  (and
+    (match_code "mem")
+    (match_test "REG_P(XEXP(op, 0))")
+  )
+)
