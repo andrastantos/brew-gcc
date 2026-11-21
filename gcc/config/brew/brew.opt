@@ -21,3 +21,21 @@
 msoft-float
 Target Mask(SOFT_FLOAT)
 Generate code with floating point emulation.
+
+menvironment=
+Target RejectNegative Joined Enum(brew_environment) Var(brew_environment) Init(0)
+-menvironment=[user|operating]	Link for the given run-time environment: user (TASK mode, syscalls provided by the simulator or an OS; the default) or operating (bare metal, started from reset in SCHEDULER mode).
+
+Enum
+Name(brew_environment) Type(int)
+Known run-time environments (for use with the -menvironment= option):
+
+EnumValue
+Enum(brew_environment) String(user) Value(0)
+
+EnumValue
+Enum(brew_environment) String(operating) Value(1)
+
+mno-crt0
+Target RejectNegative
+Do not link the run-time environment's startup file (crt0.o).
