@@ -1,6 +1,5 @@
 /* { dg-do compile { target tail_call } } */
 /* { dg-options "-fdelayed-branch" { target sparc*-*-* } } */
-/* { dg-xfail-if "sibcall optimizations are disabled at the moment" { brew-*-* } "*" "" } */
 
 extern void abort (void);
 
