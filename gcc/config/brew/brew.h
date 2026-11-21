@@ -192,28 +192,34 @@
 //       Moxie uses this approach.
 #define STATIC_CHAIN_REGNUM BREW_REG_STATIC_CHAIN
 
+// Classes must be ordered so that every class comes after its subclasses,
+// with ALL_REGS last.
 enum reg_class
 {
   NO_REGS,
+  SIBCALL_REGS,
+  TINY_OFS_REGS,
   GENERAL_REGS,
   SPECIAL_REGS,
   ALL_REGS,
-  TINY_OFS_REGS,
   LIM_REG_CLASSES
 };
 
 #define REG_CLASS_CONTENTS {                                   \
   { 0x00000000 }, /* Empty */                                  \
+  { 0x000000FF }, /* $r0 to $r7: sibcall targets */            \
+  { (1 << BREW_REG_FP) | (1 << BREW_REG_SP) }, /* registers that can use tiny offsets */ \
   { 0x0001FFFF }, /* $r0 to $r14; $?fp, $?ap */                \
   { 0x00020000 }, /* $pc */                                    \
-  { 0x0002FFFF }, /* All registers */                          \
-  { (1 << BREW_REG_FP) | (1 << BREW_REG_SP) } /* registers that can use tiny offsets */ \
+  { 0x0002FFFF }  /* All registers */                          \
 }
 
 #define N_REG_CLASSES LIM_REG_CLASSES
 
 #define REG_CLASS_NAMES {\
     "NO_REGS", \
+    "SIBCALL_REGS", \
+    "TINY_OFS_REGS", \
     "GENERAL_REGS", \
     "SPECIAL_REGS", \
     "ALL_REGS" }

@@ -115,6 +115,11 @@
   )
 )
 
+(define_register_constraint "j" "SIBCALL_REGS"
+  "A call-clobbered register ($r0 to $r7), for the target of an indirect
+   sibcall: the sibcall epilogue restores the call-saved registers before
+   the jump.")
+
 (define_memory_constraint "Q"
   "A memory operand with a register-indirect address (memll, memsc)."
   (and
