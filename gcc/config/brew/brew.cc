@@ -483,6 +483,19 @@ brew_dynamic_chain_address(rtx frameaddr)
 }
 
 
+/* Worker for PROFILE_HOOK: emit _mcount (frompc, selfpc), where frompc
+   is the incoming $lr (the caller's return address) and selfpc the
+   address of the current function.  */
+void
+brew_profile_hook()
+{
+  rtx frompc = get_hard_reg_initial_val (Pmode, BREW_REG_LINK);
+  rtx selfpc = XEXP (DECL_RTL (current_function_decl), 0);
+  rtx fun = gen_rtx_SYMBOL_REF (Pmode, MCOUNT_NAME);
+  emit_library_call (fun, LCT_NORMAL, VOIDmode,
+		     frompc, Pmode, selfpc, Pmode);
+}
+
 /* RETURN_ADDR_RTX should return the return address for a frame pointer
    in FRAME. COUNT tells how many frames we've stepped back on the
    call-chain */

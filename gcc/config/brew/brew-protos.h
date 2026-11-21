@@ -26,6 +26,7 @@ extern void brew_expand_call(machine_mode mode, rtx *operands);
 extern bool brew_soft_float();
 extern rtx brew_dynamic_chain_address(rtx frameaddr);
 extern rtx brew_return_addr_rtx(unsigned int count, rtx frame);
+extern void brew_profile_hook();
 extern rtx brew_eh_return_handler_rtx();
 extern rtx brew_eh_return_stackadj_rtx();
 extern bool brew_legitimate_tiny_address_p(rtx x);

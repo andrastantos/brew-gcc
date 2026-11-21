@@ -1009,6 +1009,9 @@ Objective-C and Objective-C++ Dialects}.
 -mfast-fp  -minline-plt  -mmulticore  -mcorea  -mcoreb  -msdram
 -micplb}
 
+@emph{Brew Options} (@ref{Brew Options})
+@gccoptlist{-msoft-float  -menvironment=@var{env}  -mno-crt0}
+
 @emph{C6X Options} (@ref{C6X Options})
 @gccoptlist{-mbig-endian  -mlittle-endian  -march=@var{cpu}
 -msim  -msdata=@var{sdata-type}  -mdsbt  -mlong-calls}
@@ -21423,6 +21426,7 @@ other compilers on the same platform.
 * ARM Options::
 * AVR Options::
 * Blackfin Options::
+* Brew Options::
 * C6X Options::
 * CRIS Options::
 * C-SKY Options::
@@ -25445,6 +25449,45 @@ The loader should initialize SDRAM before loading the application.
 Assume that ICPLBs are enabled at run time.  This has an effect on certain
 anomaly workarounds.  For Linux targets, the default is to assume ICPLBs
 are enabled; for standalone applications the default is off.
+@end table
+
+@node Brew Options
+@subsection Brew Options
+@cindex Brew Options
+
+These options are defined for Brew:
+
+@table @gcctabopt
+
+@opindex msoft-float
+@item -msoft-float
+Generate code with floating-point emulation: floating-point operations
+become calls to library routines.
+
+@opindex menvironment
+@item -menvironment=@var{env}
+Link for the run-time environment @var{env}, which selects the startup
+file (@file{crt0.o}) and board support library (@file{libbrew.a}).
+@var{env} is one of:
+
+@table @samp
+@item user
+The program runs in TASK mode, and an operating system or the
+simulator provides the system calls and sets up the stack.  This is
+the default.
+
+@item operating
+The program runs on bare metal from reset in SCHEDULER mode, with no
+system calls; the board support library drives the console device
+directly.  Without a linker script, the startup code is placed at the
+reset vector (address 0) and the rest of the program above the I/O
+devices.
+@end table
+
+@opindex mno-crt0
+@item -mno-crt0
+Do not link in the run-time environment's startup file (@file{crt0.o}).
+
 @end table
 
 @node C6X Options
