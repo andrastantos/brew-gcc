@@ -234,6 +234,7 @@ TARGET_SPECIFIC_PAGES = {
     'gcc/AVR-Options.html' : 'gcc/config/avr/',
     'gcc/Adapteva-Epiphany-Options.html' : 'gcc/config/epiphany/',
     'gcc/Blackfin-Options.html' : 'gcc/config/bfin/',
+    'gcc/Brew-Options.html' : 'gcc/config/brew/',
     'gcc/C-SKY-Options.html' : 'gcc/config/csky/',
     'gcc/C6X-Options.html' : 'gcc/config/c6x/',
     'gcc/CRIS-Options.html' : 'gcc/config/cris/',
