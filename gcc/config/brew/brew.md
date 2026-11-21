@@ -786,7 +786,7 @@
 (define_insn "*sibcall"
   [
     (call
-      (mem:QI (match_operand:SI 0 "nonmemory_operand" "L,i,r"))
+      (mem:QI (match_operand:SI 0 "nonmemory_operand" "L,i,j"))
       (match_operand 1 "")
     )
     (return)
@@ -804,7 +804,7 @@
     (set
       (match_operand 0 "register_operand" "=r,r,r")
       (call
-        (mem:QI (match_operand:SI 1 "nonmemory_operand" "L,i,r"))
+        (mem:QI (match_operand:SI 1 "nonmemory_operand" "L,i,j"))
         (match_operand 2 "")
       )
     )
