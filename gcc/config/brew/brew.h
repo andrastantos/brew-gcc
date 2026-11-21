@@ -25,8 +25,17 @@
 //#include "../linux.h"
 //#endif
 
+/* The board support files (libgloss/brew) come in one variant per run-time
+   environment, -menvironment=user (the default) or operating, installed in a
+   subdirectory named after it with the same file names:
+   user_env/{crt0.o,libbrew.a} and operating_env/{crt0.o,libbrew.a}.  */
+#define BREW_ENV_FILE(f) \
+  "%{menvironment=operating:operating_env/" f "%s;:user_env/" f "%s}"
+#define BREW_LIBBREW BREW_ENV_FILE ("libbrew.a")
+
 #undef  STARTFILE_SPEC
-#define STARTFILE_SPEC "%{!mno-crt0:crt0%O%s} crti.o%s crtbegin.o%s"
+#define STARTFILE_SPEC \
+  "%{!mno-crt0:" BREW_ENV_FILE ("crt0%O") "} crti.o%s crtbegin.o%s"
 
 /* Provide an ENDFILE_SPEC appropriate for svr4.  Here we tack on our own
    magical crtend.o file (see crtstuff.c) which provides part of the
@@ -36,18 +45,24 @@
 /* We also need to resolve some circular references between libc and libbrew at the end */
 
 #undef  ENDFILE_SPEC
-#define ENDFILE_SPEC "crtend.o%s crtn.o%s %{!shared:%{!symbolic:-lc -lbrew -lc -lbrew}}"
+#define ENDFILE_SPEC "crtend.o%s crtn.o%s %{!shared:%{!symbolic:-lc " \
+  BREW_LIBBREW " -lc " BREW_LIBBREW "}}"
 
 /* Provide a LIB_SPEC appropriate for svr4.  Here we tack on the default
    standard C library (unless we are building a shared library) and
    the target BSP code (libgloss essentially). */
 
 #undef LIB_SPEC
-#define LIB_SPEC "%{!shared:%{!symbolic:-lc -lbrew}}"
+#define LIB_SPEC "%{!shared:%{!symbolic:-lc " BREW_LIBBREW "}}"
 
+/* In the operating environment the CPU starts at address 0, where crt0
+   puts __start (section .reset).  Without a linker script of the user's,
+   place .reset there and the rest of the program above the I/O devices of
+   the simulator and the Anachron system (0x10000-0x2ffff).  */
 #undef  LINK_SPEC
 #define LINK_SPEC "%{h*} %{v:-V}\
-                   %{static:-Bstatic} %{shared:-shared} %{symbolic:-Bsymbolic}"
+                   %{static:-Bstatic} %{shared:-shared} %{symbolic:-Bsymbolic}\
+                   %{menvironment=operating:%{!T*:--section-start=.reset=0 -Ttext-segment=0x100000}}"
 
 //#ifndef MULTILIB_DEFAULTS
 //#define MULTILIB_DEFAULTS {}
