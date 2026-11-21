@@ -30,4 +30,8 @@ extern rtx brew_eh_return_handler_rtx();
 extern rtx brew_eh_return_stackadj_rtx();
 extern bool brew_legitimate_tiny_address_p(rtx x);
 extern bool brew_legitimate_offset_address_p(rtx x, bool strict_p);
-
+extern void brew_atomic_pre_fence(HOST_WIDE_INT model);
+extern void brew_atomic_post_fence(HOST_WIDE_INT model);
+extern void brew_expand_subword_cas(rtx bool_out, rtx old_out, rtx mem, rtx expected, rtx desired, HOST_WIDE_INT model);
+extern void brew_expand_subword_rmw(rtx old_out, rtx mem, rtx val, enum rtx_code code, HOST_WIDE_INT model);
+extern const char *brew_output_masked_rmw(rtx *operands);

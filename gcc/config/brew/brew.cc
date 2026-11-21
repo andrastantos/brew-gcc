@@ -39,6 +39,8 @@
 #include "varasm.h"
 #include "calls.h"
 #include "expr.h"
+#include "optabs.h"
+#include "expmed.h"
 #include "builtins.h"
 #include "explow.h"
 #include "tm_p.h"
@@ -1273,5 +1275,142 @@ brew_asm_output_mi_thunk(
 
 
 struct gcc_target targetm = TARGET_INITIALIZER;
+
+// Fences for an atomic read-modify-write loop (sync.md) with memory model
+// MODEL: Brew doesn't order loads and stores among themselves, so release
+// semantics need a full fence before the loop and acquire semantics one
+// after it.
+void
+brew_atomic_pre_fence (HOST_WIDE_INT model)
+{
+  enum memmodel m = memmodel_from_int (model);
+  if (is_mm_release (m) || is_mm_acq_rel (m) || is_mm_seq_cst (m))
+    emit_insn (gen_brew_fence ());
+}
+
+void
+brew_atomic_post_fence (HOST_WIDE_INT model)
+{
+  enum memmodel m = memmodel_from_int (model);
+  if (is_mm_acquire (m) || is_mm_consume (m) || is_mm_acq_rel (m)
+      || is_mm_seq_cst (m))
+    emit_insn (gen_brew_fence ());
+}
+
+// 8- and 16-bit atomics (sync.md) work on the aligned word containing
+// MEM: set *WMEM to that word, *SHIFT to the field's bit offset (Brew is
+// little-endian), *MASK to the field's bits in the word and *NOTMASK to
+// the other bits.
+static void
+brew_subword_setup (rtx mem, rtx *wmem, rtx *shift, rtx *mask, rtx *notmask)
+{
+  machine_mode mode = GET_MODE (mem);
+  rtx addr = force_reg (Pmode, XEXP (mem, 0));
+  rtx aligned = force_reg (Pmode, expand_simple_binop (Pmode, AND, addr,
+                                                       GEN_INT (-4), NULL_RTX,
+                                                       1, OPTAB_DIRECT));
+  *wmem = change_address (mem, SImode, aligned);
+  set_mem_alias_set (*wmem, 0);
+
+  rtx byte = expand_simple_binop (SImode, AND, addr, GEN_INT (3), NULL_RTX,
+                                  1, OPTAB_DIRECT);
+  *shift = force_reg (SImode, expand_simple_binop (SImode, ASHIFT, byte,
+                                                   GEN_INT (3), NULL_RTX, 1,
+                                                   OPTAB_DIRECT));
+  rtx field = force_reg (SImode, GEN_INT (GET_MODE_MASK (mode)));
+  *mask = force_reg (SImode, expand_simple_binop (SImode, ASHIFT, field,
+                                                  *shift, NULL_RTX, 1,
+                                                  OPTAB_DIRECT));
+  *notmask = force_reg (SImode, expand_simple_unop (SImode, NOT, *mask,
+                                                    NULL_RTX, 1));
+}
+
+// VAL (of MEM's mode) zero-extended and shifted into the field.
+static rtx
+brew_subword_value (rtx val, machine_mode mode, rtx shift)
+{
+  rtx word = force_reg (SImode, convert_modes (SImode, mode, val, 1));
+  return force_reg (SImode, expand_simple_binop (SImode, ASHIFT, word, shift,
+                                                 NULL_RTX, 1, OPTAB_DIRECT));
+}
+
+// Store the field of the word OLD_WORD into TARGET (of MODE).
+static void
+brew_subword_result (rtx target, rtx old_word, rtx shift, machine_mode mode)
+{
+  rtx val = force_reg (SImode, expand_simple_binop (SImode, LSHIFTRT,
+                                                    old_word, shift, NULL_RTX,
+                                                    1, OPTAB_DIRECT));
+  emit_move_insn (target, gen_lowpart (mode, val));
+}
+
+void
+brew_expand_subword_cas (rtx bool_out, rtx old_out, rtx mem, rtx expected,
+                         rtx desired, HOST_WIDE_INT model)
+{
+  machine_mode mode = GET_MODE (mem);
+  rtx wmem, shift, mask, notmask;
+
+  brew_subword_setup (mem, &wmem, &shift, &mask, &notmask);
+  rtx exp_word = brew_subword_value (expected, mode, shift);
+  rtx des_word = brew_subword_value (desired, mode, shift);
+  rtx old_word = gen_reg_rtx (SImode);
+
+  brew_atomic_pre_fence (model);
+  emit_insn (gen_brew_masked_cassi (old_word, wmem, mask, notmask, exp_word,
+                                    des_word));
+  brew_atomic_post_fence (model);
+
+  rtx old_field = force_reg (SImode, expand_simple_binop (SImode, AND,
+                                                          old_word, mask,
+                                                          NULL_RTX, 1,
+                                                          OPTAB_DIRECT));
+  emit_store_flag_force (bool_out, EQ, old_field, exp_word, SImode, 1, 1);
+  brew_subword_result (old_out, old_word, shift, mode);
+}
+
+// CODE is the operation: PLUS, MINUS, AND, IOR, XOR, NOT (nand) or SET
+// (exchange).
+void
+brew_expand_subword_rmw (rtx old_out, rtx mem, rtx val, enum rtx_code code,
+                         HOST_WIDE_INT model)
+{
+  machine_mode mode = GET_MODE (mem);
+  rtx wmem, shift, mask, notmask;
+
+  brew_subword_setup (mem, &wmem, &shift, &mask, &notmask);
+  rtx val_word = brew_subword_value (val, mode, shift);
+  rtx old_word = gen_reg_rtx (SImode);
+
+  brew_atomic_pre_fence (model);
+  emit_insn (gen_brew_masked_rmwsi (old_word, wmem, mask, notmask, val_word,
+                                    GEN_INT ((int) code)));
+  brew_atomic_post_fence (model);
+  brew_subword_result (old_out, old_word, shift, mode);
+}
+
+// The loop of brew_masked_rmwsi: compute the new field into %6 (keeping
+// only the field's bits), merge it with the rest of the old word (%7) and
+// store it conditionally.
+const char *
+brew_output_masked_rmw (rtx *operands)
+{
+  const char *op;
+
+  switch ((enum rtx_code) INTVAL (operands[5]))
+    {
+    case SET:   op = "%6 <- %4"; break; // %4 has no bits outside the field
+    case PLUS:  op = "%6 <- %0 + %4\n\t%6 <- %6 & %2"; break;
+    case MINUS: op = "%6 <- %0 - %4\n\t%6 <- %6 & %2"; break;
+    case AND:   op = "%6 <- %0 & %4"; break;
+    case IOR:   op = "%6 <- %0 | %4\n\t%6 <- %6 & %2"; break;
+    case XOR:   op = "%6 <- %0 ^ %4\n\t%6 <- %6 & %2"; break;
+    case NOT:   op = "%6 <- %0 & %4\n\t%6 <- ~%6\n\t%6 <- %6 & %2"; break;
+    default: gcc_unreachable ();
+    }
+  output_asm_insn ("1:\n\t%0 <- memll[%1]", operands);
+  output_asm_insn (op, operands);
+  return "%7 <- %0 & %3\n\t%6 <- %6 | %7\n\tmemsc[%1] <- %6\n\tif %6 != 0 $pc <- 1b";
+}
 
 #include "gt-brew.h"
