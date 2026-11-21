@@ -2932,12 +2932,10 @@ assign_parm_adjust_stack_rtl (tree parm, struct assign_parm_data_one *data)
 	      && TYPE_ALIGN (data->nominal_type) > MEM_ALIGN (stack_parm)
 	      && ((MEM_ALIGN (stack_parm)
 		   < MIN (BIGGEST_ALIGNMENT, MAX_SUPPORTED_STACK_ALIGNMENT))
-		  /* If its address is taken, make a local copy whose
-		     maximum alignment is MAX_SUPPORTED_STACK_ALIGNMENT.
-		   */
-		  || (TREE_ADDRESSABLE (parm)
-		      && (MEM_ALIGN (stack_parm)
-			  < MAX_SUPPORTED_STACK_ALIGNMENT))))))
+		  /* If its address is taken, make a local copy.
+		     assign_stack_local aligns it at run time if its
+		     alignment exceeds MAX_SUPPORTED_STACK_ALIGNMENT.  */
+		  || TREE_ADDRESSABLE (parm)))))
     stack_parm = NULL;
 
   /* If parm was passed in memory, and we need to convert it on entry,
