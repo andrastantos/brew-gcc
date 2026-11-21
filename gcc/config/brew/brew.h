@@ -444,8 +444,19 @@ enum reg_class
    when given unaligned data.  */
 #define STRICT_ALIGNMENT 1
 
-/* Generating Code for Profiling */
-#define FUNCTION_PROFILER(FILE,LABELNO) (abort (), 0)
+/* Generating Code for Profiling.  -p/-pg call
+   _mcount (frompc, selfpc) after the prologue: frompc is the caller's
+   return address (the incoming $lr), selfpc the address of the function
+   being entered.  The call is emitted as RTL, so it is an ordinary call
+   under the ABI and _mcount (libgloss/brew/mcount.c) can be plain C.  */
+#define MCOUNT_NAME "_mcount"
+
+#define NO_PROFILE_COUNTERS 1
+
+#define PROFILE_HOOK(LABEL) brew_profile_hook ()
+
+/* All the work is done in PROFILE_HOOK, but this is still required.  */
+#define FUNCTION_PROFILER(FILE,LABELNO) do { } while (0)
 
 /* Trampolines for Nested Functions.  */
 #define TRAMPOLINE_SIZE (2 + 6 + 2 + 6)
