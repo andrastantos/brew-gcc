@@ -603,19 +603,20 @@
 {
   return brew_emit_cbranch(SImode, operands, get_attr_length(insn));
 }
+  ;; The pc-relative form reaches -65536 to 65534 bytes from the start of
+  ;; the branch; otherwise an inverted branch around an absolute jump.
   [(set
     (attr "length")
     (if_then_else
       (and
-        (ge (minus (match_dup 3) (pc)) (const_int -32768))
-        (le (minus (match_dup 3) (pc)) (const_int 32767))
+        (ge (minus (match_dup 3) (pc)) (const_int -65536))
+        (le (minus (match_dup 3) (pc)) (const_int 65534))
       )
       (const_int 4)
       (const_int 10)
     )
   )]
 )
-;;      (lt (abs (minus (pc) (match_dup 3))) (const_int 32767))
 
 ;; -------------------------------------------------------------------------
 ;; Branch instructions (these apparently must be defined according to chapter
@@ -840,7 +841,9 @@
   else
     return "$pc <- %l0";
 }
-  ;; A jump between the hot and cold sections of a partitioned function
+  ;; The pc-relative form (an always-true conditional branch) reaches
+  ;; -65536 to 65534 bytes from the start of the jump.  A jump between
+  ;; the hot and cold sections of a partitioned function
   ;; (-freorder-blocks-and-partition) must use the absolute form: the
   ;; distance between the sections is only known at link time.
   [(set
@@ -848,16 +851,14 @@
     (if_then_else
       (and
         (match_test "!CROSSING_JUMP_P (insn)")
-        (ge (minus (match_dup 0) (pc)) (const_int -32768))
-        (le (minus (match_dup 0) (pc)) (const_int 32767))
+        (ge (minus (match_dup 0) (pc)) (const_int -65536))
+        (le (minus (match_dup 0) (pc)) (const_int 65534))
       )
       (const_int 4)
       (const_int 6)
     )
   )]
 )
-
-;;       (lt (abs (minus (pc) (match_dup 0))) (const_int 32767))
 
 ;; -------------------------------------------------------------------------
 ;; Prologue & Epilogue
