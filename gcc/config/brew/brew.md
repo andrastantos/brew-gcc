@@ -840,10 +840,14 @@
   else
     return "$pc <- %l0";
 }
+  ;; A jump between the hot and cold sections of a partitioned function
+  ;; (-freorder-blocks-and-partition) must use the absolute form: the
+  ;; distance between the sections is only known at link time.
   [(set
     (attr "length")
     (if_then_else
       (and
+        (match_test "!CROSSING_JUMP_P (insn)")
         (ge (minus (match_dup 0) (pc)) (const_int -32768))
         (le (minus (match_dup 0) (pc)) (const_int 32767))
       )
