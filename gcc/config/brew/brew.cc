@@ -367,14 +367,18 @@ brew_expand_epilogue(bool is_sibcall)
   int sp_adjust = cfun->machine->size_for_adjusting_sp + save_cnt * 4;
   if (sp_adjust > 0)
     {
-      // Restore SP
-      emit_insn(
+      // Restore SP. Any alloca space is already released (the stack-restore
+      // code put $sp back), so this makes $sp the CFA: describe the CFA
+      // through $sp from here on, since $fp is about to be reloaded.
+      rtx_insn *insn = emit_insn(
         gen_addsi3(
           stack_pointer_rtx,
           stack_pointer_rtx,
           GEN_INT(sp_adjust)
         )
       );
+      RTX_FRAME_RELATED_P (insn) = 1;
+      add_reg_note (insn, REG_CFA_DEF_CFA, stack_pointer_rtx);
       // Restore registers
       for (int r = ARRAY_SIZE(reg_frame_order)-1; r >= 0; --r )
         {
@@ -382,12 +386,15 @@ brew_expand_epilogue(bool is_sibcall)
           if ((cfun->machine->reg_save_mask & (1 << regno)) != 0)
             {
               --save_cnt;
-              emit_insn(gen_movsi(
-                gen_rtx_REG(Pmode, regno),
+              rtx reg = gen_rtx_REG(Pmode, regno);
+              insn = emit_insn(gen_movsi(
+                reg,
                 gen_rtx_MEM(Pmode,
                   plus_constant(Pmode, stack_pointer_rtx, -4*save_cnt-4, false) // Not an in-place addition
                 )
               ));
+              RTX_FRAME_RELATED_P (insn) = 1;
+              add_reg_note (insn, REG_CFA_RESTORE, reg);
             }
         }
     }
