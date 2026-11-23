@@ -18,6 +18,9 @@
 ; along with GCC; see the file COPYING3.  If not see
 ; <http://www.gnu.org/licenses/>.
 
+HeaderInclude
+config/brew/brew-opts.h
+
 msoft-float
 Target Mask(SOFT_FLOAT)
 Generate code with floating point emulation.
@@ -39,3 +42,17 @@ Enum(brew_environment) String(operating) Value(1)
 mno-crt0
 Target RejectNegative
 Do not link the run-time environment's startup file (crt0.o).
+
+mtune=
+Target RejectNegative Joined Enum(brew_processor) Var(brew_tune_option) Init(PROCESSOR_GENERIC)
+-mtune=PROCESSOR	Tune the generated code for PROCESSOR: generic (the default) or espresso.
+
+Enum
+Name(brew_processor) Type(enum brew_processor)
+Known Brew processors (for use with the -mtune= option):
+
+EnumValue
+Enum(brew_processor) String(generic) Value(PROCESSOR_GENERIC)
+
+EnumValue
+Enum(brew_processor) String(espresso) Value(PROCESSOR_ESPRESSO)

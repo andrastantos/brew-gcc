@@ -9,3 +9,6 @@ UrlSuffix(gcc/Brew-Options.html#index-menvironment)
 mno-crt0
 UrlSuffix(gcc/Brew-Options.html#index-mno-crt0)
 
+mtune=
+UrlSuffix(gcc/Brew-Options.html#index-mtune-4)
+

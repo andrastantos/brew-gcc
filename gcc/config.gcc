@@ -4684,6 +4684,18 @@ case "${target}" in
 		esac
 		;;
 
+	brew-*-*)
+		supported_defaults="tune"
+		case "$with_tune" in
+		"" | generic | espresso)
+			;;
+		*)
+			echo "Unknown processor used in --with-tune=$with_tune, known values: generic espresso" 1>&2
+			exit 1
+			;;
+		esac
+		;;
+
 	amdgcn-*-*)
 		supported_defaults="arch tune"
 
