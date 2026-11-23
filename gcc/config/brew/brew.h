@@ -364,7 +364,7 @@ enum reg_class
 /* Describe how we implement __builtin_eh_return.  */
 /* $r2 and $r3 (see BREW_REG_EH_RETURN_DATA0).  Two is the minimum, and
    there is no use for more.  */
-#define EH_RETURN_DATA_REGNO(N)        (((N) < 2 && (N) >= 0) ? (N+BREW_REG_EH_RETURN_DATA0) : INVALID_REGNUM)
+#define EH_RETURN_DATA_REGNO(N)        ((N) < 2 ? (N) + BREW_REG_EH_RETURN_DATA0 : INVALID_REGNUM)
 
 /* Store the return handler into the call frame.  */
 /* Typically this is the location in the call frame at which the normal
