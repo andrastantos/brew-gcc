@@ -500,21 +500,12 @@ enum reg_class
    of eliminable registers.  The "from" register number is given first,
    followed by "to".  Eliminations of the same "from" register are listed
    in order of preference.  */
-/* FIXME: Moxie only defined these to be eliminated towards $fp, which would
-   probably mean that $fp is never eliminated. That, I think is a bit too
-   pessimistic, and the Alpha version (replicated here) is a more optimal
-   decision, however for that to work, brew_initial_elimination_offset
-   would need to be updated too. */
-/*
+/* $sp is preferred; GCC falls back to $fp in functions that need a
+   frame pointer (frame_pointer_needed, see brew_frame_pointer_required).  */
 #define ELIMINABLE_REGS                              \
 {{ ARG_POINTER_REGNUM, STACK_POINTER_REGNUM},        \
  { ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM},   \
  { FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM},      \
- { FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM}}
-*/
-
-#define ELIMINABLE_REGS                              \
-{{ ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM},   \
  { FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM}}
 
 /* This macro returns the initial difference between the specified pair

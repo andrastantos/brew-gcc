@@ -236,15 +236,19 @@ reg_needs_save_restore(int regno)
     for (unsigned int i = 0; EH_RETURN_DATA_REGNO (i) != INVALID_REGNUM; i++)
       if ((unsigned int) regno == EH_RETURN_DATA_REGNO (i))
         return true;
-  // The frame pointer (TODO: how to eliminate this as much as possible?)
+  // The frame pointer, in functions that set one up
   if (regno == BREW_REG_FP)
-    return true;
+    return frame_pointer_needed;
   return false;
 }
 
-// Order of registers saved on the stack. Largely arbitrary, but the first two entries are important:
+// Order of registers saved on the stack. Largely arbitrary, but the first two
+// entries are important in functions with a frame pointer:
 //     brew_dynamic_chain_address assumes $fp is in the 1st save slot.
-//     brew_return_addr_rtx assumes assumes $lr is in the 2nd save slot.
+//     brew_return_addr_rtx and brew_eh_return_handler_rtx assume $lr is in
+//     the 2nd save slot.
+// (Without a frame pointer $lr takes the 1st slot; nothing then looks for it
+// there but the unwinders, which follow the CFI.)
 static const size_t reg_frame_order[] = {
   BREW_REG_FP,
   BREW_REG_LINK,
@@ -331,11 +335,14 @@ brew_expand_prologue (void)
     }
   gcc_assert(save_cnt*4 == cfun->machine->callee_saved_reg_size);
   // set up FP
-  insn = emit_insn(gen_movsi(
-    hard_frame_pointer_rtx,
-    stack_pointer_rtx
-  ));
-  RTX_FRAME_RELATED_P (insn) = 1;
+  if (frame_pointer_needed)
+    {
+      insn = emit_insn(gen_movsi(
+        hard_frame_pointer_rtx,
+        stack_pointer_rtx
+      ));
+      RTX_FRAME_RELATED_P (insn) = 1;
+    }
   // adjust SP
   int sp_adjust = cfun->machine->size_for_adjusting_sp + cfun->machine->callee_saved_reg_size;
   if (sp_adjust > 0)
@@ -452,23 +459,42 @@ brew_expand_epilogue(bool is_sibcall)
 ///////////////////////////////////////////////////////////////////////////
 
 // Implements the macro INITIAL_ELIMINATION_OFFSET, return the OFFSET.
-// That is: used to figure out the offset between $?fp, $?ap and $fp
+// That is: used to figure out the offset between $?fp, $?ap and $fp or $sp.
+// $fp (when there is one) and $?ap are the incoming $sp; the registers are
+// saved below it, $?fp is right below them, and the prologue moves $sp down
+// by the saved registers plus size_for_adjusting_sp.
 int
 brew_initial_elimination_offset (int from, int to)
 {
+  // Compute this since we need to use cfun->machine->local_vars_size.
+  brew_compute_frame();
   int ret;
-  if(from == FRAME_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
-    {
-      // Compute this since we need to use cfun->machine->local_vars_size.
-      brew_compute_frame();
-      ret = -cfun->machine->callee_saved_reg_size;
-    }
-  else if(from == ARG_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
-    ret = 0x00;
+  if (from == FRAME_POINTER_REGNUM)
+    ret = -cfun->machine->callee_saved_reg_size;
+  else if (from == ARG_POINTER_REGNUM)
+    ret = 0;
   else
-    abort ();
+    gcc_unreachable ();
 
+  if (to == STACK_POINTER_REGNUM)
+    ret += cfun->machine->callee_saved_reg_size + cfun->machine->size_for_adjusting_sp;
+  else
+    gcc_assert (to == HARD_FRAME_POINTER_REGNUM);
   return ret;
+}
+
+// Implements TARGET_FRAME_POINTER_REQUIRED.  Beyond what GCC checks itself
+// (-fno-omit-frame-pointer, frame walking):
+//   alloca moves $sp, and with EXIT_IGNORE_STACK 0 GCC doesn't ask for a
+//     frame pointer on its own (as ft32);
+//   __builtin_eh_return stores the handler into the $lr save slot at $fp-8
+//     (brew_eh_return_handler_rtx);
+//   accesses_prior_frames is checked by IRA but not by every later pass
+//     (as or1k).
+static bool
+brew_frame_pointer_required (void)
+{
+  return cfun->calls_alloca || crtl->calls_eh_return || crtl->accesses_prior_frames;
 }
 
 /* DYNAMIC_CHAIN_ADDRESS
@@ -524,18 +550,11 @@ brew_profile_hook()
 rtx
 brew_return_addr_rtx(unsigned int count, rtx frame)
 {
+  // Our own return address is the incoming $lr; this needs no frame.
   if (count == 0)
-  {
-    // For some reason, we get the soft frame pointer, if count is 0 and - again -
-    // for some reason that's moving around based on how much we push on the stack
-    // in the prolog. To get to $lr, we need the hard frame pointer in all cases.
-    // If count is not 0, the caller (expand_builtin_return_addr) properly walks
-    // the stack for us and gives us the hard frame pointer for the n-th frame.
-    frame = hard_frame_pointer_rtx;
-
-    // Setting this is also missing, when count is 0. So let's add it.
-    crtl->accesses_prior_frames = 1;
-  }
+    return get_hard_reg_initial_val (Pmode, BREW_REG_LINK);
+  // For a non-zero count the caller (expand_builtin_return_addr) walked the
+  // frame chain and gives us the n-th frame's $fp.
   return gen_frame_mem(Pmode, plus_constant (Pmode, frame, -UNITS_PER_WORD*2));
 }
 
@@ -565,8 +584,11 @@ brew_return_addr_rtx(unsigned int count, rtx frame)
 rtx
 brew_eh_return_handler_rtx()
 {
-  // Let's use the return address on the stack
-  rtx ret_val = brew_return_addr_rtx(0, hard_frame_pointer_rtx);
+  // Let's use the return address on the stack: its save slot at $fp-8
+  // (brew_frame_pointer_required keeps the frame pointer, and
+  // reg_needs_save_restore saves $lr, in functions calling
+  // __builtin_eh_return).
+  rtx ret_val = gen_frame_mem(Pmode, plus_constant (Pmode, hard_frame_pointer_rtx, -UNITS_PER_WORD*2));
   MEM_VOLATILE_P(ret_val) = true;
   return ret_val;
 }
@@ -1250,13 +1272,8 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 #undef  TARGET_STRUCT_VALUE_RTX
 #define TARGET_STRUCT_VALUE_RTX                  brew_struct_value_rtx
 
-// FIXME:
-// Moxie says the FP is always required. Right now our prolog/epilogue code assumes that too,
-// but that's incorrect: instead we should eliminate FP as much as possible and set this to
-// constant false. However, how do we *know* in the prolog/epilogue code if FP setup/restore
-// is actually needed?
 #undef  TARGET_FRAME_POINTER_REQUIRED
-#define TARGET_FRAME_POINTER_REQUIRED            hook_bool_void_true
+#define TARGET_FRAME_POINTER_REQUIRED            brew_frame_pointer_required
 #undef  TARGET_OPTION_OVERRIDE
 #define TARGET_OPTION_OVERRIDE                   brew_option_override
 
