@@ -1123,6 +1123,18 @@ brew_operand_lossage(const char *msgid, rtx op)
   output_operand_lossage("%s", msgid);
 }
 
+// The assembly name of a hard register.  $r12 is the frame pointer only in
+// functions that set one up; where the register allocator uses it as an
+// ordinary call-saved register, print its generic name (gas accepts both;
+// objdump always shows $fp, as it can't tell the two uses apart).
+static const char *
+brew_reg_name (unsigned int regno)
+{
+  if (regno == BREW_REG_FP && !frame_pointer_needed)
+    return "$r12";
+  return reg_names[regno];
+}
+
 // for TARGET_PRINT_OPERAND
 static void
 brew_print_operand (FILE *file, rtx x, int code)
@@ -1145,7 +1157,7 @@ brew_print_operand (FILE *file, rtx x, int code)
         switch (code)
           {
           case 0:
-            fprintf (file, "%s", reg_names[regno]);
+            fprintf (file, "%s", brew_reg_name (regno));
             break;
           default:
             brew_operand_lossage("invalid operand modifier letter", x);
@@ -1194,18 +1206,18 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
   switch (GET_CODE(x))
     {
     case REG:
-      fprintf(file, "%s", reg_names[REGNO (x)]);
+      fprintf(file, "%s", brew_reg_name (REGNO (x)));
       break;
 
     case PLUS:
       switch (GET_CODE(XEXP(x, 1)))
         {
         case CONST_INT:
-          fprintf(file, "%s + %ld", reg_names[REGNO(XEXP(x, 0))], INTVAL(XEXP(x, 1)));
+          fprintf(file, "%s + %ld", brew_reg_name (REGNO(XEXP(x, 0))), INTVAL(XEXP(x, 1)));
           break;
         case SYMBOL_REF:
           output_addr_const(file, XEXP(x, 1));
-          fprintf(file, "%s", reg_names[REGNO(XEXP (x, 0))]);
+          fprintf(file, "%s", brew_reg_name (REGNO(XEXP (x, 0))));
           break;
         case CONST:
           {
@@ -1216,7 +1228,7 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
             )
               {
                 output_addr_const(file, XEXP (plus, 0));
-                fprintf(file,"%s + %ld", reg_names[REGNO(XEXP(x, 0))], INTVAL(XEXP(plus, 1)));
+                fprintf(file,"%s + %ld", brew_reg_name (REGNO(XEXP(x, 0))), INTVAL(XEXP(plus, 1)));
               }
             else
               abort();

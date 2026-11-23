@@ -231,7 +231,7 @@ enum reg_class
   0, 0, 0, 0, /* $r0,  $r1,  $r2,  $r3  */ \
   0, 0, 0, 0, /* $r4,  $r5,  $r6,  $r7  */ \
   0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
-  1, 1, 0,    /* $fp,  $sp,  $lr        */ \
+  0, 1, 0,    /* $fp,  $sp,  $lr        */ \
   1, 1, 1     /* $?fp, $?ap, $pc        */ \
 }
 
@@ -247,9 +247,14 @@ enum reg_class
   1, 1, 1, 1, /* $r0,  $r1,  $r2,  $r3  */ \
   1, 1, 1, 1, /* $r4,  $r5,  $r6,  $r7  */ \
   0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
-  1, 1, 0,    /* $fp,  $sp,  $lr        */ \
+  0, 1, 0,    /* $fp,  $sp,  $lr        */ \
   1, 1, 1     /* $?fp, $?ap, $pc        */ \
 }
+
+/* $fp ($r12) is an ordinary call-saved register in functions without a
+   frame pointer (IRA leaves it alone when frame_pointer_needed); assembly
+   output then calls it $r12 (brew_reg_name).  */
+#define ADDITIONAL_REGISTER_NAMES { { "$r12", BREW_REG_FP } }
 
 /* We can't copy to or from our CC register. */
 #define AVOID_CCMODE_COPIES 1
