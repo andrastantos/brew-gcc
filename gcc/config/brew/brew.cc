@@ -46,6 +46,7 @@
 #include "tm_p.h"
 #include "insn-config.h"
 #include "recog.h"
+#include "reload.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -231,8 +232,10 @@ reg_needs_save_restore(int regno)
     return true;
   // The EH data registers in functions that use __builtin_eh_return: the
   // unwinder installs the handler's values by overwriting their save slots.
-  if (EH_RETURN_DATA_REGNO(regno-BREW_REG_EH_RETURN_DATA0) != INVALID_REGNUM && (crtl->calls_eh_return))
-    return true;
+  if (crtl->calls_eh_return)
+    for (unsigned int i = 0; EH_RETURN_DATA_REGNO (i) != INVALID_REGNUM; i++)
+      if ((unsigned int) regno == EH_RETURN_DATA_REGNO (i))
+        return true;
   // The frame pointer (TODO: how to eliminate this as much as possible?)
   if (regno == BREW_REG_FP)
     return true;
@@ -933,12 +936,157 @@ brew_struct_value_rtx (tree fntype ATTRIBUTE_UNUSED, int incoming ATTRIBUTE_UNUS
   return gen_rtx_REG (Pmode, BREW_REG_STRUCT_VAL_ADDR);
 }
 
+// Tuning (-mtune=).
+//
+// Costs are in the units of COSTS_N_INSNS.  The rtx costs are those of
+// the operation itself: rtx_cost adds the costs of the operands.
+struct brew_cost_table
+{
+  int mult;       // MULT
+  int div;        // DIV, UDIV, MOD, UMOD (library calls)
+  int mem;        // MEM, without its address
+  int imm_tiny;   // constant in a tiny field: -7..7 in a move, add or subtract
+  int imm_short;  // constant in a 16-bit field
+  int imm_long;   // any other constant, a symbol or a label (32 bits)
+};
+
+struct brew_tune_info
+{
+  const struct brew_cost_table *speed_costs; // rtx costs when optimizing for speed
+  int load_cost;   // TARGET_MEMORY_MOVE_COST of a load
+  int store_cost;  // TARGET_MEMORY_MOVE_COST of a store
+  int reg_move;    // TARGET_REGISTER_MOVE_COST
+  int branch_cost; // BRANCH_COST when optimizing for speed
+};
+
+// GCC's own defaults (rtx_cost without a target hook,
+// default_memory_move_cost, default_register_move_cost, BRANCH_COST 1):
+// the costs Brew had before -mtune existed.
+static const struct brew_cost_table brew_default_costs =
+{
+  COSTS_N_INSNS (5), // mult
+  COSTS_N_INSNS (7), // div
+  COSTS_N_INSNS (1), // mem
+  COSTS_N_INSNS (1), // imm_tiny
+  COSTS_N_INSNS (1), // imm_short
+  COSTS_N_INSNS (1), // imm_long
+};
+
+// Espresso, from the timing measured on its RTL
+// (anachron/docs/cpu_espresso/instruction_timing.rst).  Fetch over the
+// 16-bit bus limits straight-line code to about 1.2 cycles per 16-bit
+// word, so each immediate halfword costs about one instruction.
+// A multiply takes 2 issue cycles; a load stalls the pipeline for about 5
+// cycles, a 32-bit store for 2; a taken branch costs 9 cycles.  First
+// estimates, to be checked against a cycle model.
+static const struct brew_cost_table brew_espresso_costs =
+{
+  COSTS_N_INSNS (2), // mult
+  COSTS_N_INSNS (7), // div
+  COSTS_N_INSNS (4), // mem
+  0,                 // imm_tiny
+  COSTS_N_INSNS (1), // imm_short
+  COSTS_N_INSNS (2), // imm_long
+};
+
+// Indexed by enum brew_processor.
+static const struct brew_tune_info brew_tune_table[PROCESSOR_max] =
+{
+  // generic
+  { &brew_default_costs, 4, 4, 2, 1 },
+  // espresso
+  { &brew_espresso_costs, 10, 4, 2, 3 },
+};
+
+static const struct brew_tune_info *brew_tune = &brew_tune_table[PROCESSOR_GENERIC];
+
+// The size costs don't depend on -mtune.
+static const struct brew_cost_table *brew_size_costs = &brew_default_costs;
+
+// for BRANCH_COST
+int
+brew_branch_cost (bool speed_p, bool predictable_p ATTRIBUTE_UNUSED)
+{
+  return speed_p ? brew_tune->branch_cost : 1;
+}
+
+// for TARGET_RTX_COSTS
+//
+// Sets the cost of the operation itself and returns false, so that
+// rtx_cost adds the costs of the operands, the way it does without a
+// hook; with brew_default_costs the result is exactly GCC's default.
+static bool
+brew_rtx_costs (rtx x, machine_mode mode, int outer_code,
+                int opno ATTRIBUTE_UNUSED, int *total, bool speed)
+{
+  const struct brew_cost_table *costs = speed ? brew_tune->speed_costs : brew_size_costs;
+  // As in rtx_cost: an operation N words wide costs N times as much,
+  // a multiplication or division N*N times.
+  unsigned mode_size = estimated_poly_value (GET_MODE_SIZE (mode));
+  int factor = mode_size > UNITS_PER_WORD ? mode_size / UNITS_PER_WORD : 1;
+
+  switch (GET_CODE (x))
+    {
+    case CONST_INT:
+      {
+        HOST_WIDE_INT ival = INTVAL (x);
+        int cost;
+        if (IN_RANGE (ival, -7, 7)
+            && (outer_code == SET || outer_code == PLUS || outer_code == MINUS))
+          cost = costs->imm_tiny;
+        else if (IN_RANGE (ival, -32768, 32767))
+          cost = costs->imm_short;
+        else
+          cost = costs->imm_long;
+        *total = factor * cost;
+        return true;
+      }
+    case SYMBOL_REF:
+    case LABEL_REF:
+      *total = factor * costs->imm_long;
+      return true;
+    case MULT:
+      *total = factor * factor * costs->mult;
+      return false;
+    case DIV:
+    case UDIV:
+    case MOD:
+    case UMOD:
+      *total = factor * factor * costs->div;
+      return false;
+    case MEM:
+      *total = factor * costs->mem;
+      return false;
+    default:
+      return false;
+    }
+}
+
+// for TARGET_MEMORY_MOVE_COST
+static int
+brew_memory_move_cost (machine_mode mode, reg_class_t rclass, bool in)
+{
+  return (in ? brew_tune->load_cost : brew_tune->store_cost)
+         + memory_move_secondary_cost (mode, rclass, in);
+}
+
+// for TARGET_REGISTER_MOVE_COST
+static int
+brew_register_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
+                         reg_class_t from ATTRIBUTE_UNUSED,
+                         reg_class_t to ATTRIBUTE_UNUSED)
+{
+  return brew_tune->reg_move;
+}
+
 // for TARGET_OPTION_OVERRIDE
 static void
 brew_option_override (void)
 {
   // Set the per-function-data initializer.
   init_machine_status = brew_init_machine_status;
+
+  brew_tune = &brew_tune_table[brew_tune_option];
 }
 
 // If we can't create asm, we need to abort.
@@ -1111,6 +1259,13 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 #define TARGET_FRAME_POINTER_REQUIRED            hook_bool_void_true
 #undef  TARGET_OPTION_OVERRIDE
 #define TARGET_OPTION_OVERRIDE                   brew_option_override
+
+#undef  TARGET_RTX_COSTS
+#define TARGET_RTX_COSTS                         brew_rtx_costs
+#undef  TARGET_MEMORY_MOVE_COST
+#define TARGET_MEMORY_MOVE_COST                  brew_memory_move_cost
+#undef  TARGET_REGISTER_MOVE_COST
+#define TARGET_REGISTER_MOVE_COST                brew_register_move_cost
 #undef  TARGET_PRINT_OPERAND
 #define TARGET_PRINT_OPERAND                     brew_print_operand
 #undef  TARGET_PRINT_OPERAND_ADDRESS
