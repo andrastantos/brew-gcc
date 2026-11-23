@@ -231,8 +231,10 @@ reg_needs_save_restore(int regno)
     return true;
   // The EH data registers in functions that use __builtin_eh_return: the
   // unwinder installs the handler's values by overwriting their save slots.
-  if (EH_RETURN_DATA_REGNO(regno-BREW_REG_EH_RETURN_DATA0) != INVALID_REGNUM && (crtl->calls_eh_return))
-    return true;
+  if (crtl->calls_eh_return)
+    for (unsigned int i = 0; EH_RETURN_DATA_REGNO (i) != INVALID_REGNUM; i++)
+      if ((unsigned int) regno == EH_RETURN_DATA_REGNO (i))
+        return true;
   // The frame pointer (TODO: how to eliminate this as much as possible?)
   if (regno == BREW_REG_FP)
     return true;
