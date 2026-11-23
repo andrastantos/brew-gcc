@@ -231,7 +231,7 @@ enum reg_class
   0, 0, 0, 0, /* $r0,  $r1,  $r2,  $r3  */ \
   0, 0, 0, 0, /* $r4,  $r5,  $r6,  $r7  */ \
   0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
-  1, 1, 0,    /* $fp,  $sp,  $lr        */ \
+  0, 1, 0,    /* $fp,  $sp,  $lr        */ \
   1, 1, 1     /* $?fp, $?ap, $pc        */ \
 }
 
@@ -247,9 +247,14 @@ enum reg_class
   1, 1, 1, 1, /* $r0,  $r1,  $r2,  $r3  */ \
   1, 1, 1, 1, /* $r4,  $r5,  $r6,  $r7  */ \
   0, 0, 0, 0, /* $r8,  $r9,  $r10, $r11 */ \
-  1, 1, 0,    /* $fp,  $sp,  $lr        */ \
+  0, 1, 0,    /* $fp,  $sp,  $lr        */ \
   1, 1, 1     /* $?fp, $?ap, $pc        */ \
 }
+
+/* $fp ($r12) is an ordinary call-saved register in functions without a
+   frame pointer (IRA leaves it alone when frame_pointer_needed); assembly
+   output then calls it $r12 (brew_reg_name).  */
+#define ADDITIONAL_REGISTER_NAMES { { "$r12", BREW_REG_FP } }
 
 /* We can't copy to or from our CC register. */
 #define AVOID_CCMODE_COPIES 1
@@ -500,21 +505,12 @@ enum reg_class
    of eliminable registers.  The "from" register number is given first,
    followed by "to".  Eliminations of the same "from" register are listed
    in order of preference.  */
-/* FIXME: Moxie only defined these to be eliminated towards $fp, which would
-   probably mean that $fp is never eliminated. That, I think is a bit too
-   pessimistic, and the Alpha version (replicated here) is a more optimal
-   decision, however for that to work, brew_initial_elimination_offset
-   would need to be updated too. */
-/*
+/* $sp is preferred; GCC falls back to $fp in functions that need a
+   frame pointer (frame_pointer_needed, see brew_frame_pointer_required).  */
 #define ELIMINABLE_REGS                              \
 {{ ARG_POINTER_REGNUM, STACK_POINTER_REGNUM},        \
  { ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM},   \
  { FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM},      \
- { FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM}}
-*/
-
-#define ELIMINABLE_REGS                              \
-{{ ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM},   \
  { FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM}}
 
 /* This macro returns the initial difference between the specified pair
