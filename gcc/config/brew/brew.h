@@ -586,7 +586,17 @@ enum reg_class
   {                                                               \
     builtin_define("__BREW__");                                   \
     if (brew_soft_float()) builtin_define("__BREW_SOFT_FLOAT__"); \
+    if (brew_tune_option == PROCESSOR_ESPRESSO)                   \
+      builtin_define("__BREW_TUNE_ESPRESSO__");                   \
   }
+
+/* -mtune= picks the costs (brew_tune_table in brew.cc).  */
+#define BRANCH_COST(speed_p, predictable_p) \
+  brew_branch_cost (speed_p, predictable_p)
+
+/* --with-tune= sets the default -mtune=.  */
+#define OPTION_DEFAULT_SPECS \
+  {"tune", "%{!mtune=*:-mtune=%(VALUE)}" }
 
 #define HAS_LONG_UNCOND_BRANCH true
 

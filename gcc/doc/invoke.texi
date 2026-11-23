@@ -1003,7 +1003,8 @@ Objective-C and Objective-C++ Dialects}.
 -micplb}
 
 @emph{Brew Options} (@ref{Brew Options})
-@gccoptlist{-msoft-float  -menvironment=@var{env}  -mno-crt0}
+@gccoptlist{-msoft-float  -menvironment=@var{env}  -mno-crt0
+-mtune=@var{processor}}
 
 @emph{C6X Options} (@ref{C6X Options})
 @gccoptlist{-mbig-endian  -mlittle-endian  -march=@var{cpu}
@@ -25119,6 +25120,24 @@ devices.
 @opindex mno-crt0
 @item -mno-crt0
 Do not link in the run-time environment's startup file (@file{crt0.o}).
+
+@opindex mtune
+@item -mtune=@var{processor}
+Tune the generated code for @var{processor}: the cost model the
+optimizers use to choose between instruction sequences follows its
+timing.  The code still runs on any Brew processor.  When the
+processor isn't the generic one, @code{__BREW_TUNE_@var{PROCESSOR}__}
+is defined (in upper case).  @var{processor} is one of:
+
+@table @samp
+@item generic
+No particular implementation.  This is the default, unless GCC was
+configured with @option{--with-tune}.
+
+@item espresso
+The Espresso core: in-order, fetching instructions over a 16-bit bus,
+which makes long immediates and taken branches expensive.
+@end table
 
 @end table
 
