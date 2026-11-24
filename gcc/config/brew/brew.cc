@@ -1019,8 +1019,10 @@ static const struct brew_cost_table brew_espresso_costs =
 // Indexed by enum brew_processor.
 static const struct brew_tune_info brew_tune_table[PROCESSOR_max] =
 {
-  // generic: a load or store is one instruction whatever its address
-  { &brew_default_costs, 4, 4, 2, 1, 0 },
+  // generic: a load or store is one instruction whatever its address, but
+  // a longer one takes more fetching, so each halfword costs a little; with
+  // 0, ivopts' ties could keep a copy of an IV live across calls (qsort)
+  { &brew_default_costs, 4, 4, 2, 1, 1 },
   // espresso: fetch-bound, each halfword costs about an instruction
   { &brew_espresso_costs, 10, 4, 2, 3, COSTS_N_INSNS (1) },
 };
