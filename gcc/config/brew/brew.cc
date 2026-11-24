@@ -138,7 +138,9 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
   /* There are certain comparisons that don't make sense
      such as an unsigned integer being less then 0.
      These are replaced by their equivalent unconditional
-     branches or nops as the case may be */
+     branches or nops as the case may be.  The compare-with-zero
+     branches (if $rA > 0, if $rA <= 0) are signed, so an unsigned
+     comparison with zero becomes != 0 or == 0.  */
   if (insn_len == 4)
     {
       switch (code)
@@ -150,8 +152,8 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
         case LE: return "if signed %1 <= %2 $pc <- %l3";
         case LT: return "if signed %1 < %2 $pc <- %l3";
         case GEU: if (compare_to_zero) return "$pc <- %l3"; else return "if %1 >= %2 $pc <- %l3";
-        case GTU: return "if %1 > %2 $pc <- %l3";
-        case LEU: return "if %1 <= %2 $pc <- %l3";
+        case GTU: if (compare_to_zero) return "if %1 != 0 $pc <- %l3"; else return "if %1 > %2 $pc <- %l3";
+        case LEU: if (compare_to_zero) return "if %1 == 0 $pc <- %l3"; else return "if %1 <= %2 $pc <- %l3";
         case LTU: if (compare_to_zero) return ""; else return "if %1 < %2 $pc <- %l3";
         default:
           gcc_unreachable ();
@@ -168,8 +170,8 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
         case LE: return "if signed %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case LT: return "if signed %1 >= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case GEU: if (compare_to_zero) return "$pc <- 1f\n\t$pc <- %l3\n1:"; else return "if %1 < %2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case GTU: return "if %1 <= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case LEU: return "if %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case GTU: if (compare_to_zero) return "if %1 == 0 $pc <- 1f\n\t$pc <- %l3\n1:"; else return "if %1 <= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case LEU: if (compare_to_zero) return "if %1 != 0 $pc <- 1f\n\t$pc <- %l3\n1:"; else return "if %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case LTU: if (compare_to_zero) return ""; else return "if %1 >= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         default:
           gcc_unreachable ();
@@ -204,8 +206,9 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
     case LE:  return reverse ? brew_emit_bcond(mode, GT,  false, operands) : "if signed %1 <= %2 $pc <- %l3";
     case LT:  return reverse ? brew_emit_bcond(mode, GE,  false, operands) : "if signed %1 < %2 $pc <- %l3";
     case GEU: return reverse ? brew_emit_bcond(mode, LTU, false, operands) : "$pc <- %l3";
-    case GTU: return reverse ? brew_emit_bcond(mode, LEU, false, operands) : "if %1 > %2 $pc <- %l3";
-    case LEU: return reverse ? brew_emit_bcond(mode, GTU, false, operands) : "if %1 <= %2 $pc <- %l3";
+    // Unsigned: the compare-with-zero branches are signed.
+    case GTU: return reverse ? brew_emit_bcond(mode, LEU, false, operands) : "if %1 != %2 $pc <- %l3";
+    case LEU: return reverse ? brew_emit_bcond(mode, GTU, false, operands) : "if %1 == %2 $pc <- %l3";
     case LTU: return reverse ? brew_emit_bcond(mode, GEU, false, operands) : "";
     default:
       gcc_unreachable ();
