@@ -138,7 +138,9 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
   /* There are certain comparisons that don't make sense
      such as an unsigned integer being less then 0.
      These are replaced by their equivalent unconditional
-     branches or nops as the case may be */
+     branches or nops as the case may be.  The compare-with-zero
+     branches (if $rA > 0, if $rA <= 0) are signed, so an unsigned
+     comparison with zero becomes != 0 or == 0.  */
   if (insn_len == 4)
     {
       switch (code)
@@ -150,8 +152,8 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
         case LE: return "if signed %1 <= %2 $pc <- %l3";
         case LT: return "if signed %1 < %2 $pc <- %l3";
         case GEU: if (compare_to_zero) return "$pc <- %l3"; else return "if %1 >= %2 $pc <- %l3";
-        case GTU: return "if %1 > %2 $pc <- %l3";
-        case LEU: return "if %1 <= %2 $pc <- %l3";
+        case GTU: if (compare_to_zero) return "if %1 != 0 $pc <- %l3"; else return "if %1 > %2 $pc <- %l3";
+        case LEU: if (compare_to_zero) return "if %1 == 0 $pc <- %l3"; else return "if %1 <= %2 $pc <- %l3";
         case LTU: if (compare_to_zero) return ""; else return "if %1 < %2 $pc <- %l3";
         default:
           gcc_unreachable ();
@@ -168,8 +170,8 @@ brew_emit_cbranch(machine_mode mode, rtx *operands, int insn_len)
         case LE: return "if signed %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case LT: return "if signed %1 >= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case GEU: if (compare_to_zero) return "$pc <- 1f\n\t$pc <- %l3\n1:"; else return "if %1 < %2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case GTU: return "if %1 <= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
-        case LEU: return "if %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case GTU: if (compare_to_zero) return "if %1 == 0 $pc <- 1f\n\t$pc <- %l3\n1:"; else return "if %1 <= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
+        case LEU: if (compare_to_zero) return "if %1 != 0 $pc <- 1f\n\t$pc <- %l3\n1:"; else return "if %1 > %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         case LTU: if (compare_to_zero) return ""; else return "if %1 >= %2 $pc <- 1f\n\t$pc <- %l3\n1:";
         default:
           gcc_unreachable ();
@@ -204,8 +206,9 @@ brew_emit_bcond(machine_mode mode, int condition, bool reverse, rtx *operands)
     case LE:  return reverse ? brew_emit_bcond(mode, GT,  false, operands) : "if signed %1 <= %2 $pc <- %l3";
     case LT:  return reverse ? brew_emit_bcond(mode, GE,  false, operands) : "if signed %1 < %2 $pc <- %l3";
     case GEU: return reverse ? brew_emit_bcond(mode, LTU, false, operands) : "$pc <- %l3";
-    case GTU: return reverse ? brew_emit_bcond(mode, LEU, false, operands) : "if %1 > %2 $pc <- %l3";
-    case LEU: return reverse ? brew_emit_bcond(mode, GTU, false, operands) : "if %1 <= %2 $pc <- %l3";
+    // Unsigned: the compare-with-zero branches are signed.
+    case GTU: return reverse ? brew_emit_bcond(mode, LEU, false, operands) : "if %1 != %2 $pc <- %l3";
+    case LEU: return reverse ? brew_emit_bcond(mode, GTU, false, operands) : "if %1 == %2 $pc <- %l3";
     case LTU: return reverse ? brew_emit_bcond(mode, GEU, false, operands) : "";
     default:
       gcc_unreachable ();
@@ -979,6 +982,8 @@ struct brew_tune_info
   int store_cost;  // TARGET_MEMORY_MOVE_COST of a store
   int reg_move;    // TARGET_REGISTER_MOVE_COST
   int branch_cost; // BRANCH_COST when optimizing for speed
+  int addr_halfword; // TARGET_ADDRESS_COST of each halfword an address adds
+                     // to a load or store, when optimizing for speed
 };
 
 // GCC's own defaults (rtx_cost without a target hook,
@@ -1014,10 +1019,10 @@ static const struct brew_cost_table brew_espresso_costs =
 // Indexed by enum brew_processor.
 static const struct brew_tune_info brew_tune_table[PROCESSOR_max] =
 {
-  // generic
-  { &brew_default_costs, 4, 4, 2, 1 },
-  // espresso
-  { &brew_espresso_costs, 10, 4, 2, 3 },
+  // generic: a load or store is one instruction whatever its address
+  { &brew_default_costs, 4, 4, 2, 1, 0 },
+  // espresso: fetch-bound, each halfword costs about an instruction
+  { &brew_espresso_costs, 10, 4, 2, 3, COSTS_N_INSNS (1) },
 };
 
 static const struct brew_tune_info *brew_tune = &brew_tune_table[PROCESSOR_GENERIC];
@@ -1099,6 +1104,29 @@ brew_register_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
                          reg_class_t to ATTRIBUTE_UNUSED)
 {
   return brew_tune->reg_move;
+}
+
+// for TARGET_ADDRESS_COST
+//
+// Every addressing mode is part of a single load or store; they differ
+// only in length: $rA and the tiny $sp/$fp forms fit a 16-bit
+// instruction, $rA + a 16-bit offset needs 32 bits and an absolute
+// address 48.  GCC's default prices $rA + N as an extra addition, which
+// made ivopts prefer a second induction variable to an offset address.
+static int
+brew_address_cost (rtx x, machine_mode mode ATTRIBUTE_UNUSED,
+                   addr_space_t as ATTRIBUTE_UNUSED, bool speed)
+{
+  int halfwords;
+  if (REG_P (x) || brew_legitimate_tiny_address_p (x))
+    halfwords = 0;
+  else if (GET_CODE (x) == PLUS && REG_P (XEXP (x, 0))
+           && CONST_INT_P (XEXP (x, 1))
+           && IN_RANGE (INTVAL (XEXP (x, 1)), -32768, 32767))
+    halfwords = 1;
+  else
+    halfwords = 2;
+  return halfwords * (speed ? brew_tune->addr_halfword : COSTS_N_INSNS (1));
 }
 
 // for TARGET_OPTION_OVERRIDE
@@ -1295,6 +1323,8 @@ brew_print_operand_address(FILE *file, machine_mode, rtx x)
 #define TARGET_MEMORY_MOVE_COST                  brew_memory_move_cost
 #undef  TARGET_REGISTER_MOVE_COST
 #define TARGET_REGISTER_MOVE_COST                brew_register_move_cost
+#undef  TARGET_ADDRESS_COST
+#define TARGET_ADDRESS_COST                      brew_address_cost
 #undef  TARGET_PRINT_OPERAND
 #define TARGET_PRINT_OPERAND                     brew_print_operand
 #undef  TARGET_PRINT_OPERAND_ADDRESS
