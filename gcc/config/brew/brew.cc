@@ -999,21 +999,25 @@ static const struct brew_cost_table brew_default_costs =
   COSTS_N_INSNS (1), // imm_long
 };
 
-// Espresso, from the timing measured on its RTL
-// (anachron/docs/cpu_espresso/instruction_timing.rst).  Fetch over the
-// 16-bit bus limits straight-line code to about 1.2 cycles per 16-bit
-// word, so each immediate halfword costs about one instruction.
-// A multiply takes 2 issue cycles; a load stalls the pipeline for about 5
-// cycles, a 32-bit store for 2; a taken branch costs 9 cycles.  First
-// estimates, to be checked against a cycle model.
+// Espresso, calibrated with the simulator's cycle model of its RTL
+// (--timing=espresso) on the code-generation tests and dhrystone
+// (brew/benchmarks), both compilers: the rtx costs hardly matter on a core
+// that spends half its cycles refilling after taken branches and an
+// eighth waiting for fetch, and the first estimates from the measured
+// timing (immediates by encoded length, a 4-instruction memory access,
+// load move cost 10, BRANCH_COST 3) made -O2 0.5-0.65% slower than the
+// generic costs.  Only a cheaper multiply pays: a multiply is one
+// instruction (it blocks the next one for a cycle), and pricing it so
+// keeps GCC from expanding multiplications by constants into longer
+// shift-and-add sequences (-0.2% cycles, -0.8% to -0.95% code at -O2).
 static const struct brew_cost_table brew_espresso_costs =
 {
-  COSTS_N_INSNS (2), // mult
+  COSTS_N_INSNS (1), // mult
   COSTS_N_INSNS (7), // div
-  COSTS_N_INSNS (4), // mem
-  0,                 // imm_tiny
+  COSTS_N_INSNS (1), // mem
+  COSTS_N_INSNS (1), // imm_tiny
   COSTS_N_INSNS (1), // imm_short
-  COSTS_N_INSNS (2), // imm_long
+  COSTS_N_INSNS (1), // imm_long
 };
 
 // Indexed by enum brew_processor.
@@ -1023,8 +1027,10 @@ static const struct brew_tune_info brew_tune_table[PROCESSOR_max] =
   // a longer one takes more fetching, so each halfword costs a little; with
   // 0, ivopts' ties could keep a copy of an IV live across calls (qsort)
   { &brew_default_costs, 4, 4, 2, 1, 1 },
-  // espresso: fetch-bound, each halfword costs about an instruction
-  { &brew_espresso_costs, 10, 4, 2, 3, COSTS_N_INSNS (1) },
+  // espresso: the generic move and branch costs (a higher load cost or
+  // BRANCH_COST measured slower); an address halfword costs an instruction
+  // (any non-zero cost avoids the qsort spill; 0 is 2.5% slower there)
+  { &brew_espresso_costs, 4, 4, 2, 1, COSTS_N_INSNS (1) },
 };
 
 static const struct brew_tune_info *brew_tune = &brew_tune_table[PROCESSOR_GENERIC];

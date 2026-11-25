@@ -25135,7 +25135,8 @@ configured with @option{--with-tune}.
 
 @item espresso
 The Espresso core: in-order, fetching instructions over a 16-bit bus,
-which makes long immediates and taken branches expensive.
+which makes taken branches expensive.  Compared with @samp{generic},
+multiplications cost less.
 @end table
 
 @end table
