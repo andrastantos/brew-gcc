@@ -25087,6 +25087,12 @@ are enabled; for standalone applications the default is off.
 @subsection Brew Options
 @cindex Brew Options
 
+On Brew, a taken branch is the costly part of a branch, so the basic
+block layout defaults differ from other targets:
+@option{-freorder-blocks-algorithm=simple} at @option{-O2} and above,
+and @option{-freorder-blocks-algorithm=stc} at @option{-Os} and
+@option{-Oz}.
+
 These options are defined for Brew:
 
 @table @gcctabopt

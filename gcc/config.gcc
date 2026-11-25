@@ -426,7 +426,6 @@ moxie*)	cpu_type=moxie
 	target_has_targetm_common=no
 	;;
 brew*)	cpu_type=brew
-	target_has_targetm_common=no
 	;;
 fido-*-*)
 	cpu_type=m68k
