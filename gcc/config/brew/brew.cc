@@ -47,6 +47,8 @@
 #include "insn-config.h"
 #include "recog.h"
 #include "reload.h"
+#include "insn-attr.h"
+#include "sched-int.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -1520,6 +1522,92 @@ brew_asm_output_mi_thunk(
    only if the file creates trampolines on the stack.  */
 #undef  TARGET_ASM_FILE_END
 #define TARGET_ASM_FILE_END             file_end_indicate_exec_stack
+
+/* Implement TARGET_SCHED_SET_SCHED_FLAGS.  Don't let the scheduler break
+   dependencies: to move an increment above a memory access that uses the
+   register, it rewrites $rA into $rA + -N, which turns a 16-bit load or
+   store into a 32-bit one, and a fetch-bound core loses more on the longer
+   code than it gains on the latency.  */
+
+static void
+brew_set_sched_flags (spec_info_t spec_info)
+{
+  current_sched_info->flags |= DONT_BREAK_DEPENDENCIES;
+  spec_info->mask = 0;
+}
+
+#undef  TARGET_SCHED_SET_SCHED_FLAGS
+#define TARGET_SCHED_SET_SCHED_FLAGS    brew_set_sched_flags
+
+/* True if INSN accesses memory (a load, a store or an atomic sequence).  */
+
+static bool
+brew_mem_insn_p (rtx_insn *insn)
+{
+  if (!NONDEBUG_INSN_P (insn) || recog_memoized (insn) < 0)
+    return false;
+  switch (get_attr_type (insn))
+    {
+    case TYPE_LOAD: case TYPE_LOADN: case TYPE_STORE: case TYPE_STOREN:
+    case TYPE_MULTI:
+      return true;
+    default:
+      return false;
+    }
+}
+
+/* True if INSN is an ALU operation, a shift or a multiplication.  */
+
+static bool
+brew_alu_insn_p (rtx_insn *insn)
+{
+  if (!NONDEBUG_INSN_P (insn) || recog_memoized (insn) < 0)
+    return false;
+  enum attr_type t = get_attr_type (insn);
+  return t == TYPE_ALU || t == TYPE_SHIFT || t == TYPE_MULT;
+}
+
+/* True if BB can be reached by a jump (not only by falling through).  */
+
+static bool
+brew_jump_target_p (basic_block bb)
+{
+  edge e;
+  edge_iterator ei;
+  FOR_EACH_EDGE (e, ei, bb->preds)
+    if (!(e->flags & EDGE_FALLTHRU))
+      return true;
+  return false;
+}
+
+/* Implement TARGET_SCHED_REORDER.  After a taken branch Espresso refills
+   its instruction queue with a fetch burst, and a load or store that
+   reaches the memory unit while the burst runs waits for it, blocking the
+   instructions behind it; one instruction ahead of it gives the burst time
+   to end.  The pipeline description can't see this, since it describes no
+   fetch and starts every block afresh.  So in the final schedule (after
+   register allocation), if a block that a jump can reach would start with
+   a memory access, start it with a ready ALU instruction instead.  */
+
+static int
+brew_sched_reorder (FILE *, int, rtx_insn **ready, int *n_readyp, int clock)
+{
+  int n = *n_readyp;
+  if (reload_completed && clock == 0 && n > 1 && brew_mem_insn_p (ready[n - 1])
+      && brew_jump_target_p (BLOCK_FOR_INSN (ready[n - 1])))
+    for (int i = n - 2; i >= 0; i--)
+      if (brew_alu_insn_p (ready[i]))
+	{
+	  rtx_insn *insn = ready[i];
+	  memmove (&ready[i], &ready[i + 1], (n - 1 - i) * sizeof (*ready));
+	  ready[n - 1] = insn;
+	  break;
+	}
+  return 1;
+}
+
+#undef  TARGET_SCHED_REORDER
+#define TARGET_SCHED_REORDER            brew_sched_reorder
 
 
 

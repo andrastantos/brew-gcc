@@ -28,6 +28,13 @@
 ; Most instructions are two bytes long.
 (define_attr "length" "" (const_int 2))
 
+;; Instruction types, for the scheduler (espresso.md): alu also covers
+;; moves and immediates; loadn/storen are the 8- and 16-bit accesses;
+;; multi is a sequence of several instructions (the atomics in sync.md).
+(define_attr "type"
+  "alu,shift,mult,load,loadn,store,storen,branch,jump,call,return,multi"
+  (const_string "alu"))
+
 (define_constants
   [
     (BREW_REG_LINK 14)
@@ -114,7 +121,8 @@
   %0 <- %1 * %2
   %0 <- short %1 * %2
   %0 <- %1 * %2"
-  [(set_attr "length" "2,2,2,2,4,6")]
+  [(set_attr "length" "2,2,2,2,4,6")
+   (set_attr "type" "alu,alu,alu,mult,mult,mult")]
 )
 
 ;; FIXME:
@@ -299,7 +307,8 @@
   %0 <- %1 << %2
   %0 <- short %1 << %2
   %0 <- %1 << %2"
-  [(set_attr "length" "2,4,6")]
+  [(set_attr "length" "2,4,6")
+   (set_attr "type" "shift")]
 )
 
 (define_insn "ashrsi3"
@@ -315,7 +324,8 @@
   %0 <- %1 >>> %2
   %0 <- short %1 >>> %2
   %0 <- %1 >>> %2"
-  [(set_attr "length" "2,4,6")]
+  [(set_attr "length" "2,4,6")
+   (set_attr "type" "shift")]
 )
 
 (define_insn "lshrsi3"
@@ -331,7 +341,8 @@
   %0 <- %1 >> %2
   %0 <- short %1 >> %2
   %0 <- %1 >> %2"
-  [(set_attr "length" "2,4,6")]
+  [(set_attr "length" "2,4,6")
+   (set_attr "type" "shift")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -396,7 +407,8 @@
    %0 <- mem[%1] #W
    THIS IS AN ERROR !!!! mem[%0] <- %1 #m
    THIS IS AN ERROR !!!! %0 <- mem[%1] #m"
-  [(set_attr "length" "2,4,6,2,6,2,4,2,6,2,4,2,6,6")]
+  [(set_attr "length" "2,4,6,2,6,2,4,2,6,2,4,2,6,6")
+   (set_attr "type" "alu,alu,alu,alu,store,store,store,store,load,load,load,load,store,load")]
 )
 
 
@@ -452,7 +464,8 @@
    %0 <- mem16[%1]
    THIS IS AN ERROR !!!! mem16[%0] <- %1
    THIS IS AN ERROR !!!! %0 <- mem16[%1]"
-  [(set_attr "length" "2,4,6,2,6,4,2,6,4,2,6,6")]
+  [(set_attr "length" "2,4,6,2,6,4,2,6,4,2,6,6")
+   (set_attr "type" "alu,alu,alu,alu,storen,storen,storen,loadn,loadn,loadn,storen,loadn")]
 )
 
 
@@ -509,7 +522,8 @@
    %0 <- mem8[%1]
    THIS IS AN ERROR !!!! mem8[%0] <- %1
    THIS IS AN ERROR !!!! %0 <- mem8[%1]"
-  [(set_attr "length" "2,4,6,2,6,4,2,6,4,2,6,6")]
+  [(set_attr "length" "2,4,6,2,6,4,2,6,4,2,6,6")
+   (set_attr "type" "alu,alu,alu,alu,storen,storen,storen,loadn,loadn,loadn,storen,loadn")]
 )
 
 
@@ -531,7 +545,8 @@
    %0 <- mem16[%1]
    %0 <- mem16[%1]
    THIS IS AN ERROR !!!! %0 <- mem16[%1]"
-  [(set_attr "length" "6,6,4,2,6")])
+  [(set_attr "length" "6,6,4,2,6")
+   (set_attr "type" "alu,loadn,loadn,loadn,loadn")])
 
 (define_insn "zero_extendqisi2"
   [(set
@@ -547,7 +562,8 @@
    %0 <- mem8[%1]
    %0 <- mem8[%1]
    THIS IS AN ERROR !!!! %0 <- mem8[%1]"
-  [(set_attr "length" "4,6,4,2,6")])
+  [(set_attr "length" "4,6,4,2,6")
+   (set_attr "type" "alu,loadn,loadn,loadn,loadn")])
 
 (define_insn "extendhisi2"
   [(set
@@ -563,7 +579,8 @@
    %0 <- smem16[%1]
    %0 <- smem16[%1]
    THIS IS AN ERROR !!!! %0 <- smem16[%1]"
-  [(set_attr "length" "2,6,4,2,6")])
+  [(set_attr "length" "2,6,4,2,6")
+   (set_attr "type" "alu,loadn,loadn,loadn,loadn")])
 
 (define_insn "extendqisi2"
   [(set
@@ -579,7 +596,8 @@
    %0 <- smem8[%1]
    %0 <- smem8[%1]
    THIS IS AN ERROR !!!! %0 <- smem8[%1]"
-  [(set_attr "length" "2,6,4,2,6")])
+  [(set_attr "length" "2,6,4,2,6")
+   (set_attr "type" "alu,loadn,loadn,loadn,loadn")])
 
 ;; -------------------------------------------------------------------------
 ;; Conditional branch
@@ -605,7 +623,8 @@
 }
   ;; The pc-relative form reaches -65536 to 65534 bytes from the start of
   ;; the branch; otherwise an inverted branch around an absolute jump.
-  [(set
+  [(set_attr "type" "branch")
+   (set
     (attr "length")
     (if_then_else
       (and
@@ -695,7 +714,8 @@
   $lr <- $pc + 6\;if $r0 == $r0 $pc <- (%0)
   call (%0)
   $lr <- $pc + 4\;$pc <- %0"
-  [(set_attr "length"        "6,8,4")]
+  [(set_attr "length"        "6,8,4")
+   (set_attr "type" "call")]
 )
 
 ;; FIXME: DO WE NEED THIS????
@@ -745,7 +765,8 @@
   $lr <- $pc + 6\;if $r0 == $r0 $pc <- (%1)
   call (%1)
   $lr <- $pc + 4\;$pc <- %1"
-  [(set_attr "length"        "6,8,4")]
+  [(set_attr "length"        "6,8,4")
+   (set_attr "type" "call")]
 )
 
 
@@ -797,7 +818,8 @@
   if $r0 == $r0 $pc <- %0
   $pc <- %0
   $pc <- %0"
-  [(set_attr "length"        "4,6,2")]
+  [(set_attr "length"        "4,6,2")
+   (set_attr "type" "call")]
 )
 
 (define_insn "*sibcall_value"
@@ -816,7 +838,8 @@
   if $r0 == $r0 $pc <- %1
   $pc <- %1
   $pc <- %1"
-  [(set_attr "length"        "4,6,2")]
+  [(set_attr "length"        "4,6,2")
+   (set_attr "type" "call")]
 )
 
 
@@ -829,7 +852,8 @@
   [(set (pc) (match_operand:SI 0 "nonimmediate_operand" "r"))]
   ""
   "$pc <- %0"
-  [(set_attr "length"        "2")]
+  [(set_attr "length"        "2")
+   (set_attr "type" "jump")]
 )
 
 (define_insn "jump"
@@ -846,7 +870,8 @@
   ;; the hot and cold sections of a partitioned function
   ;; (-freorder-blocks-and-partition) must use the absolute form: the
   ;; distance between the sections is only known at link time.
-  [(set
+  [(set_attr "type" "jump")
+   (set
     (attr "length")
     (if_then_else
       (and
@@ -899,6 +924,7 @@
   [(return)]
   "reload_completed"
   "$pc <- $lr"
+  [(set_attr "type" "return")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -912,6 +938,8 @@
   [(trap_if (const_int 1) (const_int 0))]
   ""
   "fill"
+  [(set_attr "type" "branch")]
 )
 
 (include "sync.md")
+(include "espresso.md")
