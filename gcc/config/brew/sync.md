@@ -121,7 +121,8 @@
    (clobber (match_scratch:SI 4 "=&r"))]
   ""
   "1:\;%0 <- memll[%1]\;if %0 != %2 $pc <- 2f\;%4 <- %3\;memsc[%1] <- %4\;if %4 != 0 $pc <- 1b\;2:"
-  [(set_attr "length" "14")]
+  [(set_attr "length" "14")
+   (set_attr "type" "multi")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -151,7 +152,8 @@
    (clobber (match_scratch:SI 3 "=&r"))]
   ""
   "1:\;%0 <- memll[%1]\;%3 <- %2\;memsc[%1] <- %3\;if %3 != 0 $pc <- 1b"
-  [(set_attr "length" "10")]
+  [(set_attr "length" "10")
+   (set_attr "type" "multi")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -185,7 +187,8 @@
    (clobber (match_scratch:SI 3 "=&r"))]
   ""
   "1:\;%0 <- memll[%1]\;%3 <- %0 <brew_atomic_asm> %2\;memsc[%1] <- %3\;if %3 != 0 $pc <- 1b"
-  [(set_attr "length" "10")]
+  [(set_attr "length" "10")
+   (set_attr "type" "multi")]
 )
 
 (define_expand "atomic_fetch_nandsi"
@@ -212,7 +215,8 @@
    (clobber (match_scratch:SI 3 "=&r"))]
   ""
   "1:\;%0 <- memll[%1]\;%3 <- %0 & %2\;%3 <- ~%3\;memsc[%1] <- %3\;if %3 != 0 $pc <- 1b"
-  [(set_attr "length" "12")]
+  [(set_attr "length" "12")
+   (set_attr "type" "multi")]
 )
 
 ;; -------------------------------------------------------------------------
@@ -287,7 +291,8 @@
    (clobber (match_scratch:SI 6 "=&r"))]
   ""
   "1:\;%0 <- memll[%1]\;%6 <- %0 & %2\;if %6 != %4 $pc <- 2f\;%6 <- %0 & %3\;%6 <- %6 | %5\;memsc[%1] <- %6\;if %6 != 0 $pc <- 1b\;2:"
-  [(set_attr "length" "18")]
+  [(set_attr "length" "18")
+   (set_attr "type" "multi")]
 )
 
 ;; Operands as above, with 4 the operand shifted into the field and 5 the
@@ -309,5 +314,6 @@
 {
   return brew_output_masked_rmw (operands);
 }
-  [(set_attr "length" "18")]
+  [(set_attr "length" "18")
+   (set_attr "type" "multi")]
 )
