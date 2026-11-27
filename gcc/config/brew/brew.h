@@ -584,6 +584,8 @@ enum reg_class
     if (brew_soft_float()) builtin_define("__BREW_SOFT_FLOAT__"); \
     if (brew_tune_option == PROCESSOR_ESPRESSO)                   \
       builtin_define("__BREW_TUNE_ESPRESSO__");                   \
+    if (brew_mul) builtin_define("__BREW_MUL__");                 \
+    if (brew_shift) builtin_define("__BREW_SHIFT__");             \
   }
 
 /* -mtune= picks the costs (brew_tune_table in brew.cc).  */

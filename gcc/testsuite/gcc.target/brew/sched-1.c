@@ -2,7 +2,7 @@
    independent load up behind the first one, into the cycles the first
    load's result takes, instead of waiting for that result first.  */
 /* { dg-do compile } */
-/* { dg-options "-O2" } */
+/* { dg-options "-O2 -mmul -mshift" } */
 
 int
 f (int *p, int *q)
