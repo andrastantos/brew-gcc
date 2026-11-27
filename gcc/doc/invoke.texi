@@ -1004,7 +1004,7 @@ Objective-C and Objective-C++ Dialects}.
 
 @emph{Brew Options} (@ref{Brew Options})
 @gccoptlist{-msoft-float  -menvironment=@var{env}  -mno-crt0
--mtune=@var{processor}}
+-mtune=@var{processor}  -march=@var{arch}  -mmul  -mno-mul  -mshift  -mno-shift}
 
 @emph{C6X Options} (@ref{C6X Options})
 @gccoptlist{-mbig-endian  -mlittle-endian  -march=@var{cpu}
@@ -25145,6 +25145,49 @@ The Espresso core: in-order, fetching instructions over a 16-bit bus,
 which makes taken branches expensive.  Compared with @samp{generic},
 multiplications cost less.
 @end table
+
+@opindex march
+@item -march=@var{arch}
+Generate code for a core with the optional instructions @var{arch}
+names (multiplication and shifts are optional in the Brew ISA; a core
+reports which it has in @code{csr_capability}).  @var{arch} is one of:
+
+@table @samp
+@item brew
+Multiplication and shifts.  This is the default.
+
+@item brew-nomul
+No multiplier: as @option{-mno-mul}.
+
+@item brew-noshift
+No barrel shifter: as @option{-mno-shift}.
+
+@item brew-min
+Neither: as @option{-mno-mul -mno-shift}.
+@end table
+
+Code for any of the reduced cores links with the libraries built for
+@samp{brew-min}, which run on every Brew core.
+
+@opindex mmul
+@opindex mno-mul
+@item -mmul
+@itemx -mno-mul
+Use (or don't use) the multiply instructions.  Without them,
+multiplications become calls to @code{__mulsi3}, or additions for
+constant multipliers.  @code{__BREW_MUL__} is defined when they are
+used.  These override what @option{-march} says.
+
+@opindex mshift
+@opindex mno-shift
+@item -mshift
+@itemx -mno-shift
+Use (or don't use) the shift instructions.  Without them, shifts
+become calls to @code{__ashlsi3}, @code{__ashrsi3} and
+@code{__lshrsi3}, except left shifts by a constant, which become a
+multiplication if the multiply instructions are used and otherwise
+additions (at @option{-Os} only short ones).  @code{__BREW_SHIFT__} is
+defined when they are used.  These override what @option{-march} says.
 
 @end table
 

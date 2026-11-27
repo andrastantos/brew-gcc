@@ -18,7 +18,13 @@
 # along with GCC; see the file COPYING3.  If not see
 # <http://www.gnu.org/licenses/>.
 
-MULTILIB_OPTIONS     = msoft-float
-MULTILIB_DIRNAMES    = soft-float
+# Libraries for cores without a multiplier or barrel shifter: one variant
+# built with neither (march=brew-min, in min/), used for every reduced core.
+MULTILIB_OPTIONS     = msoft-float march=brew-min
+MULTILIB_DIRNAMES    = soft-float min
+MULTILIB_MATCHES     = march?brew-min=march?brew-nomul \
+		       march?brew-min=march?brew-noshift \
+		       march?brew-min=mno-mul \
+		       march?brew-min=mno-shift
 
 

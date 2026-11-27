@@ -2,7 +2,7 @@
    increment above the store would turn mem8[$rA] into the longer
    mem8[$rA + -1].  */
 /* { dg-do compile } */
-/* { dg-options "-O2" } */
+/* { dg-options "-O2 -mmul -mshift" } */
 
 unsigned char buf[256];
 

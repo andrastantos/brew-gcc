@@ -37,3 +37,4 @@ extern void brew_atomic_post_fence(HOST_WIDE_INT model);
 extern void brew_expand_subword_cas(rtx bool_out, rtx old_out, rtx mem, rtx expected, rtx desired, HOST_WIDE_INT model);
 extern void brew_expand_subword_rmw(rtx old_out, rtx mem, rtx val, enum rtx_code code, HOST_WIDE_INT model);
 extern const char *brew_output_masked_rmw(rtx *operands);
+extern void brew_expand_shift (enum rtx_code code, rtx *operands);
