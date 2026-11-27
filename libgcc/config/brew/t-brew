@@ -5,7 +5,9 @@
 LIB2ADD = \
 	  $(srcdir)/udivmodsi4.c \
 	  $(srcdir)/udivmod.c   \
-	  $(srcdir)/divmod.c
+	  $(srcdir)/divmod.c \
+	  $(srcdir)/config/brew/mulsi3.c \
+	  $(srcdir)/config/brew/shift.S
 
 #LIB2ADDEH = $(srcdir)/config/cr16/unwind-cr16.c 
 

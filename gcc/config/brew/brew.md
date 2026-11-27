@@ -113,7 +113,7 @@
       (match_operand:SI 2 "nonmemory_operand" "O,I,M,r,L,i")
     )
   )]
-  ""
+  "brew_mul"
   "@
   %0 <- %0 ^ %0
   %0 <- %1
@@ -293,8 +293,50 @@
 ;; -------------------------------------------------------------------------
 ;; Shifts
 ;; -------------------------------------------------------------------------
+;; Without a barrel shifter (-mno-shift) the shift instructions are
+;; disabled.  A left shift by a constant becomes a multiplication or
+;; additions where that is short (brew_expand_shift); everything else calls
+;; libgcc's __brew_ashl, __brew_ashr or __brew_lshr (shift.S) from the
+;; *<code>si3_helper pattern: an instruction, not a library call, with a
+;; private convention that uses no argument register, because GCC also
+;; shifts while it sets up incoming arguments (a _Complex char argument),
+;; where a library call would overwrite the arguments not yet saved.  The
+;; routines preserve their inputs: a clobber of an input register isn't
+;; something GCC can describe (LRA then reused $r1 as still holding the
+;; count).
 
-(define_insn "ashlsi3"
+(define_code_iterator any_shift [ashift ashiftrt lshiftrt])
+(define_code_attr shift_insn [(ashift "ashl") (ashiftrt "ashr") (lshiftrt "lshr")])
+
+(define_expand "<shift_insn>si3"
+  [(set
+    (match_operand:SI 0 "register_operand")
+    (any_shift:SI
+      (match_operand:SI 1 "nonmemory_operand")
+      (match_operand:SI 2 "brew_short_shift_operand")
+    )
+  )]
+  ""
+{
+  if (!brew_shift)
+    {
+      brew_expand_shift (<CODE>, operands);
+      DONE;
+    }
+})
+
+(define_insn "brew_<shift_insn>si3_helper"
+  [(set (reg:SI 0) (any_shift:SI (reg:SI 0) (reg:SI 1)))
+   (clobber (reg:SI 2))
+   (clobber (reg:SI 3))
+   (clobber (reg:SI BREW_REG_LINK))]
+  "!brew_shift"
+  "call (__brew_<shift_insn>)"
+  [(set_attr "length" "6")
+   (set_attr "type" "call")]
+)
+
+(define_insn "*ashlsi3"
   [(set
     (match_operand:SI 0 "register_operand"           "=r,r,r")
     (ashift:SI
@@ -302,7 +344,7 @@
       (match_operand:SI 2 "brew_short_shift_operand"  "r,L,r")
     )
   )]
-  ""
+  "brew_shift"
   "@
   %0 <- %1 << %2
   %0 <- short %1 << %2
@@ -311,7 +353,7 @@
    (set_attr "type" "shift")]
 )
 
-(define_insn "ashrsi3"
+(define_insn "*ashrsi3"
   [(set
     (match_operand:SI 0 "register_operand"           "=r,r,r")
     (ashiftrt:SI
@@ -319,7 +361,7 @@
       (match_operand:SI 2 "brew_short_shift_operand"  "r,L,r")
     )
   )]
-  ""
+  "brew_shift"
   "@
   %0 <- %1 >>> %2
   %0 <- short %1 >>> %2
@@ -328,7 +370,7 @@
    (set_attr "type" "shift")]
 )
 
-(define_insn "lshrsi3"
+(define_insn "*lshrsi3"
   [(set
     (match_operand:SI 0 "register_operand"           "=r,r,r")
     (lshiftrt:SI
@@ -336,7 +378,7 @@
       (match_operand:SI 2 "brew_short_shift_operand"  "r,L,r")
     )
   )]
-  ""
+  "brew_shift"
   "@
   %0 <- %1 >> %2
   %0 <- short %1 >> %2

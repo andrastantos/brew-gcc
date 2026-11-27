@@ -56,3 +56,31 @@ Enum(brew_processor) String(generic) Value(PROCESSOR_GENERIC)
 
 EnumValue
 Enum(brew_processor) String(espresso) Value(PROCESSOR_ESPRESSO)
+
+march=
+Target RejectNegative Joined Enum(brew_arch) Var(brew_arch_option) Init(BREW_ARCH_FULL)
+-march=ARCH	Generate code for a core with the optional instructions ARCH names: brew (multiply and shifts; the default), brew-nomul (no multiplier), brew-noshift (no barrel shifter) or brew-min (neither).
+
+Enum
+Name(brew_arch) Type(enum brew_arch)
+Known Brew architectures (for use with the -march= option):
+
+EnumValue
+Enum(brew_arch) String(brew) Value(BREW_ARCH_FULL)
+
+EnumValue
+Enum(brew_arch) String(brew-nomul) Value(BREW_ARCH_NOMUL)
+
+EnumValue
+Enum(brew_arch) String(brew-noshift) Value(BREW_ARCH_NOSHIFT)
+
+EnumValue
+Enum(brew_arch) String(brew-min) Value(BREW_ARCH_MIN)
+
+mmul
+Target Var(brew_mul) Init(1)
+Use the multiply instructions (the default unless -march= names a core without a multiplier).
+
+mshift
+Target Var(brew_shift) Init(1)
+Use the shift instructions (the default unless -march= names a core without a barrel shifter).

@@ -47,6 +47,8 @@
 #include "insn-config.h"
 #include "recog.h"
 #include "reload.h"
+#include "opts.h"
+#include "predict.h"
 #include "insn-attr.h"
 #include "sched-int.h"
 
@@ -1047,6 +1049,16 @@ brew_branch_cost (bool speed_p, bool predictable_p ATTRIBUTE_UNUSED)
   return speed_p ? brew_tune->branch_cost : 1;
 }
 
+// Without a barrel shifter, a left shift by a constant N is done inline as
+// N additions ($rA + $rA doubles) up to this N: always when optimizing for
+// speed (N additions beat __brew_ashl's loop of N iterations), up to 3 when
+// optimizing for size (a call with its arguments takes about as much).
+static int
+brew_max_inline_shift_adds (bool speed)
+{
+  return speed ? 31 : 3;
+}
+
 // for TARGET_RTX_COSTS
 //
 // Sets the cost of the operation itself and returns false, so that
@@ -1062,7 +1074,8 @@ brew_rtx_costs (rtx x, machine_mode mode, int outer_code,
   unsigned mode_size = estimated_poly_value (GET_MODE_SIZE (mode));
   int factor = mode_size > UNITS_PER_WORD ? mode_size / UNITS_PER_WORD : 1;
 
-  switch (GET_CODE (x))
+  enum rtx_code code = GET_CODE (x);
+  switch (code)
     {
     case CONST_INT:
       {
@@ -1083,7 +1096,37 @@ brew_rtx_costs (rtx x, machine_mode mode, int outer_code,
       *total = factor * costs->imm_long;
       return true;
     case MULT:
+      // Without a multiplier (-mno-mul) a multiplication is a call to
+      // __mulsi3, a loop of about 4 instructions per bit of the multiplier.
+      if (!brew_mul)
+	{
+	  *total = factor * factor * COSTS_N_INSNS (40);
+	  return false;
+	}
       *total = factor * factor * costs->mult;
+      return false;
+    case ASHIFT:
+    case ASHIFTRT:
+    case LSHIFTRT:
+      // Without a barrel shifter (-mno-shift) a left shift by a constant
+      // becomes a multiplication or additions (brew_expand_shift),
+      // everything else a call to a loop in libgcc (shift.S).
+      if (!brew_shift)
+	{
+	  HOST_WIDE_INT n = (CONST_INT_P (XEXP (x, 1))
+			     ? INTVAL (XEXP (x, 1)) & 31 : -1);
+	  if (code == ASHIFT && n >= 0 && brew_mul)
+	    *total = factor * costs->mult;
+	  else if (code == ASHIFT && n >= 0
+		   && n <= brew_max_inline_shift_adds (speed))
+	    *total = factor * COSTS_N_INSNS (n);
+	  // A call: about 3 instructions of code, a loop of up to 32
+	  // iterations of time.  (expand_shift_1 turns a left shift by N
+	  // into additions whenever it costs more than N of them.)
+	  else
+	    *total = factor * (speed ? COSTS_N_INSNS (40) : COSTS_N_INSNS (3));
+	  return false;
+	}
       return false;
     case DIV:
     case UDIV:
@@ -1147,6 +1190,65 @@ brew_option_override (void)
   init_machine_status = brew_init_machine_status;
 
   brew_tune = &brew_tune_table[brew_tune_option];
+
+  // -march= says which optional instructions the core has; explicit
+  // -m[no-]mul and -m[no-]shift override it.
+  if (!OPTION_SET_P (brew_mul))
+    brew_mul = (brew_arch_option == BREW_ARCH_FULL
+		|| brew_arch_option == BREW_ARCH_NOSHIFT);
+  if (!OPTION_SET_P (brew_shift))
+    brew_shift = (brew_arch_option == BREW_ARCH_FULL
+		  || brew_arch_option == BREW_ARCH_NOMUL);
+}
+
+// Expand a shift (CODE: ASHIFT, ASHIFTRT or LSHIFTRT) of OPERANDS[1] by
+// OPERANDS[2] into OPERANDS[0] on a core without a barrel shifter.  A left
+// shift by a constant becomes a multiplication by the power of two if
+// there is a multiplier, otherwise additions when
+// brew_max_inline_shift_adds allows; everything else calls the shift.S
+// routine through the brew_<shift>si3_helper pattern (see brew.md).
+void
+brew_expand_shift (enum rtx_code code, rtx *operands)
+{
+  if (code == ASHIFT && CONST_INT_P (operands[2]))
+    {
+      HOST_WIDE_INT n = INTVAL (operands[2]) & 31;
+      if (n == 0)
+	{
+	  emit_move_insn (operands[0], operands[1]);
+	  return;
+	}
+      if (brew_mul)
+	{
+	  rtx src = force_reg (SImode, operands[1]);
+	  emit_insn (gen_rtx_SET (operands[0],
+				  gen_rtx_MULT (SImode, src,
+						gen_int_mode (HOST_WIDE_INT_1U << n,
+							      SImode))));
+	  return;
+	}
+      if (n <= brew_max_inline_shift_adds (optimize_insn_for_speed_p ()))
+	{
+	  rtx val = force_reg (SImode, operands[1]);
+	  for (HOST_WIDE_INT i = 0; i < n; i++)
+	    {
+	      rtx dst = i == n - 1 ? operands[0] : gen_reg_rtx (SImode);
+	      emit_insn (gen_addsi3 (dst, val, val));
+	      val = dst;
+	    }
+	  return;
+	}
+    }
+  emit_move_insn (gen_rtx_REG (SImode, 0), operands[1]);
+  emit_move_insn (gen_rtx_REG (SImode, 1), operands[2]);
+  switch (code)
+    {
+    case ASHIFT: emit_insn (gen_brew_ashlsi3_helper ()); break;
+    case ASHIFTRT: emit_insn (gen_brew_ashrsi3_helper ()); break;
+    case LSHIFTRT: emit_insn (gen_brew_lshrsi3_helper ()); break;
+    default: gcc_unreachable ();
+    }
+  emit_move_insn (operands[0], gen_rtx_REG (SImode, 0));
 }
 
 // If we can't create asm, we need to abort.

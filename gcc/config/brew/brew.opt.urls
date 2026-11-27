@@ -12,3 +12,12 @@ UrlSuffix(gcc/Brew-Options.html#index-mno-crt0)
 mtune=
 UrlSuffix(gcc/Brew-Options.html#index-mtune-4)
 
+march=
+UrlSuffix(gcc/Brew-Options.html#index-march-3)
+
+mmul
+UrlSuffix(gcc/Brew-Options.html#index-mmul)
+
+mshift
+UrlSuffix(gcc/Brew-Options.html#index-mshift)
+

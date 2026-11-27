@@ -29,4 +29,14 @@ enum brew_processor
   PROCESSOR_max
 };
 
+/* -march=: which of the optional instructions (multiply, shifts; see
+   "Optional instructions" in the ISA) the core implements.  */
+enum brew_arch
+{
+  BREW_ARCH_FULL,	/* brew: multiplier and barrel shifter */
+  BREW_ARCH_NOMUL,	/* brew-nomul: no multiplier */
+  BREW_ARCH_NOSHIFT,	/* brew-noshift: no barrel shifter */
+  BREW_ARCH_MIN		/* brew-min: neither */
+};
+
 #endif /* GCC_BREW_OPTS_H */
